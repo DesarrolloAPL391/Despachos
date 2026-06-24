@@ -249,6 +249,29 @@
     </div>
   </div>
 
+  <!-- Modal Asignar puesto del día (admin) -->
+  <div id="pst-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>📌 Asignar puesto del día</h3>
+        <button id="pst-close" class="icon-btn">✕</button>
+      </div>
+      <form id="pst-form" class="edit-form">
+        <label class="field full"><span>Despachador *</span><select id="pst-desp"></select></label>
+        <label class="field"><span>Fecha *</span><input type="date" id="pst-fecha" /></label>
+        <label class="field"><span>Puesto *</span><select id="pst-puesto"></select></label>
+        <div class="field full sonar-info" id="pst-info" hidden></div>
+        <div class="field full"><pre id="pst-result" class="sonar-result" hidden></pre></div>
+      </form>
+      <div class="modal-foot">
+        <p id="pst-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="pst-cancel" class="btn">Cancelar</button>
+        <button id="pst-save" class="btn btn-primary">Asignar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal Contador de despachos por carro -->
   <div id="cnt-modal" class="modal" hidden>
     <div class="modal-card ds-card">

@@ -246,6 +246,7 @@ function buildSidebar() {
   }
   // acciones especiales (no son tablas)
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
+  if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
 }
@@ -383,6 +384,60 @@ function closeContador() { $('cnt-modal').hidden = true; }
 $('count-btn').addEventListener('click', openContador);
 $('cnt-close').addEventListener('click', closeContador);
 $('cnt-cancel').addEventListener('click', closeContador);
+
+// ---------- Asignar puesto del día (admin) ----------
+async function openAsignarPuesto() {
+  $('pst-error').hidden = true;
+  const r = $('pst-result'); r.hidden = true; r.textContent = '';
+  $('pst-info').hidden = true;
+  $('pst-fecha').value = hoyLocal();
+  const [dp, pp] = await Promise.all([
+    sb.from('perfiles').select('email,nombre').eq('rol', 'despachador').eq('activo', true).order('nombre'),
+    sb.from('puestos').select('nombre').eq('activo', true).order('nombre'),
+  ]);
+  fillSelect($('pst-desp'), (dp.data || []).map((d) => [d.email, `${d.nombre || d.email} · ${d.email}`]), 'Selecciona despachador');
+  fillSelect($('pst-puesto'), (pp.data || []).map((p) => [p.nombre, p.nombre]), 'Selecciona puesto');
+  enhanceById('pst-desp', 'pst-puesto');
+  await updatePstInfo();
+  $('pst-modal').hidden = false;
+}
+async function updatePstInfo() {
+  const email = $('pst-desp').value, fecha = $('pst-fecha').value;
+  const info = $('pst-info');
+  if (!email || !fecha) { info.hidden = true; return; }
+  const { data } = await sb.from('horarios').select('observacion').eq('email', email).eq('fecha', fecha).maybeSingle();
+  info.hidden = false; info.className = 'field full sonar-info';
+  info.textContent = data?.observacion ? `📌 Ese día tiene: ${data.observacion}` : 'Ese día no tiene puesto asignado.';
+}
+function closeAsignarPuesto() { $('pst-modal').hidden = true; }
+$('pst-close').addEventListener('click', closeAsignarPuesto);
+$('pst-cancel').addEventListener('click', closeAsignarPuesto);
+$('pst-desp').addEventListener('change', updatePstInfo);
+$('pst-fecha').addEventListener('change', updatePstInfo);
+$('pst-save').addEventListener('click', async () => {
+  const btn = $('pst-save'); if (btn.dataset.busy === '1') return;
+  const err = $('pst-error'); err.hidden = true;
+  const email = $('pst-desp').value, fecha = $('pst-fecha').value, puesto = $('pst-puesto').value;
+  if (!email || !fecha || !puesto) { err.textContent = 'Despachador, fecha y puesto son obligatorios.'; err.hidden = false; return; }
+  const despLabel = $('pst-desp').selectedOptions[0]?.textContent || email;
+  const ok = await confirmAction({
+    title: '¿Asignar puesto?',
+    lead: `Se asignará el puesto del ${fecha}:`,
+    message: `Despachador: ${despLabel}\nPuesto:      ${puesto}`,
+    okLabel: 'Asignar',
+  });
+  if (!ok) return;
+  btn.dataset.busy = '1'; btn.disabled = true;
+  let res;
+  try { res = await sb.rpc('admin_asignar_puesto', { p_email: email, p_fecha: fecha, p_puesto: puesto }); }
+  finally { btn.dataset.busy = '0'; btn.disabled = false; }
+  if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
+  const r = $('pst-result'); r.hidden = false; r.className = 'sonar-result ok';
+  r.textContent = '✅ Puesto asignado. El despachador lo verá en menos de 1 minuto (o al volver a la app).';
+  toast('Puesto asignado', 'ok');
+  await updatePstInfo();
+  if (current === 'horarios') loadData();
+});
 
 // ---------- carga de datos ----------
 let searchTimer;
