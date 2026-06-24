@@ -1498,7 +1498,11 @@ function renderMarkers(fit) {
     });
     const m = L.marker([r.latitude, r.longitude], { icon, title: `Móvil ${r.movil || ''}` });
     m._row = r;
-    m.bindPopup(mapPopup(r), { maxWidth: 320 });
+    m.bindPopup(mapPopup(r), {
+      maxWidth: Math.min(300, (window.innerWidth || 360) - 36),
+      maxHeight: Math.round((window.innerHeight || 640) * 0.5), // scroll interno si no cabe
+      autoPan: true, keepInView: true, autoPanPadding: [10, 10],
+    });
     flotaLayer.addLayer(m);
     pts.push([r.latitude, r.longitude]);
   }
