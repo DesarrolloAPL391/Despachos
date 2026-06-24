@@ -1392,20 +1392,30 @@ async function gpsIdFor(movil) { const r = await gpsInfoFor(movil); return r?.tr
 // Devuelve null si no tiene despacho reciente registrado.
 async function minutosUltimoDespacho(vehId) {
   if (!vehId) return null;
-  const tablas = ['despachos', ...puestoTables];
   let masReciente = null;
-  await Promise.all(tablas.map(async (t) => {
-    const { data } = await sb.from(t).select('despachado_en')
-      .eq('vehiculo_id', vehId).eq('estado_despacho', 'DESPACHADO')
-      .not('despachado_en', 'is', null)
-      .order('despachado_en', { ascending: false }).limit(1);
-    const r = (data || [])[0];
-    if (r?.despachado_en) {
-      const ms = new Date(r.despachado_en).getTime();
-      if (!masReciente || ms > masReciente) masReciente = ms;
-    }
-  }));
-  if (!masReciente) return null;
+  // Anti-doble-despacho GLOBAL (para todos): la función mira 'despachos' y TODAS
+  // las tablas de puesto sin importar RLS, así detecta despachos hechos en
+  // cualquier puesto/despachador.
+  const { data: ts, error } = await sb.rpc('ultimo_despacho_vehiculo', { p_veh: vehId });
+  if (!error) {
+    if (!ts) return null;
+    masReciente = new Date(ts).getTime();
+  } else {
+    // Respaldo: consulta directa a las tablas accesibles (por si la función no existe)
+    const tablas = ['despachos', ...puestoTables];
+    await Promise.all(tablas.map(async (t) => {
+      const { data } = await sb.from(t).select('despachado_en')
+        .eq('vehiculo_id', vehId).eq('estado_despacho', 'DESPACHADO')
+        .not('despachado_en', 'is', null)
+        .order('despachado_en', { ascending: false }).limit(1);
+      const r = (data || [])[0];
+      if (r?.despachado_en) {
+        const ms = new Date(r.despachado_en).getTime();
+        if (!masReciente || ms > masReciente) masReciente = ms;
+      }
+    }));
+    if (!masReciente) return null;
+  }
   return Math.floor((Date.now() - masReciente) / 60000);
 }
 
