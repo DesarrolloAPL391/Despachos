@@ -15,7 +15,7 @@
   --shadow-sm: 0 2px 8px rgba(99,102,241,.10);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; max-width: 100%; overflow-x: hidden; }
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--text);
@@ -66,7 +66,7 @@ input, select, textarea { font: inherit; }
   background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 8px;
   width: 38px; height: 38px; font-size: 18px;
 }
-.layout { flex: 1; display: flex; min-height: 0; }
+.layout { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .sidebar {
   width: 220px; background: var(--surface); border-right: 1px solid var(--border);
   padding: 10px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto;
@@ -133,7 +133,7 @@ tbody tr:hover { background: #faf8ff; }
 .row-actions { display: flex; gap: 6px; }
 .row-actions button { padding: 5px 9px; font-size: 13px; border-radius: 8px; border: 1px solid var(--border); background: #fff; }
 .lock-badge { font-size: 15px; opacity: .6; cursor: default; }
-.table-view, .map-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.table-view, .map-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 #map.map { flex: 1; min-height: 0; width: 100%; border-radius: 12px; }
 .map-search { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-size: 13px; min-width: 200px; }
 
@@ -263,14 +263,29 @@ tbody tr:hover { background: #faf8ff; }
   .sidebar.open { transform: translateX(0); }
   .edit-form { grid-template-columns: 1fr; }
 
-  /* Despachos y demás tablas: TABLA COMPACTA con solo lo esencial + botones.
-     Las columnas marcadas .col-hide se ocultan; si quedan más, la tabla se
-     desplaza horizontalmente dentro de su contenedor. */
+  /* Menos margen para aprovechar el ancho del teléfono */
+  .main { padding: 10px; }
+  .topbar { padding: 10px 12px; }
+  .topbar-title { font-size: 15px; }
+  .user-email { display: none; }
+  .toolbar { gap: 8px; }
+  #search { min-width: 0; flex: 1; }
+
+  /* Despachos y demás tablas: TABLA COMPACTA que CABE en la pantalla.
+     Solo se muestran las columnas marcadas (m:true); el texto se ajusta. */
   .col-hide { display: none !important; }
-  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  table { font-size: 13px; }
-  thead th { padding: 9px 8px; font-size: 11px; }
-  tbody td { padding: 9px 8px; white-space: nowrap; }
-  .row-actions { gap: 4px; }
-  .row-actions button { padding: 6px 8px; font-size: 15px; }
+  .table-wrap { overflow-x: hidden; }
+  table { width: 100%; table-layout: fixed; font-size: 13px; }
+  thead th {
+    padding: 8px 6px; font-size: 10.5px; letter-spacing: 0;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  tbody td {
+    padding: 8px 6px; white-space: normal; overflow-wrap: anywhere; vertical-align: middle;
+  }
+  /* La columna de acciones (botones) lo más angosta posible y sin partir */
+  .row-actions { gap: 4px; white-space: nowrap; flex-wrap: wrap; justify-content: flex-start; }
+  .row-actions button { padding: 5px 7px; font-size: 16px; }
+  /* Los chips de estado pueden partirse para no desbordar la celda */
+  .chip { white-space: normal; padding: 3px 7px; font-size: 11px; }
 }
