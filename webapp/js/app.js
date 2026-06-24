@@ -251,6 +251,24 @@ function renderFilters() {
   const cont = $('filters'); cont.innerHTML = '';
   const defs = TABLES[current].filters || [];
   for (const f of defs) {
+    if (f.type === 'daterange') {
+      const wrap = document.createElement('span');
+      wrap.className = 'filter-date';
+      const mk = (op, ph) => {
+        const i = document.createElement('input');
+        i.type = 'date'; i.title = `${f.label} ${ph}`; i.setAttribute('aria-label', `${f.label} ${ph}`);
+        i.value = filters[`${f.col}::${op}`] || '';
+        i.addEventListener('change', () => {
+          if (i.value) filters[`${f.col}::${op}`] = i.value; else delete filters[`${f.col}::${op}`];
+          page = 0; loadData();
+        });
+        return i;
+      };
+      wrap.append(Object.assign(document.createElement('span'), { className: 'filter-lbl', textContent: f.label }),
+        mk('gte', 'desde'), Object.assign(document.createElement('span'), { textContent: 'a' }), mk('lte', 'hasta'));
+      cont.appendChild(wrap);
+      continue;
+    }
     const sel = document.createElement('select');
     sel.innerHTML = `<option value="">${f.label}: todos</option>` +
       f.options.map((o) => `<option value="${o}">${f.label}: ${o}</option>`).join('');
@@ -285,7 +303,14 @@ async function loadData() {
   if (term && cfg.searchCols?.length) {
     qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
   }
-  for (const [col, val] of Object.entries(filters)) qy = qy.eq(col, val); // filtros dinámicos
+  for (const [key, val] of Object.entries(filters)) { // filtros dinámicos (eq o rango de fecha)
+    if (key.includes('::')) {
+      const [col, op] = key.split('::');
+      qy = op === 'gte' ? qy.gte(col, val) : qy.lte(col, val);
+    } else {
+      qy = qy.eq(key, val);
+    }
+  }
 
   // Despachador: solo despachos de sus rutas permitidas (refuerzo en UI; RLS lo garantiza en BD)
   if (current === 'despachos' && !isAdmin()) {

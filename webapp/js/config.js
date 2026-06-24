@@ -5,10 +5,17 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v56';
+export const APP_VERSION = 'v57';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
+
+// Novedades operativas (tomadas de los datos reales de despachos y tablas)
+const NOVEDADES = [
+  'PESCA', 'TALLER', 'SIN INFORMACION', 'SIN CONDUCTOR', 'CAMBIO DE TABLA', 'SUSPENDIDO',
+  'REQUERIMIENTO EMPRESA', 'VACACIONES', 'CONDUCTOR EN OTRA RUTA', 'CONDUCTOR EN OTRO VEHICULO',
+  'INCAPACIDAD EPS', 'CITA MEDICA EPS', 'RESTRICCION MEDICA', 'CDA', 'ADELANTADO', 'ABANDONA EL SERVICIO',
+];
 
 export const TABLE_ORDER = [
   'despachos', 'resumen', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
@@ -63,8 +70,10 @@ export const TABLES = {
     searchCols: ['id', 'estado_despacho', 'estado'],
     defaultOrder: { col: 'fecha', asc: false },
     filters: [
+      { col: 'fecha', label: 'Fecha', type: 'daterange' },
       { col: 'tipo', label: 'Tipo', options: ['TABLA', 'LIBRE'] },
       { col: 'estado_despacho', label: 'Despacho', options: ['DESPACHADO', 'NO REALIZA EL VIAJE', 'CANCELADO'] },
+      { col: 'estado', label: 'Novedad', options: NOVEDADES },
     ],
     columns: [
       { key: 'tipo', label: 'Tipo', badge: true },
@@ -76,7 +85,8 @@ export const TABLES = {
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },
       { key: 'realizo_programado', label: 'Prog. realizó', badge: true },
-      // Placa, Estado (clasificación) y regId SONAR quedan solo en el detalle.
+      { key: 'estado', label: 'Novedad', badge: true },
+      // Placa y regId SONAR quedan solo en el detalle.
     ],
     fields: [
       // ----- General -----
@@ -104,7 +114,7 @@ export const TABLES = {
       { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'Real', postDispatch: true },
       { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real', postDispatch: true },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true },
-      { key: 'estado', label: 'Estado (clasificación)', type: 'text', section: 'Real', postDispatch: true },
+      { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'Real', postDispatch: true },
       { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'Real', postDispatch: true },
 
       // ----- Indicadores ----- (editables después de despachar)
@@ -141,6 +151,7 @@ export const TABLES = {
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
     defaultOrder: { col: 'hora_cierre', asc: false },
     filters: [
+      { col: 'fecha', label: 'Fecha', type: 'daterange' },
       { col: 'estado', label: 'Estado', options: ['Cerrado', 'Abierto'] },
     ],
     columns: [
