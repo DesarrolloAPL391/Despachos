@@ -37,6 +37,7 @@ function menuOrder() {
 
 // ---------- roles ----------
 function isAdmin() { return CTX?.rol === 'admin'; }
+function isAuditor() { return CTX?.rol === 'auditor'; }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
 function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
 // Tablas visibles según el rol:
@@ -45,6 +46,8 @@ function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
 function visibleTables() {
   if (isAdmin()) return menuOrder();
+  // Auditor: solo la pantalla de Despachos (ahí audita el control de los despachos)
+  if (isAuditor()) return ['despachos'];
   // despachador: todas las tablas de su puesto (puede tener varias)
   const mine = (CTX?.tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
   if (mine.length) {
@@ -114,6 +117,13 @@ function fmt(v) {
 }
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+// Formatea un timestamp (ISO) a fecha+hora local legible: "YYYY-MM-DD HH:MM"
+function fmtFechaHora(v) {
+  const d = new Date(v);
+  if (isNaN(d)) return fmt(v);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
@@ -304,7 +314,7 @@ function selectTable(name) {
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
-  $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate; // sin "+ Nuevo" donde no aplica
+  $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate || isAuditor(); // sin "+ Nuevo" donde no aplica (el auditor no crea)
   buildSidebar();
   renderFilters();
   loadData();
@@ -446,7 +456,7 @@ function applyQueryFilters(qy) {
       qy = qy.eq(key, val);
     }
   }
-  // Despachador: solo despachos de sus rutas permitidas (refuerzo en UI; RLS lo garantiza en BD)
+  // Despachador y auditor: solo despachos de SUS rutas (refuerzo en UI; RLS lo garantiza en BD).
   if (current === 'despachos' && !isAdmin()) {
     const ids = CTX?.ids || [];
     qy = qy.in('ruta_id', ids.length ? ids : [-1]);
@@ -740,9 +750,11 @@ const ICON = {
 
 function renderTable(cfg, rows, count) {
   const head = $('thead-row'); head.innerHTML = '';
+  // Columnas de auditoría (auditCol): solo las ven el admin y el auditor; al despachador le sobran
+  const cols = cfg.columns.filter((c) => !(c.auditCol && !isAdmin() && !isAuditor()));
   // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
-  const hasMobile = cfg.columns.some((c) => c.m);
-  cfg.columns.forEach((c) => {
+  const hasMobile = cols.some((c) => c.m);
+  cols.forEach((c) => {
     const th = document.createElement('th');
     th.textContent = c.label;
     if (hasMobile && !c.m) th.className = 'col-hide';
@@ -755,13 +767,15 @@ function renderTable(cfg, rows, count) {
 
   for (const row of rows) {
     const tr = document.createElement('tr');
-    for (const c of cfg.columns) {
+    for (const c of cols) {
       const td = document.createElement('td');
       td.dataset.label = c.label;
       if (hasMobile && !c.m) td.className = 'col-hide';
       const val = c.path ? getPath(row, c.path) : row[c.key];
       if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
         td.innerHTML = `<a href="https://www.google.com/maps?q=${encodeURIComponent(String(val))}" target="_blank" rel="noopener" class="maps-link" title="${esc(String(val))}">📍 Ver</a>`;
+      } else if (c.dt && val) {
+        td.textContent = fmtFechaHora(val); // fecha+hora local legible (ej. auditado el)
       } else if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
       } else {
@@ -781,7 +795,7 @@ function renderTable(cfg, rows, count) {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
         }));
       } else {
-        if (cfg.dispatchable) {
+        if (cfg.dispatchable && !isAuditor()) { // el auditor no despacha ni cancela: solo audita
           const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', innerHTML: ICON.send });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
@@ -807,18 +821,21 @@ function renderTable(cfg, rows, count) {
           }
           act.appendChild(can);
         }
-        // Editar/eliminar: solo admin. El despachador solo despacha/cancela.
-        if (isAdmin()) {
+        // Editar: el admin siempre; el auditor también (para auditar, incluso fechas pasadas).
+        // El despachador solo despacha/cancela.
+        if (isAdmin() || isAuditor()) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
-          if (esPasada) {
+          // El auditor audita despachos ya realizados (días anteriores): no se le bloquea por fecha.
+          if (esPasada && !isAuditor()) {
             ed.title = 'Fecha ya pasada: no se puede editar';
             ed.disabled = true;
           } else {
-            ed.title = 'Editar';
+            ed.title = isAuditor() ? 'Auditar despacho' : 'Editar';
             ed.onclick = () => openEditor(row);
           }
           act.appendChild(ed);
-          if (!cfg.noDelete) {
+          // Eliminar: solo admin (el auditor no elimina)
+          if (isAdmin() && !cfg.noDelete) {
             const del = Object.assign(document.createElement('button'), { className: 'act act-del', innerHTML: ICON.trash, title: 'Eliminar' });
             del.onclick = () => deleteRow(row);
             act.appendChild(del);
@@ -1052,8 +1069,9 @@ function toggleEmptySections(form) {
 async function openEditor(row) {
   const cfg = TABLES[current];
   if (row && cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
-  // La fecha es clave: no se edita un viaje de un día anterior a hoy (tablas y despachos)
-  if (row && cfg.dispatchable && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal()) {
+  // La fecha es clave: no se edita un viaje de un día anterior a hoy (tablas y despachos).
+  // Excepción: el auditor SÍ audita despachos de días anteriores.
+  if (row && cfg.dispatchable && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal() && !isAuditor()) {
     toast('No se puede editar: la fecha del viaje ya pasó.', 'err'); return;
   }
   editing = row || null;
@@ -1068,10 +1086,17 @@ async function openEditor(row) {
   // observaciones y los demás ítems de seguimiento (postDispatch).
   const isDispatched = !!(cfg.dispatchable && row &&
     (String(row.estado_despacho || '').toUpperCase() === 'DESPACHADO' || row.sonar_regid));
-  if (isDispatched) {
+  const soyAuditor = isAuditor();
+  if (isDispatched && !soyAuditor) {
     const note = document.createElement('div');
     note.className = 'sonar-info';
     note.textContent = '🔒 Despacho ya realizado: solo puedes editar observaciones y los ítems de seguimiento.';
+    form.appendChild(note);
+  }
+  if (soyAuditor) {
+    const note = document.createElement('div');
+    note.className = 'sonar-info';
+    note.textContent = '🔎 Modo auditoría: edita el control y los indicadores. Al guardar quedará registrado como auditado por ti.';
     form.appendChild(note);
   }
 
@@ -1080,6 +1105,8 @@ async function openEditor(row) {
     if (f.formHide) continue;
     // editOnly: solo se muestra al EDITAR un registro existente (no al crear)
     if (f.editOnly && !editing) continue;
+    // auditOnly: campos de control que solo ven el auditor y el admin (el despachador no)
+    if (f.auditOnly && !isAdmin() && !soyAuditor) continue;
     // encabezado de sección
     if (f.section && f.section !== lastSection) {
       lastSection = f.section;
@@ -1100,7 +1127,10 @@ async function openEditor(row) {
       wrap.dataset.fieldKey = f.key;
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.dataset.key = f.key; cb.dataset.type = 'boolean'; cb.checked = val === true;
-      if (f.readOnly || (isDispatched && !f.postDispatch)) cb.disabled = true;
+      // Un campo de auditoría (audit) se comporta como postDispatch: editable aun ya despachado
+      if (f.readOnly || (isDispatched && !f.postDispatch && !f.audit)) cb.disabled = true;
+      // El auditor solo edita los campos de auditoría; el resto queda de solo lectura
+      if (soyAuditor && !f.audit) cb.disabled = true;
       wrap.append(cb, document.createTextNode(' ' + f.label));
     } else {
       wrap.appendChild(Object.assign(document.createElement('span'), { textContent: f.label + (f.required ? ' *' : '') }));
@@ -1164,7 +1194,10 @@ async function openEditor(row) {
       input.dataset.key = f.key; input.dataset.type = f.type;
       if (f.key === cfg.pk && row && !cfg.pkEditable) input.disabled = true;
       if (f.key === cfg.pk && row && cfg.pkEditable) input.readOnly = true; // no cambiar PK al editar
-      if (f.readOnly || (isDispatched && !f.postDispatch)) input.disabled = true; // solo lectura / ya despachado
+      // Un campo de auditoría (audit) se comporta como postDispatch: editable aun ya despachado
+      if (f.readOnly || (isDispatched && !f.postDispatch && !f.audit)) input.disabled = true; // solo lectura / ya despachado
+      // El auditor solo edita los campos de auditoría; el resto queda de solo lectura
+      if (soyAuditor && !f.audit) input.disabled = true;
       // Solo lectura "suave" para el despachador: no lo puede cambiar pero SÍ se guarda (ej. puesto)
       if (f.softReadOnlyDispatcher && !isAdmin()) input.readOnly = true;
       wrap.appendChild(input);
@@ -1248,6 +1281,12 @@ $('modal-save').addEventListener('click', async () => {
 
   // Hora de cierre automática (momento de guardado)
   if (cfg.autoStamp) payload[cfg.autoStamp] = ahoraLocal();
+
+  // Auditoría: al guardar un despacho, el auditor (y la fecha/hora) quedan registrados solos
+  if (current === 'despachos' && isAuditor()) {
+    if (CTX?.auditor_id != null) payload.auditor_id = CTX.auditor_id;
+    payload.fecha_hora_auditoria = new Date().toISOString();
+  }
 
   // Estado: 'Abierto' al crear; al editar, si están todos los campos requeridos → 'Cerrado' (bloqueado)
   let cerrado = false;
@@ -1406,6 +1445,7 @@ function hoyLocal() {
 function etiquetaUsuario(user) {
   const nombre = CTX?.nombre || user?.email || '';
   if (CTX?.rol === 'admin') return `👤 ${nombre} · Administrador`;
+  if (CTX?.rol === 'auditor') return `👤 ${nombre} · 🔎 Auditor`;
   if (CTX?.rol === 'despachador') return `👤 ${nombre} · 📌 ${CTX.puesto || 'sin turno hoy'}`;
   return `👤 ${nombre}`;
 }
@@ -2336,14 +2376,17 @@ $('syncfleet-btn').addEventListener('click', async () => {
 
 // ---------- Administración de accesos (solo admin) ----------
 $('perfil-new-btn').addEventListener('click', async () => {
-  const email = (prompt('Correo del despachador:') || '').trim();
+  const rolIn = (prompt('Rol del acceso (despachador / auditor / admin):', 'despachador') || '').trim().toLowerCase();
+  if (!rolIn) return;
+  if (!['despachador', 'auditor', 'admin'].includes(rolIn)) { toast('Rol inválido. Usa despachador, auditor o admin.', 'err'); return; }
+  const email = (prompt(`Correo del ${rolIn}:`) || '').trim();
   if (!email) return;
-  const nombre = (prompt('Nombre del despachador:') || '').trim();
+  const nombre = (prompt(`Nombre del ${rolIn}:`) || '').trim();
   const pass = (prompt('Contraseña temporal (mín. 6 caracteres):', 'APL2026*PL') || '').trim();
   if (pass.length < 6) { toast('La contraseña debe tener al menos 6 caracteres', 'err'); return; }
-  const { data, error } = await sb.rpc('admin_crear_despachador', { p_email: email, p_nombre: nombre, p_pass: pass });
+  const { data, error } = await sb.rpc('admin_crear_usuario', { p_email: email, p_nombre: nombre, p_pass: pass, p_rol: rolIn });
   if (error) { toast('Error: ' + error.message, 'err'); return; }
-  if (data?.ok) { toast('Acceso creado para ' + email, 'ok'); if (current === 'perfiles') loadData(); }
+  if (data?.ok) { toast(`Acceso de ${rolIn} creado para ${email}`, 'ok'); if (current === 'perfiles') loadData(); }
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
 });
 $('perfil-pass-btn').addEventListener('click', async () => {

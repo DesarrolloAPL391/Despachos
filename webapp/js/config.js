@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v80';
+export const APP_VERSION = 'v81';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -67,7 +67,7 @@ export const TABLES = {
     despachador: true, // visible para despachadores (filtrado por sus rutas)
     pkEditable: true, // el KEY lo escribe el usuario al crear
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
-    select: '*, ruta:ruta_id(nombre), rutap:ruta_programada_id(nombre), veh:vehiculo_id(numero,placa), vehp:vehiculo_programado_id(numero,placa), cond:conductor_id(nombre), desp:despachador_id(nombre)',
+    select: '*, ruta:ruta_id(nombre), rutap:ruta_programada_id(nombre), veh:vehiculo_id(numero,placa), vehp:vehiculo_programado_id(numero,placa), cond:conductor_id(nombre), desp:despachador_id(nombre), aud:auditor_id(nombre)',
     searchCols: ['id', 'estado_despacho', 'estado'],
     defaultOrder: { col: 'fecha', asc: false },
     filters: [
@@ -89,6 +89,12 @@ export const TABLES = {
       { key: 'realizo_programado', label: 'Prog. realizó', badge: true },
       { key: 'estado', label: 'Novedad', badge: true },
       { key: 'ubicacion', label: 'Ubicación', maps: true },
+      // ----- Control / Auditoría ----- (auditCol: solo las ven el admin y el auditor)
+      { key: 'control_interno', label: 'Control interno', auditCol: true },
+      { key: 'hora_llegada_control', label: 'Lleg. control', auditCol: true },
+      { key: 'hora_salida_control', label: 'Sal. control', auditCol: true },
+      { path: 'aud.nombre', label: 'Auditor', auditCol: true },
+      { key: 'fecha_hora_auditoria', label: 'Auditado el', dt: true, auditCol: true },
       // Placa y regId SONAR quedan solo en el detalle.
     ],
     fields: [
@@ -118,16 +124,22 @@ export const TABLES = {
       { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real', postDispatch: true },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true, readOnly: true },
       { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'Real', postDispatch: true },
-      { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'Real', postDispatch: true },
+      { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'Real', postDispatch: true, audit: true },
 
-      // ----- Indicadores ----- (editables después de despachar)
-      { key: 'completo', label: '¿Completo?', type: 'boolean', section: 'Indicadores', postDispatch: true },
-      { key: 'perdida_deliberada_tiempo', label: '¿Pérdida deliberada de tiempo?', type: 'boolean', section: 'Indicadores', postDispatch: true },
-      { key: 'abandono_ruta', label: '¿Abandono de ruta?', type: 'boolean', section: 'Indicadores', postDispatch: true },
+      // ----- Indicadores ----- (editables después de despachar y por el auditor)
+      { key: 'completo', label: '¿Completo?', type: 'boolean', section: 'Indicadores', postDispatch: true, audit: true },
+      { key: 'perdida_deliberada_tiempo', label: '¿Pérdida deliberada de tiempo?', type: 'boolean', section: 'Indicadores', postDispatch: true, audit: true },
+      { key: 'abandono_ruta', label: '¿Abandono de ruta?', type: 'boolean', section: 'Indicadores', postDispatch: true, audit: true },
 
-      // ----- Notas ----- (editables después de despachar)
-      { key: 'novedades', label: 'Novedades', type: 'textarea', section: 'Notas', postDispatch: true },
-      { key: 'observacion', label: 'Observación', type: 'textarea', section: 'Notas', postDispatch: true },
+      // ----- Notas ----- (editables después de despachar y por el auditor)
+      { key: 'novedades', label: 'Novedades', type: 'textarea', section: 'Notas', postDispatch: true, audit: true },
+      { key: 'observacion', label: 'Observación', type: 'textarea', section: 'Notas', postDispatch: true, audit: true },
+
+      // ----- Control / Auditoría ----- (solo auditor/admin; auditor sí los edita)
+      // audit:true → el auditor puede editarlos; auditOnly:true → el despachador no los ve
+      { key: 'control_interno', label: 'Control interno', type: 'textarea', section: 'Control / Auditoría', audit: true, auditOnly: true },
+      { key: 'hora_llegada_control', label: 'Hora de llegada a control', type: 'time', section: 'Control / Auditoría', audit: true, auditOnly: true },
+      { key: 'hora_salida_control', label: 'Hora de salida de control', type: 'time', section: 'Control / Auditoría', audit: true, auditOnly: true },
     ],
   },
 
