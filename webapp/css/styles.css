@@ -1,18 +1,19 @@
 :root {
-  --primary: #6366f1;
-  --primary-dark: #4f46e5;
-  --primary-2: #8b5cf6;
-  --grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #a855f7 100%);
-  --grad-soft: linear-gradient(135deg, #eef2ff, #f5edff);
-  --bg: #f4f3fd;
+  /* Marca de la empresa: rojo y blanco */
+  --primary: #d81f2a;
+  --primary-dark: #a4141d;
+  --primary-2: #e8434c;
+  --grad: linear-gradient(135deg, #e11d2a 0%, #c81620 55%, #a4141d 100%);
+  --grad-soft: linear-gradient(135deg, #fff1f1, #ffe6e7);
+  --bg: #f7f4f4;
   --surface: #ffffff;
-  --text: #211c33;
-  --muted: #71717a;
-  --border: #e9e7f7;
-  --danger: #ef4444;
+  --text: #241b1c;
+  --muted: #78716c;
+  --border: #f0e3e3;
+  --danger: #dc2626;
   --ok: #16a34a;
-  --shadow: 0 10px 30px rgba(99,102,241,.12);
-  --shadow-sm: 0 2px 8px rgba(99,102,241,.10);
+  --shadow: 0 10px 30px rgba(216,31,42,.12);
+  --shadow-sm: 0 2px 8px rgba(216,31,42,.10);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; max-width: 100%; overflow-x: hidden; }
@@ -31,7 +32,7 @@ input, select, textarea { font: inherit; }
 }
 .login-card {
   background: var(--surface); width: 100%; max-width: 370px; padding: 32px;
-  border-radius: 20px; box-shadow: 0 24px 60px rgba(76,40,130,.35);
+  border-radius: 20px; box-shadow: 0 24px 60px rgba(130,20,28,.35);
   display: flex; flex-direction: column; gap: 14px;
 }
 .brand { text-align: center; margin-bottom: 6px; }
@@ -48,7 +49,7 @@ input, select, textarea { font: inherit; }
 .login-card button {
   margin-top: 6px; padding: 13px; border: 0; border-radius: 12px;
   background: var(--grad); color: #fff; font-weight: 700; letter-spacing: .2px;
-  box-shadow: 0 8px 20px rgba(99,102,241,.35);
+  box-shadow: 0 8px 20px rgba(216,31,42,.35);
 }
 .login-card button:disabled { opacity: .6; }
 
@@ -56,7 +57,7 @@ input, select, textarea { font: inherit; }
 .app { min-height: 100%; display: flex; flex-direction: column; }
 .topbar {
   display: flex; align-items: center; gap: 10px; padding: 12px 16px;
-  background: var(--grad); color: #fff; box-shadow: 0 4px 20px rgba(99,102,241,.30);
+  background: var(--grad); color: #fff; box-shadow: 0 4px 20px rgba(216,31,42,.30);
   position: sticky; top: 0; z-index: 20;
 }
 .topbar-title { font-weight: 700; }
@@ -81,7 +82,8 @@ input, select, textarea { font: inherit; }
   background: var(--grad-soft); color: var(--primary-dark); font-weight: 700;
   box-shadow: inset 3px 0 0 var(--primary);
 }
-.main { flex: 1; padding: 16px; min-width: 0; display: flex; flex-direction: column; }
+/* isolation: contiene los z-index altos de Leaflet para que el mapa no tape el menú */
+.main { flex: 1; padding: 16px; min-width: 0; display: flex; flex-direction: column; isolation: isolate; }
 
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar h2 { margin: 0; font-size: 20px; }
@@ -101,7 +103,7 @@ input, select, textarea { font: inherit; }
 .btn:active { transform: translateY(1px); }
 .btn-primary {
   background: var(--grad); border: 0; color: #fff; font-weight: 700;
-  box-shadow: 0 8px 18px rgba(99,102,241,.32);
+  box-shadow: 0 8px 18px rgba(216,31,42,.32);
 }
 .btn-danger { color: var(--danger); }
 .btn.btn-danger { background: var(--danger); border: 0; color: #fff; font-weight: 700; box-shadow: 0 8px 18px rgba(220,38,38,.30); }
@@ -223,7 +225,7 @@ tbody tr:hover { background: #faf8ff; }
 }
 .edit-form select { text-overflow: ellipsis; }
 .edit-form input:focus, .edit-form select:focus, .edit-form textarea:focus {
-  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,136,229,.15);
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(216,31,42,.15);
 }
 .edit-form textarea { resize: vertical; min-height: 64px; }
 .edit-form input:disabled, .edit-form select:disabled, .edit-form textarea:disabled {
@@ -276,7 +278,7 @@ tbody tr:hover { background: #faf8ff; }
 @media (max-width: 760px) {
   /* Menú lateral: arranca debajo de la barra superior y con su propio scroll */
   .sidebar {
-    position: fixed; top: 0; bottom: 0; left: 0; width: 78%; max-width: 280px; z-index: 30;
+    position: fixed; top: 0; bottom: 0; left: 0; width: 78%; max-width: 280px; z-index: 1000;
     padding-top: 70px; transform: translateX(-100%); transition: transform .2s;
     box-shadow: var(--shadow); overflow-y: auto;
   }
@@ -312,6 +314,6 @@ tbody tr:hover { background: #faf8ff; }
 /* Fondo oscuro detrás del menú lateral (solo cuando está abierto) */
 .scrim { display: none; }
 @media (max-width: 760px) {
-  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 29; }
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 999; }
   .scrim[hidden] { display: none; }
 }
