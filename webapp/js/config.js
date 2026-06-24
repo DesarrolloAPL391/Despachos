@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v55';
+export const APP_VERSION = 'v56';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -75,6 +75,7 @@ export const TABLES = {
       { path: 'veh.numero', label: 'Móvil', m: true },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },
+      { key: 'realizo_programado', label: 'Prog. realizó', badge: true },
       // Placa, Estado (clasificación) y regId SONAR quedan solo en el detalle.
     ],
     fields: [
@@ -104,6 +105,7 @@ export const TABLES = {
       { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real', postDispatch: true },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true },
       { key: 'estado', label: 'Estado (clasificación)', type: 'text', section: 'Real', postDispatch: true },
+      { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'Real', postDispatch: true },
 
       // ----- Indicadores ----- (editables después de despachar)
       { key: 'completo', label: '¿Completo?', type: 'boolean', section: 'Indicadores', postDispatch: true },

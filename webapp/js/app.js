@@ -98,9 +98,9 @@ function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
   if (s === 'TABLA') return 'chip chip-indigo';
   if (s === 'LIBRE') return 'chip chip-violet';
-  if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO') return 'chip chip-green';
+  if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI') return 'chip chip-green';
   if (s === 'APAGADO') return 'chip chip-gray';
-  if (s === 'NO REALIZA EL VIAJE' || s === 'DISABLED' || s === 'CANCELADO') return 'chip chip-red';
+  if (s === 'NO REALIZA EL VIAJE' || s === 'DISABLED' || s === 'CANCELADO' || s === 'NO') return 'chip chip-red';
   if (s === 'ABIERTO') return 'chip chip-amber';
   if (['PESCA', 'TALLER', 'CAMBIO DE TABLA', 'ADELANTADO', 'CONDUCTOR EN OTRA RUTA'].includes(s)) return 'chip chip-amber';
   return 'chip chip-gray';
@@ -907,6 +907,7 @@ async function doDispatch(intent) {
     id: intent.id, tipo: intent.tipo, fecha: intent.fecha, hora: intent.hora, ruta_id,
     vehiculo_id: intent.vehId, conductor_id, codigo: intent.drvCodigo || null,
     despachador_id: intent.despId, estado_despacho: 'DESPACHADO', observacion: intent.com || null,
+    realizo_programado: true, // despacho manual (LIBRE): el carro hizo el viaje
   };
   const ins = await sb.from('despachos').upsert(payload, { onConflict: 'id' });
   if (ins.error) throw ins.error;
@@ -1078,11 +1079,16 @@ $('sonar-send').addEventListener('click', async () => {
   // Confirmación antes de despachar
   const itinLabel = $('s-itin').selectedOptions[0]?.textContent || itin;
   const drvLabel = $('s-drv').selectedOptions[0]?.textContent || '—';
+  // ¿Es un reemplazo? (el móvil seleccionado es distinto al programado)
+  const progId = sonarRow ? (sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || null) : null;
+  const esReemplazo = progId && Number(progId) !== Number(vr.id);
+  const movProg = esReemplazo ? (veh.find((v) => Number(v.id) === Number(progId))?.numero || progId) : null;
   const ok = await confirmAction({
     title: '¿Despachar en SONAR?',
     lead: 'Se enviará este despacho a SONAR:',
     message: `Móvil:     ${vr.numero}  (mId ${mId})\nItinerario:${' ' + itinLabel}\nConductor: ${drvLabel}`
-      + (com ? `\nComent.:   ${com}` : ''),
+      + (com ? `\nComent.:   ${com}` : '')
+      + (esReemplazo ? `\n\n⚠️ Reemplazo: el móvil programado ${movProg} quedará como NO realizó el viaje.` : ''),
     okLabel: 'Despachar',
   });
   if (!ok) return;
@@ -1100,11 +1106,14 @@ $('sonar-send').addEventListener('click', async () => {
     // El vehículo PROGRAMADO (el de la importación) se conserva siempre.
     if (sonarRow?.id) {
       const newVehId = Number($('s-mov').value) || sonarRow.vehiculo_id || null;
+      const progId = sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || null;
       const patch = {
         estado_despacho: 'DESPACHADO',
         vehiculo_id: newVehId,
         // si no había programado, se fija con el original de la fila (no se pierde)
-        vehiculo_programado_id: sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || newVehId,
+        vehiculo_programado_id: progId || newVehId,
+        // Si despacharon con OTRO carro (reemplazo), el carro programado NO realizó el viaje
+        realizo_programado: !(progId && newVehId && Number(progId) !== Number(newVehId)),
       };
       // Queda registrado quién despachó (el usuario que tiene la sesión)
       if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id;
