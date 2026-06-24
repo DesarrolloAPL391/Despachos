@@ -1300,8 +1300,18 @@ async function updateCancelInfo() {
     info.textContent = '⚠️ Este móvil no tiene Id GPS en SONAR.';
   }
 }
+// Regla general: un despacho solo se cancela si lleva 50 min o menos despachado
+const MAX_MIN_CANCELAR = 50;
+function minsDesde(ts) { return ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 60000) : null; }
+
 async function openCancelar(row) {
   if (row && !row.sonar_regid) { toast('Este despacho no tiene regId: no se puede cancelar.', 'err'); return; }
+  // Regla: no se puede cancelar si el viaje ya superó los 50 minutos
+  const mins = minsDesde(row?.despachado_en);
+  if (mins !== null && mins > MAX_MIN_CANCELAR) {
+    toast(`No se puede cancelar: el viaje ya supera los ${MAX_MIN_CANCELAR} min (lleva ${mins} min).`, 'err');
+    return;
+  }
   cancelRow = row || null;
   cancelTable = TABLES[current]?.dispatchable ? current : 'despachos';
   $('cancel-error').hidden = true;
@@ -1336,6 +1346,15 @@ $('cancel-send').addEventListener('click', async () => {
   const regId = $('c-regid').value.trim();
   const com = $('c-com').value.trim();
   if (!regId) { err.textContent = 'No hay regId: no se puede cancelar este despacho.'; err.hidden = false; return; }
+  // Revalida la regla de 50 min con la hora real de la BD
+  if (cancelRow?.id) {
+    const { data: cur } = await sb.from(cancelTable).select('despachado_en').eq('id', cancelRow.id).maybeSingle();
+    const mins = minsDesde(cur?.despachado_en);
+    if (mins !== null && mins > MAX_MIN_CANCELAR) {
+      err.textContent = `No se puede cancelar: el viaje ya supera los ${MAX_MIN_CANCELAR} min (lleva ${mins} min).`;
+      err.hidden = false; return;
+    }
+  }
   const ok = await confirmAction({
     title: '¿Cancelar despacho?',
     lead: 'Se cancelará el despacho activo en SONAR:',
