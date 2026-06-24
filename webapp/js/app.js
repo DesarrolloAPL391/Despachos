@@ -1171,7 +1171,10 @@ async function openNuevoDespacho() {
   $('nd-error').hidden = true;
   const r = $('nd-result'); r.hidden = true; r.textContent = '';
   $('nd-tipo').value = 'LIBRE'; // el despacho manual siempre es LIBRE (TABLA solo viene de importación)
+  // La fecha del despacho es SIEMPRE hoy y el despachador NO la puede tocar (evita trampas en los registros)
   $('nd-fecha').value = hoyLocal();
+  $('nd-fecha').min = hoyLocal();
+  $('nd-fecha').disabled = !isAdmin();
   $('nd-hora').value = ''; $('nd-com').value = '';
 
   const [its, veh, drs, desp] = await Promise.all([
@@ -1299,7 +1302,8 @@ $('nd-save').addEventListener('click', async () => {
 
   const intent = {
     id: 'APL' + Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase(),
-    tipo: 'LIBRE', fecha: $('nd-fecha').value || null, hora: $('nd-hora').value || null,
+    // El despachador no puede alterar la fecha: siempre es hoy (el admin sí puede elegirla)
+    tipo: 'LIBRE', fecha: isAdmin() ? ($('nd-fecha').value || hoyLocal()) : hoyLocal(), hora: $('nd-hora').value || null,
     itid, itinNombre: itin?.nombre || null,
     vehId: Number(vehVal), mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
