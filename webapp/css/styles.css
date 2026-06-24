@@ -263,23 +263,14 @@ tbody tr:hover { background: #faf8ff; }
   .sidebar.open { transform: translateX(0); }
   .edit-form { grid-template-columns: 1fr; }
 
-  /* Despachos y demás tablas: vista en TARJETAS (más cómoda que el scroll horizontal) */
-  .table-wrap { border: 0; box-shadow: none; background: transparent; overflow: visible; }
-  table, tbody, tr, td { display: block; width: 100%; }
-  thead { display: none; }
-  tbody tr {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: var(--shadow); margin-bottom: 12px; padding: 8px 12px;
-  }
-  tbody tr:hover { background: var(--surface); }
-  tbody td {
-    display: flex; justify-content: space-between; align-items: center; gap: 14px;
-    white-space: normal; border: 0; border-bottom: 1px dashed var(--border); padding: 8px 0; text-align: right;
-  }
-  tbody td:last-child { border-bottom: 0; }
-  tbody td::before {
-    content: attr(data-label); font-weight: 700; color: var(--primary-dark);
-    font-size: 12px; text-transform: uppercase; letter-spacing: .3px; text-align: left;
-  }
-  .row-actions { justify-content: flex-end; }
+  /* Despachos y demás tablas: TABLA COMPACTA con solo lo esencial + botones.
+     Las columnas marcadas .col-hide se ocultan; si quedan más, la tabla se
+     desplaza horizontalmente dentro de su contenedor. */
+  .col-hide { display: none !important; }
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { font-size: 13px; }
+  thead th { padding: 9px 8px; font-size: 11px; }
+  tbody td { padding: 9px 8px; white-space: nowrap; }
+  .row-actions { gap: 4px; }
+  .row-actions button { padding: 6px 8px; font-size: 15px; }
 }

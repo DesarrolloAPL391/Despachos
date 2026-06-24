@@ -292,7 +292,14 @@ async function loadData() {
 
 function renderTable(cfg, rows, count) {
   const head = $('thead-row'); head.innerHTML = '';
-  cfg.columns.forEach((c) => { const th = document.createElement('th'); th.textContent = c.label; head.appendChild(th); });
+  // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
+  const hasMobile = cfg.columns.some((c) => c.m);
+  cfg.columns.forEach((c) => {
+    const th = document.createElement('th');
+    th.textContent = c.label;
+    if (hasMobile && !c.m) th.className = 'col-hide';
+    head.appendChild(th);
+  });
   if (!cfg.readonly) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones' }));
 
   const body = $('tbody'); body.innerHTML = '';
@@ -302,7 +309,8 @@ function renderTable(cfg, rows, count) {
     const tr = document.createElement('tr');
     for (const c of cfg.columns) {
       const td = document.createElement('td');
-      td.dataset.label = c.label; // para vista en tarjetas (móvil)
+      td.dataset.label = c.label;
+      if (hasMobile && !c.m) td.className = 'col-hide';
       const val = c.path ? getPath(row, c.path) : row[c.key];
       if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
