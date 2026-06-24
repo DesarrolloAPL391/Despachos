@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v53';
+export const APP_VERSION = 'v54';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -132,8 +132,8 @@ export const TABLES = {
     autoStamp: 'hora_cierre',
     // Estado: 'Abierto' al crear; 'Cerrado' (y bloqueado) cuando al editar estén todos los campos
     stateField: 'estado',
-    closeRequired: ['fecha', 'ruta_id', 'vehiculo_id', 'conductor_id', 'jornada1_inicio', 'jornada1_fin', 'viajes'],
-    closeRequiredDoble: ['conductor2_id', 'jornada2_inicio', 'jornada2_fin'],
+    closeRequired: ['fecha', 'ruta_id', 'vehiculo_id', 'conductor_id', 'viajes'],
+    closeRequiredDoble: ['jornada1_inicio', 'jornada1_fin', 'conductor2_id', 'jornada2_inicio', 'jornada2_fin'],
     import: { rpc: 'importar_resumen', map: IMPORT_MAP_RESUMEN, kept: 'actualizados', keptLabel: 'Actualizados' },
     select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
@@ -166,14 +166,15 @@ export const TABLES = {
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Operación' },
       // Estado y Total de pasajeros: ocultos. Hora de cierre: automática (momento de guardado).
 
-      // ----- Conductor / Turnos -----
-      { key: 'conductor_id', label: 'Conductor (jornada 1)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor / Turnos' },
-      { key: 'jornada1_inicio', label: 'Jornada 1 · inicia', type: 'time', section: 'Conductor / Turnos' },
-      { key: 'jornada1_fin', label: 'Jornada 1 · termina', type: 'time', section: 'Conductor / Turnos' },
-      { key: 'doble_turno', label: '¿Doble turno? (otro conductor en otra jornada)', type: 'boolean', section: 'Conductor / Turnos' },
-      { key: 'conductor2_id', label: 'Conductor (jornada 2)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor / Turnos', showWhen: { field: 'doble_turno', in: [true] } },
-      { key: 'jornada2_inicio', label: 'Jornada 2 · inicia', type: 'time', section: 'Conductor / Turnos', showWhen: { field: 'doble_turno', in: [true] } },
-      { key: 'jornada2_fin', label: 'Jornada 2 · termina', type: 'time', section: 'Conductor / Turnos', showWhen: { field: 'doble_turno', in: [true] } },
+      // ----- Conductor -----
+      { key: 'conductor_id', label: 'Conductor', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor' },
+      { key: 'doble_turno', label: '¿Doble turno? (otro conductor en otra jornada)', type: 'boolean', section: 'Conductor' },
+      // Las jornadas y el 2.º conductor solo aparecen si es doble turno
+      { key: 'jornada1_inicio', label: 'Jornada 1 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'jornada1_fin', label: 'Jornada 1 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'conductor2_id', label: 'Conductor (jornada 2)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'jornada2_inicio', label: 'Jornada 2 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'jornada2_fin', label: 'Jornada 2 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
     ],
   },
 
