@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v49';
+export const APP_VERSION = 'v50';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -55,6 +55,7 @@ export const TABLES = {
     icon: '🚍',
     pk: 'id',
     dispatchable: true, // permite despachar/cancelar a SONAR desde las filas
+    noDelete: true, // un despacho no se elimina (ni TABLA ni LIBRE)
     despachador: true, // visible para despachadores (filtrado por sus rutas)
     pkEditable: true, // el KEY lo escribe el usuario al crear
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },

@@ -13,6 +13,7 @@ let editing = null;     // fila en edición (null = nuevo)
 const fkCache = {};     // cache de opciones de FK por tabla
 let CTX = null;         // contexto del usuario { rol, nombre, puesto, rutas[], ids[], despachador_id }
 
+
 let puestoTables = []; // tablas de puesto descubiertas (laureles, etc.)
 
 // Descubre las tablas de despacho desde `tablas_despacho` y registra su config en caliente
@@ -361,9 +362,12 @@ function renderTable(cfg, rows, count) {
         if (isAdmin()) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', textContent: '✏️', title: 'Editar' });
           ed.onclick = () => openEditor(row);
-          const del = Object.assign(document.createElement('button'), { className: 'act act-del', textContent: '🗑️', title: 'Eliminar' });
-          del.onclick = () => deleteRow(row);
-          act.append(ed, del);
+          act.appendChild(ed);
+          if (!cfg.noDelete) {
+            const del = Object.assign(document.createElement('button'), { className: 'act act-del', textContent: '🗑️', title: 'Eliminar' });
+            del.onclick = () => deleteRow(row);
+            act.appendChild(del);
+          }
         }
       }
       tr.appendChild(act);
@@ -619,6 +623,7 @@ $('modal-save').addEventListener('click', async () => {
 
 async function deleteRow(row) {
   const cfg = TABLES[current];
+  if (cfg.noDelete) { toast('Esta tabla no permite eliminar registros', 'err'); return; }
   if (cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
   if (!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return;
   const { error } = await sb.from(current).delete().eq(cfg.pk, row[cfg.pk]);
