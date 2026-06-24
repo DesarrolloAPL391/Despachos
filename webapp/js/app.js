@@ -299,6 +299,14 @@ async function loadData() {
   renderTable(cfg, data || [], count || 0);
 }
 
+// Íconos SVG (se ven iguales en Android/escritorio, sin depender de emojis)
+const ICON = {
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>',
+  ban: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6 18.4 18.4"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>',
+};
+
 function renderTable(cfg, rows, count) {
   const head = $('thead-row'); head.innerHTML = '';
   // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
@@ -339,7 +347,7 @@ function renderTable(cfg, rows, count) {
         }));
       } else {
         if (cfg.dispatchable) {
-          const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', textContent: '🛰️' });
+          const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', innerHTML: ICON.send });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
             dsp.disabled = true;
@@ -348,7 +356,7 @@ function renderTable(cfg, rows, count) {
             dsp.onclick = () => openSonar(row);
           }
           act.appendChild(dsp);
-          const can = Object.assign(document.createElement('button'), { className: 'act act-stop', textContent: '🛑' });
+          const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
           if (row.sonar_regid) {
             can.title = 'Cancelar en SONAR';
             can.onclick = () => openCancelar(row);
@@ -360,11 +368,11 @@ function renderTable(cfg, rows, count) {
         }
         // Editar/eliminar: solo admin. El despachador solo despacha/cancela.
         if (isAdmin()) {
-          const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', textContent: '✏️', title: 'Editar' });
+          const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit, title: 'Editar' });
           ed.onclick = () => openEditor(row);
           act.appendChild(ed);
           if (!cfg.noDelete) {
-            const del = Object.assign(document.createElement('button'), { className: 'act act-del', textContent: '🗑️', title: 'Eliminar' });
+            const del = Object.assign(document.createElement('button'), { className: 'act act-del', innerHTML: ICON.trash, title: 'Eliminar' });
             del.onclick = () => deleteRow(row);
             act.appendChild(del);
           }

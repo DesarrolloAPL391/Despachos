@@ -143,13 +143,14 @@ tbody tr:hover { background: #faf8ff; }
 .row-actions button.act:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .row-actions button.act:active { transform: translateY(0); }
 .row-actions button.act:disabled { opacity: .3; cursor: default; transform: none; box-shadow: none; }
-.act-go   { background: #ecfdf3; border-color: #b7e6c7; }
+.row-actions button.act svg { width: 18px; height: 18px; display: block; }
+.act-go   { background: #ecfdf3; border-color: #b7e6c7; color: #15803d; }
 .act-go:hover:not(:disabled)   { background: #d7f7e3; }
-.act-stop { background: #fef2f2; border-color: #f6c9c9; }
+.act-stop { background: #fef2f2; border-color: #f6c9c9; color: #c1121f; }
 .act-stop:hover:not(:disabled) { background: #fde0e0; }
-.act-edit { background: #eef2ff; border-color: #d4dbff; }
-.act-edit:hover:not(:disabled) { background: #e0e7ff; }
-.act-del  { background: #fef2f2; border-color: #f6c9c9; }
+.act-edit { background: #f3f4f6; border-color: #dfe3e8; color: #475569; }
+.act-edit:hover:not(:disabled) { background: #e8eaee; }
+.act-del  { background: #fef2f2; border-color: #f6c9c9; color: #c1121f; }
 .act-del:hover:not(:disabled)  { background: #fde0e0; }
 .lock-badge { font-size: 15px; opacity: .6; cursor: default; }
 .table-view, .map-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
