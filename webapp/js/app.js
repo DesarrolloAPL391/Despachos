@@ -1124,6 +1124,29 @@ function capturarGps(timeoutMs = 8000) {
   });
 }
 
+// Exige la ubicación para poder despachar. Reintenta (re-muestra el permiso del
+// navegador mientras no esté bloqueado) hasta obtenerla. Devuelve "lat, lng" o
+// null SOLO si el usuario decide cancelar el despacho.
+async function requerirGps() {
+  while (true) {
+    const pos = await capturarGps(12000);
+    if (pos) return pos;
+    let estado = '';
+    try { estado = (await navigator.permissions.query({ name: 'geolocation' })).state; } catch (e) { /* sin API de permisos */ }
+    const bloqueado = estado === 'denied';
+    const reintentar = await confirmAction({
+      title: '📍 Activa la ubicación (GPS)',
+      lead: 'No se puede despachar sin la ubicación del celular.',
+      message: bloqueado
+        ? 'El permiso de ubicación está BLOQUEADO. Actívalo en:\nAjustes → Apps → esta app → Permisos → Ubicación → Permitir.\nLuego toca Reintentar.'
+        : 'Enciende el GPS del celular y acepta el permiso de ubicación cuando aparezca.\nLuego toca Reintentar.',
+      okLabel: 'Reintentar',
+      danger: true,
+    });
+    if (!reintentar) return null; // el usuario cancela el despacho
+  }
+}
+
 // Ejecuta un despacho completo (BD + SONAR) a partir de un "intent". Lanza si hay error de red.
 async function doDispatch(intent) {
   let ruta_id = null;
@@ -1199,8 +1222,12 @@ $('nd-save').addEventListener('click', async () => {
   });
   if (!ok) return;
 
-  // Captura GPS del celular (no bloquea: si falla/niega, se despacha sin ubicación)
-  intent.ubicacion = await capturarGps();
+  // GPS OBLIGATORIO: sin ubicación no se despacha (reintenta / vuelve a pedir permiso)
+  intent.ubicacion = await requerirGps();
+  if (!intent.ubicacion) {
+    err.textContent = 'Despacho cancelado: se requiere la ubicación (GPS) para despachar.'; err.hidden = false;
+    return;
+  }
 
   // Sin internet → guardar offline y salir
   if (!navigator.onLine) {
@@ -1218,7 +1245,7 @@ $('nd-save').addEventListener('click', async () => {
       res.className = 'sonar-result ok';
       res.textContent = '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')'
         + (sd.regid ? '\nregId: ' + sd.regid : '')
-        + (intent.ubicacion ? '\n📍 Ubicación registrada: ' + intent.ubicacion : '\n📍 Sin ubicación (permiso de GPS denegado)')
+        + '\n📍 Ubicación registrada: ' + intent.ubicacion
         + '\n\n' + (sd.response || '').slice(0, 800);
       toast('Despacho creado y despachado', 'ok');
     } else {
@@ -1383,8 +1410,12 @@ $('sonar-send').addEventListener('click', async () => {
   });
   if (!ok) return;
 
-  // Captura GPS del celular para registrar dónde se despachó (no bloquea si falla)
-  const ubicGps = await capturarGps();
+  // GPS OBLIGATORIO: sin ubicación no se despacha (reintenta / vuelve a pedir permiso)
+  const ubicGps = await requerirGps();
+  if (!ubicGps) {
+    err.textContent = 'Despacho cancelado: se requiere la ubicación (GPS) para despachar.'; err.hidden = false;
+    return;
+  }
 
   btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Enviando…';
   let data, error;
@@ -1423,7 +1454,7 @@ $('sonar-send').addEventListener('click', async () => {
     res.className = 'sonar-result ok';
     res.textContent = '✅ Despachado (HTTP ' + (data.status ?? '') + ')'
       + (data.regid ? '\nregId: ' + data.regid : '')
-      + (ubicGps ? '\n📍 Ubicación registrada: ' + ubicGps : '\n📍 Sin ubicación (permiso de GPS denegado)')
+      + '\n📍 Ubicación registrada: ' + ubicGps
       + '\n\n' + (data.response || '').slice(0, 1200);
     toast('Despachado en SONAR', 'ok');
   } else {
