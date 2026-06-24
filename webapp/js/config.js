@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v79';
+export const APP_VERSION = 'v80';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -18,7 +18,7 @@ const NOVEDADES = [
 ];
 
 export const TABLE_ORDER = [
-  'despachos', 'resumen', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
+  'despachos', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'itinerarios',
 ];
 // Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
@@ -196,6 +196,33 @@ export const TABLES = {
       { key: 'jornada2_inicio', label: 'Jornada 2 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada2_fin', label: 'Jornada 2 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
     ],
+  },
+
+  // Asistencia: marcación de ingreso/salida (con foto que NO se guarda + GPS obligatorio)
+  asistencia: {
+    label: 'Asistencia',
+    icon: '🕘',
+    despachador: true, // visible para los despachadores (ven solo lo suyo por RLS)
+    asistenciaMarcar: true, // muestra los botones "Marcar ingreso/salida"
+    readonly: true, // no se edita a mano; el ingreso/salida se marcan con los botones
+    pk: 'id', pkEditable: false,
+    select: '*',
+    searchCols: ['email', 'nombre'],
+    defaultOrder: { col: 'fecha', asc: false, then: { col: 'ingreso_en', asc: false } },
+    filters: [
+      { col: 'fecha', label: 'Fecha', type: 'daterange' },
+    ],
+    columns: [
+      { key: 'fecha', label: 'Fecha', m: true },
+      { key: 'hora_ingreso', label: 'Ingreso', m: true },
+      { key: 'hora_salida', label: 'Salida', m: true },
+      { key: 'horas', label: 'Horas', m: true },
+      { key: 'nombre', label: 'Despachador', m: true },
+      { key: 'email', label: 'Correo' },
+      { key: 'ubic_ingreso', label: 'Ubic. ingreso', maps: true },
+      { key: 'ubic_salida', label: 'Ubic. salida', maps: true },
+    ],
+    fields: [],
   },
 
   horarios: {

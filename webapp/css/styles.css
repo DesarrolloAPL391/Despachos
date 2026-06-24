@@ -25,6 +25,26 @@ button { font: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; }
 [hidden] { display: none !important; }
 
+/* ---------- Aviso "marcar ingreso" (no bloqueante) ---------- */
+.asis-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; color: #fff; font-weight: 700;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 6px 18px rgba(217,119,6,.35);
+  animation: asis-pulse 1.6s ease-in-out infinite;
+}
+.asis-banner-ico { font-size: 20px; }
+.asis-banner-txt { flex: 1; min-width: 180px; font-weight: 600; }
+.asis-banner-txt b { font-weight: 800; }
+.asis-banner .asis-banner-btn {
+  background: #fff; color: #b45309; border: 0; font-weight: 800;
+  box-shadow: 0 4px 12px rgba(0,0,0,.18); white-space: nowrap;
+}
+@keyframes asis-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.12); }
+}
+
 /* ---------- Login ---------- */
 .login-screen {
   min-height: 100%; display: grid; place-items: center; padding: 20px;
@@ -113,6 +133,7 @@ input, select, textarea { font: inherit; }
 }
 .btn-danger { color: var(--danger); }
 .btn.btn-danger { background: var(--danger); border: 0; color: #fff; font-weight: 700; box-shadow: 0 8px 18px rgba(220,38,38,.30); }
+.btn-sm { padding: 6px 10px; font-size: 13px; border-radius: 8px; box-shadow: none; }
 
 /* ---------- Table ---------- */
 .table-wrap {

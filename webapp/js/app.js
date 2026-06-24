@@ -119,9 +119,10 @@ function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
   if (s === 'TABLA') return 'chip chip-indigo';
   if (s === 'LIBRE') return 'chip chip-violet';
-  if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI') return 'chip chip-green';
+  if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI' || s === 'INGRESO') return 'chip chip-green';
   if (s === 'APAGADO') return 'chip chip-gray';
   if (s === 'NO REALIZA EL VIAJE' || s === 'DISABLED' || s === 'CANCELADO' || s === 'NO') return 'chip chip-red';
+  if (s === 'SALIDA') return 'chip chip-amber';
   if (s === 'ABIERTO') return 'chip chip-amber';
   if (['PESCA', 'TALLER', 'CAMBIO DE TABLA', 'ADELANTADO', 'CONDUCTOR EN OTRA RUTA'].includes(s)) return 'chip chip-amber';
   return 'chip chip-gray';
@@ -175,7 +176,7 @@ async function verificarDispositivo() {
     await sb.auth.signOut();
   }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarDispositivo(); refreshContext(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarDispositivo(); refreshContext(); checkAsistenciaPendiente(); } });
 
 // Firma del contexto para detectar si el admin cambió el puesto/tablas/rutas
 function ctxSig(c) {
@@ -228,13 +229,14 @@ async function showApp(user) {
   if (CTX?.rol === 'despachador') {
     await registrarDispositivo(user);
     sessionUser = user;
-    sessTimer = setInterval(() => { verificarDispositivo(); refreshContext(); }, 45000);
+    sessTimer = setInterval(() => { verificarDispositivo(); refreshContext(); checkAsistenciaPendiente(); }, 45000);
   }
   buildSidebar();
   current = null;
   selectTable(visibleTables()[0] || 'despachos');
   updateNet();
   processQueue();
+  checkAsistenciaPendiente(); // avisar si falta marcar el ingreso de hoy
 }
 
 $('login-form').addEventListener('submit', async (e) => {
@@ -295,6 +297,8 @@ function selectTable(name) {
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
+  $('marcar-in-btn').hidden = !TABLES[name].asistenciaMarcar;          // Marcar ingreso (Asistencia)
+  $('marcar-out-btn').hidden = !TABLES[name].asistenciaMarcar;         // Marcar salida (Asistencia)
   $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
@@ -493,6 +497,128 @@ $('count-btn').addEventListener('click', openContador);
 $('cnt-close').addEventListener('click', closeContador);
 $('cnt-cancel').addEventListener('click', closeContador);
 
+// ---------- Asistencia: marcar ingreso/salida (foto obligatoria NO guardada + GPS obligatorio) ----------
+// Abre la cámara y exige tomar una foto. La foto NO se guarda; solo es requisito del momento.
+function tomarFoto() {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'user'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; try { inp.remove(); } catch (e) {} resolve(ok); };
+    inp.addEventListener('change', () => finish(!!(inp.files && inp.files.length)));
+    inp.click();
+    // Si el usuario cancela la cámara (no hay 'change'), lo detectamos al volver el foco
+    window.addEventListener('focus', function onF() {
+      window.removeEventListener('focus', onF);
+      setTimeout(() => finish(false), 1500);
+    }, { once: true });
+  });
+}
+
+function miCorreo() { return (sessionUser?.email || CTX?.email || '').toLowerCase(); }
+
+// Calcula horas laboradas entre dos instantes (decimales, 2 cifras). Maneja cruce de medianoche.
+function calcHoras(ingresoEn, salidaEn) {
+  const a = new Date(ingresoEn), b = new Date(salidaEn);
+  const ms = b - a;
+  if (!(ms >= 0)) return null;
+  return Math.round((ms / 3600000) * 100) / 100;
+}
+
+// Pasos comunes a toda marcación: foto obligatoria (no se guarda) + GPS obligatorio + confirmación.
+async function pasosMarcacion(titulo, resumen, okLabel, danger) {
+  const hayFoto = await tomarFoto();
+  if (!hayFoto) { toast('Debes tomar la foto para continuar.', 'err'); return null; }
+  const ubic = await requerirGps();
+  if (!ubic) { toast('Se requiere la ubicación (GPS) para marcar.', 'err'); return null; }
+  const ok = await confirmAction({ title: titulo, lead: 'Se registrará tu marcación:', message: resumen + `\nUbicación:   ${ubic}`, okLabel, danger });
+  if (!ok) return null;
+  return ubic;
+}
+
+// MARCAR INGRESO: crea una nueva jornada (una fila). Bloquea si ya hay una jornada abierta hoy.
+async function marcarIngreso() {
+  const b = $('marcar-in-btn'); if (b.dataset.busy === '1') return;
+  b.dataset.busy = '1'; b.disabled = true;
+  try {
+    const email = miCorreo();
+    // ¿Ya hay una jornada de hoy sin salida?
+    const { data: abiertas } = await sb.from('asistencia').select('id').eq('email', email).eq('fecha', hoyLocal()).is('hora_salida', null).limit(1);
+    if (abiertas && abiertas.length) { toast('Ya tienes un ingreso sin salida. Marca la salida primero.', 'err'); return; }
+    const ubic = await pasosMarcacion('¿Marcar INGRESO?', `Despachador: ${CTX?.nombre || email}\nTipo:        INGRESO`, 'Marcar ingreso', false);
+    if (!ubic) return;
+    showBusy('Registrando ingreso…');
+    const ahora = new Date();
+    let res;
+    try {
+      res = await sb.from('asistencia').insert({
+        email, nombre: CTX?.nombre || null, fecha: hoyLocal(),
+        hora_ingreso: ahoraLocal().slice(11, 19), ubic_ingreso: ubic, ingreso_en: ahora.toISOString(),
+      });
+    } finally { hideBusy(); }
+    if (res.error) { toast('Error al marcar ingreso: ' + res.error.message, 'err'); return; }
+    toast('✅ Ingreso registrado', 'ok');
+    const bn = $('asis-banner'); if (bn) bn.hidden = true; // ya marcó: quitar el aviso
+    if (current === 'asistencia') loadData();
+  } finally { b.dataset.busy = '0'; b.disabled = false; }
+}
+
+// MARCAR SALIDA de una jornada concreta (fila). Calcula y guarda las horas laboradas.
+async function marcarSalida(row, btn) {
+  if (btn && btn.dataset.busy === '1') return;
+  if (btn) { btn.dataset.busy = '1'; btn.disabled = true; }
+  try {
+    if (row.hora_salida) { toast('Esta jornada ya tiene salida.', 'err'); return; }
+    const ubic = await pasosMarcacion('¿Marcar SALIDA?', `Despachador: ${row.nombre || row.email}\nIngreso:     ${fmt(row.hora_ingreso) || '—'}\nTipo:        SALIDA`, 'Marcar salida', true);
+    if (!ubic) return;
+    showBusy('Registrando salida…');
+    const ahora = new Date();
+    const horas = row.ingreso_en ? calcHoras(row.ingreso_en, ahora.toISOString()) : null;
+    let res;
+    try {
+      res = await sb.from('asistencia').update({
+        hora_salida: ahoraLocal().slice(11, 19), ubic_salida: ubic, salida_en: ahora.toISOString(), horas,
+      }).eq('id', row.id);
+    } finally { hideBusy(); }
+    if (res.error) { toast('Error al marcar salida: ' + res.error.message, 'err'); return; }
+    toast(horas != null ? `✅ Salida registrada · ${horas} h` : '✅ Salida registrada', 'ok');
+    if (current === 'asistencia') loadData();
+  } finally { if (btn) { btn.dataset.busy = '0'; btn.disabled = false; } }
+}
+
+// Botón de la barra "Marcar salida": busca la jornada abierta de hoy y la cierra.
+async function marcarSalidaBarra() {
+  const b = $('marcar-out-btn'); if (b.dataset.busy === '1') return;
+  b.dataset.busy = '1'; b.disabled = true;
+  try {
+    const { data } = await sb.from('asistencia').select('*').eq('email', miCorreo()).is('hora_salida', null)
+      .order('fecha', { ascending: false }).limit(1);
+    const row = (data || [])[0];
+    if (!row) { toast('No tienes un ingreso pendiente de salida.', 'err'); return; }
+    await marcarSalida(row, null);
+  } finally { b.dataset.busy = '0'; b.disabled = false; }
+}
+
+$('marcar-in-btn').addEventListener('click', marcarIngreso);
+$('marcar-out-btn').addEventListener('click', marcarSalidaBarra);
+
+// Aviso visual (no bloqueante): si el despachador no ha marcado su INGRESO de hoy, muestra el banner.
+async function checkAsistenciaPendiente() {
+  const banner = $('asis-banner'); if (!banner) return;
+  if (CTX?.rol !== 'despachador') { banner.hidden = true; return; } // solo despachadores
+  try {
+    const { data } = await sb.from('asistencia').select('id').eq('email', miCorreo()).eq('fecha', hoyLocal()).limit(1);
+    banner.hidden = !!(data && data.length); // si ya marcó hoy → ocultar; si no → mostrar
+  } catch { /* si falla la consulta, no estorbar */ }
+}
+$('asis-banner-btn').addEventListener('click', async () => {
+  const b = $('asis-banner-btn'); if (b.dataset.busy === '1') return;
+  b.dataset.busy = '1';
+  try { await marcarIngreso(); } finally { b.dataset.busy = '0'; }
+  checkAsistenciaPendiente();
+});
+
 // ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
 async function openAsignarPuesto() {
   $('pst-error').hidden = true;
@@ -590,8 +716,11 @@ async function loadData() {
   const from = page * PAGE_SIZE, to = from + PAGE_SIZE - 1;
 
   let qy = sb.from(current).select(cfg.select, { count: 'exact' })
-    .order(cfg.defaultOrder.col, { ascending: cfg.defaultOrder.asc, nullsFirst: false })
-    .range(from, to);
+    .order(cfg.defaultOrder.col, { ascending: cfg.defaultOrder.asc, nullsFirst: false });
+  if (cfg.defaultOrder.then) { // orden secundario (ej. desempatar por hora dentro del mismo día)
+    qy = qy.order(cfg.defaultOrder.then.col, { ascending: cfg.defaultOrder.then.asc, nullsFirst: false });
+  }
+  qy = qy.range(from, to);
 
   qy = applyQueryFilters(qy);
 
@@ -619,7 +748,7 @@ function renderTable(cfg, rows, count) {
     if (hasMobile && !c.m) th.className = 'col-hide';
     head.appendChild(th);
   });
-  if (!cfg.readonly) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
+  if (!cfg.readonly || cfg.asistenciaMarcar) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;
@@ -695,6 +824,18 @@ function renderTable(cfg, rows, count) {
             act.appendChild(del);
           }
         }
+      }
+      tr.appendChild(act);
+    } else if (cfg.asistenciaMarcar) {
+      // Asistencia: botón por fila para marcar la SALIDA de una jornada abierta (sin salida aún)
+      const act = document.createElement('td');
+      act.className = 'row-actions'; act.dataset.label = 'Acciones';
+      if (!row.hora_salida) {
+        const out = Object.assign(document.createElement('button'), { className: 'btn btn-sm btn-danger', textContent: '🔴 Marcar salida' });
+        out.onclick = () => marcarSalida(row, out);
+        act.appendChild(out);
+      } else {
+        act.appendChild(Object.assign(document.createElement('span'), { className: 'chip chip-green', textContent: 'Jornada cerrada' }));
       }
       tr.appendChild(act);
     }
