@@ -1108,6 +1108,22 @@ $('nd-close').addEventListener('click', closeND);
 $('nd-cancel').addEventListener('click', closeND);
 $('nd-movil').addEventListener('change', updateNdInfo);
 
+// Captura el GPS del celular para llenar "ubicacion". Nunca bloquea el despacho:
+// si no hay permiso, no hay señal o tarda demasiado, resuelve a null y se sigue.
+function capturarGps(timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const t = setTimeout(() => finish(null), timeoutMs);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { clearTimeout(t); finish(`${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`); },
+      () => { clearTimeout(t); finish(null); },
+      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 30000 },
+    );
+  });
+}
+
 // Ejecuta un despacho completo (BD + SONAR) a partir de un "intent". Lanza si hay error de red.
 async function doDispatch(intent) {
   let ruta_id = null;
@@ -1126,6 +1142,7 @@ async function doDispatch(intent) {
     despachador_id: intent.despId, estado_despacho: 'DESPACHADO', observacion: intent.com || null,
     realizo_programado: true, // despacho manual (LIBRE): el carro hizo el viaje
     despachado_en: new Date().toISOString(),
+    ubicacion: intent.ubicacion || null, // GPS del celular capturado al despachar
   };
   const ins = await sb.from('despachos').upsert(payload, { onConflict: 'id' });
   if (ins.error) throw ins.error;
@@ -1182,6 +1199,9 @@ $('nd-save').addEventListener('click', async () => {
   });
   if (!ok) return;
 
+  // Captura GPS del celular (no bloquea: si falla/niega, se despacha sin ubicación)
+  intent.ubicacion = await capturarGps();
+
   // Sin internet → guardar offline y salir
   if (!navigator.onLine) {
     enqueueDispatch(intent);
@@ -1197,7 +1217,9 @@ $('nd-save').addEventListener('click', async () => {
     if (sd && sd.ok) {
       res.className = 'sonar-result ok';
       res.textContent = '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')'
-        + (sd.regid ? '\nregId: ' + sd.regid : '') + '\n\n' + (sd.response || '').slice(0, 800);
+        + (sd.regid ? '\nregId: ' + sd.regid : '')
+        + (intent.ubicacion ? '\n📍 Ubicación registrada: ' + intent.ubicacion : '\n📍 Sin ubicación (permiso de GPS denegado)')
+        + '\n\n' + (sd.response || '').slice(0, 800);
       toast('Despacho creado y despachado', 'ok');
     } else {
       res.className = 'sonar-result err';
@@ -1361,6 +1383,9 @@ $('sonar-send').addEventListener('click', async () => {
   });
   if (!ok) return;
 
+  // Captura GPS del celular para registrar dónde se despachó (no bloquea si falla)
+  const ubicGps = await capturarGps();
+
   btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Enviando…';
   let data, error;
   try {
@@ -1390,13 +1415,16 @@ $('sonar-send').addEventListener('click', async () => {
       };
       // Queda registrado quién despachó (el usuario que tiene la sesión)
       if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id;
+      if (ubicGps) patch.ubicacion = ubicGps; // GPS del celular al despachar
       if (data.regid) patch.sonar_regid = String(data.regid);
       await sb.from(sonarTable).update(patch).eq('id', sonarRow.id);
       if (current === sonarTable) loadData();
     }
     res.className = 'sonar-result ok';
     res.textContent = '✅ Despachado (HTTP ' + (data.status ?? '') + ')'
-      + (data.regid ? '\nregId: ' + data.regid : '') + '\n\n' + (data.response || '').slice(0, 1200);
+      + (data.regid ? '\nregId: ' + data.regid : '')
+      + (ubicGps ? '\n📍 Ubicación registrada: ' + ubicGps : '\n📍 Sin ubicación (permiso de GPS denegado)')
+      + '\n\n' + (data.response || '').slice(0, 1200);
     toast('Despachado en SONAR', 'ok');
   } else {
     res.className = 'sonar-result err';
