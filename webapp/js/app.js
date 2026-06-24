@@ -50,9 +50,13 @@ function visibleTables() {
   if (mine.length) {
     // Si además tiene rutas que se despachan en la vista general, agrega "Despachos"
     if (CTX?.verDespachos && !mine.includes('despachos')) mine.push('despachos');
+    // Tablas generales para despachadores (Resumen, Conductores SONAR, …)
+    for (const n of TABLE_ORDER) {
+      if (n !== 'despachos' && TABLES[n].despachador && !mine.includes(n)) mine.push(n);
+    }
     return mine;
   }
-  return TABLE_ORDER.filter((n) => TABLES[n].despachador); // sin tablas propias → despachos por ruta
+  return TABLE_ORDER.filter((n) => TABLES[n].despachador); // sin tablas propias → despachos por ruta + generales
 }
 
 // ---------- utilidades ----------
@@ -80,6 +84,19 @@ function confirmAction({ title = 'Confirmar', lead = '', message = '', okLabel =
     $('confirm-modal').hidden = false;
   });
 }
+// Capa de carga que bloquea TODA la pantalla (evita doble click y que el usuario toque algo)
+function showBusy(msg = 'Procesando…') {
+  let el = document.getElementById('busy-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'busy-overlay'; el.className = 'busy-overlay';
+    el.innerHTML = '<div class="busy-box"><div class="busy-spin"></div><div class="busy-msg"></div></div>';
+    document.body.appendChild(el);
+  }
+  el.querySelector('.busy-msg').textContent = msg;
+  el.hidden = false;
+}
+function hideBusy() { const el = document.getElementById('busy-overlay'); if (el) el.hidden = true; }
 function _confirmClose(val) {
   $('confirm-modal').hidden = true;
   const r = _confirmResolve; _confirmResolve = null;
@@ -177,7 +194,7 @@ async function refreshContext() {
   if ((CTX.tablas || []).length && (CTX.ids || []).length) {
     try { const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true }); CTX.verDespachos = (count || 0) > 0; } catch { /* */ }
   }
-  $('user-email').textContent = (sessionUser.email || '') + ' · 📌 ' + (CTX.puesto || 'sin turno hoy');
+  $('user-email').textContent = etiquetaUsuario(sessionUser);
   buildSidebar();
   const vis = visibleTables();
   if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
@@ -202,9 +219,9 @@ async function showApp(user) {
       CTX.verDespachos = (count || 0) > 0;
     } catch { /* si falla, no se muestra */ }
   }
-  // Mostrar correo + (para despachador) su puesto del día
-  const suf = CTX?.rol === 'despachador' ? ' · 📌 ' + (CTX.puesto || 'sin turno hoy') : '';
-  $('user-email').textContent = (user.email || '') + suf;
+  // Mostrar nombre + rol/puesto del usuario
+  $('user-email').textContent = etiquetaUsuario(user);
+  updateGpsStatus();
   // Sesión única por dispositivo (solo despachadores): este equipo pasa a ser el activo
   if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
   sessionUser = null;
@@ -274,11 +291,11 @@ function selectTable(name) {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
   $('table-title').textContent = TABLES[name].label;
-  // Despachar libre (barra): solo admin y NUNCA en las tablas de puesto (en las tablas
-  // se despacha solo con el botón verde de cada fila; el libre es riesgoso).
-  $('dispatch-btn').hidden = !TABLES[name].dispatchable || !isAdmin() || puestoTables.includes(name);
+  // "Despachar" de la barra: oculto en todas partes. El despacho se hace con el botón
+  // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
+  $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
-  $('dsonar-btn').hidden = !TABLES[name].dispatchable || !isAdmin();   // Consultar SONAR: solo admin
+  $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
@@ -614,7 +631,9 @@ function renderTable(cfg, rows, count) {
       td.dataset.label = c.label;
       if (hasMobile && !c.m) td.className = 'col-hide';
       const val = c.path ? getPath(row, c.path) : row[c.key];
-      if (c.badge && val != null && String(val).trim() !== '') {
+      if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
+        td.innerHTML = `<a href="https://www.google.com/maps?q=${encodeURIComponent(String(val))}" target="_blank" rel="noopener" class="maps-link" title="${esc(String(val))}">📍 Ver</a>`;
+      } else if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
       } else {
         td.textContent = fmt(val);
@@ -647,12 +666,15 @@ function renderTable(cfg, rows, count) {
           }
           act.appendChild(dsp);
           const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
-          if (row.sonar_regid) {
-            can.title = 'Cancelar en SONAR';
-            can.onclick = () => openCancelar(row);
-          } else {
+          if (!row.sonar_regid) {
             can.title = 'Sin regId: no se puede cancelar';
             can.disabled = true;
+          } else if (esPasada) {
+            can.title = 'Fecha ya pasada: no se puede cancelar';
+            can.disabled = true;
+          } else {
+            can.title = 'Cancelar en SONAR';
+            can.onclick = () => openCancelar(row);
           }
           act.appendChild(can);
         }
@@ -708,6 +730,20 @@ async function loadFkOptions(fk) {
   return opts;
 }
 
+// Opciones de TEXTO para listas desplegables (ej. nombres de perfiles, puestos)
+const _textOptsCache = {};
+async function loadTextOptions(src) {
+  if (!src || !src.table || !src.col) return [];
+  const ck = JSON.stringify(src);
+  if (_textOptsCache[ck]) return _textOptsCache[ck].slice();
+  let qy = sb.from(src.table).select(src.col);
+  if (src.where) qy = qy.eq(src.where[0], src.where[1]);
+  const { data } = await qy.order(src.col, { ascending: true }).limit(3000);
+  const vals = [...new Set((data || []).map((r) => r[src.col]).filter((x) => x != null && String(x).trim() !== '').map(String))];
+  _textOptsCache[ck] = vals;
+  return vals.slice();
+}
+
 // Carros (ids de vehículo) que operan una ruta, mirando despachos + tablas de puesto.
 // RLS ya limita las filas a lo que el usuario puede ver.
 const _carrosRutaCache = {};
@@ -730,9 +766,22 @@ async function carrosDeRuta(rutaId) {
   return set;
 }
 
-// Conductor registrado en despachos para un vehículo (opcionalmente filtrando por fecha).
+// Conductor registrado para un vehículo: primero busca en RESUMEN (lo que el
+// despachador registró), y si no hay, en despachos/tablas. (opcional: filtra por fecha)
 async function conductorDeVehiculo(vehId, fecha) {
   if (!vehId) return null;
+  // 1) Prioridad: el conductor que quedó en RESUMEN para ese móvil (lo más reciente)
+  try {
+    let rq = sb.from('resumen').select('conductor_id, fecha').eq('vehiculo_id', vehId).not('conductor_id', 'is', null);
+    if (fecha) rq = rq.eq('fecha', fecha);
+    let { data } = await rq.order('fecha', { ascending: false }).limit(1);
+    if ((!data || !data.length) && fecha) { // si no hay para esa fecha, toma el más reciente
+      ({ data } = await sb.from('resumen').select('conductor_id, fecha').eq('vehiculo_id', vehId)
+        .not('conductor_id', 'is', null).order('fecha', { ascending: false }).limit(1));
+    }
+    if (data && data[0]?.conductor_id != null) return data[0].conductor_id;
+  } catch (e) { /* sigue con despachos */ }
+  // 2) Respaldo: el conductor en despachos / tablas de puesto
   const tablas = ['despachos', ...puestoTables];
   let best = null; // { fecha, hora, cond }
   await Promise.all(tablas.map(async (t) => {
@@ -778,11 +827,14 @@ async function setupVehByRoute(form, conf) {
     if (condSel) {
       vehSel.addEventListener('change', async () => {
         if (!vehSel.value) return;
-        const cond = await conductorDeVehiculo(vehSel.value, fechaEl ? fechaEl.value : null);
-        if (cond != null && [...condSel.options].some((o) => o.value === String(cond))) {
-          condSel.value = String(cond);
+        // El conductor es de SONAR (valor = nombre): se trae por nombre
+        const nombre = await nombreConductorDeVehiculo(vehSel.value, fechaEl ? fechaEl.value : null);
+        if (!nombre) return;
+        const op = [...condSel.options].find((o) => (o.value || '').toLowerCase() === nombre.toLowerCase());
+        if (op) {
+          condSel.value = op.value;
           condSel._comboSync && condSel._comboSync();
-          toast('Conductor traído del despacho', 'ok');
+          toast('Conductor traído automáticamente', 'ok');
         }
       });
     }
@@ -801,20 +853,24 @@ function enhanceSelect(sel) {
   sel.classList.add('combo-native');
 
   const input = document.createElement('input');
-  input.type = 'text'; input.className = 'combo-input'; input.placeholder = '🔍 Buscar…'; input.autocomplete = 'off';
+  input.type = 'text'; input.className = 'combo-input'; input.autocomplete = 'off';
+  // El texto de la opción vacía (ej. "Selecciona móvil") se usa como placeholder gris,
+  // no como valor escrito (antes se veía como texto seleccionado en azul, feo).
+  const emptyOpt = [...sel.options].find((x) => x.value === '');
+  input.placeholder = emptyOpt ? emptyOpt.textContent : '🔍 Buscar…';
   const list = document.createElement('div');
   list.className = 'combo-list'; list.hidden = true;
   combo.append(input, list);
 
   const labelFor = (val) => { const o = [...sel.options].find((x) => x.value === val); return o ? o.textContent : ''; };
-  const sync = () => { input.value = labelFor(sel.value); };
+  const sync = () => { input.value = sel.value ? labelFor(sel.value) : ''; }; // vacío → placeholder
   sel._comboSync = sync;
   sync();
 
   function render(filter = '') {
     const f = filter.trim().toLowerCase();
     list.innerHTML = '';
-    const opts = [...sel.options].filter((o) => (o.textContent || '').toLowerCase().includes(f));
+    const opts = [...sel.options].filter((o) => o.value !== '' && (o.textContent || '').toLowerCase().includes(f));
     for (const o of opts.slice(0, 80)) {
       const item = document.createElement('div');
       item.className = 'combo-item' + (o.value === sel.value ? ' sel' : '');
@@ -894,7 +950,9 @@ async function openEditor(row) {
     const wrap = document.createElement('label');
     wrap.className = 'field' + (f.type === 'textarea' ? ' full' : '');
     wrap.dataset.fieldKey = f.key;
-    const val = row ? row[f.key] : (f.default ?? null);
+    // Valor inicial: del registro; al crear, opcionalmente del contexto (ej. puesto del usuario)
+    let val = row ? row[f.key] : (f.default ?? null);
+    if (!row && f.ctxValue && CTX && CTX[f.ctxValue]) val = CTX[f.ctxValue];
 
     if (f.type === 'boolean') {
       wrap.className = 'field check';
@@ -914,6 +972,32 @@ async function openEditor(row) {
           const op = document.createElement('option');
           op.value = o.value; op.textContent = o.label;
           if (val != null && String(val) === String(o.value)) op.selected = true;
+          input.appendChild(op);
+        }
+      } else if (f.type === 'sonardrv') {
+        // Conductor desde SONAR (conductores_sonar). El valor es el NOMBRE; al guardar
+        // se mapea a la tabla conductores. Se preselecciona por el nombre del registro.
+        input = document.createElement('select');
+        input.innerHTML = '<option value="">— ninguno —</option>';
+        const drs = await loadDrivers();
+        const curName = f.nameFrom ? getPath(row || {}, f.nameFrom) : null;
+        for (const d of drs) {
+          const nm = d.nombre || '';
+          const op = document.createElement('option');
+          op.value = nm; op.textContent = nm + (d.codigo ? ' · ' + d.codigo : '');
+          if (curName && nm.toLowerCase() === String(curName).toLowerCase()) op.selected = true;
+          input.appendChild(op);
+        }
+      } else if (f.type === 'textsel') {
+        // Lista desplegable de valores de TEXTO tomados de una tabla (ej. nombres, puestos)
+        input = document.createElement('select');
+        input.innerHTML = '<option value="">— ninguno —</option>';
+        const opts = await loadTextOptions(f.optionsFrom);
+        if (val != null && String(val) !== '' && !opts.includes(String(val))) opts.unshift(String(val)); // conserva el valor actual
+        for (const o of opts) {
+          const op = document.createElement('option');
+          op.value = o; op.textContent = o;
+          if (val != null && String(val) === String(o)) op.selected = true;
           input.appendChild(op);
         }
       } else if (f.type === 'enum') {
@@ -940,6 +1024,8 @@ async function openEditor(row) {
       if (f.key === cfg.pk && row && !cfg.pkEditable) input.disabled = true;
       if (f.key === cfg.pk && row && cfg.pkEditable) input.readOnly = true; // no cambiar PK al editar
       if (f.readOnly || (isDispatched && !f.postDispatch)) input.disabled = true; // solo lectura / ya despachado
+      // Solo lectura "suave" para el despachador: no lo puede cambiar pero SÍ se guarda (ej. puesto)
+      if (f.softReadOnlyDispatcher && !isAdmin()) input.readOnly = true;
       wrap.appendChild(input);
       if (f.hint) wrap.appendChild(Object.assign(document.createElement('span'), { className: 'field-hint', textContent: f.hint }));
     }
@@ -967,7 +1053,7 @@ async function openEditor(row) {
   if (cfg.vehByRoute) await setupVehByRoute(form, cfg.vehByRoute);
 
   // Buscadores en las listas largas (conductor, vehículo, ruta, etc.)
-  form.querySelectorAll('select[data-type="fk"]:not(:disabled)').forEach(enhanceSelect);
+  form.querySelectorAll('select[data-type="fk"]:not(:disabled), select[data-type="sonardrv"]:not(:disabled), select[data-type="textsel"]:not(:disabled)').forEach(enhanceSelect);
 
   $('modal').hidden = false;
 }
@@ -985,6 +1071,7 @@ $('modal-save').addEventListener('click', async () => {
   const err = $('modal-error'); err.hidden = true;
   const payload = {};
 
+  const sonarDrvKeys = []; // conductores elegidos de SONAR (valor = nombre) a mapear → id
   for (const el of $('edit-form').querySelectorAll('[data-key]')) {
     if (el.disabled) continue; // campo bloqueado (ej. ya despachado) → no se modifica
     const key = el.dataset.key, type = el.dataset.type;
@@ -994,8 +1081,16 @@ $('modal-save').addEventListener('click', async () => {
     let v = el.value;
     if (typeof v === 'string') v = v.trim();
     if (v === '') { payload[key] = null; continue; }
+    if (type === 'sonardrv') { payload[key] = v; sonarDrvKeys.push(key); continue; } // v = nombre del conductor SONAR
     if (type === 'fk' || type === 'number') payload[key] = Number(v);
     else payload[key] = v;
+  }
+
+  // El conductor viene de SONAR (por nombre): se registra/ubica en la tabla conductores y se guarda su id
+  for (const key of sonarDrvKeys) {
+    const { data, error: e } = await sb.from('conductores').upsert({ nombre: payload[key] }, { onConflict: 'nombre' }).select('id').single();
+    if (e) { err.textContent = 'No se pudo registrar el conductor: ' + e.message; err.hidden = false; return; }
+    payload[key] = data.id;
   }
 
   // Validar requeridos y mínimos (omitiendo los campos bloqueados/ocultos)
@@ -1166,6 +1261,23 @@ function hoyLocal() {
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
+// Texto del usuario en la barra superior: nombre + rol/puesto
+function etiquetaUsuario(user) {
+  const nombre = CTX?.nombre || user?.email || '';
+  if (CTX?.rol === 'admin') return `👤 ${nombre} · Administrador`;
+  if (CTX?.rol === 'despachador') return `👤 ${nombre} · 📌 ${CTX.puesto || 'sin turno hoy'}`;
+  return `👤 ${nombre}`;
+}
+// Indicador de GPS en la barra: verde permitido, ámbar pendiente, rojo bloqueado
+async function updateGpsStatus() {
+  const el = $('gps-status'); if (!el) return;
+  if (!navigator.geolocation) { el.textContent = '🛰️ sin GPS'; el.className = 'gps-status off'; el.title = 'Este dispositivo no tiene GPS disponible'; return; }
+  let estado = 'prompt';
+  try { const p = await navigator.permissions.query({ name: 'geolocation' }); estado = p.state; p.onchange = () => updateGpsStatus(); } catch (e) { /* sin API de permisos */ }
+  if (estado === 'granted') { el.textContent = '🛰️ GPS'; el.className = 'gps-status on'; el.title = 'Ubicación activada'; }
+  else if (estado === 'denied') { el.textContent = '🛰️ GPS ✖'; el.className = 'gps-status off'; el.title = 'Permiso de ubicación BLOQUEADO: actívalo en Ajustes'; }
+  else { el.textContent = '🛰️ GPS ?'; el.className = 'gps-status pend'; el.title = 'Se pedirá permiso de ubicación al despachar'; }
+}
 function ahoraLocal() {
   const d = new Date(); const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
@@ -1175,14 +1287,14 @@ async function openNuevoDespacho() {
   $('nd-error').hidden = true;
   const r = $('nd-result'); r.hidden = true; r.textContent = '';
   $('nd-tipo').value = 'LIBRE'; // el despacho manual siempre es LIBRE (TABLA solo viene de importación)
-  // La fecha del despacho es SIEMPRE hoy y el despachador NO la puede tocar (evita trampas en los registros)
+  // La fecha del despacho es SIEMPRE hoy y NADIE la puede tocar (ni admin ni despachador) → evita trampas
   $('nd-fecha').value = hoyLocal();
   $('nd-fecha').min = hoyLocal();
-  $('nd-fecha').disabled = !isAdmin();
+  $('nd-fecha').disabled = true;
   $('nd-hora').value = ''; $('nd-com').value = '';
 
-  const [its, veh, drs, desp] = await Promise.all([
-    loadItinerarios(), loadVehiculos(), loadDrivers(), loadDespachadores(),
+  const [its, veh, drs] = await Promise.all([
+    loadItinerarios(), loadVehiculos(), loadDrivers(),
   ]);
   // Despachador: solo itinerarios de sus rutas permitidas
   let itList = its;
@@ -1193,12 +1305,13 @@ async function openNuevoDespacho() {
       return allow.some((a) => n === a || n.startsWith(a) || a.startsWith(n) || n.includes(a));
     });
   }
-  fillSelect($('nd-ruta'), itList.map((i) => [i.itid, `${i.nombre}${i.grupo ? ' · ' + i.grupo : ''}`]));
+  fillSelect($('nd-ruta'), itList.map((i) => [i.itid, i.nombre])); // solo el nombre (ej. 130, 132A) para no confundir
   fillSelect($('nd-movil'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
   fillSelect($('nd-cond'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
-  fillSelect($('nd-desp'), desp.map((d) => [d.id, d.nombre]));
-  if (CTX?.despachador_id) $('nd-desp').value = String(CTX.despachador_id); // queda quien tiene la sesión
-  enhanceById('nd-ruta', 'nd-movil', 'nd-cond', 'nd-desp');
+  // El despachador NO se puede cambiar: es el del login (solo se muestra)
+  $('nd-desp').value = CTX?.despachador_id ? String(CTX.despachador_id) : '';
+  $('nd-desp-name').value = CTX?.nombre || sessionUser?.email || '';
+  enhanceById('nd-ruta', 'nd-movil', 'nd-cond');
   await updateNdInfo();
   $('nd-modal').hidden = false;
 }
@@ -1216,10 +1329,49 @@ async function updateNdInfo() {
     info.textContent = '⚠️ Este móvil no tiene Id GPS en SONAR.';
   }
 }
+// Nombre del conductor registrado para un móvil: Resumen primero, luego despachos/tablas
+async function nombreConductorDeVehiculo(vehId, fecha) {
+  if (!vehId) return null;
+  try {
+    let rq = sb.from('resumen').select('fecha, cond:conductor_id(nombre)').eq('vehiculo_id', vehId).not('conductor_id', 'is', null);
+    if (fecha) rq = rq.eq('fecha', fecha);
+    let { data } = await rq.order('fecha', { ascending: false }).limit(1);
+    if ((!data || !data.length) && fecha) {
+      ({ data } = await sb.from('resumen').select('fecha, cond:conductor_id(nombre)').eq('vehiculo_id', vehId)
+        .not('conductor_id', 'is', null).order('fecha', { ascending: false }).limit(1));
+    }
+    if (data && data[0]?.cond?.nombre) return data[0].cond.nombre;
+  } catch (e) { /* sigue */ }
+  const tablas = ['despachos', ...puestoTables];
+  let best = null;
+  await Promise.all(tablas.map(async (t) => {
+    let qy = sb.from(t).select('fecha, hora, cond:conductor_id(nombre)').eq('vehiculo_id', vehId).not('conductor_id', 'is', null);
+    if (fecha) qy = qy.eq('fecha', fecha);
+    const { data } = await qy.order('fecha', { ascending: false }).order('hora', { ascending: false }).limit(1);
+    const r = (data || [])[0];
+    if (r?.cond?.nombre && (!best || String(r.fecha) > String(best.fecha))) best = { fecha: r.fecha, nombre: r.cond.nombre };
+  }));
+  return best?.nombre || null;
+}
+// Al elegir el móvil en Nuevo despacho, trae el conductor (mapeando por NOMBRE al conductor SONAR)
+async function traerConductorND() {
+  const vehId = $('nd-movil').value;
+  if (!vehId) return;
+  const nombre = await nombreConductorDeVehiculo(vehId, $('nd-fecha').value || null);
+  if (!nombre) return;
+  const sel = $('nd-cond');
+  const drs = await loadDrivers();
+  const dm = drs.find((d) => (d.nombre || '').trim().toLowerCase() === nombre.trim().toLowerCase());
+  if (dm && [...sel.options].some((o) => o.value === String(dm.dr_id))) {
+    sel.value = String(dm.dr_id);
+    sel._comboSync && sel._comboSync();
+    toast('Conductor traído automáticamente', 'ok');
+  }
+}
 function closeND() { $('nd-modal').hidden = true; }
 $('nd-close').addEventListener('click', closeND);
 $('nd-cancel').addEventListener('click', closeND);
-$('nd-movil').addEventListener('change', updateNdInfo);
+$('nd-movil').addEventListener('change', () => { updateNdInfo(); traerConductorND(); });
 
 // Captura el GPS del celular para llenar "ubicacion". Nunca bloquea el despacho:
 // si no hay permiso, no hay señal o tarda demasiado, resuelve a null y se sigue.
@@ -1306,8 +1458,8 @@ $('nd-save').addEventListener('click', async () => {
 
   const intent = {
     id: 'APL' + Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase(),
-    // El despachador no puede alterar la fecha: siempre es hoy (el admin sí puede elegirla)
-    tipo: 'LIBRE', fecha: isAdmin() ? ($('nd-fecha').value || hoyLocal()) : hoyLocal(), hora: $('nd-hora').value || null,
+    // Nadie puede alterar la fecha del despacho: siempre es hoy
+    tipo: 'LIBRE', fecha: hoyLocal(), hora: $('nd-hora').value || null,
     itid, itinNombre: itin?.nombre || null,
     vehId: Number(vehVal), mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
@@ -1336,22 +1488,28 @@ $('nd-save').addEventListener('click', async () => {
   });
   if (!ok) return;
 
+  // Bloquea el botón YA (antes del GPS) para que no se pueda hacer doble click
+  const btn = $('nd-save'); btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Procesando…';
+  const liberar = () => { btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Crear y despachar'; };
+
   // GPS OBLIGATORIO: sin ubicación no se despacha (reintenta / vuelve a pedir permiso)
   intent.ubicacion = await requerirGps();
   if (!intent.ubicacion) {
+    liberar();
     err.textContent = 'Despacho cancelado: se requiere la ubicación (GPS) para despachar.'; err.hidden = false;
     return;
   }
 
   // Sin internet → guardar offline y salir
   if (!navigator.onLine) {
+    liberar();
     enqueueDispatch(intent);
     toast('Sin conexión: despacho guardado, se enviará al reconectar', 'ok');
     closeND(); if (current === 'despachos') loadData();
     return;
   }
 
-  const btn = $('nd-save'); btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Procesando…';
+  showBusy('Despachando en SONAR…'); // capa que bloquea la pantalla mientras responde SONAR
   try {
     const sd = await doDispatch(intent);
     const res = $('nd-result'); res.hidden = false;
@@ -1376,6 +1534,7 @@ $('nd-save').addEventListener('click', async () => {
       err.textContent = 'Error: ' + (e.message || e); err.hidden = false;
     }
   } finally {
+    hideBusy();
     btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Crear y despachar';
   }
 });
@@ -1466,12 +1625,13 @@ async function openSonar(row) {
   sonarRow = row || null;
   sonarTable = TABLES[current]?.dispatchable ? current : 'despachos';
   $('sonar-error').hidden = true;
+  const sbtn = $('sonar-send'); sbtn.disabled = false; sbtn.textContent = 'Despachar'; // reset por si quedó deshabilitado
   const res = $('sonar-result'); res.hidden = true; res.textContent = '';
   $('s-com').value = '';
 
   const [veh, its, drs] = await Promise.all([loadVehiculos(), loadItinerarios(), loadDrivers()]);
   fillSelect($('s-mov'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
-  fillSelect($('s-itin'), its.map((i) => [i.itid, `${i.nombre}${i.grupo ? ' · ' + i.grupo : ''}`]));
+  fillSelect($('s-itin'), its.map((i) => [i.itid, i.nombre])); // solo el nombre (ej. 130, 132A) para no confundir
   fillSelect($('s-drv'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
 
   if (row) {
@@ -1486,14 +1646,31 @@ async function openSonar(row) {
     $('s-com').value = 'Despacho ' + (row.id || '');
   }
   enhanceById('s-mov', 's-itin', 's-drv');
+  $('s-desp-name').value = CTX?.nombre || ''; // despachador = usuario en sesión (no editable)
+  if (!$('s-drv').value) await traerConductorSonar(); // si la fila no trae conductor, lo busca en Resumen
   await updateSonarInfo();
   $('sonar-modal').hidden = false;
+}
+// Trae el conductor registrado en Resumen para el móvil elegido (mapeado a conductor SONAR)
+async function traerConductorSonar() {
+  const vehId = $('s-mov').value;
+  if (!vehId) return;
+  const nombre = await nombreConductorDeVehiculo(vehId, hoyLocal());
+  if (!nombre) return;
+  const sel = $('s-drv');
+  const drs = await loadDrivers();
+  const dm = drs.find((d) => (d.nombre || '').trim().toLowerCase() === nombre.trim().toLowerCase());
+  if (dm && [...sel.options].some((o) => o.value === String(dm.dr_id))) {
+    sel.value = String(dm.dr_id);
+    sel._comboSync && sel._comboSync();
+    toast('Conductor traído de Resumen', 'ok');
+  }
 }
 function closeSonar() { $('sonar-modal').hidden = true; }
 $('sonar-close').addEventListener('click', closeSonar);
 $('sonar-cancel').addEventListener('click', closeSonar);
 $('dispatch-btn').addEventListener('click', () => openSonar(null));
-$('s-mov').addEventListener('change', updateSonarInfo);
+$('s-mov').addEventListener('change', () => { updateSonarInfo(); traerConductorSonar(); });
 
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');
@@ -1538,20 +1715,26 @@ $('sonar-send').addEventListener('click', async () => {
   });
   if (!ok) return;
 
+  // Bloquea el botón YA (antes del GPS) para que no se pueda hacer doble click
+  btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Procesando…';
+
   // GPS OBLIGATORIO: sin ubicación no se despacha (reintenta / vuelve a pedir permiso)
   const ubicGps = await requerirGps();
   if (!ubicGps) {
+    btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Despachar';
     err.textContent = 'Despacho cancelado: se requiere la ubicación (GPS) para despachar.'; err.hidden = false;
     return;
   }
 
-  btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Enviando…';
+  btn.textContent = 'Enviando…';
+  showBusy('Despachando en SONAR…'); // capa que bloquea la pantalla mientras responde SONAR
   let data, error;
   try {
     ({ data, error } = await sb.rpc('despachar_sonar', {
       p_mid: String(mId), p_itinerary: itin, p_drvid: drv, p_utc: '', p_comments: com,
     }));
   } finally {
+    hideBusy();
     btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Despachar';
   }
 
@@ -1585,6 +1768,9 @@ $('sonar-send').addEventListener('click', async () => {
       + '\n📍 Ubicación registrada: ' + ubicGps
       + '\n\n' + (data.response || '').slice(0, 1200);
     toast('Despachado en SONAR', 'ok');
+    // Ya quedó despachado: no permitir despachar de nuevo en este modal
+    sonarRow = null;
+    btn.disabled = true; btn.textContent = 'Despachado ✓';
   } else {
     res.className = 'sonar-result err';
     res.textContent = '⚠️ ' + (data?.error || ('Respuesta HTTP ' + (data?.status ?? '?'))) + '\n\n' + ((data?.response || '').slice(0, 1200));
@@ -1613,6 +1799,10 @@ function minsDesde(ts) { return ts ? Math.floor((Date.now() - new Date(ts).getTi
 
 async function openCancelar(row) {
   if (row && !row.sonar_regid) { toast('Este despacho no tiene regId: no se puede cancelar.', 'err'); return; }
+  // La fecha es clave: no se cancela un despacho de un día anterior a hoy
+  if (row && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal()) {
+    toast('No se puede cancelar: el despacho es de una fecha anterior a hoy.', 'err'); return;
+  }
   // Regla: no se puede cancelar si el viaje ya superó los 50 minutos
   const mins = minsDesde(row?.despachado_en);
   if (mins !== null && mins > MAX_MIN_CANCELAR) {
@@ -1622,6 +1812,7 @@ async function openCancelar(row) {
   cancelRow = row || null;
   cancelTable = TABLES[current]?.dispatchable ? current : 'despachos';
   $('cancel-error').hidden = true;
+  const cbtn = $('cancel-send'); cbtn.disabled = false; cbtn.textContent = 'Cancelar despacho'; // reset por si quedó deshabilitado
   const res = $('cancel-result'); res.hidden = true; res.textContent = '';
   $('c-regid').value = row?.sonar_regid || '';
   $('c-com').value = 'Cancelación ' + (row?.id || '');
@@ -1633,6 +1824,8 @@ async function openCancelar(row) {
     if (movil) { const vr = veh.find((v) => String(v.numero) === String(movil)); if (vr) $('c-mov').value = vr.id; }
   }
   enhanceById('c-mov');
+  // Despachador: quien despachó el viaje (si se conoce) o el usuario en sesión
+  $('c-desp-name').value = row?.desp?.nombre || CTX?.nombre || '';
   await updateCancelInfo();
   $('cancel-modal').hidden = false;
 }
@@ -1672,10 +1865,12 @@ $('cancel-send').addEventListener('click', async () => {
   if (!ok) return;
 
   btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Cancelando…';
+  showBusy('Cancelando en SONAR…'); // capa que bloquea la pantalla mientras responde SONAR
   let data, error;
   try {
     ({ data, error } = await sb.rpc('cancelar_sonar', { p_mid: String(mId), p_regid: regId, p_comments: com }));
   } finally {
+    hideBusy();
     btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Cancelar despacho';
   }
 
@@ -1690,6 +1885,10 @@ $('cancel-send').addEventListener('click', async () => {
     res.className = 'sonar-result ok';
     res.textContent = '✅ Cancelado en SONAR (HTTP ' + (data.status ?? '') + ')\n\n' + (data.response || '').slice(0, 1200);
     toast('Despacho cancelado en SONAR', 'ok');
+    // Ya quedó cancelado: no permitir cancelar de nuevo en este modal
+    cancelRow = null;
+    $('c-regid').value = '';
+    btn.disabled = true; btn.textContent = 'Cancelado ✓';
   } else {
     res.className = 'sonar-result err';
     res.textContent = '⚠️ ' + (data?.error || ('Respuesta HTTP ' + (data?.status ?? '?'))) + '\n\n' + ((data?.response || '').slice(0, 1200));

@@ -185,10 +185,11 @@ tbody tr:hover { background: #faf8ff; }
 #map.map { flex: 1; min-height: 0; width: 100%; border-radius: 12px; }
 .map-search { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-size: 13px; min-width: 200px; }
 
-/* Indicador de conexión */
-.net-status { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.15); white-space: nowrap; }
-.net-status.off { background: rgba(239,68,68,.25); }
-.net-status.pend { background: rgba(245,158,11,.30); }
+/* Indicador de conexión y de GPS */
+.net-status, .gps-status { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.15); white-space: nowrap; }
+.net-status.off, .gps-status.off { background: rgba(239,68,68,.30); }
+.net-status.pend, .gps-status.pend { background: rgba(245,158,11,.35); }
+.gps-status.on { background: rgba(34,197,94,.35); }
 
 /* Marcador-etiqueta tipo bus en el mapa */
 .bus-marker { background: none; border: 0; }
@@ -267,6 +268,8 @@ tbody tr:hover { background: #faf8ff; }
 .edit-form input:disabled, .edit-form select:disabled, .edit-form textarea:disabled {
   background: #f1f1f5; color: #9aa0aa; cursor: not-allowed; border-style: dashed;
 }
+/* Campos de solo lectura (ej. despachador = usuario en sesión): se ven pero no se editan */
+.edit-form input[readonly] { background: #eef1f6; color: #555; cursor: default; font-weight: 600; }
 .edit-form .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 .edit-form .check input { width: 18px; height: 18px; }
 .edit-form .section-title {
@@ -388,3 +391,18 @@ tbody tr:hover { background: #faf8ff; }
 .filter-check-panel { position: absolute; z-index: 1200; top: calc(100% + 4px); left: 0; min-width: 200px; max-height: 280px; overflow-y: auto;
   background: #fff; border: 1px solid var(--border, #ddd); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 6px; }
 .filter-check-panel .fc-head { display: flex; justify-content: flex-end; padding: 2px 4px 6px; border-bottom: 1px solid #eee; margin-bottom: 4px; }
+
+/* Enlace de ubicación a Google Maps en las tablas */
+.maps-link { color: var(--primary, #ED1C24); font-weight: 700; text-decoration: none; white-space: nowrap; }
+.maps-link:hover { text-decoration: underline; }
+
+/* Capa de carga que bloquea toda la pantalla (despacho/cancelación) */
+.busy-overlay { position: fixed; inset: 0; z-index: 4000; background: rgba(0,0,0,.45);
+  display: grid; place-items: center; cursor: wait; }
+.busy-overlay[hidden] { display: none; }
+.busy-box { background: #fff; border-radius: 16px; padding: 24px 30px; display: flex; flex-direction: column;
+  align-items: center; gap: 14px; box-shadow: 0 18px 50px rgba(0,0,0,.3); min-width: 200px; }
+.busy-spin { width: 44px; height: 44px; border: 5px solid #f0d9da; border-top-color: var(--primary, #ED1C24);
+  border-radius: 50%; animation: busy-rot .8s linear infinite; }
+.busy-msg { font-weight: 700; color: var(--text, #1c1c1c); font-size: 15px; text-align: center; }
+@keyframes busy-rot { to { transform: rotate(360deg); } }

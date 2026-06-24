@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v78';
+export const APP_VERSION = 'v79';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -88,6 +88,7 @@ export const TABLES = {
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },
       { key: 'realizo_programado', label: 'Prog. realizó', badge: true },
       { key: 'estado', label: 'Novedad', badge: true },
+      { key: 'ubicacion', label: 'Ubicación', maps: true },
       // Placa y regId SONAR quedan solo en el detalle.
     ],
     fields: [
@@ -109,13 +110,13 @@ export const TABLES = {
 
       // ----- Real -----
       { key: 'vehiculo_id', label: 'Móvil (real)', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Real' },
-      { key: 'conductor_id', label: 'Conductor', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Real' },
-      { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Real' },
+      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Real' },
+      { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Real', readOnly: true },
       // Estos campos de seguimiento SÍ se pueden editar después de despachar (postDispatch)
       { key: 'hora_real_despacho', label: 'Hora real de despacho', type: 'time', section: 'Real', postDispatch: true },
       { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'Real', postDispatch: true },
       { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real', postDispatch: true },
-      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true },
+      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true, readOnly: true },
       { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'Real', postDispatch: true },
       { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'Real', postDispatch: true },
 
@@ -133,6 +134,7 @@ export const TABLES = {
   resumen: {
     label: 'Resumen',
     icon: '📊',
+    despachador: true, // visible para los despachadores
     pk: 'id',
     pkEditable: true,
     // Si el vehículo ya está "Cerrado", la fila queda bloqueada (no se edita ni elimina)
@@ -141,8 +143,9 @@ export const TABLES = {
     // El KEY se genera solo (no se escribe a mano)
     genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
     confirmSave: true, // pide confirmación antes de guardar/cerrar
-    // Al elegir ruta → filtra Móvil a los carros de esa ruta; al elegir Móvil → trae el conductor registrado en despachos
-    vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id', cond: 'conductor_id', fecha: 'fecha' },
+    // Al elegir ruta → filtra Móvil a los carros de esa ruta. En Resumen el conductor se
+    // elige a mano (NO se trae automático; el auto-traído es en despachos y tablas).
+    vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id' },
     // La hora de cierre se llena sola con el momento de guardado
     autoStamp: 'hora_cierre',
     // Estado: 'Abierto' al crear; 'Cerrado' (y bloqueado) cuando al editar estén todos los campos
@@ -150,7 +153,7 @@ export const TABLES = {
     closeRequired: ['fecha', 'ruta_id', 'vehiculo_id', 'conductor_id', 'viajes'],
     closeRequiredDoble: ['jornada1_inicio', 'jornada1_fin', 'conductor2_id', 'jornada2_inicio', 'jornada2_fin'],
     import: { rpc: 'importar_resumen', map: IMPORT_MAP_RESUMEN, kept: 'actualizados', keptLabel: 'Actualizados' },
-    select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
+    select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), cond2:conductor2_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
     defaultOrder: { col: 'hora_cierre', asc: false },
     filters: [
@@ -161,7 +164,6 @@ export const TABLES = {
     columns: [
       { key: 'fecha', label: 'Fecha', m: true },
       { path: 'ruta.nombre', label: 'Ruta', m: true },
-      { key: 'codigo', label: 'Código' },
       { path: 'veh.numero', label: 'Móvil', m: true },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'viajes', label: 'Viajes' },
@@ -173,23 +175,24 @@ export const TABLES = {
     fields: [
       { key: 'fecha', label: 'Fecha', type: 'date', section: 'General' },
       { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
-      { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General' },
-      { key: 'puesto', label: 'Puesto', type: 'text', section: 'General' },
+      { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General', formHide: true },
+      // Puesto: se llena solo con el puesto del usuario logueado; el despachador no lo edita
+      { key: 'puesto', label: 'Puesto', type: 'text', section: 'General', ctxValue: 'puesto', softReadOnlyDispatcher: true },
 
       { key: 'vehiculo_id', label: 'Móvil', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación' },
       { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación' },
       // Viajes: solo aparece al EDITAR el registro, y siempre positivo
       { key: 'viajes', label: 'Viajes', type: 'number', min: 0, editOnly: true, section: 'Operación' },
-      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Operación' },
+      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Operación', readOnly: true },
       // Estado y Total de pasajeros: ocultos. Hora de cierre: automática (momento de guardado).
 
       // ----- Conductor -----
-      { key: 'conductor_id', label: 'Conductor', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor' },
+      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Conductor' },
       { key: 'doble_turno', label: '¿Doble turno? (otro conductor en otra jornada)', type: 'boolean', section: 'Conductor' },
       // Las jornadas y el 2.º conductor solo aparecen si es doble turno
       { key: 'jornada1_inicio', label: 'Jornada 1 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada1_fin', label: 'Jornada 1 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
-      { key: 'conductor2_id', label: 'Conductor (jornada 2)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'conductor2_id', label: 'Conductor jornada 2 (SONAR)', type: 'sonardrv', nameFrom: 'cond2.nombre', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada2_inicio', label: 'Jornada 2 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada2_fin', label: 'Jornada 2 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
     ],
@@ -215,10 +218,10 @@ export const TABLES = {
     fields: [
       { key: 'fecha', label: 'Fecha', type: 'date', required: true },
       { key: 'email', label: 'Usuario (correo)', type: 'text', required: true },
-      { key: 'nombre', label: 'Nombre', type: 'text' },
+      { key: 'nombre', label: 'Nombre', type: 'textsel', optionsFrom: { table: 'perfiles', col: 'nombre', where: ['activo', true] } },
       { key: 'hora_inicio', label: 'Hora de inicio', type: 'time' },
       { key: 'hora_fin', label: 'Hora finalización labor', type: 'time' },
-      { key: 'observacion', label: 'Puesto / Observación', type: 'text' },
+      { key: 'observacion', label: 'Puesto / Observación', type: 'textsel', optionsFrom: { table: 'puestos', col: 'nombre', where: ['activo', true] } },
     ],
   },
 
@@ -353,7 +356,7 @@ export const TABLES = {
     fields: [{ key: 'nombre', label: 'Nombre', type: 'text', required: true }],
   },
   conductores_sonar: {
-    label: 'Conductores SONAR', icon: '🪪', readonly: true, pk: 'id', pkEditable: false, select: '*',
+    label: 'Conductores SONAR', icon: '🪪', readonly: true, despachador: true, pk: 'id', pkEditable: false, select: '*',
     searchCols: ['nombre', 'cedula', 'codigo'], defaultOrder: { col: 'nombre', asc: true },
     columns: [
       { key: 'dr_id', label: 'DrvId' },
@@ -406,9 +409,9 @@ export const TABLES = {
 // En las tablas los viajes los programa el administrador: el formulario es muy restringido.
 export function configTablaPuesto(label) {
   // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
-  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'ubicacion']);
-  // Se muestran pero NO se pueden modificar (información de la programación del administrador)
-  const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id']);
+  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id']);
+  // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
+  const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id', 'ubicacion']);
   const fields = TABLES.despachos.fields
     .filter((f) => !OCULTOS.has(f.key))
     .map((f) => {

@@ -37,6 +37,7 @@
       <span class="topbar-logo"><img src="icons/logo.png" alt="APL" /></span>
       <span id="app-ver" class="app-ver"></span>
       <span class="spacer"></span>
+      <span id="gps-status" class="gps-status" title="Estado del GPS"></span>
       <span id="net-status" class="net-status"></span>
       <span id="user-email" class="user-email"></span>
       <button id="logout-btn" class="icon-btn" title="Cerrar sesión">⎋</button>
@@ -167,7 +168,8 @@
         <label class="field"><span>Móvil *</span><select id="nd-movil"></select></label>
         <label class="field"><span>Conductor *</span><select id="nd-cond"></select></label>
         <div class="field full sonar-info" id="nd-info" hidden></div>
-        <label class="field"><span>Despachador</span><select id="nd-desp"></select></label>
+        <label class="field"><span>Despachador (tú)</span><input id="nd-desp-name" readonly /></label>
+        <input type="hidden" id="nd-desp" />
         <label class="field full"><span>Comentario</span><input id="nd-com" /></label>
         <div class="field full"><pre id="nd-result" class="sonar-result" hidden></pre></div>
       </form>
@@ -191,6 +193,7 @@
         <label class="field"><span>Móvil *</span><select id="s-mov"></select></label>
         <label class="field"><span>Itinerario · ruta SONAR *</span><select id="s-itin"></select></label>
         <label class="field"><span>Conductor · SONAR</span><select id="s-drv"></select></label>
+        <label class="field"><span>Despachador (tú)</span><input id="s-desp-name" readonly /></label>
         <label class="field"><span>Comentarios</span><input id="s-com" /></label>
         <div class="field full sonar-info" id="s-info" hidden></div>
         <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>
@@ -214,6 +217,7 @@
       <form id="cancel-form" class="edit-form">
         <label class="field"><span>Móvil *</span><select id="c-mov"></select></label>
         <label class="field"><span>regId (registro SONAR)</span><input id="c-regid" placeholder="opcional" /></label>
+        <label class="field"><span>Despachador</span><input id="c-desp-name" readonly /></label>
         <label class="field full"><span>Comentarios</span><input id="c-com" /></label>
         <div class="field full sonar-info" id="c-info" hidden></div>
         <div class="field full"><pre id="cancel-result" class="sonar-result" hidden></pre></div>
