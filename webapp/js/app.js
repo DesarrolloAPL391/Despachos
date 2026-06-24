@@ -755,7 +755,9 @@ async function setupVehByRoute(form, conf) {
   async function apply() {
     const rid = routeSel.value;
     const keep = vehSel.value;
-    const set = rid ? await carrosDeRuta(rid) : null;
+    // El admin puede registrar cualquier móvil (no se filtra). Al despachador sí se le
+    // filtra a los carros de la ruta (ayuda y seguridad).
+    const set = (rid && !isAdmin()) ? await carrosDeRuta(rid) : null;
     vehSel.innerHTML = '';
     for (const o of allOpts) {
       if (set && set.size && o.value && !set.has(String(o.value))) continue; // solo los carros de la ruta
