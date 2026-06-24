@@ -226,6 +226,9 @@ tbody tr:hover { background: #faf8ff; }
   outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,136,229,.15);
 }
 .edit-form textarea { resize: vertical; min-height: 64px; }
+.edit-form input:disabled, .edit-form select:disabled, .edit-form textarea:disabled {
+  background: #f1f1f5; color: #9aa0aa; cursor: not-allowed; border-style: dashed;
+}
 .edit-form .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 .edit-form .check input { width: 18px; height: 18px; }
 .edit-form .section-title {

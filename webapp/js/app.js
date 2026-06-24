@@ -11,7 +11,7 @@ let term = '';
 let filters = {};       // filtros dinámicos activos { columna: valor }
 let editing = null;     // fila en edición (null = nuevo)
 const fkCache = {};     // cache de opciones de FK por tabla
-let CTX = null;         // contexto del usuario { rol, nombre, puesto, rutas[], ids[] }
+let CTX = null;         // contexto del usuario { rol, nombre, puesto, rutas[], ids[], despachador_id }
 
 let puestoTables = []; // tablas de puesto descubiertas (laureles, etc.)
 
@@ -468,6 +468,17 @@ async function openEditor(row) {
   let lastSection = null;
   const controls = []; // campos con visibilidad condicional
 
+  // Un despacho ya realizado (TABLA o LIBRE) no se modifica: solo se permiten
+  // observaciones y los demás ítems de seguimiento (postDispatch).
+  const isDispatched = !!(cfg.dispatchable && row &&
+    (String(row.estado_despacho || '').toUpperCase() === 'DESPACHADO' || row.sonar_regid));
+  if (isDispatched) {
+    const note = document.createElement('div');
+    note.className = 'sonar-info';
+    note.textContent = '🔒 Despacho ya realizado: solo puedes editar observaciones y los ítems de seguimiento.';
+    form.appendChild(note);
+  }
+
   for (const f of cfg.fields) {
     // encabezado de sección
     if (f.section && f.section !== lastSection) {
@@ -487,6 +498,7 @@ async function openEditor(row) {
       wrap.dataset.fieldKey = f.key;
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.dataset.key = f.key; cb.dataset.type = 'boolean'; cb.checked = val === true;
+      if (isDispatched && !f.postDispatch) cb.disabled = true;
       wrap.append(cb, document.createTextNode(' ' + f.label));
     } else {
       wrap.appendChild(Object.assign(document.createElement('span'), { textContent: f.label + (f.required ? ' *' : '') }));
@@ -523,6 +535,7 @@ async function openEditor(row) {
       input.dataset.key = f.key; input.dataset.type = f.type;
       if (f.key === cfg.pk && row && !cfg.pkEditable) input.disabled = true;
       if (f.key === cfg.pk && row && cfg.pkEditable) input.readOnly = true; // no cambiar PK al editar
+      if (isDispatched && !f.postDispatch) input.disabled = true;
       wrap.appendChild(input);
       if (f.hint) wrap.appendChild(Object.assign(document.createElement('span'), { className: 'field-hint', textContent: f.hint }));
     }
@@ -564,6 +577,7 @@ $('modal-save').addEventListener('click', async () => {
   const payload = {};
 
   for (const el of $('edit-form').querySelectorAll('[data-key]')) {
+    if (el.disabled) continue; // campo bloqueado (ej. ya despachado) → no se modifica
     const key = el.dataset.key, type = el.dataset.type;
     const wrap = el.closest('.field');
     if (wrap && wrap.classList.contains('hidden-field')) { payload[key] = null; continue; } // campo oculto -> vacío
@@ -575,8 +589,10 @@ $('modal-save').addEventListener('click', async () => {
     else payload[key] = v;
   }
 
-  // Validar requeridos
+  // Validar requeridos (omitiendo los campos bloqueados/ocultos)
   for (const f of cfg.fields) {
+    const el = $('edit-form').querySelector(`[data-key="${f.key}"]`);
+    if (el && el.disabled) continue; // bloqueado → no se valida
     if (f.required && (payload[f.key] === null || payload[f.key] === undefined || payload[f.key] === '')) {
       err.textContent = `El campo "${f.label}" es obligatorio.`; err.hidden = false; return;
     }
@@ -723,6 +739,7 @@ async function openNuevoDespacho() {
   fillSelect($('nd-movil'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
   fillSelect($('nd-cond'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
   fillSelect($('nd-desp'), desp.map((d) => [d.id, d.nombre]));
+  if (CTX?.despachador_id) $('nd-desp').value = String(CTX.despachador_id); // queda quien tiene la sesión
   await updateNdInfo();
   $('nd-modal').hidden = false;
 }
@@ -959,6 +976,8 @@ $('sonar-send').addEventListener('click', async () => {
         // si no había programado, se fija con el original de la fila (no se pierde)
         vehiculo_programado_id: sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || newVehId,
       };
+      // Queda registrado quién despachó (el usuario que tiene la sesión)
+      if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id;
       if (data.regid) patch.sonar_regid = String(data.regid);
       await sb.from(sonarTable).update(patch).eq('id', sonarRow.id);
       if (current === sonarTable) loadData();

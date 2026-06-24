@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v45';
+export const APP_VERSION = 'v46';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -97,20 +97,21 @@ export const TABLES = {
       { key: 'vehiculo_id', label: 'Móvil (real)', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Real' },
       { key: 'conductor_id', label: 'Conductor', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Real' },
       { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Real' },
-      { key: 'hora_real_despacho', label: 'Hora real de despacho', type: 'time', section: 'Real' },
-      { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'Real' },
-      { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real' },
-      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real' },
-      { key: 'estado', label: 'Estado (clasificación)', type: 'text', section: 'Real' },
+      // Estos campos de seguimiento SÍ se pueden editar después de despachar (postDispatch)
+      { key: 'hora_real_despacho', label: 'Hora real de despacho', type: 'time', section: 'Real', postDispatch: true },
+      { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'Real', postDispatch: true },
+      { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real', postDispatch: true },
+      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true },
+      { key: 'estado', label: 'Estado (clasificación)', type: 'text', section: 'Real', postDispatch: true },
 
-      // ----- Indicadores -----
-      { key: 'completo', label: '¿Completo?', type: 'boolean', section: 'Indicadores' },
-      { key: 'perdida_deliberada_tiempo', label: '¿Pérdida deliberada de tiempo?', type: 'boolean', section: 'Indicadores' },
-      { key: 'abandono_ruta', label: '¿Abandono de ruta?', type: 'boolean', section: 'Indicadores' },
+      // ----- Indicadores ----- (editables después de despachar)
+      { key: 'completo', label: '¿Completo?', type: 'boolean', section: 'Indicadores', postDispatch: true },
+      { key: 'perdida_deliberada_tiempo', label: '¿Pérdida deliberada de tiempo?', type: 'boolean', section: 'Indicadores', postDispatch: true },
+      { key: 'abandono_ruta', label: '¿Abandono de ruta?', type: 'boolean', section: 'Indicadores', postDispatch: true },
 
-      // ----- Notas -----
-      { key: 'novedades', label: 'Novedades', type: 'textarea', section: 'Notas' },
-      { key: 'observacion', label: 'Observación', type: 'textarea', section: 'Notas' },
+      // ----- Notas ----- (editables después de despachar)
+      { key: 'novedades', label: 'Novedades', type: 'textarea', section: 'Notas', postDispatch: true },
+      { key: 'observacion', label: 'Observación', type: 'textarea', section: 'Notas', postDispatch: true },
     ],
   },
 
