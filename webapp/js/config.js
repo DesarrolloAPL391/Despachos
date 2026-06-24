@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v71';
+export const APP_VERSION = 'v72';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -403,6 +403,20 @@ export const TABLES = {
 };
 
 // Construye la config de una tabla de puesto (misma función que Despachos, su propia tabla).
+// En las tablas los viajes los programa el administrador: el formulario es muy restringido.
 export function configTablaPuesto(label) {
-  return { ...TABLES.despachos, label, icon: '🛣️', import: undefined, noCreate: true, despachador: false };
+  // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
+  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'ubicacion']);
+  // Se muestran pero NO se pueden modificar (información de la programación del administrador)
+  const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id']);
+  const fields = TABLES.despachos.fields
+    .filter((f) => !OCULTOS.has(f.key))
+    .map((f) => {
+      let nf = f;
+      if (SOLO_LECTURA.has(f.key)) nf = { ...nf, readOnly: true };
+      // como en una tabla el tipo siempre es TABLA, los campos "Programado" se ven siempre (sin showWhen de tipo)
+      if (nf.showWhen && nf.showWhen.field === 'tipo') { nf = { ...nf }; delete nf.showWhen; }
+      return nf;
+    });
+  return { ...TABLES.despachos, fields, label, icon: '🛣️', import: undefined, noCreate: true, despachador: false };
 }

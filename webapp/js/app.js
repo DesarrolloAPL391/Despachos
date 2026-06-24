@@ -860,6 +860,8 @@ async function openEditor(row) {
   }
 
   for (const f of cfg.fields) {
+    // formHide: el campo nunca se muestra en el formulario (ej. KEY, regId, despachador, ubicación en tablas)
+    if (f.formHide) continue;
     // editOnly: solo se muestra al EDITAR un registro existente (no al crear)
     if (f.editOnly && !editing) continue;
     // encabezado de sección
@@ -880,7 +882,7 @@ async function openEditor(row) {
       wrap.dataset.fieldKey = f.key;
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.dataset.key = f.key; cb.dataset.type = 'boolean'; cb.checked = val === true;
-      if (isDispatched && !f.postDispatch) cb.disabled = true;
+      if (f.readOnly || (isDispatched && !f.postDispatch)) cb.disabled = true;
       wrap.append(cb, document.createTextNode(' ' + f.label));
     } else {
       wrap.appendChild(Object.assign(document.createElement('span'), { textContent: f.label + (f.required ? ' *' : '') }));
@@ -918,7 +920,7 @@ async function openEditor(row) {
       input.dataset.key = f.key; input.dataset.type = f.type;
       if (f.key === cfg.pk && row && !cfg.pkEditable) input.disabled = true;
       if (f.key === cfg.pk && row && cfg.pkEditable) input.readOnly = true; // no cambiar PK al editar
-      if (isDispatched && !f.postDispatch) input.disabled = true;
+      if (f.readOnly || (isDispatched && !f.postDispatch)) input.disabled = true; // solo lectura / ya despachado
       wrap.appendChild(input);
       if (f.hint) wrap.appendChild(Object.assign(document.createElement('span'), { className: 'field-hint', textContent: f.hint }));
     }
