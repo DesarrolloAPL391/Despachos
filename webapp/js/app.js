@@ -426,7 +426,25 @@ async function carrosDeRuta(rutaId) {
   return set;
 }
 
+// Conductor registrado en despachos para un vehículo (opcionalmente filtrando por fecha).
+async function conductorDeVehiculo(vehId, fecha) {
+  if (!vehId) return null;
+  const tablas = ['despachos', ...puestoTables];
+  let best = null; // { fecha, hora, cond }
+  await Promise.all(tablas.map(async (t) => {
+    let qy = sb.from(t).select('conductor_id, fecha, hora').eq('vehiculo_id', vehId).not('conductor_id', 'is', null);
+    if (fecha) qy = qy.eq('fecha', fecha);
+    const { data } = await qy.order('fecha', { ascending: false }).order('hora', { ascending: false }).limit(1);
+    const r = (data || [])[0];
+    if (r && (!best || String(r.fecha) > String(best.fecha) || (r.fecha === best.fecha && String(r.hora) > String(best.hora)))) {
+      best = { fecha: r.fecha, hora: r.hora, cond: r.conductor_id };
+    }
+  }));
+  return best?.cond ?? null;
+}
+
 // Al elegir ruta, deja en el select de Móvil solo los carros que operan esa ruta.
+// Al elegir Móvil, trae automáticamente el conductor registrado en despachos.
 async function setupVehByRoute(form, conf) {
   const routeSel = form.querySelector(`[data-key="${conf.route}"]`);
   const vehSel = form.querySelector(`[data-key="${conf.veh}"]`);
@@ -442,9 +460,76 @@ async function setupVehByRoute(form, conf) {
       vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
     }
     if ([...vehSel.options].some((o) => o.value === keep)) vehSel.value = keep;
+    vehSel._comboSync && vehSel._comboSync();
   }
   routeSel.addEventListener('change', apply);
   await apply();
+
+  // Traer el conductor registrado para el móvil elegido
+  if (conf.cond) {
+    const condSel = form.querySelector(`[data-key="${conf.cond}"]`);
+    const fechaEl = conf.fecha ? form.querySelector(`[data-key="${conf.fecha}"]`) : null;
+    if (condSel) {
+      vehSel.addEventListener('change', async () => {
+        if (!vehSel.value) return;
+        const cond = await conductorDeVehiculo(vehSel.value, fechaEl ? fechaEl.value : null);
+        if (cond != null && [...condSel.options].some((o) => o.value === String(cond))) {
+          condSel.value = String(cond);
+          condSel._comboSync && condSel._comboSync();
+          toast('Conductor traído del despacho', 'ok');
+        }
+      });
+    }
+  }
+}
+
+// Convierte un <select> en un buscador (combobox con filtro). El <select> queda
+// oculto pero conserva el valor (lo lee el guardado). Funciona en móvil y escritorio.
+function enhanceSelect(sel) {
+  if (sel._enhanced || sel.disabled) return;
+  sel._enhanced = true;
+  const combo = document.createElement('div');
+  combo.className = 'combo';
+  sel.parentNode.insertBefore(combo, sel);
+  combo.appendChild(sel);
+  sel.classList.add('combo-native');
+
+  const input = document.createElement('input');
+  input.type = 'text'; input.className = 'combo-input'; input.placeholder = '🔍 Buscar…'; input.autocomplete = 'off';
+  const list = document.createElement('div');
+  list.className = 'combo-list'; list.hidden = true;
+  combo.append(input, list);
+
+  const labelFor = (val) => { const o = [...sel.options].find((x) => x.value === val); return o ? o.textContent : ''; };
+  const sync = () => { input.value = labelFor(sel.value); };
+  sel._comboSync = sync;
+  sync();
+
+  function render(filter = '') {
+    const f = filter.trim().toLowerCase();
+    list.innerHTML = '';
+    const opts = [...sel.options].filter((o) => (o.textContent || '').toLowerCase().includes(f));
+    for (const o of opts.slice(0, 80)) {
+      const item = document.createElement('div');
+      item.className = 'combo-item' + (o.value === sel.value ? ' sel' : '');
+      item.textContent = o.textContent || '—';
+      item.addEventListener('mousedown', (e) => { // mousedown gana al blur
+        e.preventDefault();
+        sel.value = o.value;
+        input.value = o.textContent;
+        list.hidden = true;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      list.appendChild(item);
+    }
+    list.hidden = opts.length === 0;
+  }
+  input.addEventListener('focus', () => { input.select(); render(''); });
+  input.addEventListener('input', () => render(input.value));
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; sync(); }, 160));
+}
+function enhanceById(...ids) {
+  for (const id of ids) { const el = $(id); if (el) { enhanceSelect(el); el._comboSync && el._comboSync(); } }
 }
 
 function toggleEmptySections(form) {
@@ -552,7 +637,8 @@ async function openEditor(row) {
     for (const f of controls) {
       const wrap = form.querySelector(`[data-field-key="${f.key}"]`);
       const ctrlEl = form.querySelector(`[data-key="${f.showWhen.field}"]`);
-      const cur = ctrlEl ? ctrlEl.value : '';
+      // Para casillas (boolean) se compara con el estado marcado; para selects con su valor
+      const cur = ctrlEl ? (ctrlEl.type === 'checkbox' ? ctrlEl.checked : ctrlEl.value) : '';
       wrap.classList.toggle('hidden-field', !f.showWhen.in.includes(cur));
     }
     toggleEmptySections(form);
@@ -564,6 +650,9 @@ async function openEditor(row) {
   applyVisibility();
 
   if (cfg.vehByRoute) await setupVehByRoute(form, cfg.vehByRoute);
+
+  // Buscadores en las listas largas (conductor, vehículo, ruta, etc.)
+  form.querySelectorAll('select[data-type="fk"]:not(:disabled)').forEach(enhanceSelect);
 
   $('modal').hidden = false;
 }
@@ -745,6 +834,7 @@ async function openNuevoDespacho() {
   fillSelect($('nd-cond'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
   fillSelect($('nd-desp'), desp.map((d) => [d.id, d.nombre]));
   if (CTX?.despachador_id) $('nd-desp').value = String(CTX.despachador_id); // queda quien tiene la sesión
+  enhanceById('nd-ruta', 'nd-movil', 'nd-cond', 'nd-desp');
   await updateNdInfo();
   $('nd-modal').hidden = false;
 }
@@ -931,6 +1021,7 @@ async function openSonar(row) {
     if (dm) $('s-drv').value = dm.dr_id;
     $('s-com').value = 'Despacho ' + (row.id || '');
   }
+  enhanceById('s-mov', 's-itin', 's-drv');
   await updateSonarInfo();
   $('sonar-modal').hidden = false;
 }
@@ -1028,6 +1119,7 @@ async function openCancelar(row) {
     const movil = row.veh?.numero;
     if (movil) { const vr = veh.find((v) => String(v.numero) === String(movil)); if (vr) $('c-mov').value = vr.id; }
   }
+  enhanceById('c-mov');
   await updateCancelInfo();
   $('cancel-modal').hidden = false;
 }
@@ -1084,6 +1176,7 @@ async function openDsonar() {
   $('ds-fecha').value = hoyLocal();
   const veh = await loadVehiculos();
   fillSelect($('ds-mov'), veh.map((v) => [v.numero, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]), 'Selecciona móvil');
+  enhanceById('ds-mov');
   $('ds-modal').hidden = false;
 }
 function closeDsonar() { $('ds-modal').hidden = true; }

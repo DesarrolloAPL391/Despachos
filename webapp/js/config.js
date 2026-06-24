@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v50';
+export const APP_VERSION = 'v51';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -126,8 +126,8 @@ export const TABLES = {
     lockedHint: 'Cerrado: no editable',
     // El KEY se genera solo (no se escribe a mano)
     genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
-    // Al elegir una ruta, la lista de Móvil se filtra a los carros que operan esa ruta
-    vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id' },
+    // Al elegir ruta → filtra Móvil a los carros de esa ruta; al elegir Móvil → trae el conductor registrado en despachos
+    vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id', cond: 'conductor_id', fecha: 'fecha' },
     import: { rpc: 'importar_resumen', map: IMPORT_MAP_RESUMEN, kept: 'actualizados', keptLabel: 'Actualizados' },
     select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
@@ -156,12 +156,20 @@ export const TABLES = {
       { key: 'estado', label: 'Estado', type: 'text', section: 'General' },
 
       { key: 'vehiculo_id', label: 'Móvil', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación' },
-      { key: 'conductor_id', label: 'Conductor', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación' },
       { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación' },
       { key: 'viajes', label: 'Viajes', type: 'number', section: 'Operación' },
       { key: 'total_pasajeros', label: 'Total de pasajeros', type: 'number', section: 'Operación' },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Operación' },
       { key: 'hora_cierre', label: 'Hora de cierre del vehículo', type: 'datetime', section: 'Operación' },
+
+      // ----- Conductor / Turnos -----
+      { key: 'conductor_id', label: 'Conductor (jornada 1)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor / Turnos' },
+      { key: 'jornada1_inicio', label: 'Jornada 1 · inicia', type: 'time', section: 'Conductor / Turnos' },
+      { key: 'jornada1_fin', label: 'Jornada 1 · termina', type: 'time', section: 'Conductor / Turnos' },
+      { key: 'doble_turno', label: '¿Doble turno? (otro conductor en otra jornada)', type: 'boolean', section: 'Conductor / Turnos' },
+      { key: 'conductor2_id', label: 'Conductor (jornada 2)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor / Turnos', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'jornada2_inicio', label: 'Jornada 2 · inicia', type: 'time', section: 'Conductor / Turnos', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'jornada2_fin', label: 'Jornada 2 · termina', type: 'time', section: 'Conductor / Turnos', showWhen: { field: 'doble_turno', in: [true] } },
     ],
   },
 

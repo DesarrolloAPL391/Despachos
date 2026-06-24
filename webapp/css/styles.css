@@ -239,6 +239,18 @@ tbody tr:hover { background: #faf8ff; }
   border-bottom: 2px solid #e8f1fd; text-transform: uppercase; letter-spacing: .3px;
 }
 .edit-form .hidden-field { display: none !important; }
+
+/* Buscador (combobox con filtro) en los formularios */
+.combo { position: relative; width: 100%; }
+.combo-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.combo-input { width: 100%; }
+.combo-list {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 70;
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); max-height: 240px; overflow-y: auto;
+}
+.combo-item { padding: 9px 11px; cursor: pointer; font-size: 14px; color: var(--text); }
+.combo-item:hover, .combo-item.sel { background: var(--grad-soft); color: var(--primary-dark); font-weight: 600; }
 .edit-form .field-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
 /* Modal de confirmación */
