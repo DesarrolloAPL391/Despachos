@@ -236,6 +236,7 @@ function selectTable(name) {
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
   $('table-title').textContent = TABLES[name].label;
   $('dispatch-btn').hidden = !TABLES[name].dispatchable || !isAdmin(); // Despachar libre: solo admin
+  $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
   $('dsonar-btn').hidden = !TABLES[name].dispatchable || !isAdmin();   // Consultar SONAR: solo admin
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
@@ -281,6 +282,70 @@ function renderFilters() {
   }
 }
 
+// Aplica búsqueda + filtros activos + restricción por rol a una consulta (reutilizable)
+function applyQueryFilters(qy) {
+  const cfg = TABLES[current];
+  if (term && cfg.searchCols?.length) {
+    qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
+  }
+  for (const [key, val] of Object.entries(filters)) { // eq o rango de fecha (col::gte / col::lte)
+    if (key.includes('::')) {
+      const [col, op] = key.split('::');
+      qy = op === 'gte' ? qy.gte(col, val) : qy.lte(col, val);
+    } else {
+      qy = qy.eq(key, val);
+    }
+  }
+  // Despachador: solo despachos de sus rutas permitidas (refuerzo en UI; RLS lo garantiza en BD)
+  if (current === 'despachos' && !isAdmin()) {
+    const ids = CTX?.ids || [];
+    qy = qy.in('ruta_id', ids.length ? ids : [-1]);
+  }
+  return qy;
+}
+
+// ---------- Contador de despachos por carro (según filtros) ----------
+async function openContador() {
+  $('cnt-results').innerHTML = '<div class="loading">Calculando…</div>';
+  const partes = [];
+  if (filters['fecha::gte']) partes.push('desde ' + filters['fecha::gte']);
+  if (filters['fecha::lte']) partes.push('hasta ' + filters['fecha::lte']);
+  if (filters['tipo']) partes.push('tipo ' + filters['tipo']);
+  if (filters['estado_despacho']) partes.push(filters['estado_despacho']);
+  if (filters['estado']) partes.push(filters['estado']);
+  if (term) partes.push('"' + term + '"');
+  $('cnt-sub').textContent = TABLES[current].label + (partes.length ? ' · ' + partes.join(' · ') : ' · sin filtros (todo)');
+  $('cnt-modal').hidden = false;
+
+  let qy = sb.from(current).select('estado_despacho, veh:vehiculo_id(numero), desp:despachador_id(nombre)').limit(10000);
+  qy = applyQueryFilters(qy);
+  const { data, error } = await qy;
+  if (error) { $('cnt-results').innerHTML = '<div class="empty">Error: ' + esc(error.message) + '</div>'; return; }
+
+  const map = new Map(); let total = 0;
+  for (const r of (data || [])) {
+    if (String(r.estado_despacho || '').toUpperCase() !== 'DESPACHADO') continue; // solo realizados
+    total++;
+    const movil = r.veh?.numero ?? '—';
+    if (!map.has(movil)) map.set(movil, { count: 0, desp: new Set() });
+    const e = map.get(movil); e.count++; if (r.desp?.nombre) e.desp.add(r.desp.nombre);
+  }
+  const filas = [...map.entries()].map(([movil, e]) => ({ movil, count: e.count, desp: [...e.desp] }))
+    .sort((a, b) => b.count - a.count || String(a.movil).localeCompare(String(b.movil)));
+
+  if (!filas.length) { $('cnt-results').innerHTML = '<div class="empty">No hay despachos realizados con esos filtros.</div>'; return; }
+
+  const head = `<div class="cnt-total">Total despachados: <b>${total}</b> · Carros distintos: <b>${filas.length}</b></div>`;
+  const body = '<table class="ds-table"><thead><tr><th>Móvil</th><th>Despachos</th><th>Despachadores</th></tr></thead><tbody>'
+    + filas.map((f) => `<tr><td><b>${esc(f.movil)}</b></td><td>${f.count}</td><td>${esc(f.desp.join(', ') || '—')}</td></tr>`).join('')
+    + '</tbody></table>';
+  $('cnt-results').innerHTML = head + body;
+}
+function closeContador() { $('cnt-modal').hidden = true; }
+$('count-btn').addEventListener('click', openContador);
+$('cnt-close').addEventListener('click', closeContador);
+$('cnt-cancel').addEventListener('click', closeContador);
+
 // ---------- carga de datos ----------
 let searchTimer;
 $('search').addEventListener('input', (e) => {
@@ -300,23 +365,7 @@ async function loadData() {
     .order(cfg.defaultOrder.col, { ascending: cfg.defaultOrder.asc, nullsFirst: false })
     .range(from, to);
 
-  if (term && cfg.searchCols?.length) {
-    qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
-  }
-  for (const [key, val] of Object.entries(filters)) { // filtros dinámicos (eq o rango de fecha)
-    if (key.includes('::')) {
-      const [col, op] = key.split('::');
-      qy = op === 'gte' ? qy.gte(col, val) : qy.lte(col, val);
-    } else {
-      qy = qy.eq(key, val);
-    }
-  }
-
-  // Despachador: solo despachos de sus rutas permitidas (refuerzo en UI; RLS lo garantiza en BD)
-  if (current === 'despachos' && !isAdmin()) {
-    const ids = CTX?.ids || [];
-    qy = qy.in('ruta_id', ids.length ? ids : [-1]);
-  }
+  qy = applyQueryFilters(qy);
 
   const { data, error, count } = await qy;
   $('loading').hidden = true;

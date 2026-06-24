@@ -195,6 +195,11 @@ tbody tr:hover { background: #faf8ff; }
 .ds-table th, .ds-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .ds-table th { position: sticky; top: 0; background: #f7f9fc; }
 
+/* Contador de despachos */
+.cnt-sub { padding: 8px 20px 0; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.cnt-total { padding: 10px 20px; font-size: 14px; }
+.cnt-total b { color: var(--primary-dark); }
+
 /* Acciones del menú (no son tablas) */
 .sidebar .nav-action:first-of-type { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
 

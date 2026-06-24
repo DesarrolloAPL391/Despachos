@@ -56,6 +56,7 @@
             <button id="refresh-btn" class="btn">↻</button>
             <button id="syncfleet-btn" class="btn" hidden>🔄 Sincronizar flota</button>
             <button id="dispatch-btn" class="btn" hidden>🛰️ Despachar</button>
+            <button id="count-btn" class="btn" hidden>📊 Contador</button>
             <button id="dsonar-btn" class="btn" hidden>📡 Despachos SONAR</button>
             <button id="import-btn" class="btn" hidden>📥 Importar</button>
             <button id="perfil-new-btn" class="btn" hidden>➕ Crear acceso</button>
@@ -236,6 +237,22 @@
         <span class="spacer"></span>
         <button id="ds-cancel" class="btn">Cerrar</button>
         <button id="ds-run" class="btn btn-primary">Consultar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Contador de despachos por carro -->
+  <div id="cnt-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>📊 Despachos realizados por carro</h3>
+        <button id="cnt-close" class="icon-btn">✕</button>
+      </div>
+      <div id="cnt-sub" class="cnt-sub"></div>
+      <div id="cnt-results" class="ds-results"></div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="cnt-cancel" class="btn">Cerrar</button>
       </div>
     </div>
   </div>
