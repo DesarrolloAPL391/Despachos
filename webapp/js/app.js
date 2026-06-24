@@ -17,8 +17,15 @@ let CTX = null;         // contexto del usuario { rol, nombre, puesto, rutas[], 
 function isAdmin() { return CTX?.rol === 'admin'; }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
 function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
-// Tablas visibles según el rol (admin: todas; despachador: solo las marcadas con despachador:true)
-function visibleTables() { return TABLE_ORDER.filter((n) => isAdmin() || TABLES[n].despachador); }
+// Tablas visibles según el rol:
+//  - admin: todas
+//  - despachador con tabla de puesto propia (ej. laureles): solo esa
+//  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
+function visibleTables() {
+  if (isAdmin()) return TABLE_ORDER;
+  if (CTX?.tabla && TABLES[CTX.tabla]) return [CTX.tabla];
+  return TABLE_ORDER.filter((n) => TABLES[n].despachador);
+}
 
 // ---------- utilidades ----------
 function toast(msg, kind = '') {
