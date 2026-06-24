@@ -1,5 +1,5 @@
 // Service worker: cachea el app shell. Los datos siempre van por red.
-const CACHE = 'despachos-apl-v75';
+const CACHE = 'despachos-apl-v76';
 const SHELL = [
   '.', 'index.html',
   'css/styles.css',
@@ -9,7 +9,12 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache:'reload' evita que el shell se guarde desde la caché HTTP del navegador (archivos viejos)
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -19,15 +24,23 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Permite que la página fuerce la activación de un SW en espera
+self.addEventListener('message', (e) => {
+  if (e.data === 'SKIP_WAITING') self.skipWaiting();
+});
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Nunca cachear llamadas a Supabase ni a la CDN de la librería
   if (url.hostname.endsWith('supabase.co') || url.hostname.endsWith('esm.sh')) return;
   if (e.request.method !== 'GET') return;
 
-  // Estrategia "red primero": siempre trae lo más reciente; usa caché solo sin conexión
+  const sameOrigin = url.origin === self.location.origin;
+  // Para archivos propios: pide SIEMPRE la versión fresca (sin caché HTTP); usa caché solo sin conexión
+  const req = sameOrigin ? new Request(e.request.url, { cache: 'no-store' }) : e.request;
+
   e.respondWith(
-    fetch(e.request).then((res) => {
+    fetch(req).then((res) => {
       const copy = res.clone();
       caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
       return res;

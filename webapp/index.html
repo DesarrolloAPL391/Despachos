@@ -322,9 +322,20 @@
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (refreshing) return; refreshing = true; location.reload();
       });
+      const activar = (reg) => {
+        // Si hay un SW nuevo esperando, actívalo ya (provoca controllerchange → recarga)
+        if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+        if (reg.installing) {
+          reg.installing.addEventListener('statechange', function () {
+            if (this.state === 'installed' && reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+          });
+        }
+      };
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
           reg.update();
+          activar(reg);
+          reg.addEventListener('updatefound', () => activar(reg)); // hay versión nueva entrando
           // Revisa si hay versión nueva cada minuto y al volver a la app
           setInterval(() => reg.update(), 60000);
           document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update(); });
