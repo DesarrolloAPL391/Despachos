@@ -1,11 +1,11 @@
 // Service worker: cachea el app shell. Los datos siempre van por red.
-const CACHE = 'despachos-apl-v47';
+const CACHE = 'despachos-apl-v48';
 const SHELL = [
   '.', 'index.html',
   'css/styles.css',
   'js/app.js', 'js/config.js',
   'manifest.webmanifest',
-  'icons/icon-192.png', 'icons/icon-512.png',
+  'icons/icon-192.png', 'icons/icon-512.png', 'icons/logo.png',
 ];
 
 self.addEventListener('install', (e) => {

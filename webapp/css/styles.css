@@ -1,19 +1,19 @@
 :root {
-  /* Marca de la empresa: rojo y blanco */
-  --primary: #d81f2a;
-  --primary-dark: #a4141d;
-  --primary-2: #e8434c;
-  --grad: linear-gradient(135deg, #e11d2a 0%, #c81620 55%, #a4141d 100%);
-  --grad-soft: linear-gradient(135deg, #fff1f1, #ffe6e7);
-  --bg: #f7f4f4;
+  /* Marca APL: rojo #ED1C24, gris vías #D1D2D4, texto negro */
+  --primary: #ED1C24;
+  --primary-dark: #C20F16;
+  --primary-2: #F2434A;
+  --grad: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%);
+  --grad-soft: linear-gradient(135deg, #fff1f1, #ffe6e6);
+  --bg: #f6f5f5;
   --surface: #ffffff;
-  --text: #241b1c;
-  --muted: #78716c;
-  --border: #f0e3e3;
-  --danger: #dc2626;
+  --text: #1c1c1c;
+  --muted: #6b6b6b;
+  --border: #eadede;
+  --danger: #ED1C24;
   --ok: #16a34a;
-  --shadow: 0 10px 30px rgba(216,31,42,.12);
-  --shadow-sm: 0 2px 8px rgba(216,31,42,.10);
+  --shadow: 0 10px 30px rgba(237,28,36,.12);
+  --shadow-sm: 0 2px 8px rgba(237,28,36,.10);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; max-width: 100%; overflow-x: hidden; }
@@ -36,10 +36,7 @@ input, select, textarea { font: inherit; }
   display: flex; flex-direction: column; gap: 14px;
 }
 .brand { text-align: center; margin-bottom: 6px; }
-.brand-logo {
-  font-size: 30px; width: 66px; height: 66px; margin: 0 auto 4px; border-radius: 18px;
-  display: grid; place-items: center; background: var(--grad); box-shadow: var(--shadow);
-}
+.brand-img { width: 100%; max-width: 230px; height: auto; margin: 0 auto; display: block; }
 .brand h1 { margin: 6px 0 0; font-size: 22px; }
 .brand p { margin: 2px 0 0; color: var(--muted); }
 .login-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
@@ -61,6 +58,8 @@ input, select, textarea { font: inherit; }
   position: sticky; top: 0; z-index: 20;
 }
 .topbar-title { font-weight: 700; }
+.topbar-logo { background: #fff; border-radius: 8px; padding: 3px 7px; display: inline-flex; align-items: center; box-shadow: var(--shadow-sm); }
+.topbar-logo img { height: 22px; display: block; }
 .user-email { font-size: 13px; opacity: .9; }
 .app-ver { font-size: 11px; font-weight: 700; opacity: .85; background: rgba(255,255,255,.18); padding: 2px 8px; border-radius: 999px; }
 .spacer { flex: 1; }
