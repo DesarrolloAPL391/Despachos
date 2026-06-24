@@ -47,7 +47,11 @@ function visibleTables() {
   if (isAdmin()) return menuOrder();
   // despachador: todas las tablas de su puesto (puede tener varias)
   const mine = (CTX?.tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
-  if (mine.length) return mine;
+  if (mine.length) {
+    // Si además tiene rutas que se despachan en la vista general, agrega "Despachos"
+    if (CTX?.verDespachos && !mine.includes('despachos')) mine.push('despachos');
+    return mine;
+  }
   return TABLE_ORDER.filter((n) => TABLES[n].despachador); // sin tablas propias → despachos por ruta
 }
 
@@ -164,6 +168,15 @@ async function showApp(user) {
   // Registrar configs de las tablas de despacho del despachador (por si la lectura general falla)
   for (const t of (CTX?.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
+  // ¿El despachador (con tablas propias) además tiene rutas que se despachan en "Despachos"?
+  // Se muestra el tab "Despachos" solo si hay filas visibles para sus rutas (evita tabs vacíos).
+  CTX && (CTX.verDespachos = false);
+  if (CTX?.rol === 'despachador' && (CTX.tablas || []).length && (CTX.ids || []).length) {
+    try {
+      const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true });
+      CTX.verDespachos = (count || 0) > 0;
+    } catch { /* si falla, no se muestra */ }
+  }
   // Mostrar correo + (para despachador) su puesto del día
   const suf = CTX?.rol === 'despachador' ? ' · 📌 ' + (CTX.puesto || 'sin turno hoy') : '';
   $('user-email').textContent = (user.email || '') + suf;
