@@ -792,9 +792,18 @@ $('sonar-send').addEventListener('click', async () => {
   const res = $('sonar-result'); res.hidden = false;
   if (error) { res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message; return; }
   if (data && data.ok) {
-    // Guardar el regId en el despacho de origen (para poder cancelarlo luego)
-    if (data.regid && sonarRow?.id) {
-      await sb.from('despachos').update({ sonar_regid: String(data.regid) }).eq('id', sonarRow.id);
+    // Marcar como DESPACHADO y registrar el móvil REAL despachado.
+    // El vehículo PROGRAMADO (el de la importación) se conserva siempre.
+    if (sonarRow?.id) {
+      const newVehId = Number($('s-mov').value) || sonarRow.vehiculo_id || null;
+      const patch = {
+        estado_despacho: 'DESPACHADO',
+        vehiculo_id: newVehId,
+        // si no había programado, se fija con el original de la fila (no se pierde)
+        vehiculo_programado_id: sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || newVehId,
+      };
+      if (data.regid) patch.sonar_regid = String(data.regid);
+      await sb.from('despachos').update(patch).eq('id', sonarRow.id);
       if (current === 'despachos') loadData();
     }
     res.className = 'sonar-result ok';
