@@ -265,7 +265,19 @@
   <script type="module" src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
+      // Cuando entra un service worker nuevo, recarga una sola vez para aplicar la versión
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return; refreshing = true; location.reload();
+      });
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+          reg.update();
+          // Revisa si hay versión nueva cada minuto y al volver a la app
+          setInterval(() => reg.update(), 60000);
+          document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update(); });
+        }).catch(console.error);
+      });
     }
   </script>
 </body>
