@@ -380,3 +380,11 @@ tbody tr:hover { background: #faf8ff; }
 .check-item input { width: 18px; height: 18px; flex: none; }
 .check-item span { font-size: .92rem; line-height: 1.2; }
 .link-btn { background: none; border: none; color: var(--primary, #ED1C24); font-size: .82rem; cursor: pointer; padding: 0 4px; text-decoration: underline; }
+
+/* Filtro por ruta: dropdown con casillas (multi-seleccion) */
+.filter-check { position: relative; display: inline-block; }
+.filter-check-btn { padding: 6px 10px; border: 1px solid var(--border, #ccc); border-radius: 8px; background: #fff; cursor: pointer; font-size: .9rem; }
+.filter-check-btn.active { border-color: var(--primary, #ED1C24); color: var(--primary-dark, #C20F16); font-weight: 600; }
+.filter-check-panel { position: absolute; z-index: 1200; top: calc(100% + 4px); left: 0; min-width: 200px; max-height: 280px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--border, #ddd); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 6px; }
+.filter-check-panel .fc-head { display: flex; justify-content: flex-end; padding: 2px 4px 6px; border-bottom: 1px solid #eee; margin-bottom: 4px; }

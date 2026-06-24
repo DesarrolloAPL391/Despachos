@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v70';
+export const APP_VERSION = 'v71';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -72,6 +72,7 @@ export const TABLES = {
     defaultOrder: { col: 'fecha', asc: false },
     filters: [
       { col: 'fecha', label: 'Fecha', type: 'daterange' },
+      { col: 'ruta_id', label: 'Ruta', type: 'checklist', source: 'rutas' },
       { col: 'tipo', label: 'Tipo', options: ['TABLA', 'LIBRE'] },
       { col: 'estado_despacho', label: 'Despacho', options: ['DESPACHADO', 'NO REALIZA EL VIAJE', 'CANCELADO'] },
       { col: 'estado', label: 'Novedad', options: NOVEDADES },
@@ -154,6 +155,7 @@ export const TABLES = {
     defaultOrder: { col: 'hora_cierre', asc: false },
     filters: [
       { col: 'fecha', label: 'Fecha', type: 'daterange' },
+      { col: 'ruta_id', label: 'Ruta', type: 'checklist', source: 'rutas' },
       { col: 'estado', label: 'Estado', options: ['Cerrado', 'Abierto'] },
     ],
     columns: [

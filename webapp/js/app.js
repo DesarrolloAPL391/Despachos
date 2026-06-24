@@ -289,6 +289,7 @@ function selectTable(name) {
 
 function renderFilters() {
   const cont = $('filters'); cont.innerHTML = '';
+  Object.keys(_checkOptsCache).forEach((k) => delete _checkOptsCache[k]); // refresca opciones por si cambió el puesto
   const defs = TABLES[current].filters || [];
   for (const f of defs) {
     if (f.type === 'daterange') {
@@ -309,6 +310,10 @@ function renderFilters() {
       cont.appendChild(wrap);
       continue;
     }
+    if (f.type === 'checklist') {
+      cont.appendChild(buildChecklistFilter(f));
+      continue;
+    }
     const sel = document.createElement('select');
     sel.innerHTML = `<option value="">${f.label}: todos</option>` +
       f.options.map((o) => `<option value="${o}">${f.label}: ${o}</option>`).join('');
@@ -321,16 +326,99 @@ function renderFilters() {
   }
 }
 
+// Cache de opciones para filtros checklist (p.ej. rutas), restringido por rol
+const _checkOptsCache = {};
+async function loadCheckOptions(source) {
+  if (_checkOptsCache[source]) return _checkOptsCache[source];
+  let qy = sb.from(source).select('id,nombre').order('nombre');
+  const r = await qy;
+  let opts = (r.data || []).map((x) => [x.id, x.nombre]);
+  // Despachador: solo ve sus rutas permitidas (en despachos y tablas por puesto)
+  if (source === 'rutas' && !isAdmin() && Array.isArray(CTX?.ids) && CTX.ids.length) {
+    const allow = new Set(CTX.ids.map(Number));
+    opts = opts.filter(([id]) => allow.has(Number(id)));
+  }
+  _checkOptsCache[source] = opts;
+  return opts;
+}
+
+// Filtro de selección múltiple con casillas (dropdown). Guarda filters['col::in'] = [ids]
+function buildChecklistFilter(f) {
+  const key = `${f.col}::in`;
+  const wrap = document.createElement('span');
+  wrap.className = 'filter-check';
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'filter-check-btn';
+  const panel = document.createElement('div');
+  panel.className = 'filter-check-panel'; panel.hidden = true;
+  wrap.append(btn, panel);
+
+  const selected = () => (Array.isArray(filters[key]) ? filters[key] : []);
+  const refreshBtn = () => {
+    const n = selected().length;
+    btn.textContent = `${f.label}: ${n ? n + ' ▾' : 'todas ▾'}`;
+    btn.classList.toggle('active', n > 0);
+  };
+  refreshBtn();
+
+  let built = false;
+  const buildPanel = async () => {
+    const opts = await loadCheckOptions(f.source);
+    panel.innerHTML = '';
+    const head = document.createElement('div'); head.className = 'fc-head';
+    const clr = document.createElement('button'); clr.type = 'button'; clr.className = 'link-btn'; clr.textContent = 'Limpiar';
+    clr.addEventListener('click', () => {
+      delete filters[key];
+      panel.querySelectorAll('input').forEach((c) => { c.checked = false; });
+      refreshBtn(); page = 0; loadData();
+    });
+    head.appendChild(clr); panel.appendChild(head);
+    const sel = new Set(selected().map(String));
+    opts.forEach(([id, nombre]) => {
+      const lbl = document.createElement('label'); lbl.className = 'check-item';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = String(id);
+      cb.checked = sel.has(String(id));
+      cb.addEventListener('change', () => {
+        const cur = new Set(selected().map(String));
+        if (cb.checked) cur.add(cb.value); else cur.delete(cb.value);
+        const arr = Array.from(cur).map(Number);
+        if (arr.length) filters[key] = arr; else delete filters[key];
+        refreshBtn(); page = 0; loadData();
+      });
+      const span = document.createElement('span'); span.textContent = nombre;
+      lbl.append(cb, span); panel.appendChild(lbl);
+    });
+    built = true;
+  };
+
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const open = panel.hidden;
+    document.querySelectorAll('.filter-check-panel').forEach((p) => { p.hidden = true; });
+    if (open) { if (!built) await buildPanel(); panel.hidden = false; }
+  });
+  panel.addEventListener('click', (e) => e.stopPropagation());
+  return wrap;
+}
+// Cierra los paneles de checklist al hacer clic fuera
+document.addEventListener('click', () => {
+  document.querySelectorAll('.filter-check-panel').forEach((p) => { p.hidden = true; });
+});
+
 // Aplica búsqueda + filtros activos + restricción por rol a una consulta (reutilizable)
 function applyQueryFilters(qy) {
   const cfg = TABLES[current];
   if (term && cfg.searchCols?.length) {
     qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
   }
-  for (const [key, val] of Object.entries(filters)) { // eq o rango de fecha (col::gte / col::lte)
-    if (key.includes('::')) {
-      const [col, op] = key.split('::');
-      qy = op === 'gte' ? qy.gte(col, val) : qy.lte(col, val);
+  for (const [key, val] of Object.entries(filters)) { // eq, rango de fecha (::gte/::lte) o lista (::in)
+    if (key.endsWith('::gte')) {
+      qy = qy.gte(key.slice(0, -5), val);
+    } else if (key.endsWith('::lte')) {
+      qy = qy.lte(key.slice(0, -5), val);
+    } else if (key.endsWith('::in')) {
+      const arr = Array.isArray(val) ? val : String(val).split(',');
+      if (arr.length) qy = qy.in(key.slice(0, -4), arr);
     } else {
       qy = qy.eq(key, val);
     }
@@ -352,6 +440,7 @@ async function openContador() {
   if (filters['tipo']) partes.push('tipo ' + filters['tipo']);
   if (filters['estado_despacho']) partes.push(filters['estado_despacho']);
   if (filters['estado']) partes.push(filters['estado']);
+  if (Array.isArray(filters['ruta_id::in']) && filters['ruta_id::in'].length) partes.push(filters['ruta_id::in'].length + ' ruta(s)');
   if (term) partes.push('"' + term + '"');
   $('cnt-sub').textContent = TABLES[current].label + (partes.length ? ' · ' + partes.join(' · ') : ' · sin filtros (todo)');
   $('cnt-modal').hidden = false;
