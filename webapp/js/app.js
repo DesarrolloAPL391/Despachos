@@ -569,6 +569,8 @@ async function openEditor(row) {
   }
 
   for (const f of cfg.fields) {
+    // editOnly: solo se muestra al EDITAR un registro existente (no al crear)
+    if (f.editOnly && !editing) continue;
     // encabezado de sección
     if (f.section && f.section !== lastSection) {
       lastSection = f.section;
@@ -620,6 +622,7 @@ async function openEditor(row) {
           : f.type === 'time' ? 'time' : f.type === 'datetime' ? 'datetime-local' : 'text';
         // datetime-local necesita "YYYY-MM-DDTHH:MM" (recorta segundos/zona)
         input.value = f.type === 'datetime' && val ? String(val).replace(' ', 'T').slice(0, 16) : (val ?? '');
+        if (f.type === 'number' && f.min != null) { input.min = f.min; input.step = f.step ?? 1; }
       }
       input.dataset.key = f.key; input.dataset.type = f.type;
       if (f.key === cfg.pk && row && !cfg.pkEditable) input.disabled = true;
@@ -682,12 +685,31 @@ $('modal-save').addEventListener('click', async () => {
     else payload[key] = v;
   }
 
-  // Validar requeridos (omitiendo los campos bloqueados/ocultos)
+  // Validar requeridos y mínimos (omitiendo los campos bloqueados/ocultos)
   for (const f of cfg.fields) {
     const el = $('edit-form').querySelector(`[data-key="${f.key}"]`);
     if (el && el.disabled) continue; // bloqueado → no se valida
     if (f.required && (payload[f.key] === null || payload[f.key] === undefined || payload[f.key] === '')) {
       err.textContent = `El campo "${f.label}" es obligatorio.`; err.hidden = false; return;
+    }
+    if (f.type === 'number' && f.min != null && payload[f.key] != null && payload[f.key] < f.min) {
+      err.textContent = `"${f.label}" debe ser ${f.min === 0 ? 'un número positivo' : 'mayor o igual a ' + f.min}.`; err.hidden = false; return;
+    }
+  }
+
+  // Hora de cierre automática (momento de guardado)
+  if (cfg.autoStamp) payload[cfg.autoStamp] = ahoraLocal();
+
+  // Estado: 'Abierto' al crear; al editar, si están todos los campos requeridos → 'Cerrado' (bloqueado)
+  let cerrado = false;
+  if (cfg.stateField) {
+    if (!editing) {
+      payload[cfg.stateField] = 'Abierto';
+    } else {
+      const req = [...(cfg.closeRequired || [])];
+      if (cfg.closeRequiredDoble && payload.doble_turno) req.push(...cfg.closeRequiredDoble);
+      const completo = req.every((k) => payload[k] !== null && payload[k] !== undefined && payload[k] !== '');
+      if (completo) { payload[cfg.stateField] = 'Cerrado'; cerrado = true; }
     }
   }
 
@@ -706,7 +728,7 @@ $('modal-save').addEventListener('click', async () => {
 
   if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
   closeModal();
-  toast(editing ? 'Registro actualizado' : 'Registro creado', 'ok');
+  toast(cerrado ? 'Registro completo: cerrado y bloqueado' : (editing ? 'Registro actualizado' : 'Registro creado'), 'ok');
   loadData();
 });
 
@@ -808,6 +830,10 @@ function fillSelect(sel, pairs, placeholder = '— selecciona —') {
 function hoyLocal() {
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+function ahoraLocal() {
+  const d = new Date(); const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 async function openNuevoDespacho() {

@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v51';
+export const APP_VERSION = 'v52';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -128,6 +128,12 @@ export const TABLES = {
     genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
     // Al elegir ruta → filtra Móvil a los carros de esa ruta; al elegir Móvil → trae el conductor registrado en despachos
     vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id', cond: 'conductor_id', fecha: 'fecha' },
+    // La hora de cierre se llena sola con el momento de guardado
+    autoStamp: 'hora_cierre',
+    // Estado: 'Abierto' al crear; 'Cerrado' (y bloqueado) cuando al editar estén todos los campos
+    stateField: 'estado',
+    closeRequired: ['fecha', 'ruta_id', 'vehiculo_id', 'conductor_id', 'jornada1_inicio', 'jornada1_fin', 'viajes'],
+    closeRequiredDoble: ['conductor2_id', 'jornada2_inicio', 'jornada2_fin'],
     import: { rpc: 'importar_resumen', map: IMPORT_MAP_RESUMEN, kept: 'actualizados', keptLabel: 'Actualizados' },
     select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
@@ -142,7 +148,6 @@ export const TABLES = {
       { path: 'veh.numero', label: 'Móvil', m: true },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'viajes', label: 'Viajes' },
-      { key: 'total_pasajeros', label: 'Pasajeros' },
       { key: 'puesto', label: 'Puesto' },
       { path: 'desp.nombre', label: 'Despachador' },
       { key: 'hora_cierre', label: 'Cierre' },
@@ -153,14 +158,13 @@ export const TABLES = {
       { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General' },
       { key: 'puesto', label: 'Puesto', type: 'text', section: 'General' },
-      { key: 'estado', label: 'Estado', type: 'text', section: 'General' },
 
       { key: 'vehiculo_id', label: 'Móvil', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación' },
       { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación' },
-      { key: 'viajes', label: 'Viajes', type: 'number', section: 'Operación' },
-      { key: 'total_pasajeros', label: 'Total de pasajeros', type: 'number', section: 'Operación' },
+      // Viajes: solo aparece al EDITAR el registro, y siempre positivo
+      { key: 'viajes', label: 'Viajes', type: 'number', min: 0, editOnly: true, section: 'Operación' },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Operación' },
-      { key: 'hora_cierre', label: 'Hora de cierre del vehículo', type: 'datetime', section: 'Operación' },
+      // Estado y Total de pasajeros: ocultos. Hora de cierre: automática (momento de guardado).
 
       // ----- Conductor / Turnos -----
       { key: 'conductor_id', label: 'Conductor (jornada 1)', type: 'fk', fk: { table: 'conductores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Conductor / Turnos' },
