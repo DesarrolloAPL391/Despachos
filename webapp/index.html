@@ -239,6 +239,25 @@
     </div>
   </div>
 
+  <!-- Modal de confirmación (reutilizable) -->
+  <div id="confirm-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3 id="confirm-title">Confirmar</h3>
+        <button id="confirm-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form">
+        <p id="confirm-lead" class="confirm-lead"></p>
+        <pre id="confirm-body" class="confirm-body"></pre>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="confirm-no" class="btn">Cancelar</button>
+        <button id="confirm-yes" class="btn btn-primary">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

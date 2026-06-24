@@ -219,6 +219,15 @@ tbody tr:hover { background: #faf8ff; }
 .edit-form .hidden-field { display: none !important; }
 .edit-form .field-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+/* Modal de confirmación */
+.confirm-card { max-width: 440px; }
+.confirm-lead { margin: 0 0 8px; font-size: 14px; color: var(--text, #1f2937); }
+.confirm-body {
+  margin: 0; padding: 10px 12px; border-radius: 9px; background: #f4f6fb;
+  font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .error { color: var(--danger); font-size: 13px; margin: 0; }
 
 .sonar-result {

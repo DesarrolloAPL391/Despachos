@@ -29,6 +29,30 @@ function toast(msg, kind = '') {
 function getPath(obj, path) {
   return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
 }
+// Modal de confirmación reutilizable → devuelve Promise<boolean>
+let _confirmResolve = null;
+function confirmAction({ title = 'Confirmar', lead = '', message = '', okLabel = 'Confirmar', danger = false } = {}) {
+  return new Promise((resolve) => {
+    _confirmResolve = resolve;
+    $('confirm-title').textContent = title;
+    $('confirm-lead').textContent = lead;
+    $('confirm-lead').hidden = !lead;
+    $('confirm-body').textContent = message;
+    $('confirm-body').hidden = !message;
+    const yes = $('confirm-yes');
+    yes.textContent = okLabel;
+    yes.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+    $('confirm-modal').hidden = false;
+  });
+}
+function _confirmClose(val) {
+  $('confirm-modal').hidden = true;
+  const r = _confirmResolve; _confirmResolve = null;
+  if (r) r(val);
+}
+$('confirm-yes').addEventListener('click', () => _confirmClose(true));
+$('confirm-no').addEventListener('click', () => _confirmClose(false));
+$('confirm-x').addEventListener('click', () => _confirmClose(false));
 function fmt(v) {
   if (v === null || v === undefined) return '';
   if (v === true) return 'Sí';
@@ -263,8 +287,14 @@ function renderTable(cfg, rows, count) {
         }));
       } else {
         if (current === 'despachos') {
-          const dsp = Object.assign(document.createElement('button'), { textContent: '🛰️', title: 'Despachar en SONAR' });
-          dsp.onclick = () => openSonar(row);
+          const dsp = Object.assign(document.createElement('button'), { textContent: '🛰️' });
+          if (row.sonar_regid) {
+            dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
+            dsp.disabled = true; dsp.style.opacity = '0.35';
+          } else {
+            dsp.title = 'Despachar en SONAR';
+            dsp.onclick = () => openSonar(row);
+          }
           act.appendChild(dsp);
           const can = Object.assign(document.createElement('button'), { textContent: '🛑' });
           if (row.sonar_regid) {
@@ -660,6 +690,16 @@ $('nd-save').addEventListener('click', async () => {
     despId: Number($('nd-desp').value) || null, com: $('nd-com').value.trim(),
   };
 
+  // Confirmación antes de crear/despachar
+  const ok = await confirmAction({
+    title: '¿Crear y despachar?',
+    lead: 'Se creará un despacho LIBRE y se enviará a SONAR:',
+    message: `Móvil:    ${vrow?.numero || '—'}\nRuta:     ${itin?.nombre || '—'}\nConductor:${drow?.nombre ? ' ' + drow.nombre : ' —'}`
+      + (intent.com ? `\nComent.:  ${intent.com}` : ''),
+    okLabel: 'Despachar',
+  });
+  if (!ok) return;
+
   // Sin internet → guardar offline y salir
   if (!navigator.onLine) {
     enqueueDispatch(intent);
@@ -783,6 +823,18 @@ $('sonar-send').addEventListener('click', async () => {
   const g = await gpsInfoFor(vr.numero); const mId = g?.tracker_id;
   if (!mId) { err.textContent = 'Ese móvil no tiene Id GPS en SONAR.'; err.hidden = false; return; }
 
+  // Confirmación antes de despachar
+  const itinLabel = $('s-itin').selectedOptions[0]?.textContent || itin;
+  const drvLabel = $('s-drv').selectedOptions[0]?.textContent || '—';
+  const ok = await confirmAction({
+    title: '¿Despachar en SONAR?',
+    lead: 'Se enviará este despacho a SONAR:',
+    message: `Móvil:     ${vr.numero}  (mId ${mId})\nItinerario:${' ' + itinLabel}\nConductor: ${drvLabel}`
+      + (com ? `\nComent.:   ${com}` : ''),
+    okLabel: 'Despachar',
+  });
+  if (!ok) return;
+
   const btn = $('sonar-send'); btn.disabled = true; btn.textContent = 'Enviando…';
   const { data, error } = await sb.rpc('despachar_sonar', {
     p_mid: String(mId), p_itinerary: itin, p_drvid: drv, p_utc: '', p_comments: com,
@@ -864,7 +916,14 @@ $('cancel-send').addEventListener('click', async () => {
   const regId = $('c-regid').value.trim();
   const com = $('c-com').value.trim();
   if (!regId) { err.textContent = 'No hay regId: no se puede cancelar este despacho.'; err.hidden = false; return; }
-  if (!confirm('¿Cancelar el despacho activo de este móvil en SONAR?')) return;
+  const ok = await confirmAction({
+    title: '¿Cancelar despacho?',
+    lead: 'Se cancelará el despacho activo en SONAR:',
+    message: `Móvil:  ${vr.numero}  (mId ${mId})\nregId:  ${regId}`,
+    okLabel: 'Cancelar despacho',
+    danger: true,
+  });
+  if (!ok) return;
 
   const btn = $('cancel-send'); btn.disabled = true; btn.textContent = 'Cancelando…';
   const { data, error } = await sb.rpc('cancelar_sonar', { p_mid: String(mId), p_regid: regId, p_comments: com });
