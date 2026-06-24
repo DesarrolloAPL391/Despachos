@@ -67,7 +67,7 @@ export const TABLES = {
       { key: 'fecha', label: 'Fecha' },
       { key: 'hora', label: 'Hora', m: true },
       { path: 'ruta.nombre', label: 'Ruta', m: true },
-      { path: 'vehp.numero', label: 'Móvil prog.', m: true },
+      { path: 'vehp.numero', label: 'Móvil prog.' },
       { path: 'veh.numero', label: 'Móvil', m: true },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },

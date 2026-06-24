@@ -201,7 +201,7 @@ function buildSidebar() {
     const b = document.createElement('button');
     b.innerHTML = `<span>${cfg.icon || '•'}</span> ${cfg.label}`;
     b.classList.toggle('active', name === current);
-    b.onclick = () => { selectTable(name); nav.classList.remove('open'); };
+    b.onclick = () => { selectTable(name); closeMenu(); };
     nav.appendChild(b);
   }
   // acciones especiales (no son tablas)
@@ -213,10 +213,16 @@ function addNavAction(nav, icon, label, fn, id) {
   const b = document.createElement('button');
   b.className = 'nav-action'; if (id) b.id = id;
   b.innerHTML = `<span>${icon}</span> ${label}`;
-  b.onclick = () => { fn(); nav.classList.remove('open'); };
+  b.onclick = () => { fn(); closeMenu(); };
   nav.appendChild(b);
 }
-$('menu-toggle').addEventListener('click', () => $('sidebar').classList.toggle('open'));
+function setMenu(open) {
+  $('sidebar').classList.toggle('open', open);
+  const s = $('scrim'); if (s) s.hidden = !open;
+}
+function closeMenu() { setMenu(false); }
+$('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
+$('scrim').addEventListener('click', closeMenu);
 
 function selectTable(name) {
   // salir de la vista de mapa si estaba activa

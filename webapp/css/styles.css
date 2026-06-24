@@ -291,18 +291,23 @@ tbody tr:hover { background: #faf8ff; }
      Solo se muestran las columnas marcadas (m:true); el texto se ajusta. */
   .col-hide { display: none !important; }
   .table-wrap { overflow-x: hidden; }
-  table { width: 100%; table-layout: fixed; font-size: 13px; }
-  thead th {
-    padding: 8px 5px; font-size: 10.5px; letter-spacing: 0;
-    white-space: normal; overflow-wrap: anywhere;
+  table { width: 100%; table-layout: fixed; font-size: 12.5px; }
+  thead th { padding: 8px 5px; font-size: 10px; letter-spacing: 0; white-space: normal; }
+  tbody td { padding: 9px 5px; white-space: normal; word-break: normal; vertical-align: middle; }
+  /* La columna de acciones con ancho fijo; el resto reparte lo que queda */
+  thead th.col-act, tbody td.row-actions { width: 70px; }
+  .row-actions { gap: 4px; flex-wrap: wrap; justify-content: center; align-content: center; }
+  .row-actions button.act { width: 28px; height: 28px; font-size: 14px; border-radius: 8px; }
+  /* Chips de estado como etiqueta compacta (no círculo) */
+  .chip {
+    display: inline-block; white-space: normal; line-height: 1.2;
+    padding: 3px 7px; font-size: 10.5px; border-radius: 7px;
   }
-  tbody td {
-    padding: 8px 5px; white-space: normal; overflow-wrap: anywhere; vertical-align: middle;
-  }
-  /* La columna de acciones con ancho fijo; las demás se reparten lo que queda */
-  thead th.col-act, tbody td.row-actions { width: 78px; }
-  .row-actions { gap: 5px; flex-wrap: wrap; justify-content: center; }
-  .row-actions button.act { width: 32px; height: 32px; font-size: 15px; border-radius: 9px; }
-  /* Los chips de estado pueden partirse para no desbordar la celda */
-  .chip { white-space: normal; padding: 3px 6px; font-size: 10.5px; }
+}
+
+/* Fondo oscuro detrás del menú lateral (solo cuando está abierto) */
+.scrim { display: none; }
+@media (max-width: 760px) {
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 29; }
+  .scrim[hidden] { display: none; }
 }
