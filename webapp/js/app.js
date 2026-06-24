@@ -274,7 +274,9 @@ function selectTable(name) {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
   $('table-title').textContent = TABLES[name].label;
-  $('dispatch-btn').hidden = !TABLES[name].dispatchable || !isAdmin(); // Despachar libre: solo admin
+  // Despachar libre (barra): solo admin y NUNCA en las tablas de puesto (en las tablas
+  // se despacha solo con el botón verde de cada fila; el libre es riesgoso).
+  $('dispatch-btn').hidden = !TABLES[name].dispatchable || !isAdmin() || puestoTables.includes(name);
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
   $('dsonar-btn').hidden = !TABLES[name].dispatchable || !isAdmin();   // Consultar SONAR: solo admin
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
