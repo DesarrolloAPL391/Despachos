@@ -8,7 +8,7 @@ export const PAGE_SIZE = 50;
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
 
 export const TABLE_ORDER = [
-  'despachos', 'resumen', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
+  'despachos', 'laureles', 'resumen', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'itinerarios',
 ];
 
@@ -49,6 +49,7 @@ export const TABLES = {
     label: 'Despachos',
     icon: '🚍',
     pk: 'id',
+    dispatchable: true, // permite despachar/cancelar a SONAR desde las filas
     despachador: true, // visible para despachadores (filtrado por sus rutas)
     pkEditable: true, // el KEY lo escribe el usuario al crear
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
@@ -360,4 +361,15 @@ export const TABLES = {
     columns: [{ key: 'nombre', label: 'Nombre' }],
     fields: [{ key: 'nombre', label: 'Nombre', type: 'text', required: true }],
   },
+};
+
+// Tabla de puesto "Laureles": misma estructura y función que Despachos (despachar/cancelar a SONAR),
+// pero es su propia tabla en la base de datos. No se importa aquí ni se crean filas sueltas.
+TABLES.laureles = {
+  ...TABLES.despachos,
+  label: 'Laureles',
+  icon: '🛣️',
+  import: undefined,
+  noCreate: true,
+  despachador: false, // por ahora visible solo para admin
 };

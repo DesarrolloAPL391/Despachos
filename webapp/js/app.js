@@ -193,8 +193,8 @@ function selectTable(name) {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
   $('table-title').textContent = TABLES[name].label;
-  $('dispatch-btn').hidden = name !== 'despachos' || !isAdmin(); // Despachar libre: solo admin
-  $('dsonar-btn').hidden = name !== 'despachos' || !isAdmin();   // Consultar SONAR: solo admin
+  $('dispatch-btn').hidden = !TABLES[name].dispatchable || !isAdmin(); // Despachar libre: solo admin
+  $('dsonar-btn').hidden = !TABLES[name].dispatchable || !isAdmin();   // Consultar SONAR: solo admin
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
@@ -288,7 +288,7 @@ function renderTable(cfg, rows, count) {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
         }));
       } else {
-        if (current === 'despachos') {
+        if (cfg.dispatchable) {
           const dsp = Object.assign(document.createElement('button'), { textContent: '🛰️' });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
@@ -783,9 +783,10 @@ async function updateSonarInfo() {
   }
 }
 
-let sonarRow = null;
+let sonarRow = null, sonarTable = 'despachos';
 async function openSonar(row) {
   sonarRow = row || null;
+  sonarTable = TABLES[current]?.dispatchable ? current : 'despachos';
   $('sonar-error').hidden = true;
   const res = $('sonar-result'); res.hidden = true; res.textContent = '';
   $('s-com').value = '';
@@ -857,8 +858,8 @@ $('sonar-send').addEventListener('click', async () => {
         vehiculo_programado_id: sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || newVehId,
       };
       if (data.regid) patch.sonar_regid = String(data.regid);
-      await sb.from('despachos').update(patch).eq('id', sonarRow.id);
-      if (current === 'despachos') loadData();
+      await sb.from(sonarTable).update(patch).eq('id', sonarRow.id);
+      if (current === sonarTable) loadData();
     }
     res.className = 'sonar-result ok';
     res.textContent = '✅ Despachado (HTTP ' + (data.status ?? '') + ')'
@@ -871,7 +872,7 @@ $('sonar-send').addEventListener('click', async () => {
 });
 
 // ---------- Cancelar despacho en SONAR ----------
-let cancelRow = null;
+let cancelRow = null, cancelTable = 'despachos';
 async function updateCancelInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('c-mov').value);
@@ -889,6 +890,7 @@ async function updateCancelInfo() {
 async function openCancelar(row) {
   if (row && !row.sonar_regid) { toast('Este despacho no tiene regId: no se puede cancelar.', 'err'); return; }
   cancelRow = row || null;
+  cancelTable = TABLES[current]?.dispatchable ? current : 'despachos';
   $('cancel-error').hidden = true;
   const res = $('cancel-result'); res.hidden = true; res.textContent = '';
   $('c-regid').value = row?.sonar_regid || '';
@@ -936,8 +938,8 @@ $('cancel-send').addEventListener('click', async () => {
   if (data && data.ok) {
     // Marcar el despacho como cancelado y limpiar el regId usado
     if (cancelRow?.id) {
-      await sb.from('despachos').update({ estado_despacho: 'CANCELADO', sonar_regid: null }).eq('id', cancelRow.id);
-      if (current === 'despachos') loadData();
+      await sb.from(cancelTable).update({ estado_despacho: 'CANCELADO', sonar_regid: null }).eq('id', cancelRow.id);
+      if (current === cancelTable) loadData();
     }
     res.className = 'sonar-result ok';
     res.textContent = '✅ Cancelado en SONAR (HTTP ' + (data.status ?? '') + ')\n\n' + (data.response || '').slice(0, 1200);
