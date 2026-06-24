@@ -624,6 +624,8 @@ function renderTable(cfg, rows, count) {
       act.className = 'row-actions';
       act.dataset.label = 'Acciones';
       const locked = cfg.rowLocked && cfg.rowLocked(row);
+      // La fecha es clave: no se puede despachar ni editar un viaje de un día anterior a hoy
+      const esPasada = !!(cfg.dispatchable && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal());
       if (locked) {
         act.appendChild(Object.assign(document.createElement('span'), {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
@@ -633,6 +635,9 @@ function renderTable(cfg, rows, count) {
           const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', innerHTML: ICON.send });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
+            dsp.disabled = true;
+          } else if (esPasada) {
+            dsp.title = 'Fecha ya pasada: no se puede despachar';
             dsp.disabled = true;
           } else {
             dsp.title = 'Despachar en SONAR';
@@ -651,8 +656,14 @@ function renderTable(cfg, rows, count) {
         }
         // Editar/eliminar: solo admin. El despachador solo despacha/cancela.
         if (isAdmin()) {
-          const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit, title: 'Editar' });
-          ed.onclick = () => openEditor(row);
+          const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
+          if (esPasada) {
+            ed.title = 'Fecha ya pasada: no se puede editar';
+            ed.disabled = true;
+          } else {
+            ed.title = 'Editar';
+            ed.onclick = () => openEditor(row);
+          }
           act.appendChild(ed);
           if (!cfg.noDelete) {
             const del = Object.assign(document.createElement('button'), { className: 'act act-del', innerHTML: ICON.trash, title: 'Eliminar' });
@@ -840,6 +851,10 @@ function toggleEmptySections(form) {
 async function openEditor(row) {
   const cfg = TABLES[current];
   if (row && cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
+  // La fecha es clave: no se edita un viaje de un día anterior a hoy (tablas y despachos)
+  if (row && cfg.dispatchable && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal()) {
+    toast('No se puede editar: la fecha del viaje ya pasó.', 'err'); return;
+  }
   editing = row || null;
   $('modal-title').textContent = (row ? 'Editar' : 'Nuevo') + ' · ' + cfg.label;
   $('modal-error').hidden = true;
@@ -1426,6 +1441,10 @@ async function updateSonarInfo() {
 
 let sonarRow = null, sonarTable = 'despachos';
 async function openSonar(row) {
+  // La fecha es clave: no se despacha un viaje de un día anterior a hoy
+  if (row && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal()) {
+    toast('No se puede despachar: la fecha del viaje ya pasó.', 'err'); return;
+  }
   sonarRow = row || null;
   sonarTable = TABLES[current]?.dispatchable ? current : 'despachos';
   $('sonar-error').hidden = true;
