@@ -1467,6 +1467,30 @@ function mapPopup(r) {
     <a class="pi-link" href="${g}" target="_blank" rel="noopener">📍 Ver en Google Maps</a>
   </div>`;
 }
+// Panel inferior deslizable con la info del móvil (estilo apps de mapas)
+async function openVehSheet(r) {
+  const sheet = $('veh-sheet'), body = $('veh-sheet-body');
+  body.innerHTML = mapPopup(r);
+  sheet.hidden = false;
+  requestAnimationFrame(() => sheet.classList.add('open'));
+  // Ruta actual en SONAR (1 llamada)
+  const cur = body.querySelector('#cur-ruta');
+  if (cur) {
+    cur.textContent = '⏳…';
+    const { data, error } = await sb.rpc('ruta_actual_sonar', { p_mid: r.mid });
+    const c2 = body.querySelector('#cur-ruta');
+    if (c2) c2.textContent = (error || !data || !data.ok) ? (r.ruta ? `${r.ruta} (despacho)` : '—') : (data.ruta || '—');
+  }
+}
+function closeVehSheet() {
+  const sheet = $('veh-sheet');
+  if (!sheet || sheet.hidden) return;
+  sheet.classList.remove('open');
+  setTimeout(() => { sheet.hidden = true; }, 250);
+}
+$('veh-sheet-close')?.addEventListener('click', closeVehSheet);
+$('veh-sheet-head')?.addEventListener('click', (e) => { if (e.target.id !== 'veh-sheet-close') closeVehSheet(); });
+
 let lastUbic = [], mapFilter = 'todos', routeFilter = '', vehSearch = [];
 function fillRutaSelect() {
   const sel = $('map-ruta'); if (!sel) return;
@@ -1498,11 +1522,7 @@ function renderMarkers(fit) {
     });
     const m = L.marker([r.latitude, r.longitude], { icon, title: `Móvil ${r.movil || ''}` });
     m._row = r;
-    m.bindPopup(mapPopup(r), {
-      maxWidth: Math.min(300, (window.innerWidth || 360) - 36),
-      maxHeight: Math.round((window.innerHeight || 640) * 0.5), // scroll interno si no cabe
-      autoPan: true, keepInView: true, autoPanPadding: [10, 10],
-    });
+    m.on('click', () => openVehSheet(r)); // abre el panel inferior (mejor en celular)
     flotaLayer.addLayer(m);
     pts.push([r.latitude, r.longitude]);
   }
@@ -1525,6 +1545,7 @@ async function showMapView() {
   currentView = 'mapa';
   $('table-view').hidden = true;
   $('map-view').hidden = false;
+  closeVehSheet();
   // resaltar la opción del menú
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-mapa')?.classList.add('active');
@@ -1534,18 +1555,7 @@ async function showMapView() {
       maxZoom: 19, attribution: '© OpenStreetMap',
     }).addTo(flotaMap);
     flotaLayer = L.layerGroup().addTo(flotaMap);
-    // Al abrir el globo de un bus, consulta su ruta real actual en SONAR (1 llamada)
-    flotaMap.on('popupopen', async (e) => {
-      const r = e.popup._source && e.popup._source._row;
-      const el = document.getElementById('cur-ruta');
-      if (!r || !el) return;
-      el.textContent = '⏳…';
-      const { data, error } = await sb.rpc('ruta_actual_sonar', { p_mid: r.mid });
-      const cur = document.getElementById('cur-ruta'); // el popup sigue abierto
-      if (!cur) return;
-      if (error || !data || !data.ok) cur.textContent = r.ruta ? `${r.ruta} (despacho)` : '—';
-      else cur.textContent = data.ruta || '—';
-    });
+    flotaMap.on('click', closeVehSheet); // tocar el mapa cierra el panel
   }
   setTimeout(() => flotaMap.invalidateSize(), 120); // el contenedor estaba oculto
   await refreshMapa(true);
