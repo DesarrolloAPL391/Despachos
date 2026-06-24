@@ -8,9 +8,11 @@ export const PAGE_SIZE = 50;
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
 
 export const TABLE_ORDER = [
-  'despachos', 'laureles', 'resumen', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
+  'despachos', 'resumen', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'itinerarios',
 ];
+// Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
+// y se registran en tiempo de ejecución (ver app.js). No hay que editar config por cada una.
 
 // Mapa de encabezados (normalizados) -> campo, para la importación de horarios de usuarios
 const IMPORT_MAP_HORARIOS = {
@@ -363,13 +365,7 @@ export const TABLES = {
   },
 };
 
-// Tabla de puesto "Laureles": misma estructura y función que Despachos (despachar/cancelar a SONAR),
-// pero es su propia tabla en la base de datos. No se importa aquí ni se crean filas sueltas.
-TABLES.laureles = {
-  ...TABLES.despachos,
-  label: 'Laureles',
-  icon: '🛣️',
-  import: undefined,
-  noCreate: true,
-  despachador: false, // por ahora visible solo para admin
-};
+// Construye la config de una tabla de puesto (misma función que Despachos, su propia tabla).
+export function configTablaPuesto(label) {
+  return { ...TABLES.despachos, label, icon: '🛣️', import: undefined, noCreate: true, despachador: false };
+}

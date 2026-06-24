@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, configTablaPuesto } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -13,6 +13,27 @@ let editing = null;     // fila en edición (null = nuevo)
 const fkCache = {};     // cache de opciones de FK por tabla
 let CTX = null;         // contexto del usuario { rol, nombre, puesto, rutas[], ids[] }
 
+let puestoTables = []; // tablas de puesto descubiertas (laureles, etc.)
+
+// Descubre las tablas por puesto desde `puestos` y registra su config en caliente
+async function registerPuestoTables() {
+  puestoTables = [];
+  const { data, error } = await sb.from('puestos').select('nombre, tabla').not('tabla', 'is', null);
+  if (error) return;
+  for (const p of (data || [])) {
+    if (!p.tabla || TABLES[p.tabla]) { if (p.tabla && !puestoTables.includes(p.tabla)) puestoTables.push(p.tabla); continue; }
+    TABLES[p.tabla] = configTablaPuesto(p.nombre);
+    puestoTables.push(p.tabla);
+  }
+}
+// Orden del menú con las tablas de puesto insertadas tras "despachos"
+function menuOrder() {
+  const base = [...TABLE_ORDER];
+  const i = base.indexOf('despachos');
+  base.splice(i < 0 ? base.length : i + 1, 0, ...puestoTables.filter((t) => !base.includes(t)));
+  return base;
+}
+
 // ---------- roles ----------
 function isAdmin() { return CTX?.rol === 'admin'; }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
@@ -22,7 +43,7 @@ function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
 function visibleTables() {
-  if (isAdmin()) return TABLE_ORDER;
+  if (isAdmin()) return menuOrder();
   if (CTX?.tabla && TABLES[CTX.tabla]) return [CTX.tabla];
   return TABLE_ORDER.filter((n) => TABLES[n].despachador);
 }
@@ -136,6 +157,9 @@ async function showApp(user) {
   // Cargar contexto/rol del usuario
   try { const { data } = await sb.rpc('mi_contexto'); CTX = data || null; }
   catch { CTX = null; }
+  // Para el despachador con tabla propia basta registrar la suya; el admin las ve todas
+  if (CTX?.tabla && !TABLES[CTX.tabla]) TABLES[CTX.tabla] = configTablaPuesto(CTX.puesto || CTX.tabla);
+  await registerPuestoTables();
   // Mostrar correo + (para despachador) su puesto del día
   const suf = CTX?.rol === 'despachador' ? ' · 📌 ' + (CTX.puesto || 'sin turno hoy') : '';
   $('user-email').textContent = (user.email || '') + suf;
