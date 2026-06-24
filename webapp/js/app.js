@@ -269,6 +269,7 @@ function renderTable(cfg, rows, count) {
     const tr = document.createElement('tr');
     for (const c of cfg.columns) {
       const td = document.createElement('td');
+      td.dataset.label = c.label; // para vista en tarjetas (móvil)
       const val = c.path ? getPath(row, c.path) : row[c.key];
       if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
@@ -280,6 +281,7 @@ function renderTable(cfg, rows, count) {
     if (!cfg.readonly) {
       const act = document.createElement('td');
       act.className = 'row-actions';
+      act.dataset.label = 'Acciones';
       const locked = cfg.rowLocked && cfg.rowLocked(row);
       if (locked) {
         act.appendChild(Object.assign(document.createElement('span'), {

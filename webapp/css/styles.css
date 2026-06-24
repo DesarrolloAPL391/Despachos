@@ -254,7 +254,32 @@ tbody tr:hover { background: #faf8ff; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 760px) {
-  .sidebar { position: fixed; top: 58px; bottom: 0; left: 0; z-index: 15; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  /* Menú lateral: arranca debajo de la barra superior y con su propio scroll */
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; width: 78%; max-width: 280px; z-index: 30;
+    padding-top: 70px; transform: translateX(-100%); transition: transform .2s;
+    box-shadow: var(--shadow); overflow-y: auto;
+  }
   .sidebar.open { transform: translateX(0); }
   .edit-form { grid-template-columns: 1fr; }
+
+  /* Despachos y demás tablas: vista en TARJETAS (más cómoda que el scroll horizontal) */
+  .table-wrap { border: 0; box-shadow: none; background: transparent; overflow: visible; }
+  table, tbody, tr, td { display: block; width: 100%; }
+  thead { display: none; }
+  tbody tr {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow); margin-bottom: 12px; padding: 8px 12px;
+  }
+  tbody tr:hover { background: var(--surface); }
+  tbody td {
+    display: flex; justify-content: space-between; align-items: center; gap: 14px;
+    white-space: normal; border: 0; border-bottom: 1px dashed var(--border); padding: 8px 0; text-align: right;
+  }
+  tbody td:last-child { border-bottom: 0; }
+  tbody td::before {
+    content: attr(data-label); font-weight: 700; color: var(--primary-dark);
+    font-size: 12px; text-transform: uppercase; letter-spacing: .3px; text-align: left;
+  }
+  .row-actions { justify-content: flex-end; }
 }
