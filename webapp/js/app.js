@@ -15,15 +15,15 @@ let CTX = null;         // contexto del usuario { rol, nombre, puesto, rutas[], 
 
 let puestoTables = []; // tablas de puesto descubiertas (laureles, etc.)
 
-// Descubre las tablas por puesto desde `puestos` y registra su config en caliente
+// Descubre las tablas de despacho desde `tablas_despacho` y registra su config en caliente
 async function registerPuestoTables() {
   puestoTables = [];
-  const { data, error } = await sb.from('puestos').select('nombre, tabla').not('tabla', 'is', null);
+  const { data, error } = await sb.from('tablas_despacho').select('tabla, label, puesto').eq('activo', true).order('label');
   if (error) return;
-  for (const p of (data || [])) {
-    if (!p.tabla || TABLES[p.tabla]) { if (p.tabla && !puestoTables.includes(p.tabla)) puestoTables.push(p.tabla); continue; }
-    TABLES[p.tabla] = configTablaPuesto(p.nombre);
-    puestoTables.push(p.tabla);
+  for (const t of (data || [])) {
+    if (!t.tabla) continue;
+    if (!TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label);
+    if (!puestoTables.includes(t.tabla)) puestoTables.push(t.tabla);
   }
 }
 // Orden del menú con las tablas de puesto insertadas tras "despachos"
@@ -44,8 +44,10 @@ function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
 function visibleTables() {
   if (isAdmin()) return menuOrder();
-  if (CTX?.tabla && TABLES[CTX.tabla]) return [CTX.tabla];
-  return TABLE_ORDER.filter((n) => TABLES[n].despachador);
+  // despachador: todas las tablas de su puesto (puede tener varias)
+  const mine = (CTX?.tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
+  if (mine.length) return mine;
+  return TABLE_ORDER.filter((n) => TABLES[n].despachador); // sin tablas propias → despachos por ruta
 }
 
 // ---------- utilidades ----------
@@ -157,8 +159,8 @@ async function showApp(user) {
   // Cargar contexto/rol del usuario
   try { const { data } = await sb.rpc('mi_contexto'); CTX = data || null; }
   catch { CTX = null; }
-  // Para el despachador con tabla propia basta registrar la suya; el admin las ve todas
-  if (CTX?.tabla && !TABLES[CTX.tabla]) TABLES[CTX.tabla] = configTablaPuesto(CTX.puesto || CTX.tabla);
+  // Registrar configs de las tablas de despacho del despachador (por si la lectura general falla)
+  for (const t of (CTX?.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
   // Mostrar correo + (para despachador) su puesto del día
   const suf = CTX?.rol === 'despachador' ? ' · 📌 ' + (CTX.puesto || 'sin turno hoy') : '';
