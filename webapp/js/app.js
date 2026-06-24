@@ -158,7 +158,32 @@ async function verificarDispositivo() {
     await sb.auth.signOut();
   }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) verificarDispositivo(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarDispositivo(); refreshContext(); } });
+
+// Firma del contexto para detectar si el admin cambió el puesto/tablas/rutas
+function ctxSig(c) {
+  return c ? (c.puesto || '') + '|' + JSON.stringify((c.tablas || []).map((t) => t.tabla)) + '|' + (c.ids || []).join(',') : '';
+}
+// Recarga el contexto del despachador y, si cambió, reconstruye el menú al vuelo
+async function refreshContext() {
+  if (!sessionUser || CTX?.rol !== 'despachador') return;
+  let nuevo;
+  try { const { data } = await sb.rpc('mi_contexto'); nuevo = data; } catch { return; }
+  if (!nuevo || ctxSig(nuevo) === ctxSig(CTX)) return; // sin cambios
+  CTX = nuevo;
+  for (const t of (CTX.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
+  await registerPuestoTables();
+  CTX.verDespachos = false;
+  if ((CTX.tablas || []).length && (CTX.ids || []).length) {
+    try { const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true }); CTX.verDespachos = (count || 0) > 0; } catch { /* */ }
+  }
+  $('user-email').textContent = (sessionUser.email || '') + ' · 📌 ' + (CTX.puesto || 'sin turno hoy');
+  buildSidebar();
+  const vis = visibleTables();
+  if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
+  toast('Tu puesto/tablas se actualizaron', 'ok');
+}
+
 async function showApp(user) {
   $('login-screen').hidden = true;
   $('app').hidden = false;
@@ -186,7 +211,7 @@ async function showApp(user) {
   if (CTX?.rol === 'despachador') {
     await registrarDispositivo(user);
     sessionUser = user;
-    sessTimer = setInterval(verificarDispositivo, 45000);
+    sessTimer = setInterval(() => { verificarDispositivo(); refreshContext(); }, 45000);
   }
   buildSidebar();
   current = null;
