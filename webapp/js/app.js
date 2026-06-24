@@ -300,7 +300,7 @@ function renderTable(cfg, rows, count) {
     if (hasMobile && !c.m) th.className = 'col-hide';
     head.appendChild(th);
   });
-  if (!cfg.readonly) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones' }));
+  if (!cfg.readonly) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;

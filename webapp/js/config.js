@@ -127,17 +127,17 @@ export const TABLES = {
       { col: 'estado', label: 'Estado', options: ['Cerrado', 'Abierto'] },
     ],
     columns: [
-      { key: 'fecha', label: 'Fecha' },
-      { path: 'ruta.nombre', label: 'Ruta' },
+      { key: 'fecha', label: 'Fecha', m: true },
+      { path: 'ruta.nombre', label: 'Ruta', m: true },
       { key: 'codigo', label: 'Código' },
-      { path: 'veh.numero', label: 'Móvil' },
+      { path: 'veh.numero', label: 'Móvil', m: true },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'viajes', label: 'Viajes' },
       { key: 'total_pasajeros', label: 'Pasajeros' },
       { key: 'puesto', label: 'Puesto' },
       { path: 'desp.nombre', label: 'Despachador' },
       { key: 'hora_cierre', label: 'Cierre' },
-      { key: 'estado', label: 'Estado', badge: true },
+      { key: 'estado', label: 'Estado', badge: true, m: true },
     ],
     fields: [
       { key: 'id', label: 'KEY (id único)', type: 'text', required: true, section: 'General' },
@@ -168,11 +168,11 @@ export const TABLES = {
     defaultOrder: { col: 'fecha', asc: false },
     columns: [
       { key: 'fecha', label: 'Fecha' },
-      { key: 'nombre', label: 'Nombre' },
+      { key: 'nombre', label: 'Nombre', m: true },
       { key: 'email', label: 'Usuario' },
-      { key: 'hora_inicio', label: 'Inicio' },
-      { key: 'hora_fin', label: 'Fin' },
-      { key: 'observacion', label: 'Puesto / Observación' },
+      { key: 'hora_inicio', label: 'Inicio', m: true },
+      { key: 'hora_fin', label: 'Fin', m: true },
+      { key: 'observacion', label: 'Puesto / Observación', m: true },
     ],
     fields: [
       { key: 'fecha', label: 'Fecha', type: 'date', required: true },
@@ -193,9 +193,9 @@ export const TABLES = {
     searchCols: ['nombre', 'rutas'],
     defaultOrder: { col: 'nombre', asc: true },
     columns: [
-      { key: 'nombre', label: 'Puesto' },
-      { key: 'rutas', label: 'Rutas que cubre' },
-      { key: 'activo', label: 'Activo', badge: true },
+      { key: 'nombre', label: 'Puesto', m: true },
+      { key: 'rutas', label: 'Rutas que cubre', m: true },
+      { key: 'activo', label: 'Activo', badge: true, m: true },
     ],
     fields: [
       { key: 'nombre', label: 'Nombre del puesto', type: 'text', required: true },
@@ -217,10 +217,10 @@ export const TABLES = {
       { col: 'rol', label: 'Rol', options: ['admin', 'despachador'] },
     ],
     columns: [
-      { key: 'email', label: 'Correo' },
+      { key: 'email', label: 'Correo', m: true },
       { key: 'nombre', label: 'Nombre' },
-      { key: 'rol', label: 'Rol', badge: true },
-      { key: 'activo', label: 'Activo', badge: true },
+      { key: 'rol', label: 'Rol', badge: true, m: true },
+      { key: 'activo', label: 'Activo', badge: true, m: true },
     ],
     fields: [
       { key: 'email', label: 'Correo', type: 'text' },
@@ -243,11 +243,11 @@ export const TABLES = {
       { col: 'motor', label: 'Motor', options: ['Encendido', 'Apagado'] },
     ],
     columns: [
-      { key: 'movil', label: 'Móvil' },
+      { key: 'movil', label: 'Móvil', m: true },
       { key: 'placa', label: 'Placa' },
-      { key: 'ruta', label: 'Última ruta' },
-      { key: 'motor', label: 'Motor', badge: true },
-      { key: 'driver_name', label: 'Conductor' },
+      { key: 'ruta', label: 'Última ruta', m: true },
+      { key: 'motor', label: 'Motor', badge: true, m: true },
+      { key: 'driver_name', label: 'Conductor', m: true },
       { key: 'speed', label: 'Vel. (km/h)' },
       { key: 'address', label: 'Dirección' },
       { key: 'gps_gmt', label: 'Hora GPS' },
@@ -274,9 +274,9 @@ export const TABLES = {
     searchCols: ['numero', 'placa'],
     defaultOrder: { col: 'numero', asc: true },
     columns: [
-      { key: 'numero', label: 'Móvil' },
-      { key: 'placa', label: 'Placa' },
-      { path: 'prop.nombre', label: 'Propietario' },
+      { key: 'numero', label: 'Móvil', m: true },
+      { key: 'placa', label: 'Placa', m: true },
+      { path: 'prop.nombre', label: 'Propietario', m: true },
     ],
     fields: [
       { key: 'numero', label: 'Móvil', type: 'text', required: true },
@@ -295,10 +295,10 @@ export const TABLES = {
     searchCols: ['movil', 'placa', 'tracker_id'],
     defaultOrder: { col: 'movil', asc: true },
     columns: [
-      { key: 'tracker_id', label: 'Tracker' },
+      { key: 'tracker_id', label: 'Tracker', m: true },
       { key: 'gps_vehiculo_id', label: 'ID GPS' },
-      { key: 'placa', label: 'Placa' },
-      { key: 'movil', label: 'Móvil' },
+      { key: 'placa', label: 'Placa', m: true },
+      { key: 'movil', label: 'Móvil', m: true },
     ],
     fields: [
       { key: 'tracker_id', label: 'Tracker', type: 'text' },
@@ -311,7 +311,7 @@ export const TABLES = {
   conductores: {
     label: 'Conductores', icon: '👤', pk: 'id', pkEditable: false, select: '*',
     searchCols: ['nombre'], defaultOrder: { col: 'nombre', asc: true },
-    columns: [{ key: 'nombre', label: 'Nombre' }],
+    columns: [{ key: 'nombre', label: 'Nombre', m: true }],
     fields: [{ key: 'nombre', label: 'Nombre', type: 'text', required: true }],
   },
   conductores_sonar: {
@@ -319,11 +319,11 @@ export const TABLES = {
     searchCols: ['nombre', 'cedula', 'codigo'], defaultOrder: { col: 'nombre', asc: true },
     columns: [
       { key: 'dr_id', label: 'DrvId' },
-      { key: 'nombre', label: 'Nombre' },
+      { key: 'nombre', label: 'Nombre', m: true },
       { key: 'cedula', label: 'Cédula' },
-      { key: 'codigo', label: 'Código' },
+      { key: 'codigo', label: 'Código', m: true },
       { key: 'cellphone', label: 'Celular' },
-      { key: 'status', label: 'Estado', badge: true },
+      { key: 'status', label: 'Estado', badge: true, m: true },
     ],
     fields: [
       { key: 'dr_id', label: 'DrvId (SONAR)', type: 'text' },
@@ -341,8 +341,8 @@ export const TABLES = {
     searchCols: ['nombre', 'grupo', 'itid'], defaultOrder: { col: 'nombre', asc: true },
     columns: [
       { key: 'itid', label: 'ItId' },
-      { key: 'nombre', label: 'Nombre' },
-      { key: 'grupo', label: 'Grupo' },
+      { key: 'nombre', label: 'Nombre', m: true },
+      { key: 'grupo', label: 'Grupo', m: true },
     ],
     fields: [
       { key: 'itid', label: 'ItId (SONAR)', type: 'text' },
@@ -353,13 +353,13 @@ export const TABLES = {
   rutas: {
     label: 'Rutas', icon: '🛣️', pk: 'id', pkEditable: false, select: '*',
     searchCols: ['nombre'], defaultOrder: { col: 'nombre', asc: true },
-    columns: [{ key: 'nombre', label: 'Nombre' }],
+    columns: [{ key: 'nombre', label: 'Nombre', m: true }],
     fields: [{ key: 'nombre', label: 'Nombre', type: 'text', required: true }],
   },
   despachadores: {
     label: 'Despachadores', icon: '🧑‍💼', pk: 'id', pkEditable: false, select: '*',
     searchCols: ['nombre'], defaultOrder: { col: 'nombre', asc: true },
-    columns: [{ key: 'nombre', label: 'Nombre' }],
+    columns: [{ key: 'nombre', label: 'Nombre', m: true }],
     fields: [{ key: 'nombre', label: 'Nombre', type: 'text', required: true }],
   },
 };

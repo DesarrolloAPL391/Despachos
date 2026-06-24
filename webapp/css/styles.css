@@ -300,7 +300,7 @@ tbody tr:hover { background: #faf8ff; }
     padding: 8px 5px; white-space: normal; overflow-wrap: anywhere; vertical-align: middle;
   }
   /* La columna de acciones con ancho fijo; las demás se reparten lo que queda */
-  thead th:last-child, tbody td:last-child { width: 78px; }
+  thead th.col-act, tbody td.row-actions { width: 78px; }
   .row-actions { gap: 5px; flex-wrap: wrap; justify-content: center; }
   .row-actions button.act { width: 32px; height: 32px; font-size: 15px; border-radius: 9px; }
   /* Los chips de estado pueden partirse para no desbordar la celda */
