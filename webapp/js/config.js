@@ -4,6 +4,9 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 
 export const PAGE_SIZE = 50;
 
+// Versión visible del aplicativo (mantener igual al número de caché en sw.js)
+export const APP_VERSION = 'v45';
+
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
 
@@ -119,6 +122,10 @@ export const TABLES = {
     // Si el vehículo ya está "Cerrado", la fila queda bloqueada (no se edita ni elimina)
     rowLocked: (row) => String(row.estado || '').trim().toUpperCase() === 'CERRADO',
     lockedHint: 'Cerrado: no editable',
+    // El KEY se genera solo (no se escribe a mano)
+    genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
+    // Al elegir una ruta, la lista de Móvil se filtra a los carros que operan esa ruta
+    vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id' },
     import: { rpc: 'importar_resumen', map: IMPORT_MAP_RESUMEN, kept: 'actualizados', keptLabel: 'Actualizados' },
     select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
@@ -140,7 +147,6 @@ export const TABLES = {
       { key: 'estado', label: 'Estado', badge: true, m: true },
     ],
     fields: [
-      { key: 'id', label: 'KEY (id único)', type: 'text', required: true, section: 'General' },
       { key: 'fecha', label: 'Fecha', type: 'date', section: 'General' },
       { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General' },

@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, configTablaPuesto } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, configTablaPuesto } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -87,7 +87,8 @@ function fmt(v) {
   if (v === null || v === undefined) return '';
   if (v === true) return 'Sí';
   if (v === false) return 'No';
-  return String(v);
+  // Quitar los segundos a las horas (HH:MM:SS -> HH:MM), tanto en horas sueltas como en fechas+hora
+  return String(v).replace(/(\b\d{1,2}:\d{2}):\d{2}(\.\d+)?/g, '$1');
 }
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -223,6 +224,7 @@ function setMenu(open) {
 function closeMenu() { setMenu(false); }
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
+$('app-ver').textContent = APP_VERSION;
 
 function selectTable(name) {
   // salir de la vista de mapa si estaba activa
@@ -382,12 +384,63 @@ async function loadFkOptions(fk) {
   if (fkCache[fk.table]) return fkCache[fk.table];
   const { data, error } = await sb.from(fk.table).select(fk.sel).order(fk.order, { ascending: true }).limit(2000);
   if (error) { toast('Error opciones ' + fk.table, 'err'); return []; }
-  const opts = (data || []).map((r) => ({
+  let opts = (data || []).map((r) => ({
     value: r.id,
     label: typeof fk.label === 'function' ? fk.label(r) : r[fk.label],
   }));
+  // Filtro de seguridad: el despachador solo ve sus rutas permitidas
+  if (!isAdmin() && fk.table === 'rutas') {
+    const ids = new Set((CTX?.ids || []).map(String));
+    const allow = allowedRutaSet();
+    if (ids.size || allow.size) {
+      opts = opts.filter((o) => ids.has(String(o.value)) || allow.has(normRuta(o.label)));
+    }
+  }
   fkCache[fk.table] = opts;
   return opts;
+}
+
+// Carros (ids de vehículo) que operan una ruta, mirando despachos + tablas de puesto.
+// RLS ya limita las filas a lo que el usuario puede ver.
+const _carrosRutaCache = {};
+async function carrosDeRuta(rutaId) {
+  if (!rutaId) return null;
+  if (_carrosRutaCache[rutaId]) return _carrosRutaCache[rutaId];
+  const tablas = ['despachos', ...puestoTables];
+  const set = new Set();
+  await Promise.all(tablas.map(async (t) => {
+    const { data } = await sb.from(t)
+      .select('vehiculo_id, vehiculo_programado_id')
+      .or(`ruta_id.eq.${rutaId},ruta_programada_id.eq.${rutaId}`)
+      .limit(3000);
+    (data || []).forEach((r) => {
+      if (r.vehiculo_id != null) set.add(String(r.vehiculo_id));
+      if (r.vehiculo_programado_id != null) set.add(String(r.vehiculo_programado_id));
+    });
+  }));
+  _carrosRutaCache[rutaId] = set;
+  return set;
+}
+
+// Al elegir ruta, deja en el select de Móvil solo los carros que operan esa ruta.
+async function setupVehByRoute(form, conf) {
+  const routeSel = form.querySelector(`[data-key="${conf.route}"]`);
+  const vehSel = form.querySelector(`[data-key="${conf.veh}"]`);
+  if (!routeSel || !vehSel) return;
+  const allOpts = [...vehSel.options].map((o) => ({ value: o.value, text: o.textContent }));
+  async function apply() {
+    const rid = routeSel.value;
+    const keep = vehSel.value;
+    const set = rid ? await carrosDeRuta(rid) : null;
+    vehSel.innerHTML = '';
+    for (const o of allOpts) {
+      if (set && set.size && o.value && !set.has(String(o.value))) continue; // solo los carros de la ruta
+      vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
+    }
+    if ([...vehSel.options].some((o) => o.value === keep)) vehSel.value = keep;
+  }
+  routeSel.addEventListener('change', apply);
+  await apply();
 }
 
 function toggleEmptySections(form) {
@@ -493,6 +546,8 @@ async function openEditor(row) {
   }
   applyVisibility();
 
+  if (cfg.vehByRoute) await setupVehByRoute(form, cfg.vehByRoute);
+
   $('modal').hidden = false;
 }
 
@@ -534,7 +589,8 @@ $('modal-save').addEventListener('click', async () => {
     delete payload[cfg.pk]; // nunca actualizamos la PK
     res = await sb.from(current).update(payload).eq(cfg.pk, id);
   } else {
-    if (!cfg.pkEditable) delete payload[cfg.pk]; // PK autogenerada
+    if (cfg.genKey) payload[cfg.pk] = cfg.genKey(payload); // KEY generada automáticamente
+    else if (!cfg.pkEditable) delete payload[cfg.pk]; // PK autogenerada por la BD
     res = await sb.from(current).insert(payload);
   }
   $('modal-save').disabled = false;
