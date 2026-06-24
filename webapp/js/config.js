@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v58';
+export const APP_VERSION = 'v59';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -63,6 +63,7 @@ export const TABLES = {
     pk: 'id',
     dispatchable: true, // permite despachar/cancelar a SONAR desde las filas
     noDelete: true, // un despacho no se elimina (ni TABLA ni LIBRE)
+    confirmSave: true, // pide confirmación antes de guardar cambios
     despachador: true, // visible para despachadores (filtrado por sus rutas)
     pkEditable: true, // el KEY lo escribe el usuario al crear
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
@@ -138,6 +139,7 @@ export const TABLES = {
     lockedHint: 'Cerrado: no editable',
     // El KEY se genera solo (no se escribe a mano)
     genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
+    confirmSave: true, // pide confirmación antes de guardar/cerrar
     // Al elegir ruta → filtra Móvil a los carros de esa ruta; al elegir Móvil → trae el conductor registrado en despachos
     vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id', cond: 'conductor_id', fecha: 'fecha' },
     // La hora de cierre se llena sola con el momento de guardado

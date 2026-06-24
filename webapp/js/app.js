@@ -750,6 +750,7 @@ $('new-btn').addEventListener('click', () => {
 });
 
 $('modal-save').addEventListener('click', async () => {
+  if ($('modal-save').dataset.busy === '1') return; // evita doble click
   const cfg = TABLES[current];
   const err = $('modal-error'); err.hidden = true;
   const payload = {};
@@ -795,18 +796,34 @@ $('modal-save').addEventListener('click', async () => {
     }
   }
 
-  $('modal-save').disabled = true;
-  let res;
-  if (editing) {
-    const id = editing[cfg.pk];
-    delete payload[cfg.pk]; // nunca actualizamos la PK
-    res = await sb.from(current).update(payload).eq(cfg.pk, id);
-  } else {
-    if (cfg.genKey) payload[cfg.pk] = cfg.genKey(payload); // KEY generada automáticamente
-    else if (!cfg.pkEditable) delete payload[cfg.pk]; // PK autogenerada por la BD
-    res = await sb.from(current).insert(payload);
+  // Confirmación antes de guardar una modificación importante
+  if (cfg.confirmSave) {
+    const ok = await confirmAction({
+      title: editing ? '¿Guardar cambios?' : '¿Crear registro?',
+      lead: `${editing ? 'Se guardarán los cambios' : 'Se creará el registro'} en ${cfg.label}.`,
+      message: cerrado ? '⚠️ Quedará CERRADO y ya no se podrá modificar.' : '',
+      okLabel: 'Guardar',
+      danger: !!cerrado,
+    });
+    if (!ok) return;
   }
-  $('modal-save').disabled = false;
+
+  const saveBtn = $('modal-save');
+  saveBtn.dataset.busy = '1'; saveBtn.disabled = true;
+  let res;
+  try {
+    if (editing) {
+      const id = editing[cfg.pk];
+      delete payload[cfg.pk]; // nunca actualizamos la PK
+      res = await sb.from(current).update(payload).eq(cfg.pk, id);
+    } else {
+      if (cfg.genKey) payload[cfg.pk] = cfg.genKey(payload); // KEY generada automáticamente
+      else if (!cfg.pkEditable) delete payload[cfg.pk]; // PK autogenerada por la BD
+      res = await sb.from(current).insert(payload);
+    }
+  } finally {
+    saveBtn.dataset.busy = '0'; saveBtn.disabled = false;
+  }
 
   if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
   closeModal();
@@ -818,7 +835,13 @@ async function deleteRow(row) {
   const cfg = TABLES[current];
   if (cfg.noDelete) { toast('Esta tabla no permite eliminar registros', 'err'); return; }
   if (cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
-  if (!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return;
+  const ok = await confirmAction({
+    title: '¿Eliminar registro?',
+    lead: `Se eliminará este registro de ${cfg.label}.`,
+    message: 'Esta acción no se puede deshacer.',
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
   const { error } = await sb.from(current).delete().eq(cfg.pk, row[cfg.pk]);
   if (error) { toast('No se pudo eliminar: ' + error.message, 'err'); return; }
   toast('Registro eliminado', 'ok');
@@ -994,6 +1017,7 @@ async function doDispatch(intent) {
 }
 
 $('nd-save').addEventListener('click', async () => {
+  if ($('nd-save').dataset.busy === '1') return; // evita doble click / doble despacho
   const err = $('nd-error'); err.hidden = true;
   const itid = $('nd-ruta').value;
   const vehVal = $('nd-movil').value;
@@ -1033,7 +1057,7 @@ $('nd-save').addEventListener('click', async () => {
     return;
   }
 
-  const btn = $('nd-save'); btn.disabled = true; btn.textContent = 'Procesando…';
+  const btn = $('nd-save'); btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Procesando…';
   try {
     const sd = await doDispatch(intent);
     const res = $('nd-result'); res.hidden = false;
@@ -1056,7 +1080,7 @@ $('nd-save').addEventListener('click', async () => {
       err.textContent = 'Error: ' + (e.message || e); err.hidden = false;
     }
   } finally {
-    btn.disabled = false; btn.textContent = 'Crear y despachar';
+    btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Crear y despachar';
   }
 });
 
@@ -1141,14 +1165,32 @@ $('dispatch-btn').addEventListener('click', () => openSonar(null));
 $('s-mov').addEventListener('change', updateSonarInfo);
 
 $('sonar-send').addEventListener('click', async () => {
+  const btn = $('sonar-send');
+  if (btn.dataset.busy === '1') return; // evita doble click / doble despacho
   const err = $('sonar-error'); err.hidden = true;
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const itin = $('s-itin').value, drv = $('s-drv').value, com = $('s-com').value.trim();
+  // Campos obligatorios para despachar
   if (!vr) { err.textContent = 'Selecciona un móvil.'; err.hidden = false; return; }
-  if (!itin) { err.textContent = 'Selecciona un itinerario.'; err.hidden = false; return; }
+  if (!itin) { err.textContent = 'Selecciona un itinerario / ruta.'; err.hidden = false; return; }
+  if (!drv) { err.textContent = 'Selecciona un conductor.'; err.hidden = false; return; }
   const g = await gpsInfoFor(vr.numero); const mId = g?.tracker_id;
   if (!mId) { err.textContent = 'Ese móvil no tiene Id GPS en SONAR.'; err.hidden = false; return; }
+
+  // Aviso de DOBLE DESPACHO: si la fila ya tiene regId (revisa el estado actual)
+  if (sonarRow?.id) {
+    const { data: cur } = await sb.from(sonarTable).select('sonar_regid').eq('id', sonarRow.id).maybeSingle();
+    if (cur && cur.sonar_regid) {
+      const seguir = await confirmAction({
+        title: '⚠️ Este despacho ya fue realizado',
+        lead: `Ya tiene un despacho activo (regId ${cur.sonar_regid}).`,
+        message: 'Si continúas, se enviará OTRA vez a SONAR (doble despacho).',
+        okLabel: 'Despachar de nuevo', danger: true,
+      });
+      if (!seguir) { closeSonar(); loadData(); return; }
+    }
+  }
 
   // Confirmación antes de despachar
   const itinLabel = $('s-itin').selectedOptions[0]?.textContent || itin;
@@ -1167,11 +1209,15 @@ $('sonar-send').addEventListener('click', async () => {
   });
   if (!ok) return;
 
-  const btn = $('sonar-send'); btn.disabled = true; btn.textContent = 'Enviando…';
-  const { data, error } = await sb.rpc('despachar_sonar', {
-    p_mid: String(mId), p_itinerary: itin, p_drvid: drv, p_utc: '', p_comments: com,
-  });
-  btn.disabled = false; btn.textContent = 'Despachar';
+  btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Enviando…';
+  let data, error;
+  try {
+    ({ data, error } = await sb.rpc('despachar_sonar', {
+      p_mid: String(mId), p_itinerary: itin, p_drvid: drv, p_utc: '', p_comments: com,
+    }));
+  } finally {
+    btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Despachar';
+  }
 
   const res = $('sonar-result'); res.hidden = false;
   if (error) { res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message; return; }
@@ -1246,6 +1292,8 @@ $('cancel-cancel').addEventListener('click', closeCancel);
 $('c-mov').addEventListener('change', updateCancelInfo);
 
 $('cancel-send').addEventListener('click', async () => {
+  const btn = $('cancel-send');
+  if (btn.dataset.busy === '1') return; // evita doble click
   const err = $('cancel-error'); err.hidden = true;
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('c-mov').value);
@@ -1264,9 +1312,13 @@ $('cancel-send').addEventListener('click', async () => {
   });
   if (!ok) return;
 
-  const btn = $('cancel-send'); btn.disabled = true; btn.textContent = 'Cancelando…';
-  const { data, error } = await sb.rpc('cancelar_sonar', { p_mid: String(mId), p_regid: regId, p_comments: com });
-  btn.disabled = false; btn.textContent = 'Cancelar despacho';
+  btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Cancelando…';
+  let data, error;
+  try {
+    ({ data, error } = await sb.rpc('cancelar_sonar', { p_mid: String(mId), p_regid: regId, p_comments: com }));
+  } finally {
+    btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Cancelar despacho';
+  }
 
   const res = $('cancel-result'); res.hidden = false;
   if (error) { res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message; return; }
