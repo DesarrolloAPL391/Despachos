@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#6366f1" />
+  <title>Despachos APL</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+  <!-- Pantalla de login -->
+  <section id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card">
+      <div class="brand">
+        <div class="brand-logo">🚍</div>
+        <h1>Despachos APL</h1>
+        <p>Combuses</p>
+      </div>
+      <label>Correo
+        <input type="email" id="email" autocomplete="username" required />
+      </label>
+      <label>Contraseña
+        <input type="password" id="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" id="login-btn">Iniciar sesión</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <button id="menu-toggle" class="icon-btn" aria-label="Menú">☰</button>
+      <span class="topbar-title">🚍 Despachos APL</span>
+      <span class="spacer"></span>
+      <span id="net-status" class="net-status"></span>
+      <span id="user-email" class="user-email"></span>
+      <button id="logout-btn" class="icon-btn" title="Cerrar sesión">⎋</button>
+    </header>
+
+    <div class="layout">
+      <nav id="sidebar" class="sidebar"></nav>
+
+      <main class="main">
+        <div id="table-view" class="table-view">
+          <div class="toolbar">
+            <h2 id="table-title">—</h2>
+            <span class="spacer"></span>
+            <span id="filters" class="filters"></span>
+            <input type="search" id="search" placeholder="Buscar…" />
+            <button id="refresh-btn" class="btn">↻</button>
+            <button id="syncfleet-btn" class="btn" hidden>🔄 Sincronizar flota</button>
+            <button id="dispatch-btn" class="btn" hidden>🛰️ Despachar</button>
+            <button id="dsonar-btn" class="btn" hidden>📡 Despachos SONAR</button>
+            <button id="import-btn" class="btn" hidden>📥 Importar</button>
+            <button id="perfil-new-btn" class="btn" hidden>➕ Crear acceso</button>
+            <button id="perfil-pass-btn" class="btn" hidden>🔑 Restablecer clave</button>
+            <button id="new-btn" class="btn btn-primary">+ Nuevo</button>
+          </div>
+
+          <div id="table-wrap" class="table-wrap">
+            <table id="data-table">
+              <thead><tr id="thead-row"></tr></thead>
+              <tbody id="tbody"></tbody>
+            </table>
+            <div id="empty" class="empty" hidden>Sin resultados</div>
+            <div id="loading" class="loading" hidden>Cargando…</div>
+          </div>
+
+          <div class="pager">
+            <button id="prev-btn" class="btn">‹ Anterior</button>
+            <span id="page-info" class="page-info"></span>
+            <button id="next-btn" class="btn">Siguiente ›</button>
+          </div>
+        </div>
+
+        <!-- Vista de mapa a pantalla completa -->
+        <div id="map-view" class="map-view" hidden>
+          <div id="map-filters" class="map-filters">
+            <button class="mf active" data-f="todos">Todos</button>
+            <button class="mf" data-f="mov">🟢 En movimiento</button>
+            <button class="mf" data-f="idle">🟡 Detenidos</button>
+            <button class="mf" data-f="off">⚪ Apagados</button>
+            <select id="map-ruta" class="map-ruta"><option value="">Todas las rutas</option></select>
+            <input type="search" id="map-search" class="map-search" placeholder="Buscar móvil(es) o placa…" />
+            <span class="spacer"></span>
+            <span id="map-count" class="page-info"></span>
+            <button id="map-refresh" class="btn">↻</button>
+          </div>
+          <div id="map" class="map"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Modal editor -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="modal-title">Registro</h3>
+        <button id="modal-close" class="icon-btn">✕</button>
+      </div>
+      <form id="edit-form" class="edit-form"></form>
+      <div class="modal-foot">
+        <p id="modal-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="modal-cancel" class="btn">Cancelar</button>
+        <button id="modal-save" class="btn btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Importar despachos por tabla -->
+  <div id="imp-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>📥 Importar despachos (por tabla)</h3>
+        <button id="imp-close" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form">
+        <label class="field full">
+          <span>Archivo de la programación (CSV o Excel)</span>
+          <input type="file" id="imp-file" accept=".csv,.xlsx,.xls" />
+        </label>
+        <div class="field full" style="color:var(--muted);font-size:12.5px">
+          Se conserva el <b>KEY</b> de cada despacho y <b>no</b> se duplican los que ya existan. Todos se marcan como tipo <b>TABLA</b>.
+        </div>
+        <div class="field full"><pre id="imp-result" class="sonar-result" hidden></pre></div>
+      </div>
+      <div class="modal-foot">
+        <p id="imp-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="imp-cancel" class="btn">Cerrar</button>
+        <button id="imp-run" class="btn btn-primary">Importar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Nuevo despacho (simplificado + SONAR) -->
+  <div id="nd-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>➕ Nuevo despacho</h3>
+        <button id="nd-close" class="icon-btn">✕</button>
+      </div>
+      <form id="nd-form" class="edit-form">
+        <label class="field"><span>Tipo *</span>
+          <select id="nd-tipo"><option value="TABLA">TABLA</option><option value="LIBRE">LIBRE</option></select>
+        </label>
+        <label class="field"><span>Fecha *</span><input type="date" id="nd-fecha" /></label>
+        <label class="field"><span>Hora</span><input type="time" id="nd-hora" /></label>
+        <label class="field"><span>Ruta / Itinerario *</span><select id="nd-ruta"></select></label>
+        <label class="field"><span>Móvil *</span><select id="nd-movil"></select></label>
+        <label class="field"><span>Conductor *</span><select id="nd-cond"></select></label>
+        <div class="field full sonar-info" id="nd-info" hidden></div>
+        <label class="field"><span>Despachador</span><select id="nd-desp"></select></label>
+        <label class="field full"><span>Comentario</span><input id="nd-com" /></label>
+        <div class="field full"><pre id="nd-result" class="sonar-result" hidden></pre></div>
+      </form>
+      <div class="modal-foot">
+        <p id="nd-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="nd-cancel" class="btn">Cancelar</button>
+        <button id="nd-save" class="btn btn-primary">Crear y despachar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Despachar (SONAR) -->
+  <div id="sonar-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>🛰️ Despachar en SONAR</h3>
+        <button id="sonar-close" class="icon-btn">✕</button>
+      </div>
+      <form id="sonar-form" class="edit-form">
+        <label class="field"><span>Móvil *</span><select id="s-mov"></select></label>
+        <label class="field"><span>Itinerario · ruta SONAR *</span><select id="s-itin"></select></label>
+        <label class="field"><span>Conductor · SONAR</span><select id="s-drv"></select></label>
+        <label class="field"><span>Comentarios</span><input id="s-com" /></label>
+        <div class="field full sonar-info" id="s-info" hidden></div>
+        <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>
+      </form>
+      <div class="modal-foot">
+        <p id="sonar-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="sonar-cancel" class="btn">Cerrar</button>
+        <button id="sonar-send" class="btn btn-primary">Despachar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Cancelar despacho (SONAR) -->
+  <div id="cancel-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>🛑 Cancelar despacho en SONAR</h3>
+        <button id="cancel-close" class="icon-btn">✕</button>
+      </div>
+      <form id="cancel-form" class="edit-form">
+        <label class="field"><span>Móvil *</span><select id="c-mov"></select></label>
+        <label class="field"><span>regId (registro SONAR)</span><input id="c-regid" placeholder="opcional" /></label>
+        <label class="field full"><span>Comentarios</span><input id="c-com" /></label>
+        <div class="field full sonar-info" id="c-info" hidden></div>
+        <div class="field full"><pre id="cancel-result" class="sonar-result" hidden></pre></div>
+      </form>
+      <div class="modal-foot">
+        <p id="cancel-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="cancel-cancel" class="btn">Cerrar</button>
+        <button id="cancel-send" class="btn btn-danger">Cancelar despacho</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Consultar despachos de SONAR por móvil -->
+  <div id="ds-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>📡 Despachos de SONAR</h3>
+        <button id="ds-close" class="icon-btn">✕</button>
+      </div>
+      <form id="ds-form" class="edit-form">
+        <label class="field"><span>Móvil *</span><select id="ds-mov"></select></label>
+        <label class="field"><span>Fecha</span><input type="date" id="ds-fecha" /></label>
+        <div class="field full sonar-info" id="ds-info" hidden></div>
+      </form>
+      <div id="ds-results" class="ds-results"></div>
+      <div class="modal-foot">
+        <p id="ds-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="ds-cancel" class="btn">Cerrar</button>
+        <button id="ds-run" class="btn btn-primary">Consultar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module" src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(console.error));
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# NUNCA subir credenciales ni datos personales
+credenciales_despachadores.csv
+*credenciales*
+horarios_usuarios.csv
+resumen.csv
+
+# datos/exportes sueltos (descomenta si quieres ignorar todos los CSV)
+# *.csv
+
+# basura del sistema / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+.vscode/
+.idea/
+node_modules/
