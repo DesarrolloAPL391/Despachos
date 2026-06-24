@@ -67,13 +67,11 @@ export const TABLES = {
       { key: 'fecha', label: 'Fecha' },
       { key: 'hora', label: 'Hora', m: true },
       { path: 'ruta.nombre', label: 'Ruta', m: true },
-      { path: 'vehp.numero', label: 'Móvil prog.' },
+      { path: 'vehp.numero', label: 'Móvil prog.', m: true },
       { path: 'veh.numero', label: 'Móvil', m: true },
-      { path: 'veh.placa', label: 'Placa' },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },
-      { key: 'estado', label: 'Estado', badge: true },
-      { key: 'sonar_regid', label: 'regId SONAR' },
+      // Placa, Estado (clasificación) y regId SONAR quedan solo en el detalle.
     ],
     fields: [
       // ----- General -----
@@ -83,6 +81,7 @@ export const TABLES = {
       { key: 'hora', label: 'Hora', type: 'time', section: 'General' },
       { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
       { key: 'estado_despacho', label: 'Estado del despacho', type: 'text', section: 'General' },
+      { key: 'sonar_regid', label: 'regId SONAR', type: 'text', section: 'General' },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General' },
       { key: 'cambio', label: 'Cambio', type: 'text', section: 'General' },
 

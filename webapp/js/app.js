@@ -330,32 +330,31 @@ function renderTable(cfg, rows, count) {
         }));
       } else {
         if (cfg.dispatchable) {
-          const dsp = Object.assign(document.createElement('button'), { textContent: '🛰️' });
+          const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', textContent: '🛰️' });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
-            dsp.disabled = true; dsp.style.opacity = '0.35';
+            dsp.disabled = true;
           } else {
             dsp.title = 'Despachar en SONAR';
             dsp.onclick = () => openSonar(row);
           }
           act.appendChild(dsp);
-          const can = Object.assign(document.createElement('button'), { textContent: '🛑' });
+          const can = Object.assign(document.createElement('button'), { className: 'act act-stop', textContent: '🛑' });
           if (row.sonar_regid) {
             can.title = 'Cancelar en SONAR';
             can.onclick = () => openCancelar(row);
           } else {
             can.title = 'Sin regId: no se puede cancelar';
             can.disabled = true;
-            can.style.opacity = '0.35';
           }
           act.appendChild(can);
         }
         // Editar/eliminar: solo admin. El despachador solo despacha/cancela.
         if (isAdmin()) {
-          const ed = Object.assign(document.createElement('button'), { textContent: '✏️', title: 'Editar' });
+          const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', textContent: '✏️', title: 'Editar' });
           ed.onclick = () => openEditor(row);
-          const del = Object.assign(document.createElement('button'), { textContent: '🗑️', title: 'Eliminar' });
-          del.className = 'btn-danger'; del.onclick = () => deleteRow(row);
+          const del = Object.assign(document.createElement('button'), { className: 'act act-del', textContent: '🗑️', title: 'Eliminar' });
+          del.onclick = () => deleteRow(row);
           act.append(ed, del);
         }
       }
