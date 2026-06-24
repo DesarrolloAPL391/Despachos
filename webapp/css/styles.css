@@ -372,3 +372,11 @@ tbody tr:hover { background: #faf8ff; }
   .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 999; }
   .scrim[hidden] { display: none; }
 }
+
+/* Asignar puesto: lista de despachadores con checkbox */
+.check-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 4px; background: #fff; }
+.check-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-weight: 400; }
+.check-item:hover { background: rgba(0,0,0,.04); }
+.check-item input { width: 18px; height: 18px; flex: none; }
+.check-item span { font-size: .92rem; line-height: 1.2; }
+.link-btn { background: none; border: none; color: var(--primary, #ED1C24); font-size: .82rem; cursor: pointer; padding: 0 4px; text-decoration: underline; }

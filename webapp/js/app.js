@@ -385,57 +385,84 @@ $('count-btn').addEventListener('click', openContador);
 $('cnt-close').addEventListener('click', closeContador);
 $('cnt-cancel').addEventListener('click', closeContador);
 
-// ---------- Asignar puesto del día (admin) ----------
+// ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
 async function openAsignarPuesto() {
   $('pst-error').hidden = true;
   const r = $('pst-result'); r.hidden = true; r.textContent = '';
   $('pst-info').hidden = true;
-  $('pst-fecha').value = hoyLocal();
+  const hoy = hoyLocal();
+  $('pst-desde').value = hoy; $('pst-hasta').value = hoy;
   const [dp, pp] = await Promise.all([
     sb.from('perfiles').select('email,nombre').eq('rol', 'despachador').eq('activo', true).order('nombre'),
     sb.from('puestos').select('nombre').eq('activo', true).order('nombre'),
   ]);
-  fillSelect($('pst-desp'), (dp.data || []).map((d) => [d.email, `${d.nombre || d.email} · ${d.email}`]), 'Selecciona despachador');
+  const list = $('pst-desp-list'); list.innerHTML = '';
+  (dp.data || []).forEach((d) => {
+    const lbl = document.createElement('label'); lbl.className = 'check-item';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = d.email; cb.className = 'pst-cb';
+    cb.addEventListener('change', updatePstInfo);
+    const span = document.createElement('span'); span.textContent = `${d.nombre || d.email} · ${d.email}`;
+    lbl.append(cb, span); list.appendChild(lbl);
+  });
   fillSelect($('pst-puesto'), (pp.data || []).map((p) => [p.nombre, p.nombre]), 'Selecciona puesto');
-  enhanceById('pst-desp', 'pst-puesto');
+  enhanceById('pst-puesto');
   await updatePstInfo();
   $('pst-modal').hidden = false;
 }
+function pstSeleccionados() {
+  return Array.from(document.querySelectorAll('#pst-desp-list .pst-cb:checked')).map((c) => c.value);
+}
+function pstDiasRango() {
+  const d = $('pst-desde').value, h = $('pst-hasta').value;
+  if (!d || !h || h < d) return 0;
+  return Math.round((new Date(h) - new Date(d)) / 86400000) + 1;
+}
 async function updatePstInfo() {
-  const email = $('pst-desp').value, fecha = $('pst-fecha').value;
+  const emails = pstSeleccionados();
+  const dias = pstDiasRango();
   const info = $('pst-info');
-  if (!email || !fecha) { info.hidden = true; return; }
-  const { data } = await sb.from('horarios').select('observacion').eq('email', email).eq('fecha', fecha).maybeSingle();
+  if (!emails.length || !dias) { info.hidden = true; return; }
   info.hidden = false; info.className = 'field full sonar-info';
-  info.textContent = data?.observacion ? `📌 Ese día tiene: ${data.observacion}` : 'Ese día no tiene puesto asignado.';
+  info.textContent = `Se aplicará a ${emails.length} despachador(es) × ${dias} día(s) = ${emails.length * dias} asignación(es).`;
 }
 function closeAsignarPuesto() { $('pst-modal').hidden = true; }
 $('pst-close').addEventListener('click', closeAsignarPuesto);
 $('pst-cancel').addEventListener('click', closeAsignarPuesto);
-$('pst-desp').addEventListener('change', updatePstInfo);
-$('pst-fecha').addEventListener('change', updatePstInfo);
+$('pst-desde').addEventListener('change', updatePstInfo);
+$('pst-hasta').addEventListener('change', updatePstInfo);
+$('pst-all').addEventListener('click', () => {
+  const cbs = Array.from(document.querySelectorAll('#pst-desp-list .pst-cb'));
+  const allOn = cbs.every((c) => c.checked);
+  cbs.forEach((c) => { c.checked = !allOn; });
+  $('pst-all').textContent = allOn ? 'Seleccionar todos' : 'Quitar selección';
+  updatePstInfo();
+});
 $('pst-save').addEventListener('click', async () => {
   const btn = $('pst-save'); if (btn.dataset.busy === '1') return;
   const err = $('pst-error'); err.hidden = true;
-  const email = $('pst-desp').value, fecha = $('pst-fecha').value, puesto = $('pst-puesto').value;
-  if (!email || !fecha || !puesto) { err.textContent = 'Despachador, fecha y puesto son obligatorios.'; err.hidden = false; return; }
-  const despLabel = $('pst-desp').selectedOptions[0]?.textContent || email;
+  const emails = pstSeleccionados();
+  const desde = $('pst-desde').value, hasta = $('pst-hasta').value, puesto = $('pst-puesto').value;
+  if (!emails.length || !desde || !hasta || !puesto) {
+    err.textContent = 'Selecciona al menos un despachador, el rango de fechas y el puesto.'; err.hidden = false; return;
+  }
+  if (hasta < desde) { err.textContent = 'La fecha "Hasta" no puede ser anterior a "Desde".'; err.hidden = false; return; }
+  const dias = pstDiasRango();
+  const rango = desde === hasta ? `el ${desde}` : `del ${desde} al ${hasta} (${dias} días)`;
   const ok = await confirmAction({
     title: '¿Asignar puesto?',
-    lead: `Se asignará el puesto del ${fecha}:`,
-    message: `Despachador: ${despLabel}\nPuesto:      ${puesto}`,
+    lead: `Se asignará el puesto ${rango}:`,
+    message: `Despachadores: ${emails.length}\nPuesto:        ${puesto}\nTotal:         ${emails.length * dias} asignación(es)`,
     okLabel: 'Asignar',
   });
   if (!ok) return;
   btn.dataset.busy = '1'; btn.disabled = true;
   let res;
-  try { res = await sb.rpc('admin_asignar_puesto', { p_email: email, p_fecha: fecha, p_puesto: puesto }); }
+  try { res = await sb.rpc('admin_asignar_puesto_rango', { p_emails: emails, p_desde: desde, p_hasta: hasta, p_puesto: puesto }); }
   finally { btn.dataset.busy = '0'; btn.disabled = false; }
   if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
   const r = $('pst-result'); r.hidden = false; r.className = 'sonar-result ok';
-  r.textContent = '✅ Puesto asignado. El despachador lo verá en menos de 1 minuto (o al volver a la app).';
+  r.textContent = `✅ ${res.data} asignación(es) guardada(s). Los despachadores lo verán en menos de 1 minuto (o al volver a la app).`;
   toast('Puesto asignado', 'ok');
-  await updatePstInfo();
   if (current === 'horarios') loadData();
 });
 
