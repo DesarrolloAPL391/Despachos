@@ -1005,6 +1005,7 @@ async function doDispatch(intent) {
     vehiculo_id: intent.vehId, conductor_id, codigo: intent.drvCodigo || null,
     despachador_id: intent.despId, estado_despacho: 'DESPACHADO', observacion: intent.com || null,
     realizo_programado: true, // despacho manual (LIBRE): el carro hizo el viaje
+    despachado_en: new Date().toISOString(),
   };
   const ins = await sb.from('despachos').upsert(payload, { onConflict: 'id' });
   if (ins.error) throw ins.error;
@@ -1038,6 +1039,18 @@ $('nd-save').addEventListener('click', async () => {
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
     despId: Number($('nd-desp').value) || null, com: $('nd-com').value.trim(),
   };
+
+  // Aviso de doble despacho por tiempo (< 20 min)
+  const minDesde = await minutosUltimoDespacho(Number(vehVal));
+  if (minDesde !== null && minDesde < 20) {
+    const seguir = await confirmAction({
+      title: '⚠️ Móvil despachado hace poco',
+      lead: `El móvil ${vrow?.numero || ''} fue despachado hace ${minDesde} min.`,
+      message: '¿Desea despachar nuevamente?',
+      okLabel: 'Despachar de nuevo', danger: true,
+    });
+    if (!seguir) return;
+  }
 
   // Confirmación antes de crear/despachar
   const ok = await confirmAction({
@@ -1095,6 +1108,27 @@ async function gpsInfoFor(movil) {
   return gpsMap[movil];
 }
 async function gpsIdFor(movil) { const r = await gpsInfoFor(movil); return r?.tracker_id; }
+
+// Minutos desde el último despacho de un móvil (mirando despachos + tablas de puesto).
+// Devuelve null si no tiene despacho reciente registrado.
+async function minutosUltimoDespacho(vehId) {
+  if (!vehId) return null;
+  const tablas = ['despachos', ...puestoTables];
+  let masReciente = null;
+  await Promise.all(tablas.map(async (t) => {
+    const { data } = await sb.from(t).select('despachado_en')
+      .eq('vehiculo_id', vehId).eq('estado_despacho', 'DESPACHADO')
+      .not('despachado_en', 'is', null)
+      .order('despachado_en', { ascending: false }).limit(1);
+    const r = (data || [])[0];
+    if (r?.despachado_en) {
+      const ms = new Date(r.despachado_en).getTime();
+      if (!masReciente || ms > masReciente) masReciente = ms;
+    }
+  }));
+  if (!masReciente) return null;
+  return Math.floor((Date.now() - masReciente) / 60000);
+}
 
 let itinList = null;
 async function loadItinerarios() {
@@ -1178,18 +1212,16 @@ $('sonar-send').addEventListener('click', async () => {
   const g = await gpsInfoFor(vr.numero); const mId = g?.tracker_id;
   if (!mId) { err.textContent = 'Ese móvil no tiene Id GPS en SONAR.'; err.hidden = false; return; }
 
-  // Aviso de DOBLE DESPACHO: si la fila ya tiene regId (revisa el estado actual)
-  if (sonarRow?.id) {
-    const { data: cur } = await sb.from(sonarTable).select('sonar_regid').eq('id', sonarRow.id).maybeSingle();
-    if (cur && cur.sonar_regid) {
-      const seguir = await confirmAction({
-        title: '⚠️ Este despacho ya fue realizado',
-        lead: `Ya tiene un despacho activo (regId ${cur.sonar_regid}).`,
-        message: 'Si continúas, se enviará OTRA vez a SONAR (doble despacho).',
-        okLabel: 'Despachar de nuevo', danger: true,
-      });
-      if (!seguir) { closeSonar(); loadData(); return; }
-    }
+  // Aviso de DOBLE DESPACHO por tiempo: si el móvil fue despachado hace menos de 20 min
+  const minDesde = await minutosUltimoDespacho(vr.id);
+  if (minDesde !== null && minDesde < 20) {
+    const seguir = await confirmAction({
+      title: '⚠️ Móvil despachado hace poco',
+      lead: `El móvil ${vr.numero} fue despachado hace ${minDesde} min.`,
+      message: '¿Desea despachar nuevamente?',
+      okLabel: 'Despachar de nuevo', danger: true,
+    });
+    if (!seguir) return;
   }
 
   // Confirmación antes de despachar
@@ -1234,6 +1266,7 @@ $('sonar-send').addEventListener('click', async () => {
         vehiculo_programado_id: progId || newVehId,
         // Si despacharon con OTRO carro (reemplazo), el carro programado NO realizó el viaje
         realizo_programado: !(progId && newVehId && Number(progId) !== Number(newVehId)),
+        despachado_en: new Date().toISOString(), // hora del despacho (para el aviso de 20 min)
       };
       // Queda registrado quién despachó (el usuario que tiene la sesión)
       if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id;
