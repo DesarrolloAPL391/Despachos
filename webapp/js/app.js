@@ -1471,6 +1471,17 @@ function mapPopup(r) {
 async function openVehSheet(r) {
   const sheet = $('veh-sheet'), body = $('veh-sheet-body');
   body.innerHTML = mapPopup(r);
+  // Acciones directas sobre el móvil (solo admin: despachar/consultar SONAR)
+  if (isAdmin()) {
+    const acts = document.createElement('div');
+    acts.className = 'veh-sheet-acts';
+    const bDsp = Object.assign(document.createElement('button'), { className: 'btn btn-primary', textContent: '🛰️ Despachar' });
+    bDsp.onclick = () => despacharDesdeMapa(r.movil);
+    const bCon = Object.assign(document.createElement('button'), { className: 'btn', textContent: '📡 Consultar SONAR' });
+    bCon.onclick = () => consultarDesdeMapa(r.movil);
+    acts.append(bDsp, bCon);
+    body.appendChild(acts);
+  }
   sheet.hidden = false;
   requestAnimationFrame(() => sheet.classList.add('open'));
   // Ruta actual en SONAR (1 llamada)
@@ -1485,11 +1496,42 @@ async function openVehSheet(r) {
 function closeVehSheet() {
   const sheet = $('veh-sheet');
   if (!sheet || sheet.hidden) return;
+  sheet.style.transform = '';
   sheet.classList.remove('open');
   setTimeout(() => { sheet.hidden = true; }, 250);
 }
+// Despachar el móvil del panel: abre el modal SONAR con ese móvil preseleccionado
+async function despacharDesdeMapa(movil) {
+  closeVehSheet();
+  await openSonar(null);
+  const veh = await loadVehiculos();
+  const vr = veh.find((v) => String(v.numero) === String(movil));
+  if (vr) { $('s-mov').value = String(vr.id); $('s-mov')._comboSync && $('s-mov')._comboSync(); await updateSonarInfo(); }
+}
+// Consultar en SONAR el móvil del panel
+async function consultarDesdeMapa(movil) {
+  closeVehSheet();
+  await openDsonar();
+  $('ds-mov').value = String(movil); $('ds-mov')._comboSync && $('ds-mov')._comboSync();
+}
 $('veh-sheet-close')?.addEventListener('click', closeVehSheet);
-$('veh-sheet-head')?.addEventListener('click', (e) => { if (e.target.id !== 'veh-sheet-close') closeVehSheet(); });
+
+// Deslizar hacia abajo (en la barra superior del panel) para cerrar
+(() => {
+  const sheet = $('veh-sheet'), head = $('veh-sheet-head');
+  if (!sheet || !head) return;
+  let y0 = null, drag = false;
+  head.addEventListener('touchstart', (e) => { y0 = e.touches[0].clientY; drag = true; sheet.style.transition = 'none'; }, { passive: true });
+  head.addEventListener('touchmove', (e) => { if (!drag) return; const dy = e.touches[0].clientY - y0; if (dy > 0) sheet.style.transform = `translateY(${dy}px)`; }, { passive: true });
+  head.addEventListener('touchend', (e) => {
+    if (!drag) return; drag = false; sheet.style.transition = '';
+    const dy = e.changedTouches[0].clientY - y0;
+    sheet.style.transform = '';
+    if (dy > 90) closeVehSheet();
+  });
+  // En escritorio: clic en la barra (no en la ✕) también cierra
+  head.addEventListener('click', (e) => { if (e.target.id !== 'veh-sheet-close') closeVehSheet(); });
+})();
 
 let lastUbic = [], mapFilter = 'todos', routeFilter = '', vehSearch = [];
 function fillRutaSelect() {
