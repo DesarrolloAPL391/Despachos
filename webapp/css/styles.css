@@ -39,6 +39,7 @@ input, select, textarea { font: inherit; }
 .brand-img { width: 100%; max-width: 230px; height: auto; margin: 0 auto; display: block; }
 .brand h1 { margin: 6px 0 0; font-size: 22px; }
 .brand p { margin: 2px 0 0; color: var(--muted); }
+.brand-slogan { font-style: italic; font-weight: 700; color: var(--primary); font-size: 15px; margin: 2px 0 0; }
 .login-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .login-card input {
   padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text);
@@ -53,19 +54,19 @@ input, select, textarea { font: inherit; }
 /* ---------- App layout ---------- */
 .app { min-height: 100%; display: flex; flex-direction: column; }
 .topbar {
-  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 10px; padding: 7px 14px;
   background: var(--grad); color: #fff; box-shadow: 0 4px 20px rgba(216,31,42,.30);
   position: sticky; top: 0; z-index: 20;
 }
 .topbar-title { font-weight: 700; }
 .topbar-logo { background: #fff; border-radius: 8px; padding: 3px 7px; display: inline-flex; align-items: center; box-shadow: var(--shadow-sm); }
-.topbar-logo img { height: 22px; display: block; }
+.topbar-logo img { height: 20px; display: block; }
 .user-email { font-size: 13px; opacity: .9; }
 .app-ver { font-size: 11px; font-weight: 700; opacity: .85; background: rgba(255,255,255,.18); padding: 2px 8px; border-radius: 999px; }
 .spacer { flex: 1; }
 .icon-btn {
   background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 8px;
-  width: 38px; height: 38px; font-size: 18px;
+  width: 34px; height: 34px; font-size: 17px;
 }
 .layout { flex: 1; display: flex; min-height: 0; min-width: 0; }
 .sidebar {
@@ -278,7 +279,7 @@ tbody tr:hover { background: #faf8ff; }
   /* Menú lateral: arranca debajo de la barra superior y con su propio scroll */
   .sidebar {
     position: fixed; top: 0; bottom: 0; left: 0; width: 78%; max-width: 280px; z-index: 1000;
-    padding-top: 70px; transform: translateX(-100%); transition: transform .2s;
+    padding-top: 56px; transform: translateX(-100%); transition: transform .2s;
     box-shadow: var(--shadow); overflow-y: auto;
   }
   .sidebar.open { transform: translateX(0); }
@@ -286,7 +287,7 @@ tbody tr:hover { background: #faf8ff; }
 
   /* Menos margen para aprovechar el ancho del teléfono */
   .main { padding: 10px; }
-  .topbar { padding: 10px 12px; }
+  .topbar { padding: 6px 12px; }
   .topbar-title { font-size: 15px; }
   .user-email { display: none; }
   .toolbar { gap: 8px; }
