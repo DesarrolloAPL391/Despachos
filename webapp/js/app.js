@@ -277,11 +277,14 @@ function renderTable(cfg, rows, count) {
           }
           act.appendChild(can);
         }
-        const ed = Object.assign(document.createElement('button'), { textContent: '✏️', title: 'Editar' });
-        ed.onclick = () => openEditor(row);
-        const del = Object.assign(document.createElement('button'), { textContent: '🗑️', title: 'Eliminar' });
-        del.className = 'btn-danger'; del.onclick = () => deleteRow(row);
-        act.append(ed, del);
+        // Editar/eliminar: solo admin. El despachador solo despacha/cancela.
+        if (isAdmin()) {
+          const ed = Object.assign(document.createElement('button'), { textContent: '✏️', title: 'Editar' });
+          ed.onclick = () => openEditor(row);
+          const del = Object.assign(document.createElement('button'), { textContent: '🗑️', title: 'Eliminar' });
+          del.className = 'btn-danger'; del.onclick = () => deleteRow(row);
+          act.append(ed, del);
+        }
       }
       tr.appendChild(act);
     }
@@ -566,7 +569,7 @@ function hoyLocal() {
 async function openNuevoDespacho() {
   $('nd-error').hidden = true;
   const r = $('nd-result'); r.hidden = true; r.textContent = '';
-  $('nd-tipo').value = 'TABLA';
+  $('nd-tipo').value = 'LIBRE'; // el despacho manual siempre es LIBRE (TABLA solo viene de importación)
   $('nd-fecha').value = hoyLocal();
   $('nd-hora').value = ''; $('nd-com').value = '';
 
@@ -650,7 +653,7 @@ $('nd-save').addEventListener('click', async () => {
 
   const intent = {
     id: 'APL' + Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase(),
-    tipo: $('nd-tipo').value, fecha: $('nd-fecha').value || null, hora: $('nd-hora').value || null,
+    tipo: 'LIBRE', fecha: $('nd-fecha').value || null, hora: $('nd-hora').value || null,
     itid, itinNombre: itin?.nombre || null,
     vehId: Number(vehVal), mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
@@ -751,7 +754,7 @@ async function openSonar(row) {
   fillSelect($('s-drv'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
 
   if (row) {
-    const movil = row.veh?.numero;
+    const movil = row.veh?.numero || row.vehp?.numero; // real, o el programado (TABLA importada)
     if (movil) { const vr = veh.find((v) => String(v.numero) === String(movil)); if (vr) $('s-mov').value = vr.id; }
     const ruta = (row.ruta?.nombre || row.rutap?.nombre || '').toLowerCase();
     if (ruta) { const m = its.find((i) => (i.nombre || '').toLowerCase() === ruta); if (m) $('s-itin').value = m.itid; }
