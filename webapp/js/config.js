@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v83';
+export const APP_VERSION = 'v84';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -52,6 +52,7 @@ const IMPORT_MAP_DESPACHOS = {
 // propios de las tablas: "viaje programado", "nombre de conductor", etc.)
 const IMPORT_MAP_TABLAS = {
   ...IMPORT_MAP_DESPACHOS,
+  'tabla': 'tabla_destino', 'tabla destino': 'tabla_destino', // recordatorio/validación de a qué tabla va
   'viaje programado': 'ruta_prog',
   'hora de salida programada': 'hora_prog', 'hora de salida programado': 'hora_prog', 'hora de despacho programada': 'hora_prog',
   'nombre de conductor': 'conductor', 'nombre conductor': 'conductor',
@@ -79,9 +80,9 @@ export const TABLES = {
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
     select: '*, ruta:ruta_id(nombre), rutap:ruta_programada_id(nombre), veh:vehiculo_id(numero,placa), vehp:vehiculo_programado_id(numero,placa), cond:conductor_id(nombre), desp:despachador_id(nombre), aud:auditor_id(nombre)',
     searchCols: ['id', 'estado_despacho', 'estado'],
-    defaultOrder: { col: 'fecha', asc: false },
+    defaultOrder: { col: 'fecha', asc: false, then: { col: 'hora', asc: true } },
     filters: [
-      { col: 'fecha', label: 'Fecha', type: 'daterange' },
+      { col: 'fecha', label: 'Fecha', type: 'date' },
       { col: 'ruta_id', label: 'Ruta', type: 'checklist', source: 'rutas' },
       { col: 'tipo', label: 'Tipo', options: ['TABLA', 'LIBRE'] },
       { col: 'estado_despacho', label: 'Despacho', options: ['DESPACHADO', 'NO REALIZA EL VIAJE', 'CANCELADO'] },
@@ -209,12 +210,12 @@ export const TABLES = {
       // Estado y Total de pasajeros: ocultos. Hora de cierre: automática (momento de guardado).
 
       // ----- Conductor -----
-      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Conductor' },
+      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Conductor', qr: true },
       { key: 'doble_turno', label: '¿Doble turno? (otro conductor en otra jornada)', type: 'boolean', section: 'Conductor' },
       // Las jornadas y el 2.º conductor solo aparecen si es doble turno
       { key: 'jornada1_inicio', label: 'Jornada 1 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada1_fin', label: 'Jornada 1 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
-      { key: 'conductor2_id', label: 'Conductor jornada 2 (SONAR)', type: 'sonardrv', nameFrom: 'cond2.nombre', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
+      { key: 'conductor2_id', label: 'Conductor jornada 2 (SONAR)', type: 'sonardrv', nameFrom: 'cond2.nombre', section: 'Conductor', qr: true, showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada2_inicio', label: 'Jornada 2 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada2_fin', label: 'Jornada 2 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
     ],
@@ -473,9 +474,14 @@ export function configTablaPuesto(label) {
     });
   // Las columnas de control (auditCol) tampoco aplican aquí
   const columns = TABLES.despachos.columns.filter((c) => !c.auditCol);
+  // Filtro de fecha: una sola fecha (no rango) y se indica cuál se muestra
+  const filters = TABLES.despachos.filters.map((f) =>
+    (f.col === 'fecha' && f.type === 'daterange') ? { col: 'fecha', label: 'Fecha', type: 'date' } : f);
+  // Orden: por día (más reciente primero) y dentro del día por HORA ascendente
+  const defaultOrder = { col: 'fecha', asc: false, then: { col: 'hora', asc: true } };
   // Las tablas por puesto NO tienen relación con `auditores`: se quita el embed para no romper la carga
   const select = TABLES.despachos.select.replace(', aud:auditor_id(nombre)', '');
   // Importación propia de la tabla por puesto (inserta en SU tabla, no en despachos)
   const importar = { rpc: 'importar_tabla_puesto', map: IMPORT_MAP_TABLAS, keyField: 'fecha', tablaParam: true, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' };
-  return { ...TABLES.despachos, fields, columns, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false };
+  return { ...TABLES.despachos, fields, columns, filters, defaultOrder, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false };
 }

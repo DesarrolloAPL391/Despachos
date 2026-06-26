@@ -118,6 +118,11 @@ function fmt(v) {
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+// Convierte "YYYY-MM-DD" → "DD/MM/AAAA" (para mostrar la fecha del filtro)
+function fechaLegible(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v || '');
+}
 // Formatea un timestamp (ISO) a fecha+hora local legible: "YYYY-MM-DD HH:MM"
 function fmtFechaHora(v) {
   const d = new Date(v);
@@ -215,6 +220,7 @@ async function refreshContext() {
 async function showApp(user) {
   $('login-screen').hidden = true;
   $('app').hidden = false;
+  await refrescarFechaServidor(); // fecha de hoy del servidor (autoridad para los despachos)
   // Cargar contexto/rol del usuario
   try { const { data } = await sb.rpc('mi_contexto'); CTX = data || null; }
   catch { CTX = null; }
@@ -302,6 +308,10 @@ function selectTable(name) {
   $('table-view').hidden = false;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
+  // Si la tabla tiene filtro de fecha (calendario), arranca mostrando el DÍA ACTUAL
+  // (no "todas las fechas"): así se ve el día completo y nunca topa el límite de filas.
+  const fDate = (TABLES[name].filters || []).find((f) => f.type === 'date');
+  if (fDate) filters[fDate.col] = hoyServidor();
   $('table-title').textContent = TABLES[name].label;
   // "Despachar" de la barra: oculto en todas partes. El despacho se hace con el botón
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
@@ -312,6 +322,8 @@ function selectTable(name) {
   $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
+  // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
+  $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate || isAuditor(); // sin "+ Nuevo" donde no aplica (el auditor no crea)
@@ -325,6 +337,10 @@ function renderFilters() {
   Object.keys(_checkOptsCache).forEach((k) => delete _checkOptsCache[k]); // refresca opciones por si cambió el puesto
   const defs = TABLES[current].filters || [];
   for (const f of defs) {
+    if (f.type === 'date') { // calendario propio: sombrea los días con programación cargada
+      cont.appendChild(buildDateCalendar(f));
+      continue;
+    }
     if (f.type === 'daterange') {
       const wrap = document.createElement('span');
       wrap.className = 'filter-date';
@@ -433,10 +449,87 @@ function buildChecklistFilter(f) {
   panel.addEventListener('click', (e) => e.stopPropagation());
   return wrap;
 }
-// Cierra los paneles de checklist al hacer clic fuera
+// Cierra los paneles de checklist y el calendario al hacer clic fuera
 document.addEventListener('click', () => {
-  document.querySelectorAll('.filter-check-panel').forEach((p) => { p.hidden = true; });
+  document.querySelectorAll('.filter-check-panel, .cal-panel').forEach((p) => { p.hidden = true; });
 });
+
+// Calendario propio para el filtro de fecha: sombrea los días que tienen programación cargada
+function buildDateCalendar(f) {
+  const wrap = document.createElement('span');
+  wrap.className = 'filter-cal';
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'cal-btn';
+  const panel = document.createElement('div');
+  panel.className = 'cal-panel'; panel.hidden = true;
+  wrap.append(Object.assign(document.createElement('span'), { className: 'filter-lbl', textContent: f.label }), btn, panel);
+
+  const MES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const DOW = ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'];
+  const pad = (n) => String(n).padStart(2, '0');
+  let dias = new Set(); let cargado = false; let view = null;
+  const sel = () => filters[f.col] || '';
+  const refreshBtn = () => { btn.textContent = sel() ? '📅 ' + fechaLegible(sel()) : '📅 todas las fechas'; btn.classList.toggle('active', !!sel()); };
+  refreshBtn();
+
+  function initView() {
+    const s = sel() || hoyServidor();
+    const [y, m] = s.split('-').map(Number);
+    view = { y, m: m - 1 };
+  }
+  async function cargarDias() {
+    try { const { data } = await sb.rpc('dias_con_datos', { p_tabla: current }); dias = new Set((data || []).map((d) => d.fecha)); }
+    catch (e) { dias = new Set(); }
+    cargado = true;
+  }
+  function render() {
+    panel.innerHTML = '';
+    const head = document.createElement('div'); head.className = 'cal-head';
+    const prev = Object.assign(document.createElement('button'), { className: 'cal-nav', textContent: '‹', type: 'button' });
+    const title = Object.assign(document.createElement('span'), { className: 'cal-title', textContent: `${MES[view.m]} ${view.y}` });
+    const next = Object.assign(document.createElement('button'), { className: 'cal-nav', textContent: '›', type: 'button' });
+    prev.onclick = () => { view.m--; if (view.m < 0) { view.m = 11; view.y--; } render(); };
+    next.onclick = () => { view.m++; if (view.m > 11) { view.m = 0; view.y++; } render(); };
+    head.append(prev, title, next); panel.appendChild(head);
+
+    const grid = document.createElement('div'); grid.className = 'cal-grid';
+    DOW.forEach((d) => grid.appendChild(Object.assign(document.createElement('div'), { className: 'cal-dow', textContent: d })));
+    let start = new Date(view.y, view.m, 1).getDay(); start = (start === 0) ? 6 : start - 1; // Lun=0 … Dom=6
+    const ndays = new Date(view.y, view.m + 1, 0).getDate();
+    for (let i = 0; i < start; i++) grid.appendChild(Object.assign(document.createElement('div'), { className: 'cal-day cal-empty' }));
+    const hoy = hoyServidor();
+    for (let d = 1; d <= ndays; d++) {
+      const iso = `${view.y}-${pad(view.m + 1)}-${pad(d)}`;
+      const cell = Object.assign(document.createElement('button'), { className: 'cal-day', textContent: d, type: 'button' });
+      if (dias.has(iso)) cell.classList.add('cal-has-data');
+      if (iso === hoy) cell.classList.add('cal-today');
+      if (iso === sel()) cell.classList.add('cal-sel');
+      cell.onclick = () => { filters[f.col] = iso; refreshBtn(); panel.hidden = true; page = 0; loadData(); };
+      grid.appendChild(cell);
+    }
+    panel.appendChild(grid);
+
+    const foot = document.createElement('div'); foot.className = 'cal-foot';
+    const leg = document.createElement('span'); leg.className = 'cal-legend'; leg.innerHTML = '<i></i> con programación';
+    const clr = Object.assign(document.createElement('button'), { className: 'link-btn', textContent: 'Todas las fechas', type: 'button' });
+    clr.onclick = () => { delete filters[f.col]; refreshBtn(); panel.hidden = true; page = 0; loadData(); };
+    foot.append(leg, clr); panel.appendChild(foot);
+  }
+
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const open = panel.hidden;
+    document.querySelectorAll('.filter-check-panel, .cal-panel').forEach((p) => { p.hidden = true; });
+    if (open) {
+      initView();
+      if (!cargado) { btn.textContent = '📅 …'; await cargarDias(); refreshBtn(); }
+      render();
+      panel.hidden = false;
+    }
+  });
+  panel.addEventListener('click', (e) => e.stopPropagation());
+  return wrap;
+}
 
 // Aplica búsqueda + filtros activos + restricción por rol a una consulta (reutilizable)
 function applyQueryFilters(qy) {
@@ -468,6 +561,7 @@ function applyQueryFilters(qy) {
 async function openContador() {
   $('cnt-results').innerHTML = '<div class="loading">Calculando…</div>';
   const partes = [];
+  if (filters['fecha']) partes.push('fecha ' + filters['fecha']);
   if (filters['fecha::gte']) partes.push('desde ' + filters['fecha::gte']);
   if (filters['fecha::lte']) partes.push('hasta ' + filters['fecha::lte']);
   if (filters['tipo']) partes.push('tipo ' + filters['tipo']);
@@ -553,8 +647,9 @@ async function marcarIngreso() {
   b.dataset.busy = '1'; b.disabled = true;
   try {
     const email = miCorreo();
+    await refrescarFechaServidor();
     // ¿Ya hay una jornada de hoy sin salida?
-    const { data: abiertas } = await sb.from('asistencia').select('id').eq('email', email).eq('fecha', hoyLocal()).is('hora_salida', null).limit(1);
+    const { data: abiertas } = await sb.from('asistencia').select('id').eq('email', email).eq('fecha', hoyServidor()).is('hora_salida', null).limit(1);
     if (abiertas && abiertas.length) { toast('Ya tienes un ingreso sin salida. Marca la salida primero.', 'err'); return; }
     const ubic = await pasosMarcacion('¿Marcar INGRESO?', `Despachador: ${CTX?.nombre || email}\nTipo:        INGRESO`, 'Marcar ingreso', false);
     if (!ubic) return;
@@ -563,7 +658,7 @@ async function marcarIngreso() {
     let res;
     try {
       res = await sb.from('asistencia').insert({
-        email, nombre: CTX?.nombre || null, fecha: hoyLocal(),
+        email, nombre: CTX?.nombre || null, fecha: hoyServidor(),
         hora_ingreso: ahoraLocal().slice(11, 19), ubic_ingreso: ubic, ingreso_en: ahora.toISOString(),
       });
     } finally { hideBusy(); }
@@ -618,7 +713,7 @@ async function checkAsistenciaPendiente() {
   const banner = $('asis-banner'); if (!banner) return;
   if (CTX?.rol !== 'despachador') { banner.hidden = true; return; } // solo despachadores
   try {
-    const { data } = await sb.from('asistencia').select('id').eq('email', miCorreo()).eq('fecha', hoyLocal()).limit(1);
+    const { data } = await sb.from('asistencia').select('id').eq('email', miCorreo()).eq('fecha', hoyServidor()).limit(1);
     banner.hidden = !!(data && data.length); // si ya marcó hoy → ocultar; si no → mostrar
   } catch { /* si falla la consulta, no estorbar */ }
 }
@@ -722,7 +817,11 @@ $('next-btn').addEventListener('click', () => { page++; loadData(); });
 
 async function loadData() {
   const cfg = TABLES[current];
+  refrescarFechaServidor(); // mantiene al día la fecha del servidor (sin bloquear el render)
   $('loading').hidden = false; $('empty').hidden = true;
+  // Día completo: si hay un día seleccionado en el calendario, se muestra TODA la
+  // programación de ese día sin paginar.
+  const diaSel = !!filters['fecha'] && (cfg.filters || []).some((f) => f.col === 'fecha' && f.type === 'date');
   const from = page * PAGE_SIZE, to = from + PAGE_SIZE - 1;
 
   let qy = sb.from(current).select(cfg.select, { count: 'exact' })
@@ -730,14 +829,14 @@ async function loadData() {
   if (cfg.defaultOrder.then) { // orden secundario (ej. desempatar por hora dentro del mismo día)
     qy = qy.order(cfg.defaultOrder.then.col, { ascending: cfg.defaultOrder.then.asc, nullsFirst: false });
   }
-  qy = qy.range(from, to);
+  qy = diaSel ? qy.range(0, 4999) : qy.range(from, to); // día completo trae todo; si no, paginado
 
   qy = applyQueryFilters(qy);
 
   const { data, error, count } = await qy;
   $('loading').hidden = true;
   if (error) { toast('Error al cargar: ' + error.message, 'err'); return; }
-  renderTable(cfg, data || [], count || 0);
+  renderTable(cfg, data || [], count || 0, diaSel);
 }
 
 // Íconos SVG (se ven iguales en Android/escritorio, sin depender de emojis)
@@ -748,7 +847,7 @@ const ICON = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>',
 };
 
-function renderTable(cfg, rows, count) {
+function renderTable(cfg, rows, count, diaSel = false) {
   const head = $('thead-row'); head.innerHTML = '';
   // Columnas de auditoría (auditCol): solo las ven el admin y el auditor; al despachador le sobran
   const cols = cfg.columns.filter((c) => !(c.auditCol && !isAdmin() && !isAuditor()));
@@ -788,8 +887,11 @@ function renderTable(cfg, rows, count) {
       act.className = 'row-actions';
       act.dataset.label = 'Acciones';
       const locked = cfg.rowLocked && cfg.rowLocked(row);
-      // La fecha es clave: no se puede despachar ni editar un viaje de un día anterior a hoy
-      const esPasada = !!(cfg.dispatchable && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal());
+      // La fecha es clave: solo se opera el día actual. No se despacha/cancela/edita un viaje
+      // de un día anterior (pasada) NI de un día futuro (adelantada).
+      const frow = row.fecha ? String(row.fecha).slice(0, 10) : '';
+      const esPasada = !!(cfg.dispatchable && frow && frow < hoyServidor());
+      const esFutura = !!(cfg.dispatchable && frow && frow > hoyServidor());
       if (locked) {
         act.appendChild(Object.assign(document.createElement('span'), {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
@@ -803,6 +905,9 @@ function renderTable(cfg, rows, count) {
           } else if (esPasada) {
             dsp.title = 'Fecha ya pasada: no se puede despachar';
             dsp.disabled = true;
+          } else if (esFutura) {
+            dsp.title = 'Fecha adelantada: solo se despacha el día actual';
+            dsp.disabled = true;
           } else {
             dsp.title = 'Despachar en SONAR';
             dsp.onclick = () => openSonar(row);
@@ -815,6 +920,9 @@ function renderTable(cfg, rows, count) {
           } else if (esPasada) {
             can.title = 'Fecha ya pasada: no se puede cancelar';
             can.disabled = true;
+          } else if (esFutura) {
+            can.title = 'Fecha adelantada: solo se cancela el día actual';
+            can.disabled = true;
           } else {
             can.title = 'Cancelar en SONAR';
             can.onclick = () => openCancelar(row);
@@ -825,8 +933,11 @@ function renderTable(cfg, rows, count) {
         // El despachador solo despacha/cancela.
         if (isAdmin() || isAuditor()) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
-          // El auditor audita despachos ya realizados (días anteriores): no se le bloquea por fecha.
-          if (esPasada && !isAuditor()) {
+          // No se edita una fecha adelantada (futura). El auditor sí audita días anteriores.
+          if (esFutura) {
+            ed.title = 'Fecha adelantada: aún no se puede editar';
+            ed.disabled = true;
+          } else if (esPasada && !isAuditor()) {
             ed.title = 'Fecha ya pasada: no se puede editar';
             ed.disabled = true;
           } else {
@@ -860,11 +971,18 @@ function renderTable(cfg, rows, count) {
   }
 
   const total = count;
-  const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
-  const end = Math.min((page + 1) * PAGE_SIZE, total);
-  $('page-info').textContent = `${start}–${end} de ${total}`;
-  $('prev-btn').disabled = page === 0;
-  $('next-btn').disabled = end >= total;
+  if (diaSel) { // día completo: sin paginación, se ve toda la programación del día
+    $('page-info').textContent = `${total} programados (día completo)`;
+    $('prev-btn').disabled = true; $('next-btn').disabled = true;
+    $('prev-btn').hidden = true; $('next-btn').hidden = true;
+  } else {
+    $('prev-btn').hidden = false; $('next-btn').hidden = false;
+    const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
+    const end = Math.min((page + 1) * PAGE_SIZE, total);
+    $('page-info').textContent = `${start}–${end} de ${total}`;
+    $('prev-btn').disabled = page === 0;
+    $('next-btn').disabled = end >= total;
+  }
 }
 
 // ---------- editor ----------
@@ -1052,6 +1170,166 @@ function enhanceById(...ids) {
   for (const id of ids) { const el = $(id); if (el) { enhanceSelect(el); el._comboSync && el._comboSync(); } }
 }
 
+/* ===== Lector de QR del carnet del conductor (campos sonardrv con qr:true) ===== */
+// Pone un botón "📷 Escanear QR", un visor bloqueado para lo escaneado y un check
+// "Elegir de la lista (sin QR)" que SOLO el usuario marca para escoger a mano.
+// Escaneado  = check DESMARCADO + conductor bloqueado (no editable).
+// Manual     = check MARCADO + lista desplegable editable.
+function attachQrScanner(sel) {
+  const row = document.createElement('div');
+  row.className = 'drv-row';
+  sel.parentNode.insertBefore(row, sel);
+  row.appendChild(sel); // enhanceSelect envolverá el select en .combo dentro de esta fila
+
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'qr-btn'; btn.innerHTML = '📷 Escanear QR';
+  btn.title = 'Escanear el carnet del conductor';
+  btn.addEventListener('click', () => scanConductorToSelect(sel));
+  row.appendChild(btn);
+
+  // Visor de solo lectura: muestra el conductor escaneado, bloqueado.
+  const locked = document.createElement('div');
+  locked.className = 'qr-locked';
+  const lockedName = document.createElement('span'); lockedName.className = 'qr-locked-name';
+  const rescan = document.createElement('button');
+  rescan.type = 'button'; rescan.className = 'qr-rescan'; rescan.textContent = '↻ Reescanear';
+  rescan.addEventListener('click', () => scanConductorToSelect(sel));
+  locked.append(Object.assign(document.createElement('span'), { className: 'qr-lock-ico', textContent: '🔒' }), lockedName, rescan);
+  row.appendChild(locked);
+
+  // Check para escoger manualmente (sin QR). Arranca DESMARCADO siempre.
+  const toggle = document.createElement('label');
+  toggle.className = 'qr-toggle';
+  const cb = document.createElement('input'); cb.type = 'checkbox';
+  toggle.append(cb, document.createTextNode(' Elegir de la lista (sin QR)'));
+  row.parentNode.insertBefore(toggle, row);
+
+  const apply = () => {
+    const manual = cb.checked;
+    const hasVal = !!sel.value;
+    const combo = row.querySelector('.combo') || sel;
+    combo.classList.toggle('hidden-field', !manual);        // lista: solo en modo manual
+    btn.classList.toggle('hidden-field', manual || hasVal); // botón QR: solo si manual=off y aún sin conductor
+    locked.classList.toggle('hidden-field', manual || !hasVal); // visor bloqueado: escaneado y sin manual
+    if (hasVal && !manual) lockedName.textContent = sel.selectedOptions[0]?.textContent || sel.value;
+  };
+  cb.addEventListener('change', apply);
+  setTimeout(apply, 0); // tras enhanceSelect (ya existe el .combo)
+  sel._qrApply = apply;
+}
+
+// Normaliza nombres para comparar (sin tildes, minúsculas, espacios colapsados).
+function normNombre(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Escanea el QR (que trae el NOMBRE) y selecciona el conductor que coincida.
+async function scanConductorToSelect(sel) {
+  const text = await openQrScanner();
+  if (!text) return; // cancelado o sin lectura
+  const target = normNombre(text);
+  const opts = [...sel.options].filter((o) => o.value);
+  let match = opts.find((o) => normNombre(o.value) === target);
+  if (!match) match = opts.find((o) => normNombre(o.value).includes(target) || target.includes(normNombre(o.value)));
+  if (!match) { toast('No encontré "' + text + '" en Conductores SONAR.', 'err'); return; }
+  sel.value = match.value;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  if (sel._comboSync) sel._comboSync();
+  if (sel._qrApply) sel._qrApply(); // muestra el conductor escaneado, bloqueado
+  toast('Conductor: ' + match.value, 'ok');
+}
+
+let qrStream = null, qrRAF = null, qrDetector = null, qrResolve = null;
+
+function ensureJsQR() {
+  if (window.jsQR) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'js/jsqr.min.js'; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+function stopQr() {
+  if (qrRAF) { cancelAnimationFrame(qrRAF); qrRAF = null; }
+  if (qrStream) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; }
+  const v = $('qr-video'); if (v) v.srcObject = null;
+}
+
+function finishQr(text) {
+  stopQr();
+  $('qr-modal').hidden = true;
+  const r = qrResolve; qrResolve = null;
+  if (r) r(text || null);
+}
+
+// Abre la cámara, lee un QR y resuelve con su texto (o null si se cancela).
+function openQrScanner() {
+  const modal = $('qr-modal'), video = $('qr-video'), status = $('qr-status');
+  status.className = 'qr-status'; status.textContent = 'Iniciando cámara…';
+  modal.hidden = false;
+  return new Promise((resolve) => {
+    qrResolve = resolve;
+    (async () => {
+      try {
+        qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+      } catch (e) {
+        status.className = 'qr-status err';
+        status.textContent = 'No se pudo abrir la cámara. Concede el permiso e inténtalo de nuevo.';
+        return; // el usuario cierra con Cancelar
+      }
+      video.srcObject = qrStream;
+      try { await video.play(); } catch {}
+      status.className = 'qr-status'; status.textContent = 'Apunta la cámara al QR del carnet…';
+
+      // Decodificador: BarcodeDetector nativo (Android) o jsQR como respaldo.
+      let useNative = false;
+      if ('BarcodeDetector' in window) {
+        try {
+          const fmts = await window.BarcodeDetector.getSupportedFormats();
+          if (fmts.includes('qr_code')) { qrDetector = new window.BarcodeDetector({ formats: ['qr_code'] }); useNative = true; }
+        } catch {}
+      }
+      if (!useNative) {
+        try { await ensureJsQR(); } catch {
+          status.className = 'qr-status err'; status.textContent = 'No se pudo cargar el lector. Revisa la conexión.'; return;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const tick = async () => {
+        if (modal.hidden || !qrStream) return;
+        if (video.readyState >= 2 && video.videoWidth) {
+          let text = null;
+          try {
+            if (useNative) {
+              const codes = await qrDetector.detect(video);
+              if (codes && codes.length) text = codes[0].rawValue;
+            } else if (window.jsQR) {
+              canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+              if (r) text = r.data;
+            }
+          } catch {}
+          if (text && text.trim()) { finishQr(text.trim()); return; }
+        }
+        qrRAF = requestAnimationFrame(tick);
+      };
+      qrRAF = requestAnimationFrame(tick);
+    })();
+  });
+}
+
+(function wireQrModal() {
+  const x = $('qr-x'), c = $('qr-cancel');
+  if (x) x.addEventListener('click', () => finishQr(null));
+  if (c) c.addEventListener('click', () => finishQr(null));
+})();
+
 function toggleEmptySections(form) {
   const kids = [...form.children];
   for (let i = 0; i < kids.length; i++) {
@@ -1069,10 +1347,12 @@ function toggleEmptySections(form) {
 async function openEditor(row) {
   const cfg = TABLES[current];
   if (row && cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
-  // La fecha es clave: no se edita un viaje de un día anterior a hoy (tablas y despachos).
-  // Excepción: el auditor SÍ audita despachos de días anteriores.
-  if (row && cfg.dispatchable && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal() && !isAuditor()) {
-    toast('No se puede editar: la fecha del viaje ya pasó.', 'err'); return;
+  // La fecha es clave: solo se opera el día actual.
+  if (row && cfg.dispatchable && row.fecha) {
+    const f = String(row.fecha).slice(0, 10);
+    if (f > hoyServidor()) { toast('No se puede editar: la fecha aún no llega (adelantada).', 'err'); return; }
+    // Excepción: el auditor SÍ audita despachos de días anteriores.
+    if (f < hoyServidor() && !isAuditor()) { toast('No se puede editar: la fecha del viaje ya pasó.', 'err'); return; }
   }
   editing = row || null;
   $('modal-title').textContent = (row ? 'Editar' : 'Nuevo') + ' · ' + cfg.label;
@@ -1202,6 +1482,8 @@ async function openEditor(row) {
       if (f.softReadOnlyDispatcher && !isAdmin()) input.readOnly = true;
       wrap.appendChild(input);
       if (f.hint) wrap.appendChild(Object.assign(document.createElement('span'), { className: 'field-hint', textContent: f.hint }));
+      // Lector de QR del carnet junto al campo Conductor (solo donde se marca f.qr, ej. Resumen)
+      if (f.type === 'sonardrv' && f.qr && !input.disabled) attachQrScanner(input);
     }
     form.appendChild(wrap);
     if (f.showWhen) controls.push(f);
@@ -1378,6 +1660,35 @@ async function parseImportFile(file, map, keyField = 'key') {
   return rows;
 }
 
+// Borrar toda la programación de una tabla por puesto para una fecha (admin). Útil para
+// reimportar un día corregido sin que queden duplicados.
+$('del-day-btn').addEventListener('click', async () => {
+  const btn = $('del-day-btn'); if (btn.dataset.busy === '1') return;
+  const label = TABLES[current]?.label || current;
+  const sugerida = filters['fecha'] || hoyServidor();
+  const fecha = (prompt(`Borrar la programación de la tabla "${label}" para la fecha (AAAA-MM-DD):`, sugerida) || '').trim();
+  if (!fecha) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { toast('Fecha inválida. Usa el formato AAAA-MM-DD.', 'err'); return; }
+  // Contar primero para mostrar cuántos se borrarán
+  const { count, error: ce } = await sb.from(current).select('id', { count: 'exact', head: true }).eq('fecha', fecha);
+  if (ce) { toast('Error al consultar: ' + ce.message, 'err'); return; }
+  if (!count) { toast(`No hay registros del ${fechaLegible(fecha)} en ${label}.`, 'err'); return; }
+  const ok = await confirmAction({
+    title: '¿Borrar el día?',
+    lead: `Se borrará TODA la programación de ${label} del ${fechaLegible(fecha)}.`,
+    message: `Registros a borrar: ${count}\n\n⚠️ Esta acción no se puede deshacer.`,
+    okLabel: 'Borrar día', danger: true,
+  });
+  if (!ok) return;
+  btn.dataset.busy = '1'; btn.disabled = true;
+  let res;
+  try { res = await sb.rpc('borrar_tabla_dia', { p_tabla: current, p_fecha: fecha }); }
+  finally { btn.dataset.busy = '0'; btn.disabled = false; }
+  if (res.error) { toast('Error al borrar: ' + res.error.message, 'err'); return; }
+  toast(`🗑️ ${res.data?.borrados ?? 0} registros borrados del ${fechaLegible(fecha)}`, 'ok');
+  loadData();
+});
+
 function openImport() {
   $('imp-error').hidden = true;
   const res = $('imp-result'); res.hidden = true; res.textContent = '';
@@ -1403,6 +1714,21 @@ $('imp-run').addEventListener('click', async () => {
   try {
     const rows = await parseImportFile(f, impCfg.map, impCfg.keyField || 'key');
     if (!rows.length) throw new Error('No se encontraron filas válidas en el archivo. Revisa los encabezados de las columnas.');
+    // Validación de orden: la columna "hora" debe traer horas (no móviles). Detecta archivos con columnas corridas.
+    const esHora = (v) => !v || /^\d{1,2}:\d{2}/.test(String(v).trim());
+    const malHora = rows.find((r) => !esHora(r.hora) || !esHora(r.hora_prog));
+    if (malHora) {
+      const ej = !esHora(malHora.hora) ? malHora.hora : malHora.hora_prog;
+      throw new Error(`La columna de hora trae un valor que no es una hora ("${ej}"). Revisa que los encabezados estén en el orden correcto (fecha; vehiculo; hora; ruta; …).`);
+    }
+    // Validación de tabla destino: el archivo debe corresponder a la tabla seleccionada
+    if (impCfg.tablaParam) {
+      const objetivo = normH(TABLES[current].label);
+      const malTabla = rows.find((r) => r.tabla_destino && normH(r.tabla_destino) !== objetivo);
+      if (malTabla) {
+        throw new Error(`Este archivo es de la tabla "${malTabla.tabla_destino}", pero lo estás importando en "${TABLES[current].label}". Abre la tabla correcta o corrige la columna "tabla".`);
+      }
+    }
     let insertados = 0, kept = 0;
     const B = 200;
     for (let i = 0; i < rows.length; i += B) {
@@ -1416,8 +1742,9 @@ $('imp-run').addEventListener('click', async () => {
     }
     res.className = 'sonar-result ok';
     res.textContent = `✅ Importación terminada\n\nFilas leídas: ${rows.length}\nNuevos insertados: ${insertados}\n${impCfg.keptLabel}: ${kept}`;
-    toast('Importación completada', 'ok');
-    loadData();
+    toast(`✅ ${insertados} importados`, 'ok');
+    loadData(); // refresca la tabla detrás
+    setTimeout(closeImport, 1600); // cierra solo para mostrar directamente lo importado
   } catch (e) {
     res.hidden = true; err.textContent = 'Error: ' + (e.message || e); err.hidden = false;
   } finally {
@@ -1443,6 +1770,14 @@ function hoyLocal() {
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
+// Fecha de HOY tomada del SERVIDOR (Supabase, zona Colombia). Evita que cambien la fecha
+// del celular para hacer trampa con los despachos. Se refresca al cargar y periódicamente.
+let SRV_HOY = null;
+async function refrescarFechaServidor() {
+  try { const { data, error } = await sb.rpc('hoy_servidor'); if (!error && data) SRV_HOY = String(data).slice(0, 10); }
+  catch (e) { /* sin red: se usará la fecha local como respaldo */ }
+}
+function hoyServidor() { return SRV_HOY || hoyLocal(); } // respaldo a local solo si aún no cargó
 // Texto del usuario en la barra superior: nombre + rol/puesto
 function etiquetaUsuario(user) {
   const nombre = CTX?.nombre || user?.email || '';
@@ -1470,9 +1805,10 @@ async function openNuevoDespacho() {
   $('nd-error').hidden = true;
   const r = $('nd-result'); r.hidden = true; r.textContent = '';
   $('nd-tipo').value = 'LIBRE'; // el despacho manual siempre es LIBRE (TABLA solo viene de importación)
-  // La fecha del despacho es SIEMPRE hoy y NADIE la puede tocar (ni admin ni despachador) → evita trampas
-  $('nd-fecha').value = hoyLocal();
-  $('nd-fecha').min = hoyLocal();
+  // La fecha del despacho es SIEMPRE hoy (del servidor) y NADIE la puede tocar → evita trampas
+  await refrescarFechaServidor();
+  $('nd-fecha').value = hoyServidor();
+  $('nd-fecha').min = hoyServidor();
   $('nd-fecha').disabled = true;
   $('nd-hora').value = ''; $('nd-com').value = '';
 
@@ -1513,28 +1849,19 @@ async function updateNdInfo() {
   }
 }
 // Nombre del conductor registrado para un móvil: Resumen primero, luego despachos/tablas
+// Conductor para un móvil: SOLO desde Resumen y SOLO de la fecha indicada.
+// Si no hay registro en Resumen para ese móvil en esa fecha, no autocompleta (devuelve null).
 async function nombreConductorDeVehiculo(vehId, fecha) {
-  if (!vehId) return null;
+  if (!vehId || !fecha) return null; // sin fecha exacta no se adivina (evita traer datos de otro día)
   try {
-    let rq = sb.from('resumen').select('fecha, cond:conductor_id(nombre)').eq('vehiculo_id', vehId).not('conductor_id', 'is', null);
-    if (fecha) rq = rq.eq('fecha', fecha);
-    let { data } = await rq.order('fecha', { ascending: false }).limit(1);
-    if ((!data || !data.length) && fecha) {
-      ({ data } = await sb.from('resumen').select('fecha, cond:conductor_id(nombre)').eq('vehiculo_id', vehId)
-        .not('conductor_id', 'is', null).order('fecha', { ascending: false }).limit(1));
-    }
+    const { data } = await sb.from('resumen')
+      .select('cond:conductor_id(nombre)')
+      .eq('vehiculo_id', vehId).eq('fecha', fecha)
+      .not('conductor_id', 'is', null)
+      .order('hora_cierre', { ascending: false }).limit(1);
     if (data && data[0]?.cond?.nombre) return data[0].cond.nombre;
-  } catch (e) { /* sigue */ }
-  const tablas = ['despachos', ...puestoTables];
-  let best = null;
-  await Promise.all(tablas.map(async (t) => {
-    let qy = sb.from(t).select('fecha, hora, cond:conductor_id(nombre)').eq('vehiculo_id', vehId).not('conductor_id', 'is', null);
-    if (fecha) qy = qy.eq('fecha', fecha);
-    const { data } = await qy.order('fecha', { ascending: false }).order('hora', { ascending: false }).limit(1);
-    const r = (data || [])[0];
-    if (r?.cond?.nombre && (!best || String(r.fecha) > String(best.fecha))) best = { fecha: r.fecha, nombre: r.cond.nombre };
-  }));
-  return best?.nombre || null;
+  } catch (e) { /* sin resultado → null */ }
+  return null;
 }
 // Al elegir el móvil en Nuevo despacho, trae el conductor (mapeando por NOMBRE al conductor SONAR)
 async function traerConductorND() {
@@ -1641,8 +1968,8 @@ $('nd-save').addEventListener('click', async () => {
 
   const intent = {
     id: 'APL' + Date.now().toString(36).slice(-3).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase(),
-    // Nadie puede alterar la fecha del despacho: siempre es hoy
-    tipo: 'LIBRE', fecha: hoyLocal(), hora: $('nd-hora').value || null,
+    // Nadie puede alterar la fecha del despacho: siempre es hoy (del servidor)
+    tipo: 'LIBRE', fecha: hoyServidor(), hora: $('nd-hora').value || null,
     itid, itinNombre: itin?.nombre || null,
     vehId: Number(vehVal), mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
@@ -1801,9 +2128,11 @@ async function updateSonarInfo() {
 
 let sonarRow = null, sonarTable = 'despachos';
 async function openSonar(row) {
-  // La fecha es clave: no se despacha un viaje de un día anterior a hoy
-  if (row && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal()) {
-    toast('No se puede despachar: la fecha del viaje ya pasó.', 'err'); return;
+  // La fecha es clave: solo se despacha el día actual (fecha del servidor, no del celular)
+  if (row && row.fecha) {
+    const f = String(row.fecha).slice(0, 10);
+    if (f < hoyServidor()) { toast('No se puede despachar: la fecha del viaje ya pasó.', 'err'); return; }
+    if (f > hoyServidor()) { toast('No se puede despachar: la fecha aún no llega (adelantada).', 'err'); return; }
   }
   sonarRow = row || null;
   sonarTable = TABLES[current]?.dispatchable ? current : 'despachos';
@@ -1822,15 +2151,13 @@ async function openSonar(row) {
     if (movil) { const vr = veh.find((v) => String(v.numero) === String(movil)); if (vr) $('s-mov').value = vr.id; }
     const ruta = (row.ruta?.nombre || row.rutap?.nombre || '').toLowerCase();
     if (ruta) { const m = its.find((i) => (i.nombre || '').toLowerCase() === ruta); if (m) $('s-itin').value = m.itid; }
-    const cod = row.codigo, nom = (row.cond?.nombre || '').toLowerCase();
-    let dm = cod ? drs.find((d) => d.codigo === cod) : null;
-    if (!dm && nom) dm = drs.find((d) => (d.nombre || '').toLowerCase() === nom);
-    if (dm) $('s-drv').value = dm.dr_id;
+    // El conductor NO se toma de la programación de la tabla (puede estar desactualizada);
+    // se trae de Resumen para la fecha del despacho (abajo). Si no hay, queda vacío.
     $('s-com').value = 'Despacho ' + (row.id || '');
   }
   enhanceById('s-mov', 's-itin', 's-drv');
   $('s-desp-name').value = CTX?.nombre || ''; // despachador = usuario en sesión (no editable)
-  if (!$('s-drv').value) await traerConductorSonar(); // si la fila no trae conductor, lo busca en Resumen
+  await traerConductorSonar(); // conductor desde Resumen, según la fecha del despacho
   await updateSonarInfo();
   $('sonar-modal').hidden = false;
 }
@@ -1838,7 +2165,9 @@ async function openSonar(row) {
 async function traerConductorSonar() {
   const vehId = $('s-mov').value;
   if (!vehId) return;
-  const nombre = await nombreConductorDeVehiculo(vehId, hoyLocal());
+  // Conductor de Resumen para la fecha del despacho (la del viaje, no la del celular)
+  const fechaDesp = sonarRow?.fecha ? String(sonarRow.fecha).slice(0, 10) : hoyServidor();
+  const nombre = await nombreConductorDeVehiculo(vehId, fechaDesp);
   if (!nombre) return;
   const sel = $('s-drv');
   const drs = await loadDrivers();
@@ -1982,9 +2311,11 @@ function minsDesde(ts) { return ts ? Math.floor((Date.now() - new Date(ts).getTi
 
 async function openCancelar(row) {
   if (row && !row.sonar_regid) { toast('Este despacho no tiene regId: no se puede cancelar.', 'err'); return; }
-  // La fecha es clave: no se cancela un despacho de un día anterior a hoy
-  if (row && row.fecha && String(row.fecha).slice(0, 10) < hoyLocal()) {
-    toast('No se puede cancelar: el despacho es de una fecha anterior a hoy.', 'err'); return;
+  // La fecha es clave: solo se cancela el día actual (fecha del servidor, no del celular)
+  if (row && row.fecha) {
+    const f = String(row.fecha).slice(0, 10);
+    if (f < hoyServidor()) { toast('No se puede cancelar: el despacho es de una fecha anterior a hoy.', 'err'); return; }
+    if (f > hoyServidor()) { toast('No se puede cancelar: la fecha aún no llega (adelantada).', 'err'); return; }
   }
   // Regla: no se puede cancelar si el viaje ya superó los 50 minutos
   const mins = minsDesde(row?.despachado_en);

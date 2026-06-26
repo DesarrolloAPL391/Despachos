@@ -69,6 +69,7 @@
             <button id="marcar-out-btn" class="btn" hidden>🔴 Marcar salida</button>
             <button id="dsonar-btn" class="btn" hidden>📡 Despachos SONAR</button>
             <button id="import-btn" class="btn" hidden>📥 Importar</button>
+            <button id="del-day-btn" class="btn btn-danger" hidden>🗑️ Borrar día</button>
             <button id="perfil-new-btn" class="btn" hidden>➕ Crear acceso</button>
             <button id="perfil-pass-btn" class="btn" hidden>🔑 Restablecer clave</button>
             <button id="new-btn" class="btn btn-primary">+ Nuevo</button>
@@ -320,6 +321,26 @@
         <span class="spacer"></span>
         <button id="confirm-no" class="btn">Cancelar</button>
         <button id="confirm-yes" class="btn btn-primary">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="qr-modal" class="modal" hidden>
+    <div class="modal-card qr-card">
+      <div class="modal-head">
+        <h3>📷 Escanear carnet del conductor</h3>
+        <button id="qr-x" class="icon-btn">✕</button>
+      </div>
+      <div class="qr-body">
+        <div class="qr-stage">
+          <video id="qr-video" playsinline muted></video>
+          <div class="qr-frame"></div>
+        </div>
+        <p id="qr-status" class="qr-status">Apunta la cámara al código QR del carnet…</p>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="qr-cancel" class="btn">Cancelar</button>
       </div>
     </div>
   </div>
