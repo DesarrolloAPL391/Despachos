@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v82';
+export const APP_VERSION = 'v83';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -46,6 +46,16 @@ const IMPORT_MAP_DESPACHOS = {
   'auditador': 'auditador', 'fecha y hora auditoria': 'fecha_aud', 'control interno': 'control_interno',
   'hora llegada control': 'h_lleg_control', 'hora de salida control': 'h_sal_control',
   'estado': 'estado', 'hora de llegada': 'hora_llegada',
+};
+
+// Mapa de encabezados -> campo para importar TABLAS por puesto (acepta los encabezados
+// propios de las tablas: "viaje programado", "nombre de conductor", etc.)
+const IMPORT_MAP_TABLAS = {
+  ...IMPORT_MAP_DESPACHOS,
+  'viaje programado': 'ruta_prog',
+  'hora de salida programada': 'hora_prog', 'hora de salida programado': 'hora_prog', 'hora de despacho programada': 'hora_prog',
+  'nombre de conductor': 'conductor', 'nombre conductor': 'conductor',
+  'codigo de conductor': 'codigo',
 };
 
 // Mapa de encabezados (normalizados) -> campo, para la importación de resumen
@@ -465,5 +475,7 @@ export function configTablaPuesto(label) {
   const columns = TABLES.despachos.columns.filter((c) => !c.auditCol);
   // Las tablas por puesto NO tienen relación con `auditores`: se quita el embed para no romper la carga
   const select = TABLES.despachos.select.replace(', aud:auditor_id(nombre)', '');
-  return { ...TABLES.despachos, fields, columns, select, label, icon: '🛣️', import: undefined, noCreate: true, despachador: false };
+  // Importación propia de la tabla por puesto (inserta en SU tabla, no en despachos)
+  const importar = { rpc: 'importar_tabla_puesto', map: IMPORT_MAP_TABLAS, keyField: 'fecha', tablaParam: true, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' };
+  return { ...TABLES.despachos, fields, columns, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false };
 }

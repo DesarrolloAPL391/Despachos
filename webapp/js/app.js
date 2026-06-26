@@ -1407,7 +1407,9 @@ $('imp-run').addEventListener('click', async () => {
     const B = 200;
     for (let i = 0; i < rows.length; i += B) {
       const batch = rows.slice(i, i + B);
-      const { data, error } = await sb.rpc(impCfg.rpc, { p_rows: batch });
+      // Las tablas por puesto importan a SU propia tabla → pasan el nombre (p_tabla)
+      const params = impCfg.tablaParam ? { p_tabla: current, p_rows: batch } : { p_rows: batch };
+      const { data, error } = await sb.rpc(impCfg.rpc, params);
       if (error) throw error;
       insertados += data.insertados || 0; kept += data[impCfg.kept] || 0;
       res.textContent = `Procesando… ${Math.min(i + B, rows.length)} / ${rows.length}`;
