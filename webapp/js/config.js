@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v81';
+export const APP_VERSION = 'v82';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -452,7 +452,8 @@ export function configTablaPuesto(label) {
   // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
   const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id', 'ubicacion']);
   const fields = TABLES.despachos.fields
-    .filter((f) => !OCULTOS.has(f.key))
+    // Los campos de auditoría/control no aplican en las tablas por puesto (la auditoría es en Despachos)
+    .filter((f) => !OCULTOS.has(f.key) && !f.auditOnly)
     .map((f) => {
       let nf = f;
       if (SOLO_LECTURA.has(f.key)) nf = { ...nf, readOnly: true };
@@ -460,5 +461,9 @@ export function configTablaPuesto(label) {
       if (nf.showWhen && nf.showWhen.field === 'tipo') { nf = { ...nf }; delete nf.showWhen; }
       return nf;
     });
-  return { ...TABLES.despachos, fields, label, icon: '🛣️', import: undefined, noCreate: true, despachador: false };
+  // Las columnas de control (auditCol) tampoco aplican aquí
+  const columns = TABLES.despachos.columns.filter((c) => !c.auditCol);
+  // Las tablas por puesto NO tienen relación con `auditores`: se quita el embed para no romper la carga
+  const select = TABLES.despachos.select.replace(', aud:auditor_id(nombre)', '');
+  return { ...TABLES.despachos, fields, columns, select, label, icon: '🛣️', import: undefined, noCreate: true, despachador: false };
 }
