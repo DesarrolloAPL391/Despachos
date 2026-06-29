@@ -324,7 +324,7 @@ tbody tr:hover { background: #faf8ff; }
 .page-info { color: var(--muted); font-size: 14px; }
 
 /* ---------- Modal ---------- */
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 2000; padding: 16px; }
 .modal-card { background: var(--surface); width: 100%; max-width: 600px; max-height: 90vh; border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
 .modal-head, .modal-foot { display: flex; align-items: center; gap: 10px; padding: 16px 20px; }
 .modal-head { border-bottom: 1px solid var(--border); background: #f7f9fc; }
@@ -704,3 +704,12 @@ tbody tr:hover { background: #faf8ff; }
 .qr-status { text-align: center; font-weight: 600; color: var(--text, #1c1c1c); margin: 12px 4px 4px; min-height: 20px; }
 .qr-status.ok { color: #137a2b; }
 .qr-status.err { color: var(--primary, #ED1C24); }
+
+/* Multi-selección de grupos de ruta (editor de horarios) */
+.multisel { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow: auto;
+  padding: 8px; border: 1px solid var(--border, #d9d9d9); border-radius: 10px; background: #fafafa; }
+.multisel-chip { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none;
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border, #d9d9d9);
+  background: #fff; font-size: 13px; line-height: 1; white-space: nowrap; }
+.multisel-chip input { margin: 0; }
+.multisel-chip.on { background: var(--primary, #ED1C24); border-color: var(--primary, #ED1C24); color: #fff; }

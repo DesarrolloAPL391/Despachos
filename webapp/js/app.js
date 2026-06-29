@@ -23,7 +23,7 @@ async function registerPuestoTables() {
   if (error) return;
   for (const t of (data || [])) {
     if (!t.tabla) continue;
-    if (!TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label);
+    if (!TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto);
     if (!puestoTables.includes(t.tabla)) puestoTables.push(t.tabla);
   }
 }
@@ -40,6 +40,8 @@ function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
 function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
+// Grupos del parque que el despachador tiene habilitados hoy (admin = todos → null)
+function allowedGrupoSet() { return isAdmin() ? null : new Set(CTX?.grupos || []); }
 // Tablas visibles según el rol:
 //  - admin: todas
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
@@ -110,6 +112,7 @@ $('confirm-no').addEventListener('click', () => _confirmClose(false));
 $('confirm-x').addEventListener('click', () => _confirmClose(false));
 function fmt(v) {
   if (v === null || v === undefined) return '';
+  if (Array.isArray(v)) return v.join(', ');
   if (v === true) return 'Sí';
   if (v === false) return 'No';
   // Quitar los segundos a las horas (HH:MM:SS -> HH:MM), tanto en horas sueltas como en fechas+hora
@@ -1578,6 +1581,60 @@ async function setupVehByRoute(form, conf) {
   }
 }
 
+// En una tabla de puesto, limita el campo "Ruta" a las rutas de ese puesto (puestos.rutas).
+// Aplica a todos (incluido el admin); conserva la ruta ya guardada en la fila.
+const _puestoRutasCache = {};
+async function loadPuestoRutas(puesto) {
+  const k = String(puesto).toLowerCase();
+  if (_puestoRutasCache[k]) return _puestoRutasCache[k];
+  const { data } = await sb.from('puestos').select('rutas').ilike('nombre', puesto).limit(1);
+  const txt = (data && data[0]?.rutas) || '';
+  const set = new Set(txt.split(',').map((s) => normRuta(s)).filter(Boolean));
+  _puestoRutasCache[k] = set;
+  return set;
+}
+async function setupRouteByPuesto(form, fieldKey, puesto) {
+  const sel = form.querySelector(`[data-key="${fieldKey}"]`);
+  if (!sel) return;
+  const permitidas = await loadPuestoRutas(puesto);
+  if (!permitidas.size) return; // si el puesto no tiene rutas definidas, no se filtra
+  const keep = sel.value;
+  for (const o of [...sel.options]) {
+    if (o.value && o.value !== keep && !permitidas.has(normRuta(o.textContent))) o.remove();
+  }
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  sel._comboSync && sel._comboSync();
+}
+
+// Igual que setupVehByRoute pero usando el GRUPO del parque (ruta_grupos + parque_automotor).
+// Al elegir la ruta, el "Móvil (real)" se limita a los carros de ese grupo (aplica a todos,
+// incluido el admin). Conserva el móvil ya guardado en la fila; si no se conoce el grupo, no filtra.
+async function setupVehByGroup(form, conf) {
+  const routeSel = form.querySelector(`[data-key="${conf.route}"]`);
+  const vehSel = form.querySelector(`[data-key="${conf.veh}"]`);
+  if (!routeSel || !vehSel) return;
+  const allOpts = [...vehSel.options].map((o) => ({ value: o.value, text: o.textContent }));
+  const [gmap, rmap, veh] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadVehiculos()]);
+  const numById = new Map(veh.map((v) => [String(v.id), String(v.numero).trim()]));
+  async function apply() {
+    const keep = vehSel.value;
+    const rname = (routeSel.selectedOptions[0]?.textContent || '').trim();
+    const grupo = _grupoDeRuta(gmap, rname);
+    const filtrar = !!grupo; // si no se conoce el grupo de la ruta, no se filtra (no romper)
+    vehSel.innerHTML = '';
+    for (const o of allOpts) {
+      // Fuera del grupo de la ruta → se oculta, salvo el móvil ya guardado en la fila (para no perderlo)
+      const fuera = filtrar && o.value && rmap.get(numById.get(String(o.value))) !== grupo;
+      if (fuera && o.value !== keep) continue;
+      vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
+    }
+    if ([...vehSel.options].some((o) => o.value === keep)) vehSel.value = keep;
+    vehSel._comboSync && vehSel._comboSync();
+  }
+  routeSel.addEventListener('change', apply);
+  await apply();
+}
+
 // Convierte un <select> en un buscador (combobox con filtro). El <select> queda
 // oculto pero conserva el valor (lo lee el guardado). Funciona en móvil y escritorio.
 function enhanceSelect(sel) {
@@ -2089,8 +2146,8 @@ $('docp-x') && $('docp-x').addEventListener('click', () => { $('docp-modal').hid
 $('docp-cerrar') && $('docp-cerrar').addEventListener('click', () => { $('docp-modal').hidden = true; });
 
 // ---- Aviso al despachar: si el móvil tiene documentos vencidos / por vencer ----
-async function avisarDocsMovil(numero) {
-  const box = $('s-docwarn'); if (!box) return;
+async function avisarDocsMovil(numero, boxId = 's-docwarn') {
+  const box = $(boxId); if (!box) return;
   box.hidden = true; box.innerHTML = '';
   if (!numero) return;
   const { data } = await sb.from('parque_automotor')
@@ -2172,8 +2229,8 @@ async function openEditor(row) {
       form.appendChild(h);
     }
 
-    const wrap = document.createElement('label');
-    wrap.className = 'field' + (f.type === 'textarea' ? ' full' : '');
+    const wrap = document.createElement(f.type === 'multisel' ? 'div' : 'label');
+    wrap.className = 'field' + (f.type === 'textarea' || f.type === 'multisel' ? ' full' : '');
     wrap.dataset.fieldKey = f.key;
     // Valor inicial: del registro; al crear, opcionalmente del contexto (ej. puesto del usuario)
     let val = row ? row[f.key] : (f.default ?? null);
@@ -2227,6 +2284,21 @@ async function openEditor(row) {
           op.value = o; op.textContent = o;
           if (val != null && String(val) === String(o)) op.selected = true;
           input.appendChild(op);
+        }
+      } else if (f.type === 'multisel') {
+        // Multi-selección de valores de texto (ej. grupos de ruta) → se guarda como arreglo
+        input = document.createElement('div');
+        input.className = 'multisel';
+        const opts = await loadTextOptions(f.optionsFrom);
+        const cur = new Set(Array.isArray(val) ? val.map(String) : (val != null && val !== '' ? [String(val)] : []));
+        for (const o of opts) {
+          const chip = document.createElement('label');
+          chip.className = 'multisel-chip' + (cur.has(String(o)) ? ' on' : '');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.value = o; cb.checked = cur.has(String(o));
+          cb.addEventListener('change', () => chip.classList.toggle('on', cb.checked));
+          chip.append(cb, document.createTextNode(' ' + o));
+          input.appendChild(chip);
         }
       } else if (f.type === 'enum') {
         input = document.createElement('select');
@@ -2284,6 +2356,8 @@ async function openEditor(row) {
   applyVisibility();
 
   if (cfg.vehByRoute) await setupVehByRoute(form, cfg.vehByRoute);
+  if (cfg.routeByPuesto && cfg.puesto) await setupRouteByPuesto(form, cfg.routeByPuesto, cfg.puesto);
+  if (cfg.vehByGroup) await setupVehByGroup(form, cfg.vehByGroup);
 
   // Buscadores en las listas largas (conductor, vehículo, ruta, etc.)
   form.querySelectorAll('select[data-type="fk"]:not(:disabled), select[data-type="sonardrv"]:not(:disabled), select[data-type="textsel"]:not(:disabled)').forEach(enhanceSelect);
@@ -2311,6 +2385,10 @@ $('modal-save').addEventListener('click', async () => {
     const wrap = el.closest('.field');
     if (wrap && wrap.classList.contains('hidden-field')) { payload[key] = null; continue; } // campo oculto -> vacío
     if (type === 'boolean') { payload[key] = el.checked; continue; }
+    if (type === 'multisel') {
+      const arr = [...el.querySelectorAll('input:checked')].map((i) => i.value);
+      payload[key] = arr.length ? arr : null; continue;
+    }
     let v = el.value;
     if (typeof v === 'string') v = v.trim();
     if (v === '') { payload[key] = null; continue; }
@@ -2582,6 +2660,11 @@ function ahoraLocal() {
 }
 
 async function openNuevoDespacho() {
+  // Restricción: el despachador sin rutas/grupos asignados hoy no puede despachar
+  if (!isAdmin() && !allowedRutaSet().size) {
+    toast('No tienes grupos asignados hoy: no puedes despachar.', 'err');
+    return;
+  }
   $('nd-error').hidden = true;
   const r = $('nd-result'); r.hidden = true; r.textContent = '';
   $('nd-tipo').value = 'LIBRE'; // el despacho manual siempre es LIBRE (TABLA solo viene de importación)
@@ -2590,7 +2673,9 @@ async function openNuevoDespacho() {
   $('nd-fecha').value = hoyServidor();
   $('nd-fecha').min = hoyServidor();
   $('nd-fecha').disabled = true;
-  $('nd-hora').value = ''; $('nd-com').value = '';
+  const ahora = new Date();
+  $('nd-hora').value = `${_pad2(ahora.getHours())}:${_pad2(ahora.getMinutes())}`; // hora actual por defecto
+  $('nd-com').value = '';
 
   const [its, veh, drs] = await Promise.all([
     loadItinerarios(), loadVehiculos(), loadDrivers(),
@@ -2611,6 +2696,8 @@ async function openNuevoDespacho() {
   $('nd-desp').value = CTX?.despachador_id ? String(CTX.despachador_id) : '';
   $('nd-desp-name').value = CTX?.nombre || sessionUser?.email || '';
   enhanceById('nd-ruta', 'nd-movil', 'nd-cond');
+  if ($('nd-estacion')) $('nd-estacion').checked = false;
+  if ($('nd-estacion-wrap')) $('nd-estacion-wrap').hidden = true;
   await updateNdInfo();
   $('nd-modal').hidden = false;
 }
@@ -2618,7 +2705,8 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; return; }
+  if (!vr) { info.hidden = true; const w = $('nd-docwarn'); if (w) w.hidden = true; return; }
+  avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
@@ -2662,6 +2750,68 @@ function closeND() { $('nd-modal').hidden = true; }
 $('nd-close').addEventListener('click', closeND);
 $('nd-cancel').addEventListener('click', closeND);
 $('nd-movil').addEventListener('change', () => { updateNdInfo(); traerConductorND(); });
+
+// ---- Al elegir la ruta, cargar solo los móviles de esa ruta (parque_automotor.ruta) ----
+let _parqueRutas = null; // Map numero_interno -> ruta (grupo del parque)
+async function loadParqueRutas() {
+  if (_parqueRutas) return _parqueRutas;
+  const { data } = await sb.from('parque_automotor').select('numero_interno,ruta').neq('estado', 'Desvinculado').limit(5000);
+  _parqueRutas = new Map((data || []).map((r) => [String(r.numero_interno).trim(), r.ruta || '']));
+  return _parqueRutas;
+}
+let _rutaGrupos = null; // Map ruta_sonar(minúscula) -> grupo del parque
+async function loadRutaGrupos() {
+  if (_rutaGrupos) return _rutaGrupos;
+  const { data } = await sb.from('ruta_grupos').select('ruta_sonar,grupo').limit(5000);
+  _rutaGrupos = new Map((data || []).map((r) => [String(r.ruta_sonar).trim().toLowerCase(), r.grupo]));
+  return _rutaGrupos;
+}
+// Grupo del parque al que pertenece un itinerario de SONAR (según tabla ruta_grupos)
+function _grupoDeRuta(map, itinNombre) { return map.get(String(itinNombre || '').trim().toLowerCase()) || null; }
+async function filtrarMovilesPorRuta() {
+  const sel = $('nd-movil'); if (!sel) return;
+  const its = await loadItinerarios();
+  const itid = $('nd-ruta').value;
+  const itin = its.find((i) => String(i.itid) === String(itid));
+  const veh = await loadVehiculos();
+  const estChk = $('nd-estacion'), estWrap = $('nd-estacion-wrap');
+  let lista = veh; let placeholder = '— selecciona móvil —';
+  if (itin) {
+    const [gmap, rmap] = await Promise.all([loadRutaGrupos(), loadParqueRutas()]);
+    // Grupos del parque de la ESTACIÓN (itinerarios.grupo): todas las rutas que comparten estación
+    const estacion = itin.grupo;
+    const gruposEstacion = new Set(
+      its.filter((i) => i.grupo === estacion).map((i) => _grupoDeRuta(gmap, i.nombre)).filter(Boolean)
+    );
+    const grupoRuta = _grupoDeRuta(gmap, itin.nombre);
+    // El check solo aparece si la estación abarca más de un grupo del parque
+    const aplicaEstacion = gruposEstacion.size > 1;
+    if (estWrap) {
+      estWrap.hidden = !aplicaEstacion;
+      const sp = estWrap.querySelector('span');
+      if (sp && aplicaEstacion) sp.textContent = `Mostrar móviles de toda la estación ${estacion} (${[...gruposEstacion].join(', ')})`;
+    }
+    if (!aplicaEstacion && estChk) estChk.checked = false;
+    const usarEstacion = aplicaEstacion && estChk && estChk.checked;
+    let objetivo = usarEstacion ? gruposEstacion : new Set(grupoRuta ? [grupoRuta] : []);
+    // El despachador solo ve móviles de SUS grupos (admin = todos)
+    const allowG = allowedGrupoSet();
+    if (allowG) objetivo = new Set([...objetivo].filter((g) => allowG.has(g)));
+    const match = veh.filter((v) => objetivo.has(rmap.get(String(v.numero).trim())));
+    if (match.length) {
+      lista = match;
+      placeholder = usarEstacion
+        ? `— ${match.length} móvil(es) de la estación ${estacion} —`
+        : `— ${match.length} móvil(es) de ${grupoRuta} —`;
+    } else { placeholder = '— sin móviles asignados a esa ruta; se muestran todos —'; }
+  } else if (estWrap) { estWrap.hidden = true; if (estChk) estChk.checked = false; }
+  fillSelect(sel, lista.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]), placeholder);
+  sel.value = ''; sel._comboSync && sel._comboSync();
+  const c = $('nd-cond'); if (c) { c.value = ''; c._comboSync && c._comboSync(); }
+  updateNdInfo();
+}
+$('nd-ruta').addEventListener('change', filtrarMovilesPorRuta);
+$('nd-estacion').addEventListener('change', filtrarMovilesPorRuta);
 
 // Captura el GPS del celular para llenar "ubicacion". Nunca bloquea el despacho:
 // si no hay permiso, no hay señal o tarda demasiado, resuelve a null y se sigue.

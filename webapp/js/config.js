@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v91';
+export const APP_VERSION = 'v92';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -76,6 +76,9 @@ export const TABLES = {
     noDelete: true, // un despacho no se elimina (ni TABLA ni LIBRE)
     confirmSave: true, // pide confirmación antes de guardar cambios
     despachador: true, // visible para despachadores (filtrado por sus rutas)
+    // Al elegir/cambiar la ruta, el "Móvil (real)" se limita a los carros del GRUPO de esa ruta
+    // (vía ruta_grupos + parque_automotor). Evita despachar carros que no son de la tabla.
+    vehByGroup: { route: 'ruta_id', veh: 'vehiculo_id' },
     pkEditable: true, // el KEY lo escribe el usuario al crear
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
     select: '*, ruta:ruta_id(nombre), rutap:ruta_programada_id(nombre), veh:vehiculo_id(numero,placa), vehp:vehiculo_programado_id(numero,placa), cond:conductor_id(nombre), desp:despachador_id(nombre), aud:auditor_id(nombre)',
@@ -264,7 +267,8 @@ export const TABLES = {
       { key: 'email', label: 'Usuario' },
       { key: 'hora_inicio', label: 'Inicio', m: true },
       { key: 'hora_fin', label: 'Fin', m: true },
-      { key: 'observacion', label: 'Puesto / Observación', m: true },
+      { key: 'grupos', label: 'Grupos', m: true },
+      { key: 'observacion', label: 'Puesto / Observación' },
     ],
     fields: [
       { key: 'fecha', label: 'Fecha', type: 'date', required: true },
@@ -272,6 +276,7 @@ export const TABLES = {
       { key: 'nombre', label: 'Nombre', type: 'textsel', optionsFrom: { table: 'perfiles', col: 'nombre', where: ['activo', true] } },
       { key: 'hora_inicio', label: 'Hora de inicio', type: 'time' },
       { key: 'hora_fin', label: 'Hora finalización labor', type: 'time' },
+      { key: 'grupos', label: 'Grupos de ruta', type: 'multisel', optionsFrom: { table: 'parque_automotor', col: 'ruta' } },
       { key: 'observacion', label: 'Puesto / Observación', type: 'textsel', optionsFrom: { table: 'puestos', col: 'nombre', where: ['activo', true] } },
     ],
   },
@@ -521,7 +526,7 @@ export const TABLES = {
 
 // Construye la config de una tabla de puesto (misma función que Despachos, su propia tabla).
 // En las tablas los viajes los programa el administrador: el formulario es muy restringido.
-export function configTablaPuesto(label) {
+export function configTablaPuesto(label, puesto) {
   // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
   const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id']);
   // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
@@ -547,5 +552,6 @@ export function configTablaPuesto(label) {
   const select = TABLES.despachos.select.replace(', aud:auditor_id(nombre)', '');
   // Importación propia de la tabla por puesto (inserta en SU tabla, no en despachos)
   const importar = { rpc: 'importar_tabla_puesto', map: IMPORT_MAP_TABLAS, keyField: 'fecha', tablaParam: true, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' };
-  return { ...TABLES.despachos, fields, columns, filters, defaultOrder, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false };
+  // La tabla pertenece a un puesto: el campo "Ruta" se limita a las rutas de ese puesto (puestos.rutas)
+  return { ...TABLES.despachos, fields, columns, filters, defaultOrder, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false, puesto, routeByPuesto: 'ruta_id' };
 }
