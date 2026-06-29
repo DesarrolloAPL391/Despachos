@@ -673,14 +673,14 @@ function buildDateCalendar(f) {
 }
 
 // Aplica búsqueda + filtros activos + restricción por rol a una consulta (reutilizable)
-function applyQueryFilters(qy) {
+function applyQueryFilters(qy, opts = {}) {
   const cfg = TABLES[current];
   // Filtro base fijo de la tabla (ej. ocultar vehículos desvinculados del parque)
   (cfg.baseFilter || []).forEach((bf) => {
     if (bf.op === 'neq') qy = qy.neq(bf.col, bf.val);
     else if (bf.op === 'eq') qy = qy.eq(bf.col, bf.val);
   });
-  if (term && cfg.searchCols?.length) {
+  if (!opts.skipSearch && term && cfg.searchCols?.length) {
     qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
   }
   for (const [key, val] of Object.entries(filters)) { // eq, rango de fecha (::gte/::lte) o lista (::in)
@@ -1263,6 +1263,16 @@ $('refresh-btn').addEventListener('click', loadData);
 $('prev-btn').addEventListener('click', () => { if (page > 0) { page--; loadData(); } });
 $('next-btn').addEventListener('click', () => { page++; loadData(); });
 
+// ¿La fila coincide con el texto buscado? Mira las columnas visibles (móvil, ruta,
+// conductor, etc., incluidas las relaciones) + searchCols + placas. Búsqueda en cliente.
+function rowMatchesTerm(cfg, row, t) {
+  const q = String(t || '').toLowerCase();
+  const vals = [];
+  for (const c of (cfg.columns || [])) vals.push(c.path ? getPath(row, c.path) : row[c.key]);
+  for (const k of (cfg.searchCols || [])) vals.push(row[k]);
+  vals.push(getPath(row, 'veh.placa'), getPath(row, 'vehp.placa'));
+  return vals.some((v) => v != null && String(v).toLowerCase().includes(q));
+}
 async function loadData() {
   const cfg = TABLES[current];
   refrescarFechaServidor(); // mantiene al día la fecha del servidor (sin bloquear el render)
@@ -1270,6 +1280,9 @@ async function loadData() {
   // Día completo: si hay un día seleccionado en el calendario, se muestra TODA la
   // programación de ese día sin paginar.
   const diaSel = !!filters['fecha'] && (cfg.filters || []).some((f) => f.col === 'fecha' && f.type === 'date');
+  // Con el día completo cargado, la búsqueda se hace en el cliente (así busca por
+  // móvil, ruta, conductor, placa… que son relaciones y no se pueden filtrar en el servidor).
+  const useClientSearch = diaSel && !!term;
   const from = page * PAGE_SIZE, to = from + PAGE_SIZE - 1;
 
   let qy = sb.from(current).select(cfg.select, { count: 'exact' })
@@ -1279,14 +1292,17 @@ async function loadData() {
   }
   qy = diaSel ? qy.range(0, 4999) : qy.range(from, to); // día completo trae todo; si no, paginado
 
-  qy = applyQueryFilters(qy);
+  qy = applyQueryFilters(qy, { skipSearch: useClientSearch });
 
   const { data, error, count } = await qy;
   $('loading').hidden = true;
   if (error) { toast('Error al cargar: ' + error.message, 'err'); return; }
+  let rows = data || [];
+  let total = count || 0;
+  if (useClientSearch) { rows = rows.filter((r) => rowMatchesTerm(cfg, r, term)); total = rows.length; }
   // Si la tabla tiene columna de QR, asegura el generador antes de pintar
   if ((cfg.columns || []).some((c) => c.qr)) { try { await ensureQRGen(); await ensureLogo(); } catch { /* */ } }
-  renderTable(cfg, data || [], count || 0, diaSel);
+  renderTable(cfg, rows, total, diaSel);
 }
 
 // Íconos SVG (se ven iguales en Android/escritorio, sin depender de emojis)
