@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v90';
+export const APP_VERSION = 'v91';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -410,8 +410,9 @@ export const TABLES = {
     select: '*',
     searchCols: ['numero_interno', 'placa', 'ruta', 'propietario', 'marca'],
     defaultOrder: { col: 'numero_interno', asc: true },
+    baseFilter: [{ col: 'estado', op: 'neq', val: 'Desvinculado' }], // ocultar desvinculados
     filters: [
-      { col: 'estado', label: 'Estado', options: ['Activo', 'Inactivo', 'Desvinculado'] },
+      { col: 'estado', label: 'Estado', options: ['Activo', 'Inactivo'] },
     ],
     columns: [
       { key: 'numero_interno', label: 'Móvil', m: true },

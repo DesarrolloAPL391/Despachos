@@ -656,6 +656,11 @@ function buildDateCalendar(f) {
 // Aplica búsqueda + filtros activos + restricción por rol a una consulta (reutilizable)
 function applyQueryFilters(qy) {
   const cfg = TABLES[current];
+  // Filtro base fijo de la tabla (ej. ocultar vehículos desvinculados del parque)
+  (cfg.baseFilter || []).forEach((bf) => {
+    if (bf.op === 'neq') qy = qy.neq(bf.col, bf.val);
+    else if (bf.op === 'eq') qy = qy.eq(bf.col, bf.val);
+  });
   if (term && cfg.searchCols?.length) {
     qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
   }
@@ -3358,6 +3363,8 @@ let _recPts = [];      // puntos del recorrido actual
 let _recCursor = null; // marcador que avanza con el slider
 function limpiarRecorrido() {
   if (recLayer && flotaMap) { flotaMap.removeLayer(recLayer); recLayer = null; }
+  // restaura los demás vehículos al quitar el recorrido
+  if (flotaLayer && flotaMap && !flotaMap.hasLayer(flotaLayer)) flotaLayer.addTo(flotaMap);
   _recPts = []; _recCursor = null;
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
@@ -3365,6 +3372,8 @@ function limpiarRecorrido() {
 function dibujarRecorrido(pts, movil) {
   if (!flotaMap) return;
   limpiarRecorrido();
+  // oculta la flota para ver mejor el recorrido (se restaura al quitarlo)
+  if (flotaLayer && flotaMap.hasLayer(flotaLayer)) flotaMap.removeLayer(flotaLayer);
   _recPts = pts;
   recLayer = L.layerGroup().addTo(flotaMap);
   const latlngs = pts.map((p) => [p.lat, p.lon]);
