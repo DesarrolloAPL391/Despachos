@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v84';
+export const APP_VERSION = 'v85';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -19,7 +19,7 @@ const NOVEDADES = [
 
 export const TABLE_ORDER = [
   'despachos', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
-  'conductores_sonar', 'itinerarios',
+  'conductores_sonar', 'parque_automotor', 'itinerarios',
 ];
 // Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
 // y se registran en tiempo de ejecución (ver app.js). No hay que editar config por cada una.
@@ -396,6 +396,68 @@ export const TABLES = {
       { key: 'gps_vehiculo_id', label: 'ID GPS', type: 'text' },
       { key: 'placa', label: 'Placa', type: 'text' },
       { key: 'movil', label: 'Móvil', type: 'text' },
+    ],
+  },
+
+  parque_automotor: {
+    label: 'Parque automotor',
+    icon: '🚍',
+    readonly: true,        // solo consulta
+    despachador: true,     // visible para despachadores y admin
+    pk: 'id',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['numero_interno', 'placa', 'ruta', 'propietario', 'marca'],
+    defaultOrder: { col: 'numero_interno', asc: true },
+    filters: [
+      { col: 'estado', label: 'Estado', options: ['Activo', 'Inactivo', 'Desvinculado'] },
+    ],
+    columns: [
+      { key: 'numero_interno', label: 'Móvil', m: true },
+      { key: 'placa', label: 'Placa', m: true },
+      { label: 'QR', qr: 'placa' },
+      { key: 'ruta', label: 'Ruta', m: true },
+      { key: 'vence_soat', label: 'SOAT', band: true, m: true },
+      { key: 'vence_tecnomecanica', label: 'Tecnomec.', band: true, m: true },
+      { key: 'vence_tarjeta_operacion', label: 'T. operación', band: true },
+      { key: 'estado', label: 'Estado', badge: true },
+      { label: 'Docs', docsbtn: true, m: true },
+    ],
+    fields: [
+      { key: 'numero_interno', label: 'Móvil (N° interno)', type: 'text', section: 'General' },
+      { key: 'placa', label: 'Placa', type: 'text', section: 'General' },
+      { key: 'estado', label: 'Estado', type: 'text', section: 'General' },
+      { key: 'centro_costos', label: 'Centro de costos', type: 'text', section: 'General' },
+      { key: 'sistema_ruta', label: 'Sistema de ruta', type: 'text', section: 'General' },
+      { key: 'ruta', label: 'Ruta', type: 'text', section: 'General' },
+      { key: 'marca', label: 'Marca', type: 'text', section: 'Técnico' },
+      { key: 'modelo', label: 'Modelo (año)', type: 'number', section: 'Técnico' },
+      { key: 'linea', label: 'Línea', type: 'text', section: 'Técnico' },
+      { key: 'cilindraje', label: 'Cilindraje', type: 'text', section: 'Técnico' },
+      { key: 'combustible', label: 'Combustible', type: 'text', section: 'Técnico' },
+      { key: 'tecnologia_emision', label: 'Tecnología emisión', type: 'text', section: 'Técnico' },
+      { key: 'clase_vehiculo', label: 'Clase', type: 'text', section: 'Técnico' },
+      { key: 'tipo_carroceria', label: 'Carrocería', type: 'text', section: 'Técnico' },
+      { key: 'color', label: 'Color', type: 'text', section: 'Técnico' },
+      { key: 'cap_sentados', label: 'Cap. sentados', type: 'number', section: 'Técnico' },
+      { key: 'cap_pie', label: 'Cap. de pie', type: 'number', section: 'Técnico' },
+      { key: 'capacidad_to', label: 'Capacidad T.O.', type: 'number', section: 'Técnico' },
+      { key: 'propietario', label: 'Propietario', type: 'text', section: 'Propietario' },
+      { key: 'identificacion', label: 'Identificación', type: 'text', section: 'Propietario' },
+      { key: 'direccion', label: 'Dirección', type: 'text', section: 'Propietario' },
+      { key: 'telefono', label: 'Teléfono', type: 'text', section: 'Propietario' },
+      { key: 'correo', label: 'Correo', type: 'text', section: 'Propietario' },
+      { key: 'administrador', label: 'Administrador', type: 'text', section: 'Propietario' },
+      { key: 'correo_admin', label: 'Correo administrador', type: 'text', section: 'Propietario' },
+      { key: 'fecha_matricula', label: 'Fecha matrícula', type: 'date', section: 'Documentos' },
+      { key: 'num_matricula', label: 'N° matrícula', type: 'text', section: 'Documentos' },
+      { key: 'num_tarjeta_operacion', label: 'N° tarjeta operación', type: 'text', section: 'Documentos' },
+      { key: 'vence_tarjeta_operacion', label: 'Vence tarjeta operación', type: 'date', section: 'Documentos' },
+      { key: 'num_soat', label: 'N° SOAT', type: 'text', section: 'Documentos' },
+      { key: 'vence_soat', label: 'Vence SOAT', type: 'date', section: 'Documentos' },
+      { key: 'aseguradora_soat', label: 'Aseguradora SOAT', type: 'text', section: 'Documentos' },
+      { key: 'num_tecnomecanica', label: 'N° tecnomecánica', type: 'text', section: 'Documentos' },
+      { key: 'vence_tecnomecanica', label: 'Vence tecnomecánica', type: 'date', section: 'Documentos' },
     ],
   },
 

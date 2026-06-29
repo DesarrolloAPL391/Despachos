@@ -50,6 +50,12 @@
       <button id="asis-banner-btn" class="btn asis-banner-btn">🟢 Marcar ingreso</button>
     </div>
 
+    <div id="doc-banner" class="doc-banner" hidden>
+      <span class="doc-banner-txt" id="doc-banner-txt"></span>
+      <button id="doc-banner-ver" class="btn doc-banner-btn">Ver</button>
+      <button id="doc-banner-x" class="icon-btn doc-banner-x" title="Ocultar">✕</button>
+    </div>
+
     <div class="layout">
       <div id="scrim" class="scrim" hidden></div>
       <nav id="sidebar" class="sidebar"></nav>
@@ -206,6 +212,7 @@
         <label class="field"><span>Despachador (tú)</span><input id="s-desp-name" readonly /></label>
         <label class="field"><span>Comentarios</span><input id="s-com" /></label>
         <div class="field full sonar-info" id="s-info" hidden></div>
+        <div class="field full" id="s-docwarn" hidden></div>
         <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>
       </form>
       <div class="modal-foot">
@@ -278,6 +285,14 @@
         <label class="field"><span>Desde *</span><input type="date" id="pst-desde" /></label>
         <label class="field"><span>Hasta *</span><input type="date" id="pst-hasta" /></label>
         <label class="field full"><span>Puesto *</span><select id="pst-puesto"></select></label>
+        <label class="field full"><span>Tipo de asignación</span>
+          <select id="pst-tipo">
+            <option value="rango">Por fechas (puntual)</option>
+            <option value="fijo">Fijo entre semana (lun–sáb)</option>
+            <option value="domingo">Fijo domingos y festivos</option>
+          </select>
+        </label>
+        <div class="field full pst-tipo-help" id="pst-tipo-help"></div>
         <div class="field full sonar-info" id="pst-info" hidden></div>
         <div class="field full"><pre id="pst-result" class="sonar-result" hidden></pre></div>
       </form>
@@ -286,6 +301,25 @@
         <span class="spacer"></span>
         <button id="pst-cancel" class="btn">Cancelar</button>
         <button id="pst-save" class="btn btn-primary">Asignar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Tablero: quién está en cada puesto -->
+  <div id="tab-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>🗂️ Puestos · quién está dónde</h3>
+        <button id="tab-close" class="icon-btn">✕</button>
+      </div>
+      <div class="tab-bar">
+        <label class="tab-fecha-lbl">Fecha <input type="date" id="tab-fecha" /></label>
+        <button id="tab-refresh" type="button" class="btn btn-sm">↻ Actualizar</button>
+      </div>
+      <div id="tab-body" class="tab-body"></div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="tab-cancel" class="btn">Cerrar</button>
       </div>
     </div>
   </div>
@@ -341,6 +375,72 @@
       <div class="modal-foot">
         <span class="spacer"></span>
         <button id="qr-cancel" class="btn">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="qrv-modal" class="modal" hidden>
+    <div class="modal-card qrv-card">
+      <div class="modal-head">
+        <h3>🚍 QR del vehículo</h3>
+        <button id="qrv-x" class="icon-btn">✕</button>
+      </div>
+      <div class="qrv-body">
+        <div id="qrv-img" class="qrv-img"></div>
+        <div id="qrv-placa" class="qrv-placa"></div>
+        <p class="qrv-hint">Al leerlo muestra la <b>placa</b>.</p>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="qrv-descargar" class="btn">⬇️ Descargar</button>
+        <button id="qrv-imprimir" class="btn btn-primary">🖨️ Imprimir</button>
+        <button id="qrv-cerrar" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="doc-modal" class="modal" hidden>
+    <div class="modal-card doc-card">
+      <div class="modal-head">
+        <h3>📄 Documentos · <span id="doc-veh"></span></h3>
+        <button id="doc-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form doc-body">
+        <div id="doc-estado" class="doc-estados"></div>
+        <div class="doc-sep">Actualizar documento</div>
+        <label class="field"><span>Documento</span>
+          <select id="doc-tipo">
+            <option value="soat">SOAT</option>
+            <option value="tecnomecanica">Tecnomecánica</option>
+            <option value="tarjeta_operacion">Tarjeta de operación</option>
+          </select>
+        </label>
+        <label class="field"><span>Vence</span><input type="date" id="doc-fecha" /></label>
+        <label class="field"><span>N° (opcional)</span><input type="text" id="doc-num" /></label>
+        <label class="field full"><span>Archivo — PDF o foto (opcional)</span><input type="file" id="doc-file" accept="application/pdf,image/*" /></label>
+        <label class="field full"><span>Observación (opcional)</span><input type="text" id="doc-obs" /></label>
+        <p id="doc-err" class="error" hidden></p>
+        <div class="doc-sep">Historial del vehículo</div>
+        <div id="doc-hist" class="doc-hist"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="doc-cancel" class="btn">Cerrar</button>
+        <button id="doc-save" class="btn btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="docp-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>⚠️ Documentos por vencer</h3>
+        <button id="docp-x" class="icon-btn">✕</button>
+      </div>
+      <div id="docp-body" class="docp-body"></div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="docp-cerrar" class="btn">Cerrar</button>
       </div>
     </div>
   </div>

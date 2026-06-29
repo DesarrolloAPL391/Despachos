@@ -1,9 +1,9 @@
 // Service worker: cachea el app shell. Los datos siempre van por red.
-const CACHE = 'despachos-apl-v84';
+const CACHE = 'despachos-apl-v85';
 const SHELL = [
   '.', 'index.html',
   'css/styles.css',
-  'js/app.js', 'js/config.js', 'js/jsqr.min.js',
+  'js/app.js', 'js/config.js', 'js/jsqr.min.js', 'js/qrcode.min.js',
   'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/logo.png',
 ];

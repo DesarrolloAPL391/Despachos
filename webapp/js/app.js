@@ -123,12 +123,12 @@ function fechaLegible(v) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v || '');
 }
-// Formatea un timestamp (ISO) a fecha+hora local legible: "YYYY-MM-DD HH:MM"
+// Formatea un timestamp (ISO) a fecha+hora local colombiana: "DD/MM/AAAA, HH:MM"
 function fmtFechaHora(v) {
   const d = new Date(v);
   if (isNaN(d)) return fmt(v);
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
@@ -253,6 +253,7 @@ async function showApp(user) {
   updateNet();
   processQueue();
   checkAsistenciaPendiente(); // avisar si falta marcar el ingreso de hoy
+  refrescarAlertasDocs();     // avisar de documentos vencidos / por vencer
 }
 
 $('login-form').addEventListener('submit', async (e) => {
@@ -280,8 +281,10 @@ function buildSidebar() {
     nav.appendChild(b);
   }
   // acciones especiales (no son tablas)
+  if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
+  if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
 }
@@ -290,6 +293,15 @@ function addNavAction(nav, icon, label, fn, id) {
   b.className = 'nav-action'; if (id) b.id = id;
   b.innerHTML = `<span>${icon}</span> ${label}`;
   b.onclick = () => { fn(); closeMenu(); };
+  nav.appendChild(b);
+}
+// Centro de notificaciones (alertas de documentos), con contador
+function addNavNotif(nav) {
+  const b = document.createElement('button');
+  b.className = 'nav-action'; b.id = 'nav-notif';
+  const n = (typeof DOC_ALERTAS !== 'undefined' && DOC_ALERTAS) ? DOC_ALERTAS.length : 0;
+  b.innerHTML = `<span>🔔</span> Notificaciones${n ? ` <span class="nav-badge">${n}</span>` : ''}`;
+  b.onclick = () => { openDocPanel(); closeMenu(); };
   nav.appendChild(b);
 }
 function setMenu(open) {
@@ -745,9 +757,28 @@ async function openAsignarPuesto() {
   });
   fillSelect($('pst-puesto'), (pp.data || []).map((p) => [p.nombre, p.nombre]), 'Selecciona puesto');
   enhanceById('pst-puesto');
+  $('pst-tipo').value = 'rango';
+  aplicarModoAsig();
   await updatePstInfo();
   $('pst-modal').hidden = false;
 }
+const PST_HELP = {
+  rango: 'Asigna el puesto solo en el rango de fechas indicado.',
+  fijo: 'El despachador queda en este puesto de lunes a sábado, sin recargar. Deja el puesto vacío para quitarlo.',
+  domingo: 'El despachador queda en este puesto los domingos y los festivos de Colombia. Deja el puesto vacío para quitarlo.',
+};
+// Modo de asignación: las fechas solo aplican al modo "rango"
+function aplicarModoAsig() {
+  const tipo = $('pst-tipo').value;
+  const usaFechas = tipo === 'rango';
+  $('pst-desde').disabled = !usaFechas;
+  $('pst-hasta').disabled = !usaFechas;
+  $('pst-desde').closest('.field').classList.toggle('field-off', !usaFechas);
+  $('pst-hasta').closest('.field').classList.toggle('field-off', !usaFechas);
+  $('pst-tipo-help').textContent = PST_HELP[tipo] || '';
+  $('pst-save').textContent = usaFechas ? 'Asignar' : 'Guardar';
+}
+$('pst-tipo').addEventListener('change', () => { aplicarModoAsig(); updatePstInfo(); });
 function pstSeleccionados() {
   return Array.from(document.querySelectorAll('#pst-desp-list .pst-cb:checked')).map((c) => c.value);
 }
@@ -758,9 +789,17 @@ function pstDiasRango() {
 }
 async function updatePstInfo() {
   const emails = pstSeleccionados();
-  const dias = pstDiasRango();
   const info = $('pst-info');
-  if (!emails.length || !dias) { info.hidden = true; return; }
+  const tipo = $('pst-tipo').value;
+  if (!emails.length) { info.hidden = true; return; }
+  if (tipo === 'fijo' || tipo === 'domingo') {
+    const cuando = tipo === 'fijo' ? 'de lunes a sábado' : 'los domingos y festivos';
+    info.hidden = false; info.className = 'field full sonar-info';
+    info.textContent = `Quedará para ${emails.length} despachador(es) ${cuando} (sin recargar). Deja el puesto vacío para quitarlo.`;
+    return;
+  }
+  const dias = pstDiasRango();
+  if (!dias) { info.hidden = true; return; }
   info.hidden = false; info.className = 'field full sonar-info';
   info.textContent = `Se aplicará a ${emails.length} despachador(es) × ${dias} día(s) = ${emails.length * dias} asignación(es).`;
 }
@@ -780,7 +819,37 @@ $('pst-save').addEventListener('click', async () => {
   const btn = $('pst-save'); if (btn.dataset.busy === '1') return;
   const err = $('pst-error'); err.hidden = true;
   const emails = pstSeleccionados();
-  const desde = $('pst-desde').value, hasta = $('pst-hasta').value, puesto = $('pst-puesto').value;
+  const puesto = $('pst-puesto').value;
+  const tipo = $('pst-tipo').value;
+
+  // ----- Modo recurrente: fijo entre semana o fijo domingos/festivos (no usa fechas) -----
+  if (tipo === 'fijo' || tipo === 'domingo') {
+    if (!emails.length) { err.textContent = 'Selecciona al menos un despachador.'; err.hidden = false; return; }
+    const quitar = !puesto;
+    const cuando = tipo === 'fijo' ? 'de lunes a sábado' : 'los domingos y festivos';
+    const ok = await confirmAction({
+      title: quitar ? '¿Quitar puesto recurrente?' : '¿Guardar puesto recurrente?',
+      lead: quitar ? `Estos despachadores dejarán de tener puesto ${cuando}:` : `Estos despachadores quedarán en este puesto ${cuando}:`,
+      message: `Despachadores: ${emails.length}\nPuesto:        ${puesto || '— (sin asignar) —'}\nAplica:        ${cuando}`,
+      okLabel: quitar ? 'Quitar' : 'Guardar',
+    });
+    if (!ok) return;
+    btn.dataset.busy = '1'; btn.disabled = true;
+    let res;
+    try { res = await sb.rpc('admin_set_puesto_recurrente', { p_emails: emails, p_puesto: puesto || null, p_tipo: tipo }); }
+    finally { btn.dataset.busy = '0'; btn.disabled = false; }
+    if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
+    const r = $('pst-result'); r.hidden = false; r.className = 'sonar-result ok';
+    r.textContent = quitar
+      ? `✅ Puesto ${cuando} quitado a ${res.data} despachador(es).`
+      : `✅ "${puesto}" para ${res.data} despachador(es) ${cuando} (sin recargar).`;
+    toast('Asignación guardada', 'ok');
+    if (current === 'horarios') loadData();
+    return;
+  }
+
+  // ----- Modo por fechas (rango) -----
+  const desde = $('pst-desde').value, hasta = $('pst-hasta').value;
   if (!emails.length || !desde || !hasta || !puesto) {
     err.textContent = 'Selecciona al menos un despachador, el rango de fechas y el puesto.'; err.hidden = false; return;
   }
@@ -804,6 +873,93 @@ $('pst-save').addEventListener('click', async () => {
   toast('Puesto asignado', 'ok');
   if (current === 'horarios') loadData();
 });
+
+// ---------- Tablero: quién está en cada puesto ----------
+async function openTablero() {
+  $('tab-fecha').value = hoyServidor();
+  $('tab-modal').hidden = false;
+  await renderTablero();
+}
+function closeTablero() { $('tab-modal').hidden = true; }
+$('tab-close').addEventListener('click', closeTablero);
+$('tab-cancel').addEventListener('click', closeTablero);
+$('tab-refresh').addEventListener('click', renderTablero);
+$('tab-fecha').addEventListener('change', renderTablero);
+
+async function renderTablero() {
+  const body = $('tab-body');
+  const fecha = $('tab-fecha').value || hoyServidor();
+  body.innerHTML = '<p class="tab-load">Cargando…</p>';
+  const [pf, hr, pp, td] = await Promise.all([
+    sb.from('perfiles').select('email,nombre,puesto_fijo,puesto_domingo').eq('rol', 'despachador').eq('activo', true).order('nombre'),
+    sb.from('horarios').select('email,nombre,observacion').eq('fecha', fecha),
+    sb.from('puestos').select('nombre').eq('activo', true).order('nombre'),
+    sb.rpc('tipo_dia', { d: fecha }),
+  ]);
+  if (pf.error || hr.error || pp.error) {
+    body.innerHTML = `<p class="error">${(pf.error || hr.error || pp.error).message}</p>`; return;
+  }
+  const tipoDia = td.data || 'habil';       // 'habil' | 'domingo' | 'festivo'
+  const esDomFest = tipoDia !== 'habil';
+  // horario del día por correo
+  const diaPorEmail = {};
+  for (const h of (hr.data || [])) {
+    const k = (h.email || '').toLowerCase();
+    if ((h.observacion || '').trim()) diaPorEmail[k] = h.observacion.trim();
+  }
+  // resolver puesto de cada despachador: horario del día > recurrente (domingo/festivo o entre semana)
+  const porPuesto = {}; // lowerNombrePuesto -> { puesto, items:[{nombre, fuente}] }
+  const sinPuesto = [];
+  for (const d of (pf.data || [])) {
+    const k = (d.email || '').toLowerCase();
+    const dia = diaPorEmail[k];
+    const recurrente = esDomFest ? (d.puesto_domingo || '').trim() : (d.puesto_fijo || '').trim();
+    const puesto = dia || recurrente;
+    const nombre = d.nombre || d.email;
+    if (!puesto) { sinPuesto.push(nombre); continue; }
+    const fuente = dia ? 'día' : (esDomFest ? 'dom/fest' : 'fijo');
+    const pk = puesto.toLowerCase();
+    (porPuesto[pk] = porPuesto[pk] || { puesto, items: [] }).items.push({ nombre, fuente });
+  }
+  // tarjetas: primero los puestos activos (aunque estén vacíos), luego puestos usados que no están activos
+  const activos = (pp.data || []).map((p) => p.nombre);
+  const usados = new Set(Object.keys(porPuesto));
+  const cards = [];
+  let cubiertos = 0;
+  for (const nom of activos) {
+    const pk = nom.toLowerCase();
+    const grp = porPuesto[pk];
+    usados.delete(pk);
+    if (grp && grp.items.length) cubiertos++;
+    cards.push(cardPuesto(nom, grp ? grp.items : [], false));
+  }
+  for (const pk of usados) { // puestos asignados pero no activos / sin catálogo
+    cards.push(cardPuesto(porPuesto[pk].puesto, porPuesto[pk].items, true));
+  }
+
+  const aviso = esDomFest
+    ? `<div class="tab-domfest">${tipoDia === 'festivo' ? '🎉 Festivo' : '🟡 Domingo'} · servicio dominical (se usa el puesto de domingos y festivos)</div>`
+    : '';
+  const resumen = aviso + `<div class="tab-resumen">📅 ${fechaLegible(fecha)} · ${cubiertos}/${activos.length} puestos con gente`
+    + ` · ${sinPuesto.length} despachador(es) sin puesto</div>`;
+  const sinHtml = sinPuesto.length
+    ? `<div class="tab-card tab-sin"><div class="tab-card-h">⚠️ Sin puesto (${sinPuesto.length})</div>`
+      + `<div class="tab-card-b">${sinPuesto.map((n) => `<span class="tab-chip">${esc(n)}</span>`).join('')}</div></div>`
+    : '';
+  body.innerHTML = resumen + '<div class="tab-grid">' + cards.join('') + '</div>' + sinHtml;
+}
+function cardPuesto(nombre, items, fueraCatalogo) {
+  const vacio = !items.length;
+  const cuerpo = vacio
+    ? '<span class="tab-nadie">— nadie —</span>'
+    : items.map((it) => {
+      const cls = it.fuente === 'fijo' ? 'fijo' : it.fuente === 'dom/fest' ? 'domfest' : 'dia';
+      return `<span class="tab-chip">${esc(it.nombre)}<i class="tab-src tab-src-${cls}">${it.fuente}</i></span>`;
+    }).join('');
+  return `<div class="tab-card${vacio ? ' tab-empty' : ''}${fueraCatalogo ? ' tab-extra' : ''}">`
+    + `<div class="tab-card-h">📌 ${esc(nombre)}${fueraCatalogo ? ' <em>(no activo)</em>' : ''} <b>${items.length}</b></div>`
+    + `<div class="tab-card-b">${cuerpo}</div></div>`;
+}
 
 // ---------- carga de datos ----------
 let searchTimer;
@@ -836,6 +992,8 @@ async function loadData() {
   const { data, error, count } = await qy;
   $('loading').hidden = true;
   if (error) { toast('Error al cargar: ' + error.message, 'err'); return; }
+  // Si la tabla tiene columna de QR, asegura el generador antes de pintar
+  if ((cfg.columns || []).some((c) => c.qr)) { try { await ensureQRGen(); await ensureLogo(); } catch { /* */ } }
   renderTable(cfg, data || [], count || 0, diaSel);
 }
 
@@ -870,11 +1028,41 @@ function renderTable(cfg, rows, count, diaSel = false) {
       const td = document.createElement('td');
       td.dataset.label = c.label;
       if (hasMobile && !c.m) td.className = 'col-hide';
+      // Columna de QR: dibuja el QR del campo indicado (ej. la placa) y al tocarlo lo amplía
+      if (c.qr) {
+        const code = row[c.qr];
+        if (code && window.qrcode) {
+          const cv = qrCanvas(code, 2, 1);
+          cv.className = 'qr-cell';
+          cv.title = 'Ver / imprimir QR · ' + code;
+          cv.addEventListener('click', () => openQrVehiculo(code));
+          td.appendChild(cv);
+        } else {
+          td.textContent = code ? '—' : '';
+        }
+        tr.appendChild(td);
+        continue;
+      }
+      // Columna de gestión de documentos (solo admin): botón que abre el gestor del vehículo
+      if (c.docsbtn) {
+        if (isAdmin()) {
+          const b = Object.assign(document.createElement('button'), {
+            className: 'act act-edit', innerHTML: '📄', title: 'Documentos / vencimientos',
+          });
+          b.onclick = () => openDocsVehiculo(row);
+          td.appendChild(b);
+        }
+        tr.appendChild(td);
+        continue;
+      }
       const val = c.path ? getPath(row, c.path) : row[c.key];
       if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
         td.innerHTML = `<a href="https://www.google.com/maps?q=${encodeURIComponent(String(val))}" target="_blank" rel="noopener" class="maps-link" title="${esc(String(val))}">📍 Ver</a>`;
       } else if (c.dt && val) {
         td.textContent = fmtFechaHora(val); // fecha+hora local legible (ej. auditado el)
+      } else if (c.band) {
+        const b = docBand(val);
+        td.innerHTML = `<span class="doc-chip ${b.cls}" title="${b.dias == null ? 'Sin dato' : b.dias < 0 ? 'Vencido hace ' + (-b.dias) + ' día(s)' : 'Vence en ' + b.dias + ' día(s)'}">${esc(b.txt)}</span>`;
       } else if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
       } else {
@@ -1329,6 +1517,301 @@ function openQrScanner() {
   if (x) x.addEventListener('click', () => finishQr(null));
   if (c) c.addEventListener('click', () => finishQr(null));
 })();
+
+/* ===== Generador de QR (qrcode-generator) para los vehículos ===== */
+function ensureQRGen() {
+  if (window.qrcode) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'js/qrcode.min.js'; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+// Logo del centro (precargado una vez)
+let _logoImg = null, _logoTried = false;
+function ensureLogo() {
+  if (_logoImg || _logoTried) return Promise.resolve(_logoImg);
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => { _logoImg = img; res(img); };
+    img.onerror = () => { _logoTried = true; res(null); };
+    img.src = 'icons/logo.png';
+  });
+}
+function _roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+// Dibuja el QR del texto en un <canvas> (corrección H) con el logo al centro.
+function qrCanvas(text, scale = 4, margin = 2, withLogo = true) {
+  const qr = window.qrcode(0, 'H'); // alta corrección: tolera el logo en el centro
+  qr.addData(String(text)); qr.make();
+  const n = qr.getModuleCount();
+  const px = (n + margin * 2) * scale;
+  const cv = document.createElement('canvas'); cv.width = cv.height = px;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, px, px);
+  ctx.fillStyle = '#111';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    if (qr.isDark(r, c)) ctx.fillRect((c + margin) * scale, (r + margin) * scale, scale, scale);
+  }
+  if (withLogo && _logoImg) {
+    const ls = Math.round(px * 0.24);              // tamaño del logo (~24%)
+    const pad = Math.max(2, Math.round(ls * 0.16)); // margen blanco alrededor
+    const x = Math.round((px - ls) / 2), y = Math.round((px - ls) / 2);
+    ctx.fillStyle = '#fff';
+    _roundRect(ctx, x - pad, y - pad, ls + pad * 2, ls + pad * 2, Math.round(ls * 0.22));
+    ctx.fill();
+    ctx.drawImage(_logoImg, x, y, ls, ls);
+  }
+  return cv;
+}
+// Modal: QR ampliado del vehículo (la placa), con imprimir y descargar.
+function openQrVehiculo(placa) {
+  if (!placa) return;
+  const cont = $('qrv-img'); cont.innerHTML = '';
+  cont.appendChild(qrCanvas(placa, 8, 2));
+  $('qrv-placa').textContent = placa;
+  $('qrv-modal').dataset.placa = placa;
+  $('qrv-modal').hidden = false;
+}
+function closeQrVehiculo() { $('qrv-modal').hidden = true; }
+$('qrv-x').addEventListener('click', closeQrVehiculo);
+$('qrv-cerrar').addEventListener('click', closeQrVehiculo);
+$('qrv-descargar').addEventListener('click', () => {
+  const placa = $('qrv-modal').dataset.placa; if (!placa) return;
+  const a = document.createElement('a');
+  a.href = qrCanvas(placa, 12, 3).toDataURL('image/png');
+  a.download = `QR-${placa}.png`; a.click();
+});
+$('qrv-imprimir').addEventListener('click', () => {
+  const placa = $('qrv-modal').dataset.placa; if (!placa) return;
+  const url = qrCanvas(placa, 12, 3).toDataURL('image/png');
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+  w.document.write(`<!doctype html><html><head><title>QR ${placa}</title></head>`
+    + `<body style="margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:sans-serif">`
+    + `<img src="${url}" style="width:280px;height:280px"><div style="font-size:26px;font-weight:800;margin-top:10px">${placa}</div>`
+    + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+});
+
+/* ===== Vencimientos de documentos (SOAT, tecnomecánica, tarjeta de operación) ===== */
+const DOC_TIPOS = [
+  { key: 'soat', label: 'SOAT', col: 'vence_soat', num: 'num_soat' },
+  { key: 'tecnomecanica', label: 'Tecnomecánica', col: 'vence_tecnomecanica', num: 'num_tecnomecanica' },
+  { key: 'tarjeta_operacion', label: 'Tarjeta de operación', col: 'vence_tarjeta_operacion', num: 'num_tarjeta_operacion' },
+];
+// Franja/semáforo según los días que faltan: vencido / ≤10 / ≤15 / ≤30 (mes) / vigente
+function docBand(fecha) {
+  if (!fecha) return { cls: 'doc-sin', txt: '—', nivel: 9, dias: null };
+  const f = String(fecha).slice(0, 10);
+  const dias = Math.round((new Date(f + 'T00:00:00') - new Date(hoyServidor() + 'T00:00:00')) / 86400000);
+  if (dias < 0) return { cls: 'doc-venc', txt: fechaLegible(f), nivel: 0, dias };
+  if (dias <= 10) return { cls: 'doc-p10', txt: fechaLegible(f), nivel: 1, dias };
+  if (dias <= 15) return { cls: 'doc-p15', txt: fechaLegible(f), nivel: 2, dias };
+  if (dias <= 30) return { cls: 'doc-p30', txt: fechaLegible(f), nivel: 3, dias };
+  return { cls: 'doc-ok', txt: fechaLegible(f), nivel: 4, dias };
+}
+const nivelEsAlerta = (n) => n <= 3; // vencido o por vencer (≤30)
+function fechaMenosDias(n) { const d = new Date(hoyServidor() + 'T00:00:00'); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); }
+
+// ---- Gestor de documentos del vehículo (admin): editar fechas, adjuntar PDF/foto, historial ----
+let DOC_VEH = null;
+async function openDocsVehiculo(row) {
+  DOC_VEH = row;
+  $('doc-veh').textContent = `${row.numero_interno || ''} · ${row.placa || ''}`;
+  $('doc-err').hidden = true;
+  $('doc-tipo').value = 'soat'; $('doc-obs').value = ''; $('doc-file').value = '';
+  prefillDoc();
+  renderDocEstados(row);
+  $('doc-modal').hidden = false;
+  await loadDocHist(row.id);
+}
+function prefillDoc() {
+  const t = DOC_TIPOS.find((x) => x.key === $('doc-tipo').value);
+  $('doc-fecha').value = DOC_VEH && DOC_VEH[t.col] ? String(DOC_VEH[t.col]).slice(0, 10) : '';
+  $('doc-num').value = (DOC_VEH && DOC_VEH[t.num]) || '';
+}
+$('doc-tipo').addEventListener('change', prefillDoc);
+function renderDocEstados(row) {
+  const cont = $('doc-estado'); cont.innerHTML = '';
+  for (const t of DOC_TIPOS) {
+    const b = docBand(row[t.col]);
+    const d = document.createElement('div'); d.className = 'doc-est-item';
+    d.innerHTML = `<span class="doc-est-lbl">${t.label}</span><span class="doc-chip ${b.cls}">${esc(b.txt)}</span>`;
+    cont.appendChild(d);
+  }
+}
+function closeDocs() { $('doc-modal').hidden = true; DOC_VEH = null; }
+$('doc-x').addEventListener('click', closeDocs);
+$('doc-cancel').addEventListener('click', closeDocs);
+async function loadDocHist(vehId) {
+  const cont = $('doc-hist'); cont.innerHTML = '<p class="tab-load">Cargando…</p>';
+  const { data, error } = await sb.from('vehiculo_documentos').select('*').eq('vehiculo_id', vehId)
+    .order('creado_en', { ascending: false }).limit(100);
+  if (error) { cont.innerHTML = `<p class="error">${error.message}</p>`; return; }
+  if (!data.length) { cont.innerHTML = '<p class="doc-empty">Sin historial todavía.</p>'; return; }
+  const lbl = { soat: 'SOAT', tecnomecanica: 'Tecnomecánica', tarjeta_operacion: 'T. operación' };
+  cont.innerHTML = '';
+  for (const h of data) {
+    const div = document.createElement('div'); div.className = 'doc-hrow';
+    const arch = h.archivo_path ? `<button class="link-btn" data-path="${esc(h.archivo_path)}">📎 ${esc(h.archivo_nombre || 'archivo')}</button>` : '';
+    const cambio = (h.fecha_anterior && String(h.fecha_anterior) !== String(h.fecha_vencimiento))
+      ? ` <span class="doc-cambio">(antes: ${fechaLegible(h.fecha_anterior)})</span>` : '';
+    div.innerHTML = `<div class="doc-hmain"><b>${lbl[h.tipo] || h.tipo}</b> · vence <b>${h.fecha_vencimiento ? fechaLegible(h.fecha_vencimiento) : '—'}</b>${cambio}${h.numero ? (' · N° ' + esc(h.numero)) : ''}</div>`
+      + `<div class="doc-hmeta">👤 ${esc(h.creado_por || '—')} · 🕒 ${fmtFechaHora(h.creado_en)} ${arch}</div>`
+      + (h.observacion ? `<div class="doc-hobs">${esc(h.observacion)}</div>` : '');
+    cont.appendChild(div);
+  }
+  cont.querySelectorAll('button[data-path]').forEach((b) => b.addEventListener('click', () => verDocArchivo(b.dataset.path)));
+}
+async function verDocArchivo(path) {
+  const { data, error } = await sb.storage.from('docs-vehiculos').createSignedUrl(path, 3600);
+  if (error) { toast('No se pudo abrir el archivo: ' + error.message, 'err'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+$('doc-save').addEventListener('click', async () => {
+  const btn = $('doc-save'); if (btn.dataset.busy === '1') return;
+  const err = $('doc-err'); err.hidden = true;
+  if (!DOC_VEH) return;
+  const tipo = $('doc-tipo').value, fecha = $('doc-fecha').value || null;
+  const num = $('doc-num').value.trim() || null, obs = $('doc-obs').value.trim() || null;
+  const file = $('doc-file').files[0];
+  if (!fecha && !file) { err.textContent = 'Indica la nueva fecha de vencimiento o adjunta el documento.'; err.hidden = false; return; }
+  // Validación de la fecha (manejo de errores)
+  if (fecha) {
+    const y = +String(fecha).slice(0, 4);
+    if (isNaN(Date.parse(fecha + 'T00:00:00')) || y < 2000 || y > 2100) {
+      err.textContent = 'La fecha de vencimiento no es válida.'; err.hidden = false; return;
+    }
+  }
+  if (file && file.size > 15 * 1024 * 1024) { err.textContent = 'El archivo supera 15 MB.'; err.hidden = false; return; }
+  // Confirmación con auditoría a la vista (cambio + responsable)
+  const tdef = DOC_TIPOS.find((x) => x.key === tipo);
+  const anterior = DOC_VEH[tdef.col] ? fechaLegible(DOC_VEH[tdef.col]) : '— (sin fecha)';
+  const nueva = fecha ? fechaLegible(fecha) : anterior;
+  const ok = await confirmAction({
+    title: '¿Guardar cambio?',
+    lead: `${tdef.label} · móvil ${DOC_VEH.numero_interno || ''} (${DOC_VEH.placa || ''})`,
+    message: `Vence:        ${anterior}  →  ${nueva}` + (file ? `\nArchivo:      ${file.name}` : '') + `\nResponsable:  ${miCorreo()}`,
+    okLabel: 'Guardar',
+  });
+  if (!ok) return;
+  btn.dataset.busy = '1'; btn.disabled = true; const old = btn.textContent; btn.textContent = 'Guardando…';
+  try {
+    let path = null, nombre = null;
+    if (file) {
+      if (file.size > 15 * 1024 * 1024) throw new Error('El archivo supera 15 MB.');
+      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      path = `${DOC_VEH.id}/${tipo}/${Date.now()}_${safe}`;
+      const up = await sb.storage.from('docs-vehiculos').upload(path, file, { upsert: false, contentType: file.type || undefined });
+      if (up.error) throw up.error;
+      nombre = file.name;
+    }
+    const { error } = await sb.rpc('admin_guardar_doc_vehiculo', {
+      p_vehiculo_id: DOC_VEH.id, p_tipo: tipo, p_fecha: fecha, p_numero: num,
+      p_archivo_path: path, p_archivo_nombre: nombre, p_observacion: obs,
+    });
+    if (error) throw error;
+    const t = DOC_TIPOS.find((x) => x.key === tipo);
+    DOC_VEH[t.col] = fecha; if (num) DOC_VEH[t.num] = num;
+    renderDocEstados(DOC_VEH);
+    $('doc-file').value = ''; $('doc-obs').value = '';
+    await loadDocHist(DOC_VEH.id);
+    toast('Documento guardado', 'ok');
+    if (current === 'parque_automotor') loadData();
+  } catch (e) { err.textContent = e.message || String(e); err.hidden = false; }
+  finally { btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = old; }
+});
+
+// ---- Alertas de vencimiento para el despachador (solo sus móviles) / admin (toda la flota) ----
+let DOC_ALERTAS = [];
+// Móviles que el despachador realmente programa (de Despachos + sus tablas de puesto), últimos 45 días
+async function misMovilesProg() {
+  const set = new Set();
+  const desde = fechaMenosDias(45);
+  const tablas = ['despachos', ...((CTX?.tablas || []).map((t) => t.tabla))].filter((t) => TABLES[t]);
+  for (const t of tablas) {
+    const { data } = await sb.from(t).select('vehiculo').gte('fecha', desde).not('vehiculo', 'is', null).limit(5000);
+    (data || []).forEach((r) => { if (r.vehiculo != null) set.add(String(r.vehiculo).trim()); });
+  }
+  return set;
+}
+async function cargarAlertasDocumentos() {
+  const { data, error } = await sb.from('parque_automotor')
+    .select('id,numero_interno,placa,ruta,estado,vence_soat,vence_tecnomecanica,vence_tarjeta_operacion,num_soat,num_tecnomecanica,num_tarjeta_operacion')
+    .eq('estado', 'Activo').limit(5000);
+  if (error || !data) return [];
+  let permitido = null; // null = todos (admin)
+  if (!isAdmin()) { permitido = await misMovilesProg(); }
+  const out = [];
+  for (const v of data) {
+    if (permitido && !permitido.has(String(v.numero_interno).trim())) continue;
+    const items = [];
+    for (const t of DOC_TIPOS) { const b = docBand(v[t.col]); if (nivelEsAlerta(b.nivel)) items.push({ label: t.label, b }); }
+    if (items.length) out.push({ ...v, items, peor: Math.min(...items.map((i) => i.b.nivel)) });
+  }
+  out.sort((a, b) => a.peor - b.peor || String(a.numero_interno).localeCompare(String(b.numero_interno)));
+  return out;
+}
+async function refrescarAlertasDocs() {
+  try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
+  buildSidebar(); // refresca el contador 🔔 del menú
+  const banner = $('doc-banner');
+  if (!banner) return;
+  if (!DOC_ALERTAS.length || banner.dataset.dismiss === '1') { banner.hidden = true; return; }
+  const venc = DOC_ALERTAS.filter((a) => a.peor === 0).length;
+  $('doc-banner-txt').innerHTML = `⚠️ <b>${DOC_ALERTAS.length}</b> vehículo(s) con documentos por vencer`
+    + (venc ? ` · <b>${venc}</b> ya vencido(s)` : '');
+  banner.hidden = false;
+}
+$('doc-banner-ver') && $('doc-banner-ver').addEventListener('click', openDocPanel);
+$('doc-banner-x') && $('doc-banner-x').addEventListener('click', () => { $('doc-banner').dataset.dismiss = '1'; $('doc-banner').hidden = true; });
+
+function openDocPanel() {
+  const body = $('docp-body');
+  if (!DOC_ALERTAS.length) { body.innerHTML = '<p class="doc-empty">Sin alertas de documentos. 👍</p>'; }
+  else {
+    body.innerHTML = DOC_ALERTAS.map((a) => {
+      const chips = a.items.map((it) => `<span class="doc-chip ${it.b.cls}">${esc(it.label)}: ${esc(it.b.txt)}</span>`).join(' ');
+      const adminBtn = isAdmin() ? `<button class="btn btn-sm docp-edit" data-id="${a.id}">📄 Gestionar</button>` : '';
+      return `<div class="docp-item"><div class="docp-h"><b>${esc(a.numero_interno || '')}</b> · ${esc(a.placa || '')}`
+        + ` <span class="docp-ruta">${esc(a.ruta || '')}</span> ${adminBtn}</div><div class="docp-chips">${chips}</div></div>`;
+    }).join('');
+  }
+  $('docp-modal').hidden = false;
+  body.querySelectorAll('.docp-edit').forEach((b) => b.addEventListener('click', () => {
+    const a = DOC_ALERTAS.find((x) => String(x.id) === b.dataset.id);
+    if (a) { $('docp-modal').hidden = true; openDocsVehiculo(a); }
+  }));
+}
+$('docp-x') && $('docp-x').addEventListener('click', () => { $('docp-modal').hidden = true; });
+$('docp-cerrar') && $('docp-cerrar').addEventListener('click', () => { $('docp-modal').hidden = true; });
+
+// ---- Aviso al despachar: si el móvil tiene documentos vencidos / por vencer ----
+async function avisarDocsMovil(numero) {
+  const box = $('s-docwarn'); if (!box) return;
+  box.hidden = true; box.innerHTML = '';
+  if (!numero) return;
+  const { data } = await sb.from('parque_automotor')
+    .select('vence_soat,vence_tecnomecanica,vence_tarjeta_operacion')
+    .eq('numero_interno', String(numero).trim()).limit(1);
+  const v = data && data[0]; if (!v) return;
+  const items = [];
+  for (const t of DOC_TIPOS) { const b = docBand(v[t.col]); if (nivelEsAlerta(b.nivel)) items.push({ label: t.label, b }); }
+  if (!items.length) return;
+  const peor = Math.min(...items.map((i) => i.b.nivel));
+  box.className = 'sonar-info ' + (peor === 0 ? 'docwarn-venc' : 'docwarn-prox');
+  box.innerHTML = (peor === 0 ? '⛔ <b>Documentos vencidos</b> de este móvil: ' : '⚠️ <b>Documentos por vencer</b> de este móvil: ')
+    + items.map((it) => `${esc(it.label)} (${it.b.dias < 0 ? 'vencido' : 'en ' + it.b.dias + ' días'})`).join(' · ');
+  box.hidden = false;
+}
 
 function toggleEmptySections(form) {
   const kids = [...form.children];
@@ -2115,7 +2598,8 @@ async function updateSonarInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const info = $('s-info');
-  if (!vr) { info.hidden = true; return; }
+  if (!vr) { info.hidden = true; const w = $('s-docwarn'); if (w) w.hidden = true; return; }
+  avisarDocsMovil(vr.numero); // aviso de documentos vencidos / por vencer de este móvil
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
