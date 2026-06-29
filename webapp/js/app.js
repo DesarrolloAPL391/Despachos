@@ -3354,35 +3354,46 @@ async function verRecorrido() {
   } catch (e) { msg.textContent = e.message || String(e); }
   finally { btn.disabled = false; btn.textContent = t; }
 }
-let _recMarkers = [];  // marcadores por punto (para enlazar con la lista)
+let _recPts = [];      // puntos del recorrido actual
+let _recCursor = null; // marcador que avanza con el slider
 function limpiarRecorrido() {
   if (recLayer && flotaMap) { flotaMap.removeLayer(recLayer); recLayer = null; }
-  _recMarkers = [];
+  _recPts = []; _recCursor = null;
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
 }
 function dibujarRecorrido(pts, movil) {
   if (!flotaMap) return;
   limpiarRecorrido();
+  _recPts = pts;
   recLayer = L.layerGroup().addTo(flotaMap);
   const latlngs = pts.map((p) => [p.lat, p.lon]);
   L.polyline(latlngs, { color: '#ED1C24', weight: 4, opacity: 0.85 }).addTo(recLayer);
-  _recMarkers = pts.map((p, i) => {
+  // puntos pequeños del trayecto (inicio verde, fin azul); sin popups (el detalle va en el panel)
+  pts.forEach((p, i) => {
     const ini = i === 0, fin = i === pts.length - 1, ext = ini || fin;
     const col = ini ? '#137a2b' : (fin ? '#0b5cad' : '#ED1C24');
-    const m = L.circleMarker([p.lat, p.lon], {
-      radius: ext ? 7 : 3.5, color: col, fillColor: col, fillOpacity: 0.9, weight: ext ? 2 : 1,
-    });
-    const eti = ini ? '🟢 Inicio · ' : (fin ? '🔵 Fin · ' : '');
-    m.bindPopup(`<b>${esc(movil || '')}</b> · ${eti}${esc(_hora12(p.t))}<br>🚗 ${p.vel ?? 0} km/h<br>${esc(p.dir || '')}`);
-    m.addTo(recLayer);
-    return m;
+    L.circleMarker([p.lat, p.lon], { radius: ext ? 6 : 3, color: col, fillColor: col, fillOpacity: 0.9, weight: ext ? 2 : 1, interactive: false }).addTo(recLayer);
   });
+  // cursor móvil (lo controla el slider / la lista)
+  _recCursor = L.circleMarker([pts[0].lat, pts[0].lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ED1C24', fillOpacity: 1 }).addTo(recLayer);
   flotaMap.fitBounds(latlngs, { padding: [40, 40] });
   const b = $('rec-clear'); if (b) b.hidden = false;
   renderRecPanel(pts, movil);
 }
-// Lista deslizable del recorrido: cada punto centra el mapa y abre su detalle
+// Mueve el cursor al punto i: marcador + mapa + info + slider + lista (todo sincronizado)
+function recGoto(i) {
+  const p = _recPts[i]; if (!p || !flotaMap) return;
+  if (_recCursor) _recCursor.setLatLng([p.lat, p.lon]);
+  flotaMap.panTo([p.lat, p.lon], { animate: false });
+  const det = (p.vel ?? 0) === 0 ? 'detenido' : `${p.vel} km/h`;
+  const info = $('rec-scrub-info'); if (info) info.innerHTML = `<b>${esc(_hora12(p.t))}</b> · ${esc(det)} · ${esc(p.dir || '')}`;
+  const sl = $('rec-slider'); if (sl && +sl.value !== i) sl.value = i;
+  const list = $('rec-panel-list');
+  list.querySelectorAll('.rec-pt.sel').forEach((x) => x.classList.remove('sel'));
+  const it = list.querySelector(`.rec-pt[data-i="${i}"]`);
+  if (it) { it.classList.add('sel'); it.scrollIntoView({ block: 'nearest' }); }
+}
 function renderRecPanel(pts, movil) {
   const pn = $('rec-panel'); if (!pn) return;
   $('rec-panel-title').textContent = `🛣️ ${movil || ''}`;
@@ -3397,16 +3408,14 @@ function renderRecPanel(pts, movil) {
       <span class="rec-pt-d">${esc(p.dir || '—')}</span>
     </button>`;
   }).join('');
-  list.querySelectorAll('.rec-pt').forEach((b) => b.addEventListener('click', () => {
-    const i = +b.dataset.i; const p = pts[i]; const m = _recMarkers[i];
-    if (!p) return;
-    flotaMap.setView([p.lat, p.lon], 16, { animate: true });
-    if (m) m.openPopup();
-    list.querySelectorAll('.rec-pt.sel').forEach((x) => x.classList.remove('sel'));
-    b.classList.add('sel');
-  }));
+  list.querySelectorAll('.rec-pt').forEach((b) => b.addEventListener('click', () => recGoto(+b.dataset.i)));
+  const sl = $('rec-slider'); if (sl) { sl.min = 0; sl.max = pts.length - 1; sl.value = 0; sl.oninput = () => recGoto(+sl.value); }
+  // En celular arranca con la lista oculta (mapa visible); en PC, con la lista abierta
+  pn.classList.toggle('list-open', window.innerWidth > 760);
   pn.hidden = false;
+  recGoto(0);
 }
+$('rec-panel-toggle') && $('rec-panel-toggle').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.classList.toggle('list-open'); });
 $('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.hidden = true; });
 $('rec-x') && $('rec-x').addEventListener('click', () => { $('rec-modal').hidden = true; });
 $('rec-cancel') && $('rec-cancel').addEventListener('click', () => { $('rec-modal').hidden = true; });
