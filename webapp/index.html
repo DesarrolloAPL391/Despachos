@@ -111,6 +111,7 @@
             <input type="search" id="map-search" class="map-search" placeholder="Buscar móvil(es) o placa…" />
             <span class="spacer"></span>
             <span id="map-count" class="page-info"></span>
+            <button id="rec-clear" class="btn" hidden>🛣️✕ Quitar recorrido</button>
             <button id="map-refresh" class="btn">↻</button>
           </div>
           <div id="map" class="map"></div>
@@ -121,6 +122,17 @@
               <button id="veh-sheet-close" class="veh-sheet-close" aria-label="Cerrar">✕</button>
             </div>
             <div id="veh-sheet-body" class="veh-sheet-body"></div>
+          </div>
+          <!-- Panel con la lista del recorrido (deslizable) -->
+          <div id="rec-panel" class="rec-panel" hidden>
+            <div class="rec-panel-head">
+              <div class="rec-panel-info">
+                <div class="rec-panel-title" id="rec-panel-title">Recorrido</div>
+                <div class="rec-panel-sub" id="rec-panel-sub"></div>
+              </div>
+              <button id="rec-panel-x" class="icon-btn" aria-label="Cerrar">✕</button>
+            </div>
+            <div id="rec-panel-list" class="rec-panel-list"></div>
           </div>
         </div>
       </main>
@@ -475,22 +487,22 @@
     </div>
   </div>
 
-  <div id="atr-modal" class="modal" hidden>
-    <div class="modal-card ds-card">
+  <div id="rec-modal" class="modal" hidden>
+    <div class="modal-card rec-card">
       <div class="modal-head">
-        <h3>🚦 Control de ruta · próximos puntos</h3>
-        <button id="atr-x" class="icon-btn">✕</button>
+        <h3>🛣️ Recorrido · <span id="rec-movil"></span></h3>
+        <button id="rec-x" class="icon-btn">✕</button>
       </div>
-      <div class="atr-tools">
-        <select id="atr-ruta" class="atr-ruta"><option value="">Todas las rutas</option></select>
-        <label class="atr-chk"><input type="checkbox" id="atr-solo-late" checked /> Solo atrasados</label>
-        <span class="spacer"></span>
-        <button id="atr-refresh" class="btn btn-sm">↻ Actualizar</button>
+      <div class="edit-form rec-body">
+        <label class="field full"><span>Despacho</span>
+          <select id="rec-despacho"><option value="">Cargando despachos…</option></select>
+        </label>
+        <p id="rec-msg" class="field-hint full"></p>
       </div>
-      <div id="atr-body" class="docp-body"></div>
       <div class="modal-foot">
         <span class="spacer"></span>
-        <button id="atr-cerrar" class="btn">Cerrar</button>
+        <button id="rec-cancel" class="btn">Cerrar</button>
+        <button id="rec-ver" class="btn btn-primary">🛣️ Ver recorrido</button>
       </div>
     </div>
   </div>

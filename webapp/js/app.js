@@ -283,7 +283,6 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
-  if (isAdmin() || CTX?.rol === 'despachador') addNavAction(nav, '🚦', 'Control de ruta', openAtrasos, 'nav-atrasos');
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
@@ -368,7 +367,6 @@ function closeMenu() { setMenu(false); }
 function cerrarPanelesFlotantes() {
   const dp = $('docp-modal'); if (dp) dp.hidden = true;
   const dm = $('doc-modal'); if (dm) dm.hidden = true;
-  const am = $('atr-modal'); if (am) am.hidden = true;
 }
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
@@ -3285,146 +3283,153 @@ function mapPopup(r) {
   </div>`;
 }
 // Panel inferior deslizable con la info del móvil (estilo apps de mapas)
-// ===== Próximo punto de control (SONAR GET_NextItPointArrival) =====
-// Parsea fecha/hora de SONAR (admite ISO y DD/MM/YYYY HH:MM[:SS]).
-function parseSonarFecha(s) {
-  if (!s) return null;
-  s = String(s).trim();
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
-  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0));
-  const t = Date.parse(s); return isNaN(t) ? null : new Date(t);
+// ===== Recorrido del bus (SONAR GET_TrackerEventsHistory) =====
+let recLayer = null;   // capa Leaflet con el recorrido dibujado
+let _recVeh = null;    // { mid, movil, ruta } del móvil elegido
+let _recDesp = [];     // despachos cargados del móvil (para el selector)
+// "HH:MM" (24h) -> "h:MM a.m./p.m." (formato colombiano)
+function _hora12(hhmm) {
+  if (!hhmm) return '';
+  const [h, m] = String(hhmm).split(':').map(Number);
+  const ap = h < 12 ? 'a.m.' : 'p.m.';
+  const h12 = (h % 12) || 12;
+  return `${h12}:${_pad2(m)} ${ap}`;
 }
-// Evalúa un punto: {cls, etq (etiqueta), min (minutos de atraso, + = atrasado), hhmm}
-function evalProximoPunto(p) {
-  const d = parseSonarFecha(p && p.llega);
-  if (!d) return { cls: 'pp-na', etq: '', min: null, hhmm: '' };
-  const diffMin = Math.round((Date.now() - d.getTime()) / 60000); // + = atrasado
-  const hhmm = `${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`;
-  if (diffMin > 5) return { cls: 'pp-late', etq: `atrasado ${diffMin} min`, min: diffMin, hhmm };
-  if (diffMin < -1) return { cls: 'pp-ok', etq: `faltan ${-diffMin} min`, min: diffMin, hhmm };
-  return { cls: 'pp-ok', etq: 'a tiempo', min: diffMin, hhmm };
+// Suma minutos a una hora local (fecha+hh:mm); devuelve {fecha, hhmm} (maneja cruce de día)
+function _finConMinutos(fecha, hhmm, minutos) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date(fecha + 'T00:00:00'); d.setMinutes(h * 60 + m + (minutos || 0));
+  const f = `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(d.getDate())}`;
+  return { fecha: f, hhmm: `${_pad2(d.getHours())}:${_pad2(d.getMinutes())}` };
 }
-function fmtProximoPunto(data, error) {
-  if (error || !data || !data.ok) return { html: '<span class="pp-na">—</span>', title: error?.message || data?.error || '' };
-  const ps = data.puntos || [];
-  if (!ps.length) return { html: '<span class="pp-na">sin ruta activa ahora</span>', title: '' };
-  const p = ps[0];
-  const e = evalProximoPunto(p);
-  const punto = esc(p.punto || p.it || '—');
-  const hora = e.hhmm ? ` · ${e.hhmm}` : (p.llega ? ` · ${esc(p.llega)}` : '');
-  const badge = e.etq ? ` <span class="pp-badge ${e.cls}">${esc(e.etq)}</span>` : '';
-  return { html: `<b>${punto}</b>${hora}${badge}`, title: `Itinerario: ${p.it || ''} · llega: ${p.llega || ''}` };
-}
-
-// Ejecuta fn sobre items con un máximo de llamadas en paralelo.
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length); let i = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx); }
-  });
-  await Promise.all(workers); return out;
-}
-let _atrSoloLate = true;
-let _atrCache = {};      // clave (ruta) -> { ts, res } para no re-consultar SONAR en ráfaga
-let _atrRutas = null;    // lista de rutas para el selector (admin)
-const ATR_TTL = 90000;   // 90 s de caché
-// Panel "Control de ruta": consulta a SONAR el próximo punto de cada móvil en operación
-async function openAtrasos() {
-  $('atr-modal').hidden = false;
-  closeMenu();
-  const chk = $('atr-solo-late'); if (chk) { chk.checked = _atrSoloLate; chk.onchange = () => { _atrSoloLate = chk.checked; renderAtrasosCache(); }; }
-  const rb = $('atr-refresh'); if (rb) rb.onclick = () => cargarAtrasos(true);
-  await ensureAtrRutaSelect();
-  await cargarAtrasos(false);
-}
-async function ensureAtrRutaSelect() {
-  const sel = $('atr-ruta'); if (!sel) return;
-  if (!isAdmin()) { sel.style.display = 'none'; return; } // el despachador ya está acotado a sus rutas
-  sel.style.display = '';
-  if (!_atrRutas) {
-    const q = await sb.from('ubicaciones').select('ruta').not('mid', 'is', null);
-    _atrRutas = Array.from(new Set((q.data || []).map((r) => (r.ruta || '').trim()).filter(Boolean))).sort();
+// CONDICIÓN: el recorrido solo se muestra del despacho de HOY, consultado EN VIVO a SONAR.
+async function abrirRecorrido(r) {
+  _recVeh = { mid: r.mid, movil: r.movil, ruta: r.ruta };
+  _recDesp = [];
+  $('rec-movil').textContent = `${r.movil || ''}${r.ruta ? ' · ' + r.ruta : ''}`;
+  $('rec-msg').textContent = '';
+  const sel = $('rec-despacho'); sel.innerHTML = '<option value="">Consultando despachos de hoy…</option>';
+  $('rec-ver').disabled = true;
+  $('rec-modal').hidden = false;
+  if (!r.mid) { sel.innerHTML = '<option value="">—</option>'; $('rec-msg').textContent = 'Este móvil no tiene Id GPS en SONAR.'; return; }
+  // Despachos de HOY en vivo desde SONAR (rango del día Bogotá expresado en UTC)
+  const hoy = hoyServidor();
+  const pIni = `${hoy} 05:00:00`; // 00:00 Bogotá → UTC
+  const pFin = new Date().toISOString().slice(0, 19).replace('T', ' '); // ahora en UTC
+  const { data, error } = await sb.rpc('despachos_sonar', { p_mid: r.mid, p_ini: pIni, p_fin: pFin });
+  if (error) { sel.innerHTML = '<option value="">—</option>'; $('rec-msg').textContent = 'Error: ' + error.message; return; }
+  if (!data || !data.ok) { sel.innerHTML = '<option value="">—</option>'; $('rec-msg').textContent = 'No se pudo consultar SONAR: ' + (data?.error || '?'); return; }
+  // solo HOY, sin cancelados, descartando placeholders con duración absurda (>24 h)
+  const items = (data.items || []).filter((d) => d.fecha === hoy && d.cancelado !== 'true' && (d.minutos || 0) > 0 && (d.minutos || 0) <= 1440);
+  _recDesp = items.map((d) => {
+    const ini = (d.hora || '').slice(0, 5);
+    const f = _finConMinutos(d.fecha, ini, d.minutos || 0);
+    return { fecha: d.fecha, ini, fin: f.hhmm, finFecha: f.fecha, ruta: d.ruta || '', estado: d.corriendo === 'true' ? 'en curso' : 'finalizado' };
+  }).filter((d) => d.ini);
+  if (!_recDesp.length) {
+    sel.innerHTML = '<option value="">—</option>';
+    $('rec-msg').textContent = '🚫 Este vehículo no tiene despacho hoy. El recorrido solo se muestra del despacho de hoy.';
+    return;
   }
-  sel.innerHTML = '<option value="">Todas las rutas</option>' + _atrRutas.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
-  sel.onchange = () => cargarAtrasos(false);
+  sel.innerHTML = _recDesp.map((d, i) => `<option value="${i}">${esc(_hora12(d.ini))}–${esc(_hora12(d.fin))}${d.ruta ? ' · ' + esc(d.ruta) : ''} · ${esc(d.estado)}</option>`).join('');
+  $('rec-ver').disabled = false;
 }
-function atrKey() { const sel = $('atr-ruta'); return (isAdmin() && sel ? (sel.value || '__todas__') : '__propias__'); }
-function renderAtrasosCache() { const c = _atrCache[atrKey()]; if (c) renderAtrasos(c.res); }
-async function cargarAtrasos(force) {
-  const body = $('atr-body');
-  const key = atrKey();
-  const c = _atrCache[key];
-  if (!force && c && (Date.now() - c.ts) < ATR_TTL) { renderAtrasos(c.res); return; }
-  body.innerHTML = '<p class="tab-load">Cargando móviles en operación…</p>';
-  const sel = $('atr-ruta'); const rutaF = (isAdmin() && sel) ? sel.value : '';
-  let rows;
-  if (currentView === 'mapa' && Array.isArray(lastUbic) && lastUbic.length && !rutaF) rows = lastUbic.slice();
-  else { const q = await sb.from('ubicaciones').select('mid,movil,ruta').not('mid', 'is', null); rows = q.data || []; }
-  if (!isAdmin()) { const allow = allowedRutaSet(); rows = rows.filter((r) => allow.has(normRuta(r.ruta))); }
-  if (rutaF) rows = rows.filter((r) => (r.ruta || '').trim() === rutaF);
-  rows = rows.filter((r) => r.mid);
-  if (!rows.length) { body.innerHTML = '<p class="doc-empty">No hay móviles en operación ahora. 🌙</p>'; _atrCache[key] = { ts: Date.now(), res: [] }; return; }
-  let done = 0;
-  body.innerHTML = '<p id="atr-prog" class="tab-load"></p>';
-  const setProg = () => { const p = $('atr-prog'); if (p) p.textContent = `Consultando SONAR… ${done}/${rows.length}`; };
-  setProg();
-  const res = await mapLimit(rows, 8, async (r) => {
-    let pp = null;
-    try { const { data } = await sb.rpc('sonar_proximo_punto', { p_mid: r.mid }); pp = data; } catch {}
-    done++; setProg();
-    const p = (pp && pp.ok && (pp.puntos || [])[0]) || null;
-    return { movil: r.movil, ruta: r.ruta, p, e: p ? evalProximoPunto(p) : null };
+async function verRecorrido() {
+  if (!_recVeh) return;
+  const sel = $('rec-despacho'); const msg = $('rec-msg');
+  const d = _recDesp[+sel.value];
+  if (!d) { msg.textContent = 'Elige un despacho. El recorrido solo se muestra para vehículos despachados.'; return; }
+  const btn = $('rec-ver'); const t = btn.textContent; btn.disabled = true; btn.textContent = 'Cargando…';
+  msg.textContent = 'Consultando SONAR…';
+  try {
+    const { data, error } = await sb.rpc('sonar_recorrido', { p_mid: _recVeh.mid, p_desde: `${d.fecha} ${d.ini}`, p_hasta: `${d.finFecha} ${d.fin}` });
+    if (error) { msg.textContent = 'Error: ' + error.message; return; }
+    if (!data || !data.ok) { msg.textContent = 'No se pudo: ' + (data?.error || '?'); return; }
+    const pts = (data.puntos || []).filter((p) => p.lat != null && p.lon != null);
+    if (!pts.length) { msg.textContent = 'El despacho no tiene reportes GPS en ese rango.'; return; }
+    dibujarRecorrido(pts, _recVeh.movil);
+    $('rec-modal').hidden = true;
+    closeVehSheet();
+    toast(`Recorrido de ${_recVeh.movil}: ${pts.length} puntos · ${_hora12(pts[0].t)}–${_hora12(pts[pts.length - 1].t)}`, 'ok');
+  } catch (e) { msg.textContent = e.message || String(e); }
+  finally { btn.disabled = false; btn.textContent = t; }
+}
+let _recMarkers = [];  // marcadores por punto (para enlazar con la lista)
+function limpiarRecorrido() {
+  if (recLayer && flotaMap) { flotaMap.removeLayer(recLayer); recLayer = null; }
+  _recMarkers = [];
+  const b = $('rec-clear'); if (b) b.hidden = true;
+  const pn = $('rec-panel'); if (pn) pn.hidden = true;
+}
+function dibujarRecorrido(pts, movil) {
+  if (!flotaMap) return;
+  limpiarRecorrido();
+  recLayer = L.layerGroup().addTo(flotaMap);
+  const latlngs = pts.map((p) => [p.lat, p.lon]);
+  L.polyline(latlngs, { color: '#ED1C24', weight: 4, opacity: 0.85 }).addTo(recLayer);
+  _recMarkers = pts.map((p, i) => {
+    const ini = i === 0, fin = i === pts.length - 1, ext = ini || fin;
+    const col = ini ? '#137a2b' : (fin ? '#0b5cad' : '#ED1C24');
+    const m = L.circleMarker([p.lat, p.lon], {
+      radius: ext ? 7 : 3.5, color: col, fillColor: col, fillOpacity: 0.9, weight: ext ? 2 : 1,
+    });
+    const eti = ini ? '🟢 Inicio · ' : (fin ? '🔵 Fin · ' : '');
+    m.bindPopup(`<b>${esc(movil || '')}</b> · ${eti}${esc(_hora12(p.t))}<br>🚗 ${p.vel ?? 0} km/h<br>${esc(p.dir || '')}`);
+    m.addTo(recLayer);
+    return m;
   });
-  _atrCache[key] = { ts: Date.now(), res };
-  renderAtrasos(res);
+  flotaMap.fitBounds(latlngs, { padding: [40, 40] });
+  const b = $('rec-clear'); if (b) b.hidden = false;
+  renderRecPanel(pts, movil);
 }
-function renderAtrasos(res) {
-  const body = $('atr-body');
-  const enRuta = res.filter((x) => x.p);
-  const late = enRuta.filter((x) => x.e && x.e.min != null && x.e.min > 5);
-  let list = _atrSoloLate ? late : enRuta.slice();
-  list.sort((a, b) => (b.e?.min ?? -9999) - (a.e?.min ?? -9999));
-  const resumen = `<div class="atr-sum"><b>${late.length}</b> atrasado(s) · ${enRuta.length} en ruta · ${res.length} móviles consultados</div>`;
-  if (!list.length) { body.innerHTML = resumen + `<p class="doc-empty">${_atrSoloLate ? 'Ningún móvil atrasado. 👍' : 'Ningún móvil en ruta ahora.'}</p>`; return; }
-  body.innerHTML = resumen + list.map((x) => {
-    const e = x.e || {};
-    const badge = e.etq ? `<span class="pp-badge ${e.cls}">${esc(e.etq)}</span>` : '';
-    const hora = e.hhmm ? ` · ${e.hhmm}` : '';
-    return `<div class="atr-item ${e.cls === 'pp-late' ? 'atr-late' : ''}">
-      <div class="atr-h"><b>${esc(x.movil || '—')}</b> <span class="docp-ruta">${esc(x.ruta || '')}</span> ${badge}</div>
-      <div class="atr-sub">${esc(x.p.punto || x.p.it || '—')}${hora}</div>
-    </div>`;
+// Lista deslizable del recorrido: cada punto centra el mapa y abre su detalle
+function renderRecPanel(pts, movil) {
+  const pn = $('rec-panel'); if (!pn) return;
+  $('rec-panel-title').textContent = `🛣️ ${movil || ''}`;
+  $('rec-panel-sub').textContent = `${pts.length} puntos · ${_hora12(pts[0].t)}–${_hora12(pts[pts.length - 1].t)}`;
+  const list = $('rec-panel-list');
+  list.innerHTML = pts.map((p, i) => {
+    const tag = i === 0 ? '🟢' : (i === pts.length - 1 ? '🔵' : '•');
+    const det = (p.vel ?? 0) === 0 ? '<span class="rec-pt-stop">detenido</span>' : `${p.vel} km/h`;
+    return `<button type="button" class="rec-pt" data-i="${i}">
+      <span class="rec-pt-t">${tag} ${esc(_hora12(p.t))}</span>
+      <span class="rec-pt-v">${det}</span>
+      <span class="rec-pt-d">${esc(p.dir || '—')}</span>
+    </button>`;
   }).join('');
+  list.querySelectorAll('.rec-pt').forEach((b) => b.addEventListener('click', () => {
+    const i = +b.dataset.i; const p = pts[i]; const m = _recMarkers[i];
+    if (!p) return;
+    flotaMap.setView([p.lat, p.lon], 16, { animate: true });
+    if (m) m.openPopup();
+    list.querySelectorAll('.rec-pt.sel').forEach((x) => x.classList.remove('sel'));
+    b.classList.add('sel');
+  }));
+  pn.hidden = false;
 }
-$('atr-x') && $('atr-x').addEventListener('click', () => { $('atr-modal').hidden = true; });
-$('atr-cerrar') && $('atr-cerrar').addEventListener('click', () => { $('atr-modal').hidden = true; });
+$('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.hidden = true; });
+$('rec-x') && $('rec-x').addEventListener('click', () => { $('rec-modal').hidden = true; });
+$('rec-cancel') && $('rec-cancel').addEventListener('click', () => { $('rec-modal').hidden = true; });
+$('rec-ver') && $('rec-ver').addEventListener('click', verRecorrido);
+$('rec-clear') && $('rec-clear').addEventListener('click', limpiarRecorrido);
 
 async function openVehSheet(r) {
   const sheet = $('veh-sheet'), body = $('veh-sheet-body');
   body.innerHTML = mapPopup(r);
-  // Próximo punto de control del itinerario (SONAR)
-  const prox = document.createElement('div');
-  prox.className = 'veh-prox';
-  prox.innerHTML = '🚦 <b>Próximo punto:</b> <span id="veh-prox-v" class="veh-prox-v">⏳…</span>';
-  body.appendChild(prox);
-  sb.rpc('sonar_proximo_punto', { p_mid: r.mid }).then(({ data, error }) => {
-    const v = body.querySelector('#veh-prox-v'); if (!v) return;
-    const r2 = fmtProximoPunto(data, error);
-    v.innerHTML = r2.html; if (r2.title) v.title = r2.title;
-  });
-  // Acciones directas sobre el móvil (solo admin: despachar/consultar SONAR)
+  // Acciones del móvil: recorrido (todos) + despachar/consultar SONAR (solo admin)
+  const acts = document.createElement('div');
+  acts.className = 'veh-sheet-acts';
+  const bRec = Object.assign(document.createElement('button'), { className: 'btn', textContent: '🛣️ Recorrido' });
+  bRec.onclick = () => abrirRecorrido(r);
+  acts.appendChild(bRec);
   if (isAdmin()) {
-    const acts = document.createElement('div');
-    acts.className = 'veh-sheet-acts';
     const bDsp = Object.assign(document.createElement('button'), { className: 'btn btn-primary', textContent: '🛰️ Despachar' });
     bDsp.onclick = () => despacharDesdeMapa(r.movil);
     const bCon = Object.assign(document.createElement('button'), { className: 'btn', textContent: '📡 Consultar SONAR' });
     bCon.onclick = () => consultarDesdeMapa(r.movil);
     acts.append(bDsp, bCon);
-    body.appendChild(acts);
   }
+  body.appendChild(acts);
   sheet.hidden = false;
   requestAnimationFrame(() => sheet.classList.add('open'));
   // Ruta actual en SONAR (1 llamada)
@@ -3533,6 +3538,7 @@ async function showMapView() {
   $('table-view').hidden = true;
   $('map-view').hidden = false;
   closeVehSheet();
+  limpiarRecorrido(); // entra al mapa sin recorrido previo dibujado
   // resaltar la opción del menú
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-mapa')?.classList.add('active');
