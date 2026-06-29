@@ -225,6 +225,25 @@ tbody tr:hover { background: #faf8ff; }
 .veh-sheet-body .pi-row b { max-width: 62vw; }
 .veh-sheet-acts { display: flex; gap: 10px; margin-top: 14px; }
 .veh-sheet-acts .btn { flex: 1; text-align: center; padding: 12px; }
+/* Próximo punto de control (SONAR) */
+.veh-prox { margin-top: 10px; padding: 9px 12px; border-radius: 10px; background: var(--surface, #f7f7f9);
+  border: 1px solid var(--border, #e3e3e3); font-size: 13.5px; }
+.pp-badge { display: inline-block; font-size: 11.5px; font-weight: 800; padding: 2px 8px; border-radius: 999px; margin-left: 4px; }
+.pp-late { background: #fdeaea; color: #C20F16; }
+.pp-ok { background: #e8f7ec; color: #137a2b; }
+.pp-na { color: var(--muted, #888); }
+.pp-badge.pp-late { background: #C20F16; color: #fff; }
+.pp-badge.pp-ok { background: #137a2b; color: #fff; }
+
+/* Panel Control de ruta (atrasos) */
+.atr-tools { display: flex; align-items: center; gap: 10px; padding: 4px 16px 8px; flex-wrap: wrap; }
+.atr-ruta { padding: 7px 10px; border: 1px solid var(--border, #ccc); border-radius: 8px; background: #fff; font-size: 13px; }
+.atr-chk { font-size: 13px; font-weight: 600; color: var(--text, #1c1c1c); display: inline-flex; align-items: center; gap: 6px; }
+.atr-sum { font-size: 13.5px; color: var(--muted, #555); margin: 2px 4px 10px; }
+.atr-item { padding: 9px 12px; border: 1px solid var(--border, #e3e3e3); border-radius: 10px; margin-bottom: 8px; }
+.atr-item.atr-late { border-color: #f0c4c4; background: #fff7f7; }
+.atr-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.atr-sub { font-size: 13px; color: var(--muted, #555); margin-top: 3px; }
 #map.map { flex: 1; min-height: 0; width: 100%; border-radius: 12px; }
 .map-search { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-size: 13px; min-width: 200px; }
 
@@ -380,24 +399,40 @@ tbody tr:hover { background: #faf8ff; }
   .edit-form { grid-template-columns: 1fr; }
 
   /* Menos margen para aprovechar el ancho del teléfono */
-  .main { padding: 10px; }
+  .main { padding: 8px; }
   .topbar { padding: 6px 12px; }
   .topbar-title { font-size: 15px; }
   .user-email { display: none; }
-  .toolbar { gap: 8px; }
-  #search { min-width: 0; flex: 1; }
+
+  /* Barra de herramientas ORDENADA: título + botones arriba; filtros y búsqueda en su línea */
+  .toolbar { gap: 6px; margin-bottom: 8px; align-items: center; }
+  .toolbar h2 { font-size: 15px; flex: 1 1 auto; order: 1; }
+  .toolbar .spacer { display: none; }                 /* el separador desordenaba el ajuste */
+  .toolbar .btn { order: 2; font-size: 12px; padding: 7px 10px; }
+  #filters { order: 3; width: 100%; }
+  .filters { width: 100%; gap: 6px; }
+  .filters select { font-size: 12px; padding: 7px 9px; flex: 1 1 auto; min-width: 0; }
+  .filter-date, .filter-md { width: 100%; }
+  .filter-date input[type="date"], .filter-md .md-add { font-size: 12px; padding: 6px 8px; }
+  .filter-md .filter-lbl, .filter-date .filter-lbl { font-size: 12px; }
+  #search { order: 4; width: 100%; flex: 1 1 100%; min-width: 0; font-size: 12.5px; padding: 8px 10px; }
+  .cal-btn, .filter-check-btn { font-size: 12px; padding: 7px 9px; font-weight: 700; }
+  .cal-panel { width: min(280px, 88vw); }
+  .pager { gap: 8px; padding: 8px 0 2px; }
+  .pager .btn { font-size: 12px; padding: 7px 10px; }
+  .page-info { font-size: 12px; }
 
   /* Despachos y demás tablas: TABLA COMPACTA que CABE en la pantalla.
      Solo se muestran las columnas marcadas (m:true); el texto se ajusta. */
   .col-hide { display: none !important; }
   .table-wrap { overflow-x: hidden; }
-  table { width: 100%; table-layout: fixed; font-size: 12.5px; }
-  thead th { padding: 8px 5px; font-size: 10px; letter-spacing: 0; white-space: normal; }
-  tbody td { padding: 9px 5px; white-space: normal; word-break: normal; vertical-align: middle; }
+  table { width: 100%; table-layout: fixed; font-size: 11.5px; }
+  thead th { padding: 6px 4px; font-size: 9.5px; letter-spacing: 0; white-space: normal; }
+  tbody td { padding: 7px 4px; white-space: normal; word-break: normal; vertical-align: middle; line-height: 1.25; }
   /* La columna de acciones con ancho fijo; el resto reparte lo que queda */
-  thead th.col-act, tbody td.row-actions { width: 70px; }
+  thead th.col-act, tbody td.row-actions { width: 64px; }
   .row-actions { gap: 4px; flex-wrap: wrap; justify-content: center; align-content: center; }
-  .row-actions button.act { width: 28px; height: 28px; font-size: 14px; border-radius: 8px; }
+  .row-actions button.act { width: 27px; height: 27px; font-size: 13px; border-radius: 8px; }
   /* Chips de estado como etiqueta compacta (no círculo) */
   .chip {
     display: inline-block; white-space: normal; line-height: 1.2;

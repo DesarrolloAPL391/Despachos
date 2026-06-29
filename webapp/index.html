@@ -475,6 +475,26 @@
     </div>
   </div>
 
+  <div id="atr-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>🚦 Control de ruta · próximos puntos</h3>
+        <button id="atr-x" class="icon-btn">✕</button>
+      </div>
+      <div class="atr-tools">
+        <select id="atr-ruta" class="atr-ruta"><option value="">Todas las rutas</option></select>
+        <label class="atr-chk"><input type="checkbox" id="atr-solo-late" checked /> Solo atrasados</label>
+        <span class="spacer"></span>
+        <button id="atr-refresh" class="btn btn-sm">↻ Actualizar</button>
+      </div>
+      <div id="atr-body" class="docp-body"></div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="atr-cerrar" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

@@ -283,6 +283,7 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
+  if (isAdmin() || CTX?.rol === 'despachador') addNavAction(nav, '🚦', 'Control de ruta', openAtrasos, 'nav-atrasos');
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
@@ -367,6 +368,7 @@ function closeMenu() { setMenu(false); }
 function cerrarPanelesFlotantes() {
   const dp = $('docp-modal'); if (dp) dp.hidden = true;
   const dm = $('doc-modal'); if (dm) dm.hidden = true;
+  const am = $('atr-modal'); if (am) am.hidden = true;
 }
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
@@ -3283,9 +3285,135 @@ function mapPopup(r) {
   </div>`;
 }
 // Panel inferior deslizable con la info del móvil (estilo apps de mapas)
+// ===== Próximo punto de control (SONAR GET_NextItPointArrival) =====
+// Parsea fecha/hora de SONAR (admite ISO y DD/MM/YYYY HH:MM[:SS]).
+function parseSonarFecha(s) {
+  if (!s) return null;
+  s = String(s).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0));
+  const t = Date.parse(s); return isNaN(t) ? null : new Date(t);
+}
+// Evalúa un punto: {cls, etq (etiqueta), min (minutos de atraso, + = atrasado), hhmm}
+function evalProximoPunto(p) {
+  const d = parseSonarFecha(p && p.llega);
+  if (!d) return { cls: 'pp-na', etq: '', min: null, hhmm: '' };
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000); // + = atrasado
+  const hhmm = `${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`;
+  if (diffMin > 5) return { cls: 'pp-late', etq: `atrasado ${diffMin} min`, min: diffMin, hhmm };
+  if (diffMin < -1) return { cls: 'pp-ok', etq: `faltan ${-diffMin} min`, min: diffMin, hhmm };
+  return { cls: 'pp-ok', etq: 'a tiempo', min: diffMin, hhmm };
+}
+function fmtProximoPunto(data, error) {
+  if (error || !data || !data.ok) return { html: '<span class="pp-na">—</span>', title: error?.message || data?.error || '' };
+  const ps = data.puntos || [];
+  if (!ps.length) return { html: '<span class="pp-na">sin ruta activa ahora</span>', title: '' };
+  const p = ps[0];
+  const e = evalProximoPunto(p);
+  const punto = esc(p.punto || p.it || '—');
+  const hora = e.hhmm ? ` · ${e.hhmm}` : (p.llega ? ` · ${esc(p.llega)}` : '');
+  const badge = e.etq ? ` <span class="pp-badge ${e.cls}">${esc(e.etq)}</span>` : '';
+  return { html: `<b>${punto}</b>${hora}${badge}`, title: `Itinerario: ${p.it || ''} · llega: ${p.llega || ''}` };
+}
+
+// Ejecuta fn sobre items con un máximo de llamadas en paralelo.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length); let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) { const idx = i++; out[idx] = await fn(items[idx], idx); }
+  });
+  await Promise.all(workers); return out;
+}
+let _atrSoloLate = true;
+let _atrCache = {};      // clave (ruta) -> { ts, res } para no re-consultar SONAR en ráfaga
+let _atrRutas = null;    // lista de rutas para el selector (admin)
+const ATR_TTL = 90000;   // 90 s de caché
+// Panel "Control de ruta": consulta a SONAR el próximo punto de cada móvil en operación
+async function openAtrasos() {
+  $('atr-modal').hidden = false;
+  closeMenu();
+  const chk = $('atr-solo-late'); if (chk) { chk.checked = _atrSoloLate; chk.onchange = () => { _atrSoloLate = chk.checked; renderAtrasosCache(); }; }
+  const rb = $('atr-refresh'); if (rb) rb.onclick = () => cargarAtrasos(true);
+  await ensureAtrRutaSelect();
+  await cargarAtrasos(false);
+}
+async function ensureAtrRutaSelect() {
+  const sel = $('atr-ruta'); if (!sel) return;
+  if (!isAdmin()) { sel.style.display = 'none'; return; } // el despachador ya está acotado a sus rutas
+  sel.style.display = '';
+  if (!_atrRutas) {
+    const q = await sb.from('ubicaciones').select('ruta').not('mid', 'is', null);
+    _atrRutas = Array.from(new Set((q.data || []).map((r) => (r.ruta || '').trim()).filter(Boolean))).sort();
+  }
+  sel.innerHTML = '<option value="">Todas las rutas</option>' + _atrRutas.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+  sel.onchange = () => cargarAtrasos(false);
+}
+function atrKey() { const sel = $('atr-ruta'); return (isAdmin() && sel ? (sel.value || '__todas__') : '__propias__'); }
+function renderAtrasosCache() { const c = _atrCache[atrKey()]; if (c) renderAtrasos(c.res); }
+async function cargarAtrasos(force) {
+  const body = $('atr-body');
+  const key = atrKey();
+  const c = _atrCache[key];
+  if (!force && c && (Date.now() - c.ts) < ATR_TTL) { renderAtrasos(c.res); return; }
+  body.innerHTML = '<p class="tab-load">Cargando móviles en operación…</p>';
+  const sel = $('atr-ruta'); const rutaF = (isAdmin() && sel) ? sel.value : '';
+  let rows;
+  if (currentView === 'mapa' && Array.isArray(lastUbic) && lastUbic.length && !rutaF) rows = lastUbic.slice();
+  else { const q = await sb.from('ubicaciones').select('mid,movil,ruta').not('mid', 'is', null); rows = q.data || []; }
+  if (!isAdmin()) { const allow = allowedRutaSet(); rows = rows.filter((r) => allow.has(normRuta(r.ruta))); }
+  if (rutaF) rows = rows.filter((r) => (r.ruta || '').trim() === rutaF);
+  rows = rows.filter((r) => r.mid);
+  if (!rows.length) { body.innerHTML = '<p class="doc-empty">No hay móviles en operación ahora. 🌙</p>'; _atrCache[key] = { ts: Date.now(), res: [] }; return; }
+  let done = 0;
+  body.innerHTML = '<p id="atr-prog" class="tab-load"></p>';
+  const setProg = () => { const p = $('atr-prog'); if (p) p.textContent = `Consultando SONAR… ${done}/${rows.length}`; };
+  setProg();
+  const res = await mapLimit(rows, 8, async (r) => {
+    let pp = null;
+    try { const { data } = await sb.rpc('sonar_proximo_punto', { p_mid: r.mid }); pp = data; } catch {}
+    done++; setProg();
+    const p = (pp && pp.ok && (pp.puntos || [])[0]) || null;
+    return { movil: r.movil, ruta: r.ruta, p, e: p ? evalProximoPunto(p) : null };
+  });
+  _atrCache[key] = { ts: Date.now(), res };
+  renderAtrasos(res);
+}
+function renderAtrasos(res) {
+  const body = $('atr-body');
+  const enRuta = res.filter((x) => x.p);
+  const late = enRuta.filter((x) => x.e && x.e.min != null && x.e.min > 5);
+  let list = _atrSoloLate ? late : enRuta.slice();
+  list.sort((a, b) => (b.e?.min ?? -9999) - (a.e?.min ?? -9999));
+  const resumen = `<div class="atr-sum"><b>${late.length}</b> atrasado(s) · ${enRuta.length} en ruta · ${res.length} móviles consultados</div>`;
+  if (!list.length) { body.innerHTML = resumen + `<p class="doc-empty">${_atrSoloLate ? 'Ningún móvil atrasado. 👍' : 'Ningún móvil en ruta ahora.'}</p>`; return; }
+  body.innerHTML = resumen + list.map((x) => {
+    const e = x.e || {};
+    const badge = e.etq ? `<span class="pp-badge ${e.cls}">${esc(e.etq)}</span>` : '';
+    const hora = e.hhmm ? ` · ${e.hhmm}` : '';
+    return `<div class="atr-item ${e.cls === 'pp-late' ? 'atr-late' : ''}">
+      <div class="atr-h"><b>${esc(x.movil || '—')}</b> <span class="docp-ruta">${esc(x.ruta || '')}</span> ${badge}</div>
+      <div class="atr-sub">${esc(x.p.punto || x.p.it || '—')}${hora}</div>
+    </div>`;
+  }).join('');
+}
+$('atr-x') && $('atr-x').addEventListener('click', () => { $('atr-modal').hidden = true; });
+$('atr-cerrar') && $('atr-cerrar').addEventListener('click', () => { $('atr-modal').hidden = true; });
+
 async function openVehSheet(r) {
   const sheet = $('veh-sheet'), body = $('veh-sheet-body');
   body.innerHTML = mapPopup(r);
+  // Próximo punto de control del itinerario (SONAR)
+  const prox = document.createElement('div');
+  prox.className = 'veh-prox';
+  prox.innerHTML = '🚦 <b>Próximo punto:</b> <span id="veh-prox-v" class="veh-prox-v">⏳…</span>';
+  body.appendChild(prox);
+  sb.rpc('sonar_proximo_punto', { p_mid: r.mid }).then(({ data, error }) => {
+    const v = body.querySelector('#veh-prox-v'); if (!v) return;
+    const r2 = fmtProximoPunto(data, error);
+    v.innerHTML = r2.html; if (r2.title) v.title = r2.title;
+  });
   // Acciones directas sobre el móvil (solo admin: despachar/consultar SONAR)
   if (isAdmin()) {
     const acts = document.createElement('div');
