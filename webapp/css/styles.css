@@ -122,6 +122,22 @@ input, select, textarea { font: inherit; }
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
   background: #fff; color: var(--text); font-size: 13px;
 }
+/* Filtro de varias fechas sueltas */
+.filter-md { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.filter-md .filter-lbl { font-size: 13px; font-weight: 600; color: var(--muted); }
+.filter-md .md-add {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: #fff; color: var(--text); font-size: 13px;
+}
+.md-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.md-chip {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600;
+  background: var(--grad-soft, #fdeaea); color: var(--primary-dark, #C20F16);
+  border: 1px solid #f0c4c4; border-radius: 999px; padding: 4px 10px;
+}
+.md-chip .md-x { cursor: pointer; font-style: normal; opacity: .8; }
+.md-chip .md-x:hover { opacity: 1; }
+
 .filter-showing {
   font-size: 13px; font-weight: 700; color: var(--primary);
   background: var(--grad-soft); border: 1px solid var(--border);

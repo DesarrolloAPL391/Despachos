@@ -363,6 +363,11 @@ function setMenu(open) {
   const s = $('scrim'); if (s) s.hidden = !open;
 }
 function closeMenu() { setMenu(false); }
+// Cierra paneles emergentes (avisos / documentos) al cambiar de pantalla
+function cerrarPanelesFlotantes() {
+  const dp = $('docp-modal'); if (dp) dp.hidden = true;
+  const dm = $('doc-modal'); if (dm) dm.hidden = true;
+}
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
 $('app-ver').textContent = APP_VERSION;
@@ -371,6 +376,7 @@ function selectTable(name) {
   // salir de la vista de mapa si estaba activa
   currentView = 'tabla';
   document.getElementById('app').classList.remove('view-map');
+  cerrarPanelesFlotantes();
   $('map-view').hidden = true;
   $('table-view').hidden = false;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -379,6 +385,8 @@ function selectTable(name) {
   // (no "todas las fechas"): así se ve el día completo y nunca topa el límite de filas.
   const fDate = (TABLES[name].filters || []).find((f) => f.type === 'date');
   if (fDate) filters[fDate.col] = hoyServidor();
+  const fMulti = (TABLES[name].filters || []).find((f) => f.type === 'multidate');
+  if (fMulti) filters[`${fMulti.col}::in`] = [hoyServidor()];
   $('table-title').textContent = TABLES[name].label;
   // "Despachar" de la barra: oculto en todas partes. El despacho se hace con el botón
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
@@ -390,6 +398,7 @@ function selectTable(name) {
   actualizarEstadoAsistencia();
   $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
+  $('synccond-btn').hidden = name !== 'conductores_sonar' || !isAdmin(); // sincronizar conductores: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
   // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
@@ -428,6 +437,10 @@ function renderFilters() {
       cont.appendChild(wrap);
       continue;
     }
+    if (f.type === 'multidate') {
+      cont.appendChild(buildMultiDateFilter(f));
+      continue;
+    }
     if (f.type === 'checklist') {
       cont.appendChild(buildChecklistFilter(f));
       continue;
@@ -442,6 +455,46 @@ function renderFilters() {
     });
     cont.appendChild(sel);
   }
+}
+
+// Filtro de VARIAS FECHAS sueltas. Guarda filters['col::in'] = ['YYYY-MM-DD', ...]
+function buildMultiDateFilter(f) {
+  const key = `${f.col}::in`;
+  const wrap = document.createElement('span');
+  wrap.className = 'filter-md';
+  const lbl = Object.assign(document.createElement('span'), { className: 'filter-lbl', textContent: f.label });
+  const add = document.createElement('input');
+  add.type = 'date'; add.className = 'md-add'; add.title = `Agregar fecha a ${f.label}`;
+  const chips = document.createElement('span'); chips.className = 'md-chips';
+  const clr = Object.assign(document.createElement('button'), { type: 'button', className: 'link-btn md-clear', textContent: 'Limpiar' });
+  wrap.append(lbl, add, chips, clr);
+
+  const sel = () => (Array.isArray(filters[key]) ? filters[key] : []);
+  const render = () => {
+    const arr = sel().slice().sort();
+    chips.innerHTML = '';
+    arr.forEach((d) => {
+      const c = document.createElement('span'); c.className = 'md-chip';
+      c.innerHTML = `${esc(fechaLegible(d))} <b class="md-x" data-d="${d}">✕</b>`;
+      chips.appendChild(c);
+    });
+    clr.style.display = arr.length ? '' : 'none';
+    chips.querySelectorAll('.md-x').forEach((x) => x.addEventListener('click', () => {
+      filters[key] = sel().filter((d) => d !== x.dataset.d);
+      if (!filters[key].length) delete filters[key];
+      render(); page = 0; loadData();
+    }));
+  };
+  add.addEventListener('change', () => {
+    const d = add.value; add.value = '';
+    if (!d) return;
+    const arr = sel();
+    if (!arr.includes(d)) { filters[key] = arr.concat(d); render(); page = 0; loadData(); }
+    else render();
+  });
+  clr.addEventListener('click', () => { delete filters[key]; render(); page = 0; loadData(); });
+  render();
+  return wrap;
 }
 
 // Cache de opciones para filtros checklist (p.ej. rutas), restringido por rol
@@ -1838,13 +1891,21 @@ function fechaMenosDias(n) { const d = new Date(hoyServidor() + 'T00:00:00'); d.
 
 // ---- Gestor de documentos del vehículo (admin): editar fechas, adjuntar PDF/foto, historial ----
 let DOC_VEH = null;
-async function openDocsVehiculo(row) {
+// Llena el selector de tipo. Si soloKeys viene, limita a esos documentos (los de alerta).
+function setDocTipoOpciones(soloKeys) {
+  const sel = $('doc-tipo');
+  const allow = (soloKeys && soloKeys.length) ? DOC_TIPOS.filter((t) => soloKeys.includes(t.key)) : DOC_TIPOS;
+  sel.innerHTML = allow.map((t) => `<option value="${t.key}">${esc(t.label)}</option>`).join('');
+}
+// soloKeys (opcional): restringe la edición a los documentos vencidos/por vencer (desde Avisos).
+async function openDocsVehiculo(row, soloKeys) {
   DOC_VEH = row;
   $('doc-veh').textContent = `${row.numero_interno || ''} · ${row.placa || ''}`;
   $('doc-err').hidden = true;
-  $('doc-tipo').value = 'soat'; $('doc-obs').value = ''; $('doc-file').value = '';
+  setDocTipoOpciones(soloKeys);
+  $('doc-obs').value = ''; $('doc-file').value = '';
   prefillDoc();
-  renderDocEstados(row);
+  renderDocEstados(row, soloKeys);
   $('doc-modal').hidden = false;
   await loadDocHist(row.id);
 }
@@ -1854,9 +1915,10 @@ function prefillDoc() {
   $('doc-num').value = (DOC_VEH && DOC_VEH[t.num]) || '';
 }
 $('doc-tipo').addEventListener('change', prefillDoc);
-function renderDocEstados(row) {
+function renderDocEstados(row, soloKeys) {
   const cont = $('doc-estado'); cont.innerHTML = '';
-  for (const t of DOC_TIPOS) {
+  const tipos = (soloKeys && soloKeys.length) ? DOC_TIPOS.filter((t) => soloKeys.includes(t.key)) : DOC_TIPOS;
+  for (const t of tipos) {
     const b = docBand(row[t.col]);
     const d = document.createElement('div'); d.className = 'doc-est-item';
     d.innerHTML = `<span class="doc-est-lbl">${t.label}</span><span class="doc-chip ${b.cls}">${esc(b.txt)}</span>`;
@@ -1904,6 +1966,18 @@ $('doc-save').addEventListener('click', async () => {
     const y = +String(fecha).slice(0, 4);
     if (isNaN(Date.parse(fecha + 'T00:00:00')) || y < 2000 || y > 2100) {
       err.textContent = 'La fecha de vencimiento no es válida.'; err.hidden = false; return;
+    }
+    // Regla estricta: la nueva fecha debe ser de hoy en adelante y nunca anterior a la registrada
+    const hoy = hoyServidor();
+    const td = DOC_TIPOS.find((x) => x.key === tipo);
+    const ant = (DOC_VEH && DOC_VEH[td.col]) ? String(DOC_VEH[td.col]).slice(0, 10) : null;
+    if (fecha < hoy) {
+      err.textContent = `La nueva fecha de vencimiento debe ser de hoy (${fechaLegible(hoy)}) en adelante.`;
+      err.hidden = false; return;
+    }
+    if (ant && fecha < ant) {
+      err.textContent = `La nueva fecha no puede ser anterior a la registrada (${fechaLegible(ant)}).`;
+      err.hidden = false; return;
     }
   }
   if (file && file.size > 15 * 1024 * 1024) { err.textContent = 'El archivo supera 15 MB.'; err.hidden = false; return; }
@@ -1969,7 +2043,7 @@ async function cargarAlertasDocumentos() {
   for (const v of data) {
     if (permitido && !permitido.has(String(v.numero_interno).trim())) continue;
     const items = [];
-    for (const t of DOC_TIPOS) { const b = docBand(v[t.col]); if (nivelEsAlerta(b.nivel)) items.push({ label: t.label, b }); }
+    for (const t of DOC_TIPOS) { const b = docBand(v[t.col]); if (nivelEsAlerta(b.nivel)) items.push({ key: t.key, label: t.label, b }); }
     if (items.length) out.push({ ...v, items, peor: Math.min(...items.map((i) => i.b.nivel)) });
   }
   out.sort((a, b) => a.peor - b.peor || String(a.numero_interno).localeCompare(String(b.numero_interno)));
@@ -2003,7 +2077,7 @@ function openDocPanel() {
   $('docp-modal').hidden = false;
   body.querySelectorAll('.docp-edit').forEach((b) => b.addEventListener('click', () => {
     const a = DOC_ALERTAS.find((x) => String(x.id) === b.dataset.id);
-    if (a) { $('docp-modal').hidden = true; openDocsVehiculo(a); }
+    if (a) { $('docp-modal').hidden = true; openDocsVehiculo(a, (a.items || []).map((i) => i.key)); }
   }));
 }
 $('docp-x') && $('docp-x').addEventListener('click', () => { $('docp-modal').hidden = true; });
@@ -3327,6 +3401,7 @@ async function showMapView() {
   if (typeof L === 'undefined') { toast('No se pudo cargar el mapa (revisa tu conexión a internet)', 'err'); return; }
   currentView = 'mapa';
   document.getElementById('app').classList.add('view-map');
+  cerrarPanelesFlotantes();
   $('table-view').hidden = true;
   $('map-view').hidden = false;
   closeVehSheet();
@@ -3408,6 +3483,15 @@ $('syncfleet-btn').addEventListener('click', async () => {
   btn.disabled = false; btn.textContent = t;
   if (error) { toast('Error: ' + error.message, 'err'); return; }
   if (data && data.ok) { gpsMap = null; toast(`Flota sincronizada: ${data.moviles} móviles`, 'ok'); if (current === 'vehiculosgps') loadData(); }
+  else toast('No se pudo: ' + (data?.error || '?'), 'err');
+});
+
+$('synccond-btn').addEventListener('click', async () => {
+  const btn = $('synccond-btn'); const t = btn.textContent; btn.disabled = true; btn.textContent = 'Sincronizando…';
+  const { data, error } = await sb.rpc('sync_conductores');
+  btn.disabled = false; btn.textContent = t;
+  if (error) { toast('Error: ' + error.message, 'err'); return; }
+  if (data && data.ok) { toast(`Conductores sincronizados: ${data.conductores}`, 'ok'); if (current === 'conductores_sonar') loadData(); }
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
 });
 
