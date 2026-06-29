@@ -42,6 +42,21 @@ function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').
 function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
 // Grupos del parque que el despachador tiene habilitados hoy (admin = todos → null)
 function allowedGrupoSet() { return isAdmin() ? null : new Set(CTX?.grupos || []); }
+// Empareja el nombre de una ruta de la tabla con un itinerario de SONAR. Tolera el
+// prefijo "RUTA " del itinerario (313 ↔ RUTA 313) y sufijos de variante de la ruta
+// (ej. "135 CENTRO" → 135, "130i MADRUGADA" → 130i). Devuelve el itinerario o null.
+function matchItinerario(its, rutaNombre) {
+  const r = normRuta(rutaNombre); if (!r) return null;
+  // 1) coincidencia exacta (preferida: ej. ruta "190" → itinerario "190", no "190 CENTRO")
+  let m = its.find((i) => normRuta(i.nombre) === r); if (m) return m;
+  // 2) tolerando el prefijo "RUTA " del itinerario (313 ↔ RUTA 313)
+  const sinRuta = (s) => normRuta(s).replace(/^ruta/, '');
+  m = its.find((i) => sinRuta(i.nombre) === sinRuta(r)); if (m) return m;
+  // 3) forma canónica: sin prefijo RUTA y sin sufijo de variante en ambos lados
+  const canon = (s) => sinRuta(s).replace(/(madrugada|centro|sabado|sábado|domingo|festivo)$/, '');
+  const rc = canon(r); if (!rc) return null;
+  return its.find((i) => canon(i.nombre) === rc) || null;
+}
 // Tablas visibles según el rol:
 //  - admin: todas
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
@@ -1366,13 +1381,13 @@ function renderTable(cfg, rows, count, diaSel = false) {
           const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', innerHTML: ICON.send });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
-            dsp.disabled = true;
+            dsp.onclick = () => toast('Ya despachado en SONAR (regId ' + row.sonar_regid + ').', 'ok');
           } else if (esPasada) {
             dsp.title = 'Fecha ya pasada: no se puede despachar';
-            dsp.disabled = true;
+            dsp.onclick = () => toast('No se puede despachar: la fecha del viaje ya pasó.', 'err');
           } else if (esFutura) {
             dsp.title = 'Fecha adelantada: solo se despacha el día actual';
-            dsp.disabled = true;
+            dsp.onclick = () => toast('Solo se despacha el día de HOY. Esta fila es de otra fecha (' + frow + ').', 'err');
           } else {
             dsp.title = 'Despachar en SONAR';
             dsp.onclick = () => openSonar(row);
@@ -1381,13 +1396,13 @@ function renderTable(cfg, rows, count, diaSel = false) {
           const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
           if (!row.sonar_regid) {
             can.title = 'Sin regId: no se puede cancelar';
-            can.disabled = true;
+            can.onclick = () => toast('Este despacho no tiene regId de SONAR: no se puede cancelar.', 'err');
           } else if (esPasada) {
             can.title = 'Fecha ya pasada: no se puede cancelar';
-            can.disabled = true;
+            can.onclick = () => toast('No se puede cancelar: la fecha del viaje ya pasó.', 'err');
           } else if (esFutura) {
             can.title = 'Fecha adelantada: solo se cancela el día actual';
-            can.disabled = true;
+            can.onclick = () => toast('Solo se cancela el día de HOY. Esta fila es de otra fecha (' + frow + ').', 'err');
           } else {
             can.title = 'Cancelar en SONAR';
             can.onclick = () => openCancelar(row);
@@ -3135,8 +3150,8 @@ async function openSonar(row) {
   if (row) {
     const movil = row.veh?.numero || row.vehp?.numero; // real, o el programado (TABLA importada)
     if (movil) { const vr = veh.find((v) => String(v.numero) === String(movil)); if (vr) $('s-mov').value = vr.id; }
-    const ruta = (row.ruta?.nombre || row.rutap?.nombre || '').toLowerCase();
-    if (ruta) { const m = its.find((i) => (i.nombre || '').toLowerCase() === ruta); if (m) $('s-itin').value = m.itid; }
+    const m = matchItinerario(its, row.ruta?.nombre || row.rutap?.nombre);
+    if (m) $('s-itin').value = m.itid;
     // El conductor NO se toma de la programación de la tabla (puede estar desactualizada);
     // se trae de Resumen para la fecha del despacho (abajo). Si no hay, queda vacío.
     $('s-com').value = 'Despacho ' + (row.id || '');
@@ -3253,13 +3268,18 @@ $('sonar-send').addEventListener('click', async () => {
     if (sonarRow?.id) {
       const newVehId = Number($('s-mov').value) || sonarRow.vehiculo_id || null;
       const progId = sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || null;
+      const huboCambio = !!(progId && newVehId && Number(progId) !== Number(newVehId));
+      // Registro automático del CAMBIO de móvil (programado → despachado). No editable: lo pone el sistema.
+      const numDe = (id) => { const v = veh.find((x) => Number(x.id) === Number(id)); return v ? v.numero : id; };
       const patch = {
         estado_despacho: 'DESPACHADO',
         vehiculo_id: newVehId,
         // si no había programado, se fija con el original de la fila (no se pierde)
         vehiculo_programado_id: progId || newVehId,
         // Si despacharon con OTRO carro (reemplazo), el carro programado NO realizó el viaje
-        realizo_programado: !(progId && newVehId && Number(progId) !== Number(newVehId)),
+        realizo_programado: !huboCambio,
+        // Deja constancia del cambio (o lo limpia si se despachó el programado)
+        cambio: huboCambio ? `${numDe(progId)} → ${numDe(newVehId)}` : null,
         despachado_en: new Date().toISOString(), // hora del despacho (para el aviso de 20 min)
       };
       // Queda registrado quién despachó (el usuario que tiene la sesión)

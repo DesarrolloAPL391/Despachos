@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v93';
+export const APP_VERSION = 'v94';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -99,6 +99,7 @@ export const TABLES = {
       { path: 'ruta.nombre', label: 'Ruta', m: true },
       { path: 'vehp.numero', label: 'Móvil prog.' },
       { path: 'veh.numero', label: 'Móvil', m: true },
+      { key: 'cambio', label: 'Cambio' },
       { path: 'cond.nombre', label: 'Conductor' },
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },
       { key: 'realizo_programado', label: 'Prog. realizó', badge: true },
@@ -122,7 +123,7 @@ export const TABLES = {
       { key: 'estado_despacho', label: 'Estado del despacho', type: 'text', section: 'General' },
       { key: 'sonar_regid', label: 'regId SONAR', type: 'text', section: 'General' },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General' },
-      { key: 'cambio', label: 'Cambio', type: 'text', section: 'General' },
+      { key: 'cambio', label: 'Cambio (automático)', type: 'text', section: 'General', readOnly: true, hint: 'Lo registra el sistema cuando se despacha un móvil distinto al programado.' },
 
       // ----- Programado (solo TABLA) -----
       { key: 'vehiculo_programado_id', label: 'Móvil programado', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Programado', showWhen: { field: 'tipo', in: ['TABLA'] } },
