@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v95';
+export const APP_VERSION = 'v96';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -89,7 +89,7 @@ export const TABLES = {
       { col: 'fecha', label: 'Fecha', type: 'date' },
       { col: 'ruta_id', label: 'Ruta', type: 'checklist', source: 'rutas' },
       { col: 'tipo', label: 'Tipo', options: ['TABLA', 'LIBRE'] },
-      { col: 'estado_despacho', label: 'Despacho', options: ['DESPACHADO', 'PENDIENTE SONAR', 'NO REALIZA EL VIAJE', 'CANCELADO'] },
+      { col: 'estado_despacho', label: 'Despacho', options: ['SIN DESPACHO', 'SI', 'DESPACHADO', 'PENDIENTE SONAR', 'NO REALIZA EL VIAJE', 'NO SE REALIZA POR OTRO MOTIVO', 'CANCELADO'] },
       { col: 'estado', label: 'Novedad', options: NOVEDADES },
     ],
     columns: [
@@ -545,9 +545,11 @@ export function configTablaPuesto(label, puesto) {
     });
   // Las columnas de control (auditCol) tampoco aplican aquí
   const columns = TABLES.despachos.columns.filter((c) => !c.auditCol);
-  // Filtro de fecha: una sola fecha (no rango) y se indica cuál se muestra
-  const filters = TABLES.despachos.filters.map((f) =>
-    (f.col === 'fecha' && f.type === 'daterange') ? { col: 'fecha', label: 'Fecha', type: 'date' } : f);
+  // Filtro de fecha: una sola fecha (no rango). Se quita el filtro "Tipo" (en una tabla
+  // de puesto todo es TABLA; el despacho LIBRE solo existe en Despachos).
+  const filters = TABLES.despachos.filters
+    .filter((f) => f.col !== 'tipo')
+    .map((f) => (f.col === 'fecha' && f.type === 'daterange') ? { col: 'fecha', label: 'Fecha', type: 'date' } : f);
   // Orden: por día (más reciente primero) y dentro del día por HORA ascendente
   const defaultOrder = { col: 'fecha', asc: false, then: { col: 'hora', asc: true } };
   // Las tablas por puesto NO tienen relación con `auditores`: se quita el embed para no romper la carga

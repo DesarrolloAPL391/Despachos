@@ -519,16 +519,26 @@ function buildMultiDateFilter(f) {
 // Cache de opciones para filtros checklist (p.ej. rutas), restringido por rol
 const _checkOptsCache = {};
 async function loadCheckOptions(source) {
-  if (_checkOptsCache[source]) return _checkOptsCache[source];
-  let qy = sb.from(source).select('id,nombre').order('nombre');
-  const r = await qy;
+  const cfg = TABLES[current];
+  // En una tabla de puesto, el filtro de Ruta solo muestra las rutas que EXISTEN en esa tabla
+  const esTablaPuesto = source === 'rutas' && !!cfg?.puesto;
+  const ckey = source + (esTablaPuesto ? '::' + current : '');
+  if (_checkOptsCache[ckey]) return _checkOptsCache[ckey];
+  const r = await sb.from(source).select('id,nombre').order('nombre');
   let opts = (r.data || []).map((x) => [x.id, x.nombre]);
-  // Despachador: solo ve sus rutas permitidas (en despachos y tablas por puesto)
-  if (source === 'rutas' && !isAdmin() && Array.isArray(CTX?.ids) && CTX.ids.length) {
-    const allow = new Set(CTX.ids.map(Number));
-    opts = opts.filter(([id]) => allow.has(Number(id)));
+  if (source === 'rutas') {
+    if (esTablaPuesto) {
+      // Solo las rutas presentes en ESTA tabla (RLS ya limita las filas del despachador)
+      const { data } = await sb.from(current).select('ruta_id').not('ruta_id', 'is', null).limit(5000);
+      const ids = new Set((data || []).map((x) => Number(x.ruta_id)));
+      opts = opts.filter(([id]) => ids.has(Number(id)));
+    } else if (!isAdmin() && Array.isArray(CTX?.ids) && CTX.ids.length) {
+      // Despachos general: el despachador solo ve sus rutas permitidas
+      const allow = new Set(CTX.ids.map(Number));
+      opts = opts.filter(([id]) => allow.has(Number(id)));
+    }
   }
-  _checkOptsCache[source] = opts;
+  _checkOptsCache[ckey] = opts;
   return opts;
 }
 
