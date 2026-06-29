@@ -97,6 +97,7 @@ input, select, textarea { font: inherit; }
   text-align: left; padding: 11px 12px; border: 0; border-radius: 10px;
   background: transparent; color: var(--text); font-size: 15px; display: flex; gap: 10px; align-items: center;
 }
+.sidebar button { transition: background .15s, box-shadow .15s, color .15s; }
 .sidebar button:hover { background: #f3f1fd; }
 .sidebar button.active {
   background: var(--grad-soft); color: var(--primary-dark); font-weight: 700;
@@ -402,6 +403,38 @@ tbody tr:hover { background: #faf8ff; }
   .scrim[hidden] { display: none; }
 }
 
+/* ---------- Barra inferior de accesos rápidos (solo celular) ---------- */
+.bottomnav { display: none; }
+@media (max-width: 760px) {
+  .bottomnav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
+    background: var(--surface, #fff); border-top: 1px solid var(--border, #e3e3e3);
+    box-shadow: 0 -4px 18px rgba(0,0,0,.08);
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+  }
+  .bn-item {
+    flex: 1 1 0; min-width: 0; border: 0; background: transparent; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 6px 2px 5px; color: var(--muted, #777); font-weight: 600;
+    border-radius: 12px; transition: color .15s, background .15s, transform .08s;
+  }
+  .bn-ic { position: relative; font-size: 21px; line-height: 1; }
+  .bn-lb { font-size: 10.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bn-item.active { color: var(--primary, #ED1C24); background: var(--grad-soft, #fdeaea); }
+  .bn-item:active { transform: scale(.92); }
+  .bn-badge {
+    position: absolute; top: -6px; right: -10px; min-width: 16px; height: 16px; line-height: 16px;
+    padding: 0 4px; font-size: 10px; font-weight: 800; color: #fff; background: var(--primary, #ED1C24);
+    border-radius: 999px; text-align: center;
+  }
+  /* Espacio para que la barra no tape el contenido */
+  .main { padding-bottom: 72px; }
+  /* En el mapa se oculta (tiene su propio panel inferior deslizable) */
+  .app.view-map .bottomnav { display: none; }
+  /* Con el cajón "Más" abierto, se oculta para no montarse */
+  .app.menu-open .bottomnav { display: none; }
+}
+
 /* Asignar puesto: lista de despachadores con checkbox */
 .check-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 4px; background: #fff; }
 .check-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-weight: 400; }
@@ -528,6 +561,30 @@ tbody tr:hover { background: #faf8ff; }
 .nav-badge { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center;
   background: #c0392b; color: #fff; border-radius: 10px; font-size: 11px; font-weight: 800; padding: 0 5px; margin-left: 4px; }
 
+/* ===== Tarjeta dinámica de asistencia ===== */
+.asis-estado { margin: 0 0 12px; }
+.asis-card { display: flex; align-items: center; gap: 16px; padding: 16px 18px; border-radius: 14px;
+  border: 1px solid var(--border, #e3e3e3); box-shadow: 0 4px 14px rgba(0,0,0,.06); }
+.asis-ic { font-size: 34px; flex: 0 0 auto; line-height: 1; }
+.asis-main { flex: 1 1 auto; min-width: 0; }
+.asis-title { font-size: 18px; font-weight: 800; color: var(--text, #1c1c1c); }
+.asis-sub { font-size: 14px; color: var(--muted, #555); margin-top: 3px; }
+.asis-horario { margin-top: 7px; font-size: 13px; font-weight: 600; color: var(--text, #1c1c1c);
+  background: rgba(0,0,0,.04); border-radius: 8px; padding: 5px 10px; display: inline-block; }
+.asis-horario-none { color: var(--muted, #777); font-weight: 500; }
+.asis-big { flex: 0 0 auto; font-size: 16px; font-weight: 800; padding: 12px 20px; border-radius: 12px; }
+.asis-todo { background: linear-gradient(180deg,#fff,#fff6f6); border-color: #f3c0c0; }
+.asis-en   { background: linear-gradient(180deg,#fff,#eefaf0); border-color: #b6e3c2; }
+.asis-en .asis-title { color: #137a2b; }
+.asis-done { background: linear-gradient(180deg,#fff,#f3f7ff); border-color: #c5d8f2; }
+.asis-done .asis-title { color: #0b5cad; }
+@keyframes asis-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+.asis-todo .asis-ic { animation: asis-pulse 1.6s ease-in-out infinite; }
+@media (max-width: 560px) {
+  .asis-card { flex-direction: column; align-items: stretch; text-align: center; gap: 12px; }
+  .asis-big { width: 100%; }
+}
+
 /* Panel de alertas */
 .docp-body { padding: 8px 16px; max-height: 66vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
 .docp-item { border: 1px solid var(--border, #e3e3e3); border-radius: 10px; padding: 10px 12px; }
@@ -573,6 +630,7 @@ tbody tr:hover { background: #faf8ff; }
 .qr-stage { position: relative; width: 100%; aspect-ratio: 1 / 1; background: #000; border-radius: 14px;
   overflow: hidden; }
 #qr-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+#foto-video, #foto-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
 .qr-frame { position: absolute; inset: 16%; border: 3px solid rgba(255,255,255,.9); border-radius: 16px;
   box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }
 .qr-status { text-align: center; font-weight: 600; color: var(--text, #1c1c1c); margin: 12px 4px 4px; min-height: 20px; }

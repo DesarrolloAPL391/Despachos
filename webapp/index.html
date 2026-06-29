@@ -81,6 +81,8 @@
             <button id="new-btn" class="btn btn-primary">+ Nuevo</button>
           </div>
 
+          <div id="asis-estado" class="asis-estado" hidden></div>
+
           <div id="table-wrap" class="table-wrap">
             <table id="data-table">
               <thead><tr id="thead-row"></tr></thead>
@@ -122,6 +124,9 @@
         </div>
       </main>
     </div>
+
+    <!-- Barra inferior de accesos rápidos (solo celular) -->
+    <nav id="bottomnav" class="bottomnav"></nav>
   </div>
 
   <!-- Modal editor -->
@@ -375,6 +380,30 @@
       <div class="modal-foot">
         <span class="spacer"></span>
         <button id="qr-cancel" class="btn">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="foto-modal" class="modal" hidden>
+    <div class="modal-card qr-card">
+      <div class="modal-head">
+        <h3>📷 Toma tu foto para marcar</h3>
+        <button id="foto-x" class="icon-btn">✕</button>
+      </div>
+      <div class="qr-body">
+        <div class="qr-stage">
+          <video id="foto-video" playsinline muted></video>
+          <canvas id="foto-preview" class="foto-preview" hidden></canvas>
+        </div>
+        <p id="foto-status" class="qr-status">Mira a la cámara y pulsa “Capturar”.</p>
+      </div>
+      <div class="modal-foot">
+        <button id="foto-flip" class="btn">🔄 Cambiar cámara</button>
+        <span class="spacer"></span>
+        <button id="foto-cancel" class="btn">Cancelar</button>
+        <button id="foto-shot" class="btn btn-primary">📸 Capturar</button>
+        <button id="foto-retake" class="btn" hidden>↺ Repetir</button>
+        <button id="foto-ok" class="btn btn-primary" hidden>✓ Usar foto</button>
       </div>
     </div>
   </div>

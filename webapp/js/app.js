@@ -287,6 +287,59 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
+  buildBottomNav();
+}
+
+// Etiqueta corta para la barra inferior (espacio reducido)
+function bnLabel(label) {
+  const map = {
+    'Inicio y fin de labores': 'Labores', 'Parque automotor': 'Parque',
+    'Horarios usuarios': 'Horarios', 'Conductores SONAR': 'Conductores',
+    'Vehículos GPS': 'GPS', 'Ubicaciones': 'Ubic.',
+  };
+  if (map[label]) return map[label];
+  return label.length > 9 ? label.split(' ')[0] : label;
+}
+
+// Barra inferior (celular): los accesos más usados + 🔔 + ☰ Más (abre el cajón completo)
+function buildBottomNav() {
+  const bn = $('bottomnav'); if (!bn) return;
+  bn.innerHTML = '';
+  const vis = visibleTables();
+  const showNotif = isAdmin() || CTX?.rol === 'despachador';
+  const pref = CTX?.rol === 'despachador'
+    ? ['asistencia', 'resumen', 'despachos']
+    : ['despachos', 'resumen', 'asistencia'];
+  const picked = [];
+  if (CTX?.rol === 'despachador') {
+    // solo la primera tabla del puesto, para dejar espacio a Labores y Resumen
+    const firstOwn = (CTX.tablas || []).map((t) => t.tabla).find((t) => TABLES[t] && vis.includes(t));
+    if (firstOwn) picked.push(firstOwn);
+  }
+  for (const k of pref) { if (vis.includes(k) && !picked.includes(k)) picked.push(k); }
+  for (const k of vis) { if (!picked.includes(k)) picked.push(k); }
+  const slots = picked.slice(0, showNotif ? 3 : 4);
+  for (const name of slots) {
+    const cfg = TABLES[name];
+    const b = document.createElement('button');
+    b.className = 'bn-item' + (name === current && currentView !== 'mapa' ? ' active' : '');
+    b.innerHTML = `<span class="bn-ic">${cfg.icon || '•'}</span><span class="bn-lb">${esc(bnLabel(cfg.label))}</span>`;
+    b.onclick = () => { selectTable(name); closeMenu(); };
+    bn.appendChild(b);
+  }
+  if (showNotif) {
+    const n = (typeof DOC_ALERTAS !== 'undefined' && DOC_ALERTAS) ? DOC_ALERTAS.length : 0;
+    const b = document.createElement('button');
+    b.className = 'bn-item';
+    b.innerHTML = `<span class="bn-ic">🔔${n ? `<span class="bn-badge">${n}</span>` : ''}</span><span class="bn-lb">Avisos</span>`;
+    b.onclick = () => { openDocPanel(); closeMenu(); };
+    bn.appendChild(b);
+  }
+  const more = document.createElement('button');
+  more.className = 'bn-item bn-more' + ($('sidebar').classList.contains('open') ? ' active' : '');
+  more.innerHTML = '<span class="bn-ic">☰</span><span class="bn-lb">Más</span>';
+  more.onclick = () => setMenu(!$('sidebar').classList.contains('open'));
+  bn.appendChild(more);
 }
 function addNavAction(nav, icon, label, fn, id) {
   const b = document.createElement('button');
@@ -306,6 +359,7 @@ function addNavNotif(nav) {
 }
 function setMenu(open) {
   $('sidebar').classList.toggle('open', open);
+  document.getElementById('app').classList.toggle('menu-open', open);
   const s = $('scrim'); if (s) s.hidden = !open;
 }
 function closeMenu() { setMenu(false); }
@@ -316,6 +370,7 @@ $('app-ver').textContent = APP_VERSION;
 function selectTable(name) {
   // salir de la vista de mapa si estaba activa
   currentView = 'tabla';
+  document.getElementById('app').classList.remove('view-map');
   $('map-view').hidden = true;
   $('table-view').hidden = false;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -329,8 +384,10 @@ function selectTable(name) {
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
-  $('marcar-in-btn').hidden = !TABLES[name].asistenciaMarcar;          // Marcar ingreso (Asistencia)
-  $('marcar-out-btn').hidden = !TABLES[name].asistenciaMarcar;         // Marcar salida (Asistencia)
+  // Asistencia: los botones de marcación los maneja la tarjeta dinámica (abajo), no la barra
+  $('marcar-in-btn').hidden = true;
+  $('marcar-out-btn').hidden = true;
+  actualizarEstadoAsistencia();
   $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
@@ -615,7 +672,53 @@ $('cnt-cancel').addEventListener('click', closeContador);
 
 // ---------- Asistencia: marcar ingreso/salida (foto obligatoria NO guardada + GPS obligatorio) ----------
 // Abre la cámara y exige tomar una foto. La foto NO se guarda; solo es requisito del momento.
-function tomarFoto() {
+// ---- Foto de marcación: cámara EN VIVO (sirve en PC y celular sobre HTTPS/localhost) ----
+let _fotoStream = null, _fotoResolve = null, _fotoFacing = 'user';
+
+function _fotoStop() {
+  if (_fotoStream) { _fotoStream.getTracks().forEach((t) => t.stop()); _fotoStream = null; }
+  const v = $('foto-video'); if (v) v.srcObject = null;
+}
+function _fotoFinish(ok) {
+  _fotoStop();
+  const m = $('foto-modal'); if (m) m.hidden = true;
+  const r = _fotoResolve; _fotoResolve = null;
+  if (r) r(!!ok);
+}
+function _fotoSetCaptured(yes) {
+  const v = $('foto-video'), pv = $('foto-preview');
+  $('foto-shot').hidden = yes; $('foto-flip').hidden = yes;
+  $('foto-retake').hidden = !yes; $('foto-ok').hidden = !yes;
+  if (v) v.hidden = yes;
+  if (pv) pv.hidden = !yes;
+}
+async function _fotoStart() {
+  const video = $('foto-video'), status = $('foto-status');
+  _fotoStop();
+  status.className = 'qr-status'; status.textContent = 'Iniciando cámara…';
+  try {
+    _fotoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: _fotoFacing } }, audio: false });
+  } catch (e) {
+    status.className = 'qr-status err';
+    status.textContent = 'No se pudo abrir la cámara. Concede el permiso (candado de la barra de direcciones) e inténtalo otra vez.';
+    return false;
+  }
+  video.srcObject = _fotoStream;
+  try { await video.play(); } catch {}
+  status.className = 'qr-status'; status.textContent = 'Mira a la cámara y pulsa “Capturar”.';
+  return true;
+}
+function _fotoCapturar() {
+  const v = $('foto-video'), pv = $('foto-preview');
+  if (!v || !v.videoWidth) return;
+  pv.width = v.videoWidth; pv.height = v.videoHeight;
+  pv.getContext('2d').drawImage(v, 0, 0, pv.width, pv.height);
+  _fotoSetCaptured(true);
+  const status = $('foto-status'); status.className = 'qr-status'; status.textContent = '¿Se ve bien? Pulsa “Usar foto”.';
+}
+
+// Respaldo: si el navegador no tiene cámara/getUserMedia, usa el selector de archivos.
+function tomarFotoArchivo() {
   return new Promise((resolve) => {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'user'; inp.style.display = 'none';
@@ -624,13 +727,36 @@ function tomarFoto() {
     const finish = (ok) => { if (done) return; done = true; try { inp.remove(); } catch (e) {} resolve(ok); };
     inp.addEventListener('change', () => finish(!!(inp.files && inp.files.length)));
     inp.click();
-    // Si el usuario cancela la cámara (no hay 'change'), lo detectamos al volver el foco
     window.addEventListener('focus', function onF() {
       window.removeEventListener('focus', onF);
       setTimeout(() => finish(false), 1500);
     }, { once: true });
   });
 }
+
+// Abre la cámara en vivo y obliga a capturar una foto. Resuelve true si capturó, false si canceló.
+function tomarFoto() {
+  const modal = $('foto-modal');
+  if (!modal || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return tomarFotoArchivo();
+  return new Promise((resolve) => {
+    _fotoResolve = resolve;
+    _fotoFacing = 'user';
+    _fotoSetCaptured(false);
+    modal.hidden = false;
+    _fotoStart();
+  });
+}
+
+(function wireFotoModal() {
+  const x = $('foto-x'), c = $('foto-cancel'), shot = $('foto-shot'),
+        re = $('foto-retake'), ok = $('foto-ok'), flip = $('foto-flip');
+  if (x) x.addEventListener('click', () => _fotoFinish(false));
+  if (c) c.addEventListener('click', () => _fotoFinish(false));
+  if (shot) shot.addEventListener('click', _fotoCapturar);
+  if (re) re.addEventListener('click', () => { _fotoSetCaptured(false); const s = $('foto-status'); s.className = 'qr-status'; s.textContent = 'Mira a la cámara y pulsa “Capturar”.'; });
+  if (ok) ok.addEventListener('click', () => _fotoFinish(true));
+  if (flip) flip.addEventListener('click', () => { _fotoFacing = _fotoFacing === 'user' ? 'environment' : 'user'; _fotoStart(); });
+})();
 
 function miCorreo() { return (sessionUser?.email || CTX?.email || '').toLowerCase(); }
 
@@ -678,6 +804,7 @@ async function marcarIngreso() {
     toast('✅ Ingreso registrado', 'ok');
     const bn = $('asis-banner'); if (bn) bn.hidden = true; // ya marcó: quitar el aviso
     if (current === 'asistencia') loadData();
+    actualizarEstadoAsistencia();
   } finally { b.dataset.busy = '0'; b.disabled = false; }
 }
 
@@ -701,6 +828,7 @@ async function marcarSalida(row, btn) {
     if (res.error) { toast('Error al marcar salida: ' + res.error.message, 'err'); return; }
     toast(horas != null ? `✅ Salida registrada · ${horas} h` : '✅ Salida registrada', 'ok');
     if (current === 'asistencia') loadData();
+    actualizarEstadoAsistencia();
   } finally { if (btn) { btn.dataset.busy = '0'; btn.disabled = false; } }
 }
 
@@ -719,6 +847,93 @@ async function marcarSalidaBarra() {
 
 $('marcar-in-btn').addEventListener('click', marcarIngreso);
 $('marcar-out-btn').addEventListener('click', marcarSalidaBarra);
+
+// ---- Tarjeta dinámica de asistencia: le dice al despachador qué hacer ahora ----
+let _asisTimer = null;
+function _pad2(n) { return String(n).padStart(2, '0'); }
+function transcurrido(desdeISO) {
+  const ms = Date.now() - new Date(desdeISO).getTime();
+  if (!(ms >= 0)) return '0 min';
+  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+  return h ? `${h} h ${_pad2(m)} min` : `${m} min`;
+}
+async function actualizarEstadoAsistencia() {
+  const box = $('asis-estado'); if (!box) return;
+  if (_asisTimer) { clearInterval(_asisTimer); _asisTimer = null; }
+  if (current !== 'asistencia' || !(CTX?.rol === 'despachador' || CTX?.rol === 'admin')) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = '<div class="asis-card asis-todo"><div class="asis-main"><div class="asis-sub">Cargando tu jornada…</div></div></div>';
+  try {
+    await refrescarFechaServidor();
+    const email = miCorreo();
+    const { data: ab } = await sb.from('asistencia').select('*').eq('email', email).is('hora_salida', null)
+      .order('ingreso_en', { ascending: false }).limit(1);
+    const abierta = (ab || [])[0];
+    const { data: hoyRows } = await sb.from('asistencia').select('*').eq('email', email).eq('fecha', hoyServidor())
+      .order('ingreso_en', { ascending: false });
+    const completas = (hoyRows || []).filter((r) => r.hora_salida);
+    renderAsisCard(box, abierta, completas);
+  } catch { box.innerHTML = '<div class="asis-card asis-todo"><div class="asis-main"><div class="asis-sub">No se pudo cargar tu jornada. Reintenta con ↻.</div></div></div>'; }
+}
+// Línea con el horario asignado de HOY (solo despachadores; viene de mi_contexto).
+function horarioHoyChip() {
+  if (CTX?.rol !== 'despachador') return '';
+  const ini = CTX?.hora_inicio, fin = CTX?.hora_fin, pst = CTX?.puesto;
+  if (ini || fin) {
+    const rango = `${ini || '—'}${fin ? ' – ' + fin : ''}`;
+    return `<div class="asis-horario">🕒 Horario de hoy: <b>${esc(rango)}</b>${pst ? ' · 📌 ' + esc(pst) : ''}</div>`;
+  }
+  if (pst) return `<div class="asis-horario">📌 Puesto de hoy: <b>${esc(pst)}</b></div>`;
+  return `<div class="asis-horario asis-horario-none">🕒 Hoy no tienes un horario asignado.</div>`;
+}
+function renderAsisCard(box, abierta, completas) {
+  const nombre = CTX?.nombre || miCorreo();
+  const hor = horarioHoyChip();
+  if (abierta) {
+    const hi = fmt(abierta.hora_ingreso) || '—';
+    box.innerHTML = `<div class="asis-card asis-en">
+      <div class="asis-ic">🟢</div>
+      <div class="asis-main">
+        <div class="asis-title">En jornada desde las ${esc(hi)}</div>
+        <div class="asis-sub">Llevas <b id="asis-trans">${transcurrido(abierta.ingreso_en)}</b> · cuando termines, marca tu <b>salida</b>.</div>
+        ${hor}
+      </div>
+      <button class="btn btn-danger asis-big" id="asis-out">🔴 Marcar salida</button>
+    </div>`;
+    $('asis-out').onclick = () => marcarSalidaBarra();
+    if (abierta.ingreso_en) {
+      _asisTimer = setInterval(() => {
+        const t = $('asis-trans');
+        if (t) t.textContent = transcurrido(abierta.ingreso_en);
+        else if (_asisTimer) { clearInterval(_asisTimer); _asisTimer = null; }
+      }, 30000);
+    }
+  } else if (completas.length) {
+    const ult = completas[0];
+    const tot = Math.round(completas.reduce((s, r) => s + (r.horas || 0), 0) * 100) / 100;
+    box.innerHTML = `<div class="asis-card asis-done">
+      <div class="asis-ic">✅</div>
+      <div class="asis-main">
+        <div class="asis-title">¡Jornada completada!</div>
+        <div class="asis-sub">Hoy: ${completas.length} jornada(s) · total <b>${tot} h</b> · última salida ${esc(fmt(ult.hora_salida) || '')}.</div>
+        ${hor}
+      </div>
+      <button class="btn asis-big" id="asis-in2">🟢 Iniciar otra jornada</button>
+    </div>`;
+    $('asis-in2').onclick = () => marcarIngreso();
+  } else {
+    box.innerHTML = `<div class="asis-card asis-todo">
+      <div class="asis-ic">👋</div>
+      <div class="asis-main">
+        <div class="asis-title">Hola, ${esc(nombre)}</div>
+        <div class="asis-sub">Aún no has marcado tu <b>inicio de labores</b> de hoy.</div>
+        ${hor}
+      </div>
+      <button class="btn btn-primary asis-big" id="asis-in">🟢 Marcar ingreso</button>
+    </div>`;
+    $('asis-in').onclick = () => marcarIngreso();
+  }
+}
 
 // Aviso visual (no bloqueante): si el despachador no ha marcado su INGRESO de hoy, muestra el banner.
 async function checkAsistenciaPendiente() {
@@ -2266,7 +2481,10 @@ function etiquetaUsuario(user) {
   const nombre = CTX?.nombre || user?.email || '';
   if (CTX?.rol === 'admin') return `👤 ${nombre} · Administrador`;
   if (CTX?.rol === 'auditor') return `👤 ${nombre} · 🔎 Auditor`;
-  if (CTX?.rol === 'despachador') return `👤 ${nombre} · 📌 ${CTX.puesto || 'sin turno hoy'}`;
+  if (CTX?.rol === 'despachador') {
+    const hor = (CTX.hora_inicio || CTX.hora_fin) ? ` · 🕒 ${CTX.hora_inicio || '—'}${CTX.hora_fin ? '–' + CTX.hora_fin : ''}` : '';
+    return `👤 ${nombre} · 📌 ${CTX.puesto || 'sin turno hoy'}${hor}`;
+  }
   return `👤 ${nombre}`;
 }
 // Indicador de GPS en la barra: verde permitido, ámbar pendiente, rojo bloqueado
@@ -3108,12 +3326,14 @@ async function refreshMapa(fit) {
 async function showMapView() {
   if (typeof L === 'undefined') { toast('No se pudo cargar el mapa (revisa tu conexión a internet)', 'err'); return; }
   currentView = 'mapa';
+  document.getElementById('app').classList.add('view-map');
   $('table-view').hidden = true;
   $('map-view').hidden = false;
   closeVehSheet();
   // resaltar la opción del menú
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-mapa')?.classList.add('active');
+  buildBottomNav(); // quita el resaltado de la barra inferior (el mapa no está allí)
   if (!flotaMap) {
     flotaMap = L.map('map').setView([6.244, -75.58], 12); // Medellín
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

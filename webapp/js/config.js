@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v85';
+export const APP_VERSION = 'v86';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -223,7 +223,7 @@ export const TABLES = {
 
   // Asistencia: marcación de ingreso/salida (con foto que NO se guarda + GPS obligatorio)
   asistencia: {
-    label: 'Asistencia',
+    label: 'Inicio y fin de labores',
     icon: '🕘',
     despachador: true, // visible para los despachadores (ven solo lo suyo por RLS)
     asistenciaMarcar: true, // muestra los botones "Marcar ingreso/salida"
