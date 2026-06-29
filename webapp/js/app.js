@@ -140,6 +140,7 @@ function chipClass(v) {
   if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI' || s === 'INGRESO') return 'chip chip-green';
   if (s === 'APAGADO') return 'chip chip-gray';
   if (s === 'NO REALIZA EL VIAJE' || s === 'DISABLED' || s === 'CANCELADO' || s === 'NO') return 'chip chip-red';
+  if (s === 'PENDIENTE SONAR') return 'chip chip-amber';
   if (s === 'SALIDA') return 'chip chip-amber';
   if (s === 'ABIERTO') return 'chip chip-amber';
   if (['PESCA', 'TALLER', 'CAMBIO DE TABLA', 'ADELANTADO', 'CONDUCTOR EN OTRA RUTA'].includes(s)) return 'chip chip-amber';
@@ -1633,6 +1634,25 @@ async function setupVehByGroup(form, conf) {
   }
   routeSel.addEventListener('change', apply);
   await apply();
+
+  // Al elegir el móvil, traer el conductor (SONAR) registrado para ese carro (igual que en Despachos)
+  if (conf.cond) {
+    const condSel = form.querySelector(`[data-key="${conf.cond}"]`);
+    const fechaEl = conf.fecha ? form.querySelector(`[data-key="${conf.fecha}"]`) : null;
+    if (condSel && !condSel.disabled) {
+      vehSel.addEventListener('change', async () => {
+        if (!vehSel.value) return;
+        const nombre = await nombreConductorDeVehiculo(vehSel.value, fechaEl ? fechaEl.value : null);
+        if (!nombre) return;
+        const op = [...condSel.options].find((o) => (o.value || '').toLowerCase() === nombre.toLowerCase());
+        if (op) {
+          condSel.value = op.value;
+          condSel._comboSync && condSel._comboSync();
+          toast('Conductor traído automáticamente', 'ok');
+        }
+      });
+    }
+  }
 }
 
 // Convierte un <select> en un buscador (combobox con filtro). El <select> queda
@@ -2852,6 +2872,26 @@ async function requerirGps() {
   }
 }
 
+// SONAR confirmó el despacho SOLO si trae un regId real (≠ "0"). OJO: SONAR responde
+// HTTP 200 ok:true con regId:"0" cuando en realidad falló (cuerpo <status>ERROR</status>).
+function sonarOK(sd) { return !!(sd && sd.ok && sd.regid && String(sd.regid).trim() !== '0'); }
+// Extrae el <description> del XML de SONAR para usarlo como motivo legible.
+function sonarDescripcion(resp) { const m = /<description>([^<]*)<\/description>/i.exec(String(resp || '')); return m ? m[1].trim() : null; }
+
+// SONAR falló (estando en línea): marca el despacho como PENDIENTE SONAR y avisa al webhook.
+// Nunca lanza: el aviso no debe romper el flujo. Devuelve siempre.
+async function reportarFalloSonar(tabla, id, motivo, extra) {
+  try { if (tabla && id) await sb.from(tabla).update({ estado_despacho: 'PENDIENTE SONAR' }).eq('id', id); } catch (e) { /* */ }
+  try {
+    await sb.rpc('notificar_error_despacho', {
+      p_payload: Object.assign({
+        evento: 'despacho_sonar_fallido', tabla, despacho_id: id, motivo: String(motivo || ''),
+        despachador: CTX?.nombre || sessionUser?.email || null,
+      }, extra || {}),
+    });
+  } catch (e) { /* el webhook nunca bloquea */ }
+}
+
 // Ejecuta un despacho completo (BD + SONAR) a partir de un "intent". Lanza si hay error de red.
 async function doDispatch(intent) {
   let ruta_id = null;
@@ -2877,8 +2917,21 @@ async function doDispatch(intent) {
   const { data: sd, error: se } = await sb.rpc('despachar_sonar', {
     p_mid: intent.mId || '', p_itinerary: intent.itid, p_drvid: intent.drvId, p_utc: '', p_comments: intent.com || ('Despacho ' + intent.id),
   });
-  if (se) throw se;
-  if (sd && sd.ok && sd.regid) await sb.from('despachos').update({ sonar_regid: String(sd.regid) }).eq('id', intent.id);
+  const datosFallo = { movil: intent.movilNum ?? null, ruta: intent.itinNombre ?? null, conductor: intent.drvNombre ?? null, fecha: intent.fecha ?? null, hora: intent.hora ?? null };
+  if (se) {
+    if (isNetworkErr(se)) throw se; // error de RED: a la cola, se reintenta al reconectar
+    // SONAR/función falló estando en línea → queda PENDIENTE y se avisa al webhook
+    await reportarFalloSonar('despachos', intent.id, se.message, datosFallo);
+    return { ok: false, error: se.message };
+  }
+  if (sonarOK(sd)) {
+    // SONAR confirmó con regId real → DESPACHADO pleno
+    await sb.from('despachos').update({ sonar_regid: String(sd.regid) }).eq('id', intent.id);
+  } else {
+    // Respondió pero NO confirmó (ok=false, o regId "0" con <status>ERROR</status>) → PENDIENTE + webhook
+    const motivo = sd?.error || sonarDescripcion(sd?.response) || 'SONAR no confirmó el despacho';
+    await reportarFalloSonar('despachos', intent.id, motivo, Object.assign(datosFallo, { http_status: sd?.status ?? null, regid: sd?.regid ?? null, respuesta: (sd?.response || '').slice(0, 1000) }));
+  }
   return sd;
 }
 
@@ -2901,7 +2954,7 @@ $('nd-save').addEventListener('click', async () => {
     // Nadie puede alterar la fecha del despacho: siempre es hoy (del servidor)
     tipo: 'LIBRE', fecha: hoyServidor(), hora: $('nd-hora').value || null,
     itid, itinNombre: itin?.nombre || null,
-    vehId: Number(vehVal), mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
+    vehId: Number(vehVal), movilNum: vrow?.numero || null, mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
     despId: Number($('nd-desp').value) || null, com: $('nd-com').value.trim(),
   };
@@ -2953,16 +3006,18 @@ $('nd-save').addEventListener('click', async () => {
   try {
     const sd = await doDispatch(intent);
     const res = $('nd-result'); res.hidden = false;
-    if (sd && sd.ok) {
+    if (sonarOK(sd)) {
       res.className = 'sonar-result ok';
       res.textContent = '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')'
-        + (sd.regid ? '\nregId: ' + sd.regid : '')
+        + '\nregId: ' + sd.regid
         + '\n📍 Ubicación registrada: ' + intent.ubicacion
         + '\n\n' + (sd.response || '').slice(0, 800);
       toast('Despacho creado y despachado', 'ok');
     } else {
       res.className = 'sonar-result err';
-      res.textContent = '✅ Despacho creado. ⚠️ SONAR respondió: ' + (sd?.error || ('HTTP ' + (sd?.status ?? '?'))) + '\n\n' + ((sd?.response || '').slice(0, 800));
+      res.textContent = '✅ Despacho creado, pero ⚠️ SONAR no lo confirmó: ' + (sd?.error || sonarDescripcion(sd?.response) || ('HTTP ' + (sd?.status ?? '?')))
+        + '\n→ Quedó como PENDIENTE SONAR. Reenvíalo con el botón ▶ de la lista cuando SONAR responda.'
+        + '\n\n' + ((sd?.response || '').slice(0, 800));
     }
     if (current === 'despachos') loadData();
   } catch (e) {
@@ -3181,9 +3236,18 @@ $('sonar-send').addEventListener('click', async () => {
     btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Despachar';
   }
 
+  const infoFallo = {
+    movil: $('s-mov')?.selectedOptions?.[0]?.textContent || null,
+    ruta: sonarRow?.ruta?.nombre || sonarRow?.rutap?.nombre || null,
+    fecha: sonarRow?.fecha || null, hora: sonarRow?.hora || null, mid: String(mId), itinerario: itin,
+  };
   const res = $('sonar-result'); res.hidden = false;
-  if (error) { res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message; return; }
-  if (data && data.ok) {
+  if (error) {
+    res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message;
+    if (!isNetworkErr(error)) await reportarFalloSonar(sonarTable, sonarRow?.id, error.message, infoFallo);
+    return;
+  }
+  if (sonarOK(data)) {
     // Marcar como DESPACHADO y registrar el móvil REAL despachado.
     // El vehículo PROGRAMADO (el de la importación) se conserva siempre.
     if (sonarRow?.id) {
@@ -3216,7 +3280,11 @@ $('sonar-send').addEventListener('click', async () => {
     btn.disabled = true; btn.textContent = 'Despachado ✓';
   } else {
     res.className = 'sonar-result err';
-    res.textContent = '⚠️ ' + (data?.error || ('Respuesta HTTP ' + (data?.status ?? '?'))) + '\n\n' + ((data?.response || '').slice(0, 1200));
+    res.textContent = '⚠️ SONAR no confirmó: ' + (data?.error || sonarDescripcion(data?.response) || ('Respuesta HTTP ' + (data?.status ?? '?')))
+      + '\n→ Quedó como PENDIENTE SONAR. Reenvíalo con el botón ▶ cuando SONAR responda.'
+      + '\n\n' + ((data?.response || '').slice(0, 1200));
+    await reportarFalloSonar(sonarTable, sonarRow?.id, data?.error || sonarDescripcion(data?.response) || 'SONAR no confirmó el despacho',
+      Object.assign({}, infoFallo, { http_status: data?.status ?? null, regid: data?.regid ?? null, respuesta: (data?.response || '').slice(0, 1000) }));
   }
 });
 

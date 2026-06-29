@@ -443,17 +443,17 @@ tbody tr:hover { background: #faf8ff; }
      Solo se muestran las columnas marcadas (m:true); el texto se ajusta. */
   .col-hide { display: none !important; }
   .table-wrap { overflow-x: hidden; }
-  table { width: 100%; table-layout: fixed; font-size: 11.5px; }
-  thead th { padding: 6px 4px; font-size: 9.5px; letter-spacing: 0; white-space: normal; }
-  tbody td { padding: 7px 4px; white-space: normal; word-break: normal; vertical-align: middle; line-height: 1.25; }
+  table { width: 100%; table-layout: fixed; font-size: 10.5px; }
+  thead th { padding: 5px 3px; font-size: 8.5px; letter-spacing: 0; white-space: normal; }
+  tbody td { padding: 5px 3px; white-space: normal; word-break: normal; vertical-align: middle; line-height: 1.2; }
   /* La columna de acciones con ancho fijo; el resto reparte lo que queda */
-  thead th.col-act, tbody td.row-actions { width: 64px; }
+  thead th.col-act, tbody td.row-actions { width: 58px; }
   .row-actions { gap: 4px; flex-wrap: wrap; justify-content: center; align-content: center; }
-  .row-actions button.act { width: 27px; height: 27px; font-size: 13px; border-radius: 8px; }
+  .row-actions button.act { width: 25px; height: 25px; font-size: 12px; border-radius: 7px; }
   /* Chips de estado como etiqueta compacta (no círculo) */
   .chip {
-    display: inline-block; white-space: normal; line-height: 1.2;
-    padding: 3px 7px; font-size: 10.5px; border-radius: 7px;
+    display: inline-block; white-space: normal; line-height: 1.15;
+    padding: 2px 5px; font-size: 9.5px; border-radius: 6px;
   }
 
   /* Popup del mapa: compacto y que quepa en la pantalla del celular */

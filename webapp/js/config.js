@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v92';
+export const APP_VERSION = 'v93';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -78,7 +78,8 @@ export const TABLES = {
     despachador: true, // visible para despachadores (filtrado por sus rutas)
     // Al elegir/cambiar la ruta, el "Móvil (real)" se limita a los carros del GRUPO de esa ruta
     // (vía ruta_grupos + parque_automotor). Evita despachar carros que no son de la tabla.
-    vehByGroup: { route: 'ruta_id', veh: 'vehiculo_id' },
+    // Al elegir el móvil, trae el conductor (SONAR) registrado, igual que en Despachos.
+    vehByGroup: { route: 'ruta_id', veh: 'vehiculo_id', cond: 'conductor_id', fecha: 'fecha' },
     pkEditable: true, // el KEY lo escribe el usuario al crear
     import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
     select: '*, ruta:ruta_id(nombre), rutap:ruta_programada_id(nombre), veh:vehiculo_id(numero,placa), vehp:vehiculo_programado_id(numero,placa), cond:conductor_id(nombre), desp:despachador_id(nombre), aud:auditor_id(nombre)',
@@ -88,7 +89,7 @@ export const TABLES = {
       { col: 'fecha', label: 'Fecha', type: 'date' },
       { col: 'ruta_id', label: 'Ruta', type: 'checklist', source: 'rutas' },
       { col: 'tipo', label: 'Tipo', options: ['TABLA', 'LIBRE'] },
-      { col: 'estado_despacho', label: 'Despacho', options: ['DESPACHADO', 'NO REALIZA EL VIAJE', 'CANCELADO'] },
+      { col: 'estado_despacho', label: 'Despacho', options: ['DESPACHADO', 'PENDIENTE SONAR', 'NO REALIZA EL VIAJE', 'CANCELADO'] },
       { col: 'estado', label: 'Novedad', options: NOVEDADES },
     ],
     columns: [
@@ -528,7 +529,7 @@ export const TABLES = {
 // En las tablas los viajes los programa el administrador: el formulario es muy restringido.
 export function configTablaPuesto(label, puesto) {
   // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
-  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id']);
+  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'hora_finalizacion']);
   // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
   const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id', 'ubicacion']);
   const fields = TABLES.despachos.fields
