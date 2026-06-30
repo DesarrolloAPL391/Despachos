@@ -70,6 +70,14 @@ input, select, textarea { font: inherit; }
   box-shadow: 0 8px 20px rgba(216,31,42,.35);
 }
 .login-card button:disabled { opacity: .6; }
+/* Botón para instalar la PWA (debajo de la tarjeta de login) */
+.install-btn {
+  margin-top: 18px; background: rgba(255,255,255,.96); color: var(--primary);
+  border: 0; padding: 12px 20px; border-radius: 12px; font-weight: 700; font-size: 15px;
+  cursor: pointer; box-shadow: 0 10px 24px rgba(0,0,0,.20); display: inline-flex; align-items: center; gap: 6px;
+}
+.install-btn:active { transform: translateY(1px); }
+.install-btn[hidden] { display: none; }
 
 /* ---------- App layout ---------- */
 .app { min-height: 100%; display: flex; flex-direction: column; }

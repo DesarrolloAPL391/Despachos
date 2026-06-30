@@ -10,6 +10,20 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- iOS: modo app a pantalla completa al instalar -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Despachos APL" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <!-- Captura temprana del evento de instalación (antes de que el navegador lo descarte) -->
+  <script>
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault(); window.__bip = e; window.dispatchEvent(new Event('bip-ready'));
+    });
+    window.addEventListener('appinstalled', function () {
+      window.__bip = null; window.dispatchEvent(new Event('app-installed'));
+    });
+  </script>
 </head>
 <body>
   <!-- Pantalla de login -->
@@ -28,6 +42,7 @@
       <button type="submit" id="login-btn">Iniciar sesión</button>
       <p id="login-error" class="error" hidden></p>
     </form>
+    <button type="button" id="install-btn" class="install-btn" hidden>📲 Instalar app en el celular</button>
   </section>
 
   <!-- App -->
@@ -516,6 +531,23 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <!-- Ayuda para instalar (iOS / navegadores sin prompt automático) -->
+  <div id="install-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3>📲 Instalar la app</h3>
+        <button id="install-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form">
+        <div id="install-help"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="install-ok" class="btn btn-primary">Entendido</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module" src="js/app.js"></script>
   <script>
@@ -545,6 +577,50 @@
         }).catch(console.error);
       });
     }
+  </script>
+  <!-- Instalación de la app (PWA): prompt nativo en Android / instrucciones en iPhone -->
+  <script>
+    (function () {
+      const btn = document.getElementById('install-btn');
+      if (!btn) return;
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+      if (isStandalone) { btn.hidden = true; return; } // ya está instalada
+      const ua = navigator.userAgent || '';
+      const isIOS = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/i.test(ua) && 'ontouchend' in document);
+      const show = () => { btn.hidden = false; };
+      if (window.__bip || isIOS) show();
+      window.addEventListener('bip-ready', show);
+      window.addEventListener('app-installed', () => { btn.hidden = true; });
+      setTimeout(show, 1500); // respaldo: mostrar el botón aunque no haya prompt automático
+
+      const modal = document.getElementById('install-modal');
+      const help = document.getElementById('install-help');
+      const closeM = () => { modal.hidden = true; };
+      document.getElementById('install-x').onclick = closeM;
+      document.getElementById('install-ok').onclick = closeM;
+
+      btn.addEventListener('click', async () => {
+        if (window.__bip) { // Android / Chrome: prompt nativo
+          const e = window.__bip; window.__bip = null;
+          btn.hidden = true;
+          e.prompt();
+          try { await e.userChoice; } catch (_) { /* */ }
+          return;
+        }
+        // Sin prompt nativo → instrucciones según la plataforma
+        help.innerHTML = isIOS
+          ? 'En <b>iPhone/iPad</b> (con Safari):'
+            + '<ol style="margin:10px 0 0 18px;padding:0;line-height:1.7">'
+            + '<li>Toca el botón <b>Compartir</b> (el cuadro con la flecha&nbsp;↑).</li>'
+            + '<li>Elige <b>«Agregar a inicio»</b>.</li>'
+            + '<li>Toca <b>Agregar</b>.</li></ol>'
+          : 'En el navegador del celular:'
+            + '<ol style="margin:10px 0 0 18px;padding:0;line-height:1.7">'
+            + '<li>Abre el <b>menú ⋮</b> (arriba a la derecha).</li>'
+            + '<li>Elige <b>«Instalar app»</b> o <b>«Agregar a pantalla de inicio»</b>.</li></ol>';
+        modal.hidden = false;
+      });
+    })();
   </script>
 </body>
 </html>
