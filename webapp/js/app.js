@@ -90,7 +90,7 @@ function getPath(obj, path) {
 }
 // Modal de confirmación reutilizable → devuelve Promise<boolean>
 let _confirmResolve = null;
-function confirmAction({ title = 'Confirmar', lead = '', message = '', okLabel = 'Confirmar', danger = false } = {}) {
+function confirmAction({ title = 'Confirmar', lead = '', message = '', okLabel = 'Confirmar', danger = false, noCancel = false } = {}) {
   return new Promise((resolve) => {
     _confirmResolve = resolve;
     $('confirm-title').textContent = title;
@@ -101,6 +101,7 @@ function confirmAction({ title = 'Confirmar', lead = '', message = '', okLabel =
     const yes = $('confirm-yes');
     yes.textContent = okLabel;
     yes.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+    $('confirm-no').hidden = !!noCancel; // aviso de solo aceptar (sin Cancelar)
     $('confirm-modal').hidden = false;
   });
 }
@@ -1361,9 +1362,9 @@ function renderTable(cfg, rows, count, diaSel = false) {
         tr.appendChild(td);
         continue;
       }
-      // Columna de gestión de documentos (solo admin): botón que abre el gestor del vehículo
+      // Columna de gestión de documentos (admin y despachador): botón que abre el gestor del vehículo
       if (c.docsbtn) {
-        if (isAdmin()) {
+        if (isAdmin() || CTX?.rol === 'despachador') {
           const b = Object.assign(document.createElement('button'), {
             className: 'act act-edit', innerHTML: '📄', title: 'Documentos / vencimientos',
           });
@@ -2116,55 +2117,102 @@ $('doc-save').addEventListener('click', async () => {
   });
   if (!ok) return;
   btn.dataset.busy = '1'; btn.disabled = true; const old = btn.textContent; btn.textContent = 'Guardando…';
+  showBusy('Guardando documento…');
+  let intentoNotif = false, notificado = false, resumenOk = '';
   try {
     let path = null, nombre = null;
     if (file) {
       if (file.size > 15 * 1024 * 1024) throw new Error('El archivo supera 15 MB.');
       const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       path = `${DOC_VEH.id}/${tipo}/${Date.now()}_${safe}`;
+      showBusy('Subiendo archivo…');
       const up = await sb.storage.from('docs-vehiculos').upload(path, file, { upsert: false, contentType: file.type || undefined });
       if (up.error) throw up.error;
       nombre = file.name;
     }
+    showBusy('Guardando documento…');
     const { error } = await sb.rpc('admin_guardar_doc_vehiculo', {
       p_vehiculo_id: DOC_VEH.id, p_tipo: tipo, p_fecha: fecha, p_numero: num,
       p_archivo_path: path, p_archivo_nombre: nombre, p_observacion: obs,
     });
     if (error) throw error;
     const t = DOC_TIPOS.find((x) => x.key === tipo);
+    const vencAnterior = (DOC_VEH && DOC_VEH[t.col]) || null; // vencimiento que tenía ANTES de actualizar
     DOC_VEH[t.col] = fecha; if (num) DOC_VEH[t.num] = num;
     renderDocEstados(DOC_VEH);
     $('doc-file').value = ''; $('doc-obs').value = '';
     await loadDocHist(DOC_VEH.id);
-    toast('Documento guardado', 'ok');
+    // Aviso por webhook (Pabbly → correo): SIEMPRE que se adjunte el archivo del documento,
+    // sin importar el vencimiento. Manda una URL firmada temporal (7 días) para que Pabbly
+    // adjunte el PDF/foto al correo.
+    const bAnt = docBand(fecha || vencAnterior);
+    if (path) {
+      intentoNotif = true;
+      showBusy('Enviando actualización a operaciones…');
+      try {
+        const estadoDoc = bAnt.nivel === 0 ? `Vencido (hace ${Math.abs(bAnt.dias)} días)`
+          : (bAnt.nivel <= 3 ? `Próximo a vencer (${bAnt.dias} días)`
+            : (bAnt.nivel === 4 ? 'Vigente' : 'Sin fecha'));
+        let archivoUrl = null;
+        try {
+          const su = await sb.storage.from('docs-vehiculos').createSignedUrl(path, 604800);
+          archivoUrl = su?.data?.signedUrl || null;
+        } catch (_) { /* si no se puede firmar, va sin enlace */ }
+        const { error: ne } = await sb.rpc('notificar_doc_vehiculo', { p_payload: {
+          vehiculo_id: DOC_VEH.id,
+          movil: DOC_VEH.numero_interno || '',
+          placa: DOC_VEH.placa || '',
+          ruta: DOC_VEH.ruta || '',
+          tipo: t.label || tipo,
+          numero: num || '',
+          vence: fecha ? fechaLegible(fecha) : (vencAnterior ? fechaLegible(vencAnterior) : ''),
+          vencimiento_anterior: vencAnterior ? fechaLegible(vencAnterior) : '',
+          estado_doc: estadoDoc,
+          archivo_nombre: nombre || '',
+          archivo_path: path,
+          archivo_url: archivoUrl,
+          actualizado_por: miCorreo(),
+          observacion: obs || '',
+        } });
+        if (!ne) notificado = true;
+      } catch (_) { /* el webhook nunca bloquea el guardado */ }
+    }
     if (current === 'parque_automotor') loadData();
+    resumenOk = `${t.label} · móvil ${DOC_VEH.numero_interno || ''} (${DOC_VEH.placa || ''})\n`
+      + `Vence: ${fecha ? fechaLegible(fecha) : (vencAnterior ? fechaLegible(vencAnterior) : '—')}`;
   } catch (e) { err.textContent = e.message || String(e); err.hidden = false; }
-  finally { btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = old; }
+  finally { hideBusy(); btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = old; }
+  // Aviso final (fuera del try, ya sin overlay) para que el usuario sepa qué pasó.
+  if (err.hidden) {
+    let msg = resumenOk;
+    if (intentoNotif) {
+      msg += notificado
+        ? '\n\n📧 Actualización enviada a operaciones.'
+        : '\n\n⚠️ Se guardó, pero no se pudo avisar a operaciones. Revisa la conexión e inténtalo de nuevo.';
+    }
+    await confirmAction({ title: '✅ Documento guardado', message: msg, okLabel: 'Listo', noCancel: true });
+  }
 });
 
-// ---- Alertas de vencimiento para el despachador (solo sus móviles) / admin (toda la flota) ----
+// ---- Alertas de vencimiento: despachador (móviles de sus rutas) / admin (toda la flota) ----
 let DOC_ALERTAS = [];
-// Móviles que el despachador realmente programa (de Despachos + sus tablas de puesto), últimos 45 días
-async function misMovilesProg() {
-  const set = new Set();
-  const desde = fechaMenosDias(45);
-  const tablas = ['despachos', ...((CTX?.tablas || []).map((t) => t.tabla))].filter((t) => TABLES[t]);
-  for (const t of tablas) {
-    const { data } = await sb.from(t).select('vehiculo').gte('fecha', desde).not('vehiculo', 'is', null).limit(5000);
-    (data || []).forEach((r) => { if (r.vehiculo != null) set.add(String(r.vehiculo).trim()); });
-  }
-  return set;
-}
 async function cargarAlertasDocumentos() {
   const { data, error } = await sb.from('parque_automotor')
     .select('id,numero_interno,placa,ruta,estado,vence_soat,vence_tecnomecanica,vence_tarjeta_operacion,num_soat,num_tecnomecanica,num_tarjeta_operacion')
     .eq('estado', 'Activo').limit(5000);
   if (error || !data) return [];
+  // admin: toda la flota. despachador: solo móviles de los GRUPOS de sus rutas
+  // (sus rutas SONAR → grupo del parque vía ruta_grupos; parque_automotor.ruta = grupo).
   let permitido = null; // null = todos (admin)
-  if (!isAdmin()) { permitido = await misMovilesProg(); }
+  if (!isAdmin()) {
+    const gmap = await loadRutaGrupos();
+    permitido = new Set();
+    for (const rn of (CTX?.rutas || [])) { const g = _grupoDeRuta(gmap, rn); if (g) permitido.add(String(g).trim()); }
+    for (const g of (CTX?.grupos || [])) { if (g) permitido.add(String(g).trim()); } // respaldo: grupos del horario de hoy
+  }
   const out = [];
   for (const v of data) {
-    if (permitido && !permitido.has(String(v.numero_interno).trim())) continue;
+    if (permitido && !permitido.has(String(v.ruta || '').trim())) continue;
     const items = [];
     for (const t of DOC_TIPOS) { const b = docBand(v[t.col]); if (nivelEsAlerta(b.nivel)) items.push({ key: t.key, label: t.label, b }); }
     if (items.length) out.push({ ...v, items, peor: Math.min(...items.map((i) => i.b.nivel)) });
@@ -2259,8 +2307,10 @@ async function openEditor(row) {
 
   // Un despacho ya realizado (TABLA o LIBRE) no se modifica: solo se permiten
   // observaciones y los demás ítems de seguimiento (postDispatch).
-  const isDispatched = !!(cfg.dispatchable && row &&
-    (String(row.estado_despacho || '').toUpperCase() === 'DESPACHADO' || row.sonar_regid));
+  // "Ya realizado": DESPACHADO, importado como "SI" (operado), o con regId de SONAR.
+  // En esos casos el móvil/ruta/conductor quedan bloqueados; solo se editan observaciones y seguimiento.
+  const _ed = String(row?.estado_despacho || '').toUpperCase();
+  const isDispatched = !!(cfg.dispatchable && row && (_ed === 'DESPACHADO' || _ed === 'SI' || row.sonar_regid));
   const soyAuditor = isAuditor();
   if (isDispatched && !soyAuditor) {
     const note = document.createElement('div');
