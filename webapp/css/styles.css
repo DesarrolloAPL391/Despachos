@@ -47,7 +47,8 @@ input, select, textarea { font: inherit; }
 
 /* ---------- Login ---------- */
 .login-screen {
-  min-height: 100%; display: grid; place-items: center; padding: 20px;
+  min-height: 100%; display: grid; place-items: center;
+  padding: calc(20px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
   background: var(--grad);
 }
 .login-card {
@@ -82,7 +83,12 @@ input, select, textarea { font: inherit; }
 /* ---------- App layout ---------- */
 .app { min-height: 100%; display: flex; flex-direction: column; }
 .topbar {
-  display: flex; align-items: center; gap: 10px; padding: 7px 14px;
+  display: flex; align-items: center; gap: 10px;
+  /* Respeta el notch/barra de estado de iOS (safe-area) para que no se oculte el contenido */
+  padding: 7px 14px;
+  padding-top: calc(7px + env(safe-area-inset-top));
+  padding-left: calc(14px + env(safe-area-inset-left));
+  padding-right: calc(14px + env(safe-area-inset-right));
   background: var(--grad); color: #fff; box-shadow: 0 4px 20px rgba(216,31,42,.30);
   position: sticky; top: 0; z-index: 20;
 }
@@ -419,7 +425,7 @@ tbody tr:hover { background: #faf8ff; }
   /* Menú lateral: arranca debajo de la barra superior y con su propio scroll */
   .sidebar {
     position: fixed; top: 0; bottom: 0; left: 0; width: 78%; max-width: 280px; z-index: 1000;
-    padding-top: 56px; transform: translateX(-100%); transition: transform .2s;
+    padding-top: calc(56px + env(safe-area-inset-top)); transform: translateX(-100%); transition: transform .2s;
     box-shadow: var(--shadow); overflow-y: auto;
   }
   .sidebar.open { transform: translateX(0); }
@@ -427,7 +433,12 @@ tbody tr:hover { background: #faf8ff; }
 
   /* Menos margen para aprovechar el ancho del teléfono */
   .main { padding: 8px; }
-  .topbar { padding: 6px 12px; }
+  .topbar {
+    padding: 6px 12px;
+    padding-top: calc(6px + env(safe-area-inset-top));
+    padding-left: calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
+  }
   .topbar-title { font-size: 15px; }
   .user-email { display: none; }
 

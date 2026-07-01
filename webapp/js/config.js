@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v98';
+export const APP_VERSION = 'v99';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -180,7 +180,7 @@ export const TABLES = {
     stateField: 'estado',
     closeRequired: ['fecha', 'ruta_id', 'vehiculo_id', 'conductor_id', 'viajes'],
     closeRequiredDoble: ['jornada1_inicio', 'jornada1_fin', 'conductor2_id', 'jornada2_inicio', 'jornada2_fin'],
-    import: { rpc: 'importar_resumen', map: IMPORT_MAP_RESUMEN, kept: 'actualizados', keptLabel: 'Actualizados' },
+    // (Resumen NO permite importar archivos: el resumen se genera/edita en la app, no por importación.)
     select: '*, ruta:ruta_id(nombre), cond:conductor_id(nombre), cond2:conductor2_id(nombre), veh:vehiculo_id(numero,placa), desp:despachador_id(nombre)',
     searchCols: ['id', 'codigo', 'puesto', 'estado'],
     defaultOrder: { col: 'hora_cierre', asc: false },
