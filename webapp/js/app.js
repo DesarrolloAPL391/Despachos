@@ -142,9 +142,18 @@ function fechaLegible(v) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v || '');
 }
+// Safari/iOS NO parsea "YYYY-MM-DD HH:MM:SS" (con espacio) → "Invalid Date".
+// Normaliza el timestamp de Postgres a ISO (con "T") antes de crear el Date.
+function toDate(v) {
+  if (v instanceof Date) return v;
+  if (v == null) return new Date(NaN);
+  let s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(' ', 'T');
+  return new Date(s);
+}
 // Formatea un timestamp (ISO) a fecha+hora local colombiana: "DD/MM/AAAA, HH:MM"
 function fmtFechaHora(v) {
-  const d = new Date(v);
+  const d = toDate(v);
   if (isNaN(d)) return fmt(v);
   const p = (n) => String(n).padStart(2, '0');
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -850,7 +859,7 @@ function miCorreo() { return (sessionUser?.email || CTX?.email || '').toLowerCas
 
 // Calcula horas laboradas entre dos instantes (decimales, 2 cifras). Maneja cruce de medianoche.
 function calcHoras(ingresoEn, salidaEn) {
-  const a = new Date(ingresoEn), b = new Date(salidaEn);
+  const a = toDate(ingresoEn), b = toDate(salidaEn);
   const ms = b - a;
   if (!(ms >= 0)) return null;
   return Math.round((ms / 3600000) * 100) / 100;
@@ -940,7 +949,7 @@ $('marcar-out-btn').addEventListener('click', marcarSalidaBarra);
 let _asisTimer = null;
 function _pad2(n) { return String(n).padStart(2, '0'); }
 function transcurrido(desdeISO) {
-  const ms = Date.now() - new Date(desdeISO).getTime();
+  const ms = Date.now() - toDate(desdeISO).getTime();
   if (!(ms >= 0)) return '0 min';
   const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
   return h ? `${h} h ${_pad2(m)} min` : `${m} min`;
@@ -2776,41 +2785,48 @@ async function openNuevoDespacho() {
     toast('No tienes grupos asignados hoy: no puedes despachar.', 'err');
     return;
   }
+  // Reset y ABRE el modal de una vez (en iOS así siempre se ve, aunque la carga tarde o falle)
   $('nd-error').hidden = true;
   const r = $('nd-result'); r.hidden = true; r.textContent = '';
   $('nd-tipo').value = 'LIBRE'; // el despacho manual siempre es LIBRE (TABLA solo viene de importación)
-  // La fecha del despacho es SIEMPRE hoy (del servidor) y NADIE la puede tocar → evita trampas
-  await refrescarFechaServidor();
-  $('nd-fecha').value = hoyServidor();
-  $('nd-fecha').min = hoyServidor();
-  $('nd-fecha').disabled = true;
   const ahora = new Date();
   $('nd-hora').value = `${_pad2(ahora.getHours())}:${_pad2(ahora.getMinutes())}`; // hora actual por defecto
   $('nd-com').value = '';
+  $('nd-modal').hidden = false; // ← abre el modal YA, antes de cargar los datos
+  try {
+    // La fecha del despacho es SIEMPRE hoy (del servidor) y NADIE la puede tocar → evita trampas
+    await refrescarFechaServidor();
+    $('nd-fecha').value = hoyServidor();
+    $('nd-fecha').min = hoyServidor();
+    $('nd-fecha').disabled = true;
 
-  const [its, veh, drs] = await Promise.all([
-    loadItinerarios(), loadVehiculos(), loadDrivers(),
-  ]);
-  // Despachador: solo itinerarios de sus rutas permitidas
-  let itList = its;
-  if (!isAdmin()) {
-    const allow = [...allowedRutaSet()].filter(Boolean);
-    itList = its.filter((i) => {
-      const n = normRuta(i.nombre);
-      return allow.some((a) => n === a || n.startsWith(a) || a.startsWith(n) || n.includes(a));
-    });
+    const [its, veh, drs] = await Promise.all([
+      loadItinerarios(), loadVehiculos(), loadDrivers(),
+    ]);
+    // Despachador: solo itinerarios de sus rutas permitidas
+    let itList = its;
+    if (!isAdmin()) {
+      const allow = [...allowedRutaSet()].filter(Boolean);
+      itList = its.filter((i) => {
+        const n = normRuta(i.nombre);
+        return allow.some((a) => n === a || n.startsWith(a) || a.startsWith(n) || n.includes(a));
+      });
+    }
+    fillSelect($('nd-ruta'), itList.map((i) => [i.itid, i.nombre])); // solo el nombre (ej. 130, 132A) para no confundir
+    fillSelect($('nd-movil'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
+    fillSelect($('nd-cond'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
+    // El despachador NO se puede cambiar: es el del login (solo se muestra)
+    $('nd-desp').value = CTX?.despachador_id ? String(CTX.despachador_id) : '';
+    $('nd-desp-name').value = CTX?.nombre || sessionUser?.email || '';
+    enhanceById('nd-ruta', 'nd-movil', 'nd-cond');
+    if ($('nd-estacion')) $('nd-estacion').checked = false;
+    if ($('nd-estacion-wrap')) $('nd-estacion-wrap').hidden = true;
+    await updateNdInfo();
+  } catch (e) {
+    const err = $('nd-error');
+    if (err) { err.textContent = 'No se pudo cargar todo el despacho: ' + (e.message || e); err.hidden = false; }
+    toast('Error cargando el despacho: ' + (e.message || e), 'err');
   }
-  fillSelect($('nd-ruta'), itList.map((i) => [i.itid, i.nombre])); // solo el nombre (ej. 130, 132A) para no confundir
-  fillSelect($('nd-movil'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
-  fillSelect($('nd-cond'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
-  // El despachador NO se puede cambiar: es el del login (solo se muestra)
-  $('nd-desp').value = CTX?.despachador_id ? String(CTX.despachador_id) : '';
-  $('nd-desp-name').value = CTX?.nombre || sessionUser?.email || '';
-  enhanceById('nd-ruta', 'nd-movil', 'nd-cond');
-  if ($('nd-estacion')) $('nd-estacion').checked = false;
-  if ($('nd-estacion-wrap')) $('nd-estacion-wrap').hidden = true;
-  await updateNdInfo();
-  $('nd-modal').hidden = false;
 }
 async function updateNdInfo() {
   const veh = await loadVehiculos();
@@ -3148,7 +3164,7 @@ async function minutosUltimoDespacho(vehId) {
   const { data: ts, error } = await sb.rpc('ultimo_despacho_vehiculo', { p_veh: vehId });
   if (!error) {
     if (!ts) return null;
-    masReciente = new Date(ts).getTime();
+    masReciente = toDate(ts).getTime();
   } else {
     // Respaldo: consulta directa a las tablas accesibles (por si la función no existe)
     const tablas = ['despachos', ...puestoTables];
@@ -3159,7 +3175,7 @@ async function minutosUltimoDespacho(vehId) {
         .order('despachado_en', { ascending: false }).limit(1);
       const r = (data || [])[0];
       if (r?.despachado_en) {
-        const ms = new Date(r.despachado_en).getTime();
+        const ms = toDate(r.despachado_en).getTime();
         if (!masReciente || ms > masReciente) masReciente = ms;
       }
     }));
@@ -3402,7 +3418,7 @@ async function updateCancelInfo() {
 }
 // Regla general: un despacho solo se cancela si lleva 50 min o menos despachado
 const MAX_MIN_CANCELAR = 50;
-function minsDesde(ts) { return ts ? Math.floor((Date.now() - new Date(ts).getTime()) / 60000) : null; }
+function minsDesde(ts) { return ts ? Math.floor((Date.now() - toDate(ts).getTime()) / 60000) : null; }
 
 async function openCancelar(row) {
   if (row && !row.sonar_regid) { toast('Este despacho no tiene regId: no se puede cancelar.', 'err'); return; }

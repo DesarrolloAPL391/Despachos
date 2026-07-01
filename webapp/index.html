@@ -23,6 +23,27 @@
     window.addEventListener('appinstalled', function () {
       window.__bip = null; window.dispatchEvent(new Event('app-installed'));
     });
+    // Muestra en pantalla cualquier error JS (clave para depurar en iPhone, donde no hay consola)
+    (function () {
+      function showErr(msg) {
+        var b = document.getElementById('__errbar');
+        if (!b) {
+          b = document.createElement('div'); b.id = '__errbar';
+          b.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#b00020;color:#fff;'
+            + 'font:12px system-ui,-apple-system,sans-serif;padding:10px 14px calc(10px + env(safe-area-inset-bottom));'
+            + 'box-shadow:0 -4px 16px rgba(0,0,0,.35);white-space:pre-wrap;word-break:break-word;max-height:45vh;overflow:auto';
+          b.addEventListener('click', function () { b.remove(); });
+          (document.body || document.documentElement).appendChild(b);
+        }
+        b.textContent = '⚠️ ' + msg + '\n\n(toca para cerrar)';
+      }
+      window.addEventListener('error', function (e) {
+        showErr((e.message || 'Error') + (e.filename ? '\n' + String(e.filename).split('/').pop() + ':' + e.lineno : ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason; showErr('Promesa: ' + ((r && (r.message || r)) || 'error'));
+      });
+    })();
   </script>
 </head>
 <body>
