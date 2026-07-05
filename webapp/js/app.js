@@ -406,9 +406,9 @@ function selectTable(name) {
   currentView = 'tabla';
   document.getElementById('app').classList.remove('view-map');
   cerrarPanelesFlotantes();
-  $('map-view').hidden = true;
+  // Si el mapa está flotante, NO lo ocultamos: debe seguir visible mientras se despacha
+  if (!mapaFlotante) { $('map-view').hidden = true; if (mapTimer) { clearInterval(mapTimer); mapTimer = null; } }
   $('table-view').hidden = false;
-  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
   // Si la tabla tiene filtro de fecha (calendario), arranca mostrando el DÍA ACTUAL
   // (no "todas las fechas"): así se ve el día completo y nunca topa el límite de filas.
@@ -1673,10 +1673,14 @@ async function setupVehByGroup(form, conf) {
     const rname = (routeSel.selectedOptions[0]?.textContent || '').trim();
     const grupo = _grupoDeRuta(gmap, rname);
     const filtrar = !!grupo; // si no se conoce el grupo de la ruta, no se filtra (no romper)
+    const conIntegradas = filtrar && esGrupoIntegrada(grupo); // ruta con I/II → suma el pool "Integradas"
     vehSel.innerHTML = '';
     for (const o of allOpts) {
-      // Fuera del grupo de la ruta → se oculta, salvo el móvil ya guardado en la fila (para no perderlo)
-      const fuera = filtrar && o.value && rmap.get(numById.get(String(o.value))) !== grupo;
+      // Pertenece si es del grupo de la ruta o (si la ruta es integrada) del pool "Integradas".
+      const pg = rmap.get(numById.get(String(o.value)));
+      const dentro = pg === grupo || (conIntegradas && pg === GRUPO_INTEGRADAS);
+      // Fuera del grupo → se oculta, salvo el móvil ya guardado en la fila (para no perderlo)
+      const fuera = filtrar && o.value && !dentro;
       if (fuera && o.value !== keep) continue;
       vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
     }
@@ -2895,6 +2899,11 @@ async function loadRutaGrupos() {
 }
 // Grupo del parque al que pertenece un itinerario de SONAR (según tabla ruta_grupos)
 function _grupoDeRuta(map, itinNombre) { return map.get(String(itinNombre || '').trim().toLowerCase()) || null; }
+// Pool "Integradas": los móviles del grupo 'Integradas' se pueden despachar en CUALQUIER ruta
+// integrada (alimentadora del metro). Un grupo es integrado si su nombre lleva un número
+// seguido de I/II (ej. 130I, 132II, 136IA, 136IIA, 193I-193II).
+const GRUPO_INTEGRADAS = 'Integradas';
+function esGrupoIntegrada(g) { return /\d\s*i/i.test(String(g || '')); }
 async function filtrarMovilesPorRuta() {
   const sel = $('nd-movil'); if (!sel) return;
   const its = await loadItinerarios();
@@ -2924,6 +2933,8 @@ async function filtrarMovilesPorRuta() {
     // El despachador solo ve móviles de SUS grupos (admin = todos)
     const allowG = allowedGrupoSet();
     if (allowG) objetivo = new Set([...objetivo].filter((g) => allowG.has(g)));
+    // Pool Integradas: si la ruta objetivo es integrada (I/II), suma los móviles del pool "Integradas"
+    if ([...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     const match = veh.filter((v) => objetivo.has(rmap.get(String(v.numero).trim())));
     if (match.length) {
       lista = match;
@@ -3588,6 +3599,7 @@ function renderDsonar(items) {
 
 // ---------- Mapa de la flota (Leaflet + OpenStreetMap) ----------
 let flotaMap = null, flotaLayer = null, mapTimer = null, currentView = 'tabla';
+let mapaFlotante = false, floatTimer = null, mapViewHome = null; // ventana flotante del mapa
 // Clasifica el estado de un móvil: 'off' apagado · 'mov' en movimiento · 'idle' encendido detenido
 function clasificar(r) {
   if (r.motor === 'Apagado') return 'off';
@@ -3878,8 +3890,19 @@ async function refreshMapa(fit) {
   fillRutaSelect();
   renderMarkers(fit);
 }
+// Crea el mapa Leaflet una sola vez (lo reusan la vista completa y la ventana flotante)
+function ensureFlotaMap() {
+  if (flotaMap) return;
+  flotaMap = L.map('map').setView([6.244, -75.58], 12); // Medellín
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap',
+  }).addTo(flotaMap);
+  flotaLayer = L.layerGroup().addTo(flotaMap);
+  flotaMap.on('click', closeVehSheet); // tocar el mapa cierra el panel
+}
 async function showMapView() {
   if (typeof L === 'undefined') { toast('No se pudo cargar el mapa (revisa tu conexión a internet)', 'err'); return; }
+  if (mapaFlotante) cerrarMapaFlotante(); // si estaba flotante, devolver el mapa a su lugar
   currentView = 'mapa';
   document.getElementById('app').classList.add('view-map');
   cerrarPanelesFlotantes();
@@ -3891,19 +3914,80 @@ async function showMapView() {
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-mapa')?.classList.add('active');
   buildBottomNav(); // quita el resaltado de la barra inferior (el mapa no está allí)
-  if (!flotaMap) {
-    flotaMap = L.map('map').setView([6.244, -75.58], 12); // Medellín
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '© OpenStreetMap',
-    }).addTo(flotaMap);
-    flotaLayer = L.layerGroup().addTo(flotaMap);
-    flotaMap.on('click', closeVehSheet); // tocar el mapa cierra el panel
-  }
+  ensureFlotaMap();
   setTimeout(() => flotaMap.invalidateSize(), 120); // el contenedor estaba oculto
   await refreshMapa(true);
   if (mapTimer) clearInterval(mapTimer);
   mapTimer = setInterval(() => refreshMapa(false), 60000); // refresco automático cada 60s
 }
+// ----- Mapa flotante: mueve TODO el #map-view a una ventana arrastrable -----
+async function abrirMapaFlotante() {
+  if (typeof L === 'undefined') { toast('No se pudo cargar el mapa (revisa tu conexión a internet)', 'err'); return; }
+  const mv = $('map-view');
+  if (!mapViewHome) mapViewHome = { parent: mv.parentNode, next: mv.nextSibling };
+  document.getElementById('app').classList.remove('view-map');
+  if (currentView === 'mapa') { currentView = 'tabla'; $('table-view').hidden = false; buildBottomNav(); }
+  $('map-float-body').appendChild(mv);
+  mv.hidden = false;
+  $('map-float').hidden = false;
+  $('map-fab').classList.add('activo');
+  mapaFlotante = true;
+  ensureFlotaMap();
+  setTimeout(() => flotaMap.invalidateSize(), 150);
+  await refreshMapa(true);
+  if (floatTimer) clearInterval(floatTimer);
+  floatTimer = setInterval(() => { if (mapaFlotante) refreshMapa(false); }, 60000);
+}
+function cerrarMapaFlotante() {
+  const mv = $('map-view');
+  if (mapViewHome) mapViewHome.parent.insertBefore(mv, mapViewHome.next); // devolver a su lugar
+  mv.hidden = true;
+  $('map-float').hidden = true;
+  $('map-fab').classList.remove('activo');
+  mapaFlotante = false;
+  if (floatTimer) { clearInterval(floatTimer); floatTimer = null; }
+}
+function toggleMapaFlotante() { mapaFlotante ? cerrarMapaFlotante() : abrirMapaFlotante(); }
+$('map-fab')?.addEventListener('click', toggleMapaFlotante);
+$('map-float-close')?.addEventListener('click', cerrarMapaFlotante);
+$('map-float-full')?.addEventListener('click', () => { cerrarMapaFlotante(); showMapView(); });
+// Arrastrar la ventana por la barra superior y redimensionar por la esquina (mouse + touch)
+(function () {
+  const panel = $('map-float'), head = $('map-float-head'), rz = $('map-float-resize');
+  if (!panel || !head || !rz) return;
+  let sx, sy, ox, oy, drag = false;
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.mf-btn')) return; // no arrastrar al tocar los botones
+    drag = true; head.setPointerCapture(e.pointerId);
+    const r = panel.getBoundingClientRect(); ox = r.left; oy = r.top; sx = e.clientX; sy = e.clientY;
+    panel.style.right = 'auto';
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    let nx = ox + (e.clientX - sx), ny = oy + (e.clientY - sy);
+    nx = Math.max(0, Math.min(nx, window.innerWidth - 80));
+    ny = Math.max(0, Math.min(ny, window.innerHeight - 44));
+    panel.style.left = nx + 'px'; panel.style.top = ny + 'px';
+  });
+  const endDrag = () => { drag = false; };
+  head.addEventListener('pointerup', endDrag);
+  head.addEventListener('pointercancel', endDrag);
+  let rw, rh, rx, ry, res = false;
+  rz.addEventListener('pointerdown', (e) => {
+    res = true; rz.setPointerCapture(e.pointerId);
+    const r = panel.getBoundingClientRect(); rw = r.width; rh = r.height; rx = e.clientX; ry = e.clientY;
+    e.preventDefault();
+  });
+  rz.addEventListener('pointermove', (e) => {
+    if (!res) return;
+    panel.style.width = Math.max(240, rw + (e.clientX - rx)) + 'px';
+    panel.style.height = Math.max(200, rh + (e.clientY - ry)) + 'px';
+    if (flotaMap) flotaMap.invalidateSize();
+  });
+  const endRes = () => { res = false; if (flotaMap) flotaMap.invalidateSize(); };
+  rz.addEventListener('pointerup', endRes);
+  rz.addEventListener('pointercancel', endRes);
+})();
 $('map-refresh').addEventListener('click', () => refreshMapa(true));
 document.querySelectorAll('#map-filters .mf').forEach((b) => {
   b.addEventListener('click', () => {

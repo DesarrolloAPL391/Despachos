@@ -181,6 +181,20 @@
 
     <!-- Barra inferior de accesos rápidos (solo celular) -->
     <nav id="bottomnav" class="bottomnav"></nav>
+
+    <!-- Botón flotante: mostrar/ocultar el mapa en vivo mientras se despacha -->
+    <button id="map-fab" class="map-fab" title="Mapa en vivo">🗺️</button>
+    <!-- Ventana flotante del mapa (arrastrable por la barra y redimensionable por la esquina) -->
+    <div id="map-float" class="map-float" hidden>
+      <div id="map-float-head" class="map-float-head">
+        <span class="mf-title">🗺️ Mapa en vivo</span>
+        <span class="spacer"></span>
+        <button id="map-float-full" class="mf-btn" title="Pantalla completa">⛶</button>
+        <button id="map-float-close" class="mf-btn" title="Cerrar">✕</button>
+      </div>
+      <div id="map-float-body" class="map-float-body"></div>
+      <div id="map-float-resize" class="map-float-resize" title="Arrastra para redimensionar"></div>
+    </div>
   </div>
 
   <!-- Modal editor -->

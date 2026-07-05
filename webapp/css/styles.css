@@ -576,6 +576,40 @@ tbody tr:hover { background: #faf8ff; }
 .busy-msg { font-weight: 700; color: var(--text, #1c1c1c); font-size: 15px; text-align: center; }
 @keyframes busy-rot { to { transform: rotate(360deg); } }
 
+/* ----- Mapa flotante (arrastrable) para verlo mientras se despacha ----- */
+.map-fab {
+  position: fixed; right: 16px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 1500;
+  width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--grad); color: #fff;
+  font-size: 24px; box-shadow: 0 8px 22px rgba(0,0,0,.32); display: flex; align-items: center; justify-content: center;
+}
+.map-fab.activo { outline: 3px solid rgba(255,255,255,.7); }
+.map-fab[hidden] { display: none; }
+@media (min-width: 761px) { .map-fab { bottom: 20px; } }
+.map-float {
+  position: fixed; z-index: 1600; left: 12px; top: 76px; width: 370px; height: 340px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 20px 55px rgba(0,0,0,.38); display: flex; flex-direction: column; overflow: hidden;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 90px);
+}
+.map-float[hidden] { display: none; }
+.map-float-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--grad); color: #fff;
+  cursor: move; user-select: none; touch-action: none;
+}
+.map-float-head .mf-title { font-weight: 700; font-size: 14px; }
+.map-float-head .spacer { flex: 1; }
+.mf-btn { background: rgba(255,255,255,.18); color: #fff; border: 0; width: 28px; height: 28px; border-radius: 7px; font-size: 14px; }
+.map-float-body { flex: 1; position: relative; min-height: 0; }
+/* El #map-view completo vive aquí dentro cuando está flotante */
+.map-float-body .map-view { position: static !important; height: 100% !important; display: flex; flex-direction: column; }
+.map-float-body #map { flex: 1 !important; height: auto !important; min-height: 0; }
+.map-float-body .map-filters { flex-wrap: wrap; gap: 4px; padding: 6px; }
+.map-float-resize {
+  position: absolute; right: 2px; bottom: 2px; width: 20px; height: 20px; cursor: nwse-resize; z-index: 1610;
+  background: linear-gradient(135deg, transparent 45%, var(--muted) 45%, var(--muted) 55%, transparent 55%,
+    transparent 68%, var(--muted) 68%, var(--muted) 78%, transparent 78%);
+}
+
 /* ----- Asignar puesto: check "fijo" y campos desactivados ----- */
 .pst-fijo-row { flex-direction: row !important; align-items: flex-start; gap: 8px; cursor: pointer;
   background: #fff7e6; border: 1px solid #f3d690; border-radius: 10px; padding: 10px 12px; }
