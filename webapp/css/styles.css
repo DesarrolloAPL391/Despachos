@@ -216,6 +216,30 @@ tbody tr:hover { background: #faf8ff; }
 .act-del  { background: #fef2f2; border-color: #f6c9c9; color: #c1121f; }
 .act-del:hover:not(:disabled)  { background: #fde0e0; }
 .lock-badge { font-size: 15px; opacity: .6; cursor: default; }
+/* Punto de estado GPS junto al número de móvil (igual que los pines del mapa) */
+.gps-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.gps-dot.mov  { background: #16a34a; }   /* verde: en movimiento */
+.gps-dot.idle { background: #f59e0b; }   /* ámbar: detenido (encendido) */
+.gps-dot.off  { background: #6b7280; }   /* gris: apagado */
+.gps-dot.none { background: transparent; box-shadow: inset 0 0 0 1.5px #cbd5e1; } /* sin señal GPS */
+
+/* En pantallas anchas (web) la tabla puede ser más ancha que el área visible. La
+   columna de ACCIONES queda FIJA a la derecha para que despachar/cancelar/editar
+   siempre se vean; el resto de columnas se recorre con scroll horizontal. */
+@media (min-width: 761px) {
+  thead th { z-index: 3; }                    /* el encabezado fijo siempre por encima del cuerpo */
+  tbody td.row-actions {
+    position: sticky; right: 0; z-index: 2; background: #fff;  /* por encima de las celdas del cuerpo */
+    box-shadow: -8px 0 10px -8px rgba(0,0,0,.18);
+  }
+  thead th.col-act { position: sticky; right: 0; z-index: 5; background: #efeafb; } /* esquina sup. derecha */
+  tbody tr:hover td.row-actions { background: #faf8ff; }
+  /* La celda fija toma el mismo tinte que la fila (pendiente/atrasada/siguiente) */
+  tr.tr-pend td.row-actions { background: #fffdf5; }
+  tr.tr-late td.row-actions { background: #fff5f5; }
+  tr.tr-next td.row-actions { background: #fff4d6; }
+}
+
 .table-view, .map-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .map-view { position: relative; }
 
@@ -368,16 +392,28 @@ tbody tr:hover { background: #faf8ff; }
 .edit-form .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 .edit-form .check input { width: 18px; height: 18px; }
 .edit-form .section-title {
-  grid-column: 1 / -1; margin: 6px 0 2px; padding-bottom: 4px;
+  grid-column: 1 / -1; margin: 6px 0 2px; padding: 6px 4px;
   font-weight: 700; color: var(--primary-dark); font-size: 14px;
   border-bottom: 2px solid #e8f1fd; text-transform: uppercase; letter-spacing: .3px;
+  display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+  border-radius: 8px 8px 0 0; transition: background .12s;
 }
-.edit-form .hidden-field { display: none !important; }
+.edit-form .section-title:hover { background: #f4f7fd; }
+.edit-form .section-title .sec-caret { font-size: 12px; transition: transform .15s; color: var(--muted); }
+.edit-form .section-title.collapsed .sec-caret { transform: rotate(-90deg); }
+.edit-form .section-title.collapsed { border-bottom-color: transparent; opacity: .85; }
+.edit-form .hidden-field, .edit-form .sec-hidden { display: none !important; }
 
 /* Buscador (combobox con filtro) en los formularios */
 .combo { position: relative; width: 100%; }
 .combo-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.combo-input { width: 100%; }
+.combo-input { width: 100%; padding-right: 32px; cursor: pointer; }
+/* Flecha desplegable: deja claro que es una LISTA para elegir/cambiar (no un texto) */
+.combo::after {
+  content: ''; position: absolute; right: 13px; top: 50%; width: 8px; height: 8px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: translateY(-70%) rotate(45deg); pointer-events: none; opacity: .8;
+}
 .combo-list {
   position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 70;
   background: #fff; border: 1px solid var(--border); border-radius: 10px;
@@ -386,6 +422,11 @@ tbody tr:hover { background: #faf8ff; }
 .combo-item { padding: 9px 11px; cursor: pointer; font-size: 14px; color: var(--text); }
 .combo-item:hover, .combo-item.sel { background: var(--grad-soft); color: var(--primary-dark); font-weight: 600; }
 .edit-form .field-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+/* Aviso: el conductor se trajo del Resumen (dato importante para el despachador) */
+.edit-form .field-hint.cond-src {
+  color: #15803d; font-weight: 700; background: #eafaf0; border: 1px solid #bfe8cf;
+  border-radius: 8px; padding: 5px 9px; margin-top: 6px;
+}
 
 /* Modal de confirmación */
 .confirm-card { max-width: 440px; }
@@ -693,6 +734,30 @@ tbody tr:hover { background: #faf8ff; }
 .doc-cambio { color: #c0392b; font-size: 12px; font-weight: 600; }
 .nav-badge { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center;
   background: #c0392b; color: #fff; border-radius: 10px; font-size: 11px; font-weight: 800; padding: 0 5px; margin-left: 4px; }
+
+.btn.on { background: #f2a900; border-color: #f2a900; color: #fff; }
+
+/* ===== Barra "próximo por despachar" ===== */
+.proximo-bar { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; cursor: pointer;
+  background: #fff7e6; border: 1px solid #f2c94c; color: #7a5a00; font-weight: 600;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; line-height: 1.35;
+  box-shadow: 0 3px 10px rgba(0,0,0,.05); user-select: none; }
+.proximo-bar .pb-ico { font-size: 18px; }
+.proximo-bar b { color: #b4690e; }
+.proximo-bar.late { background: #fdecec; border-color: #e57373; color: #8a1c1c; }
+.proximo-bar.late b { color: #b71c1c; }
+.proximo-bar.ok { background: #e9f7ef; border-color: #58c98a; color: #1c6b3f; cursor: default; }
+.proximo-bar .pb-late { color: #b71c1c; font-weight: 800; }
+.proximo-bar .pb-hint { font-weight: 500; opacity: .6; font-size: 12px; }
+/* Filas de la tabla según su estado de despacho */
+tr.tr-pend > td { background: #fffdf5; }
+tr.tr-pend > td:first-child { box-shadow: inset 4px 0 0 #f2c94c; }
+tr.tr-late > td { background: #fff5f5; }
+tr.tr-late > td:first-child { box-shadow: inset 4px 0 0 #e57373; }
+tr.tr-next > td { background: #fff4d6 !important; }
+tr.tr-next > td:first-child { box-shadow: inset 5px 0 0 #f2a900 !important; }
+tr.tr-flash > td { animation: trflash 1.1s ease; }
+@keyframes trflash { 0%,100% { background: transparent; } 30% { background: #ffe08a; } }
 
 /* ===== Tarjeta dinámica de asistencia ===== */
 .asis-estado { margin: 0 0 12px; }

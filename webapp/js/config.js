@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v102';
+export const APP_VERSION = 'v103';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -122,25 +122,25 @@ export const TABLES = {
       { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
       { key: 'estado_despacho', label: 'Estado del despacho', type: 'text', section: 'General' },
       { key: 'sonar_regid', label: 'regId SONAR', type: 'text', section: 'General' },
-      { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General' },
-      { key: 'cambio', label: 'Cambio (automático)', type: 'text', section: 'General', readOnly: true, hint: 'Lo registra el sistema cuando se despacha un móvil distinto al programado.' },
+      { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General', formHide: true },
+      { key: 'cambio', label: 'Cambio (automático)', type: 'text', section: 'General', readOnly: true, autoCambio: true, hint: 'Se registra solo al elegir un móvil distinto al programado.' },
 
       // ----- Programado (solo TABLA) -----
-      { key: 'vehiculo_programado_id', label: 'Móvil programado', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Programado', showWhen: { field: 'tipo', in: ['TABLA'] } },
-      { key: 'hora_programada', label: 'Hora programada', type: 'time', section: 'Programado', showWhen: { field: 'tipo', in: ['TABLA'] } },
-      { key: 'ruta_programada_id', label: 'Ruta programada', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Programado', showWhen: { field: 'tipo', in: ['TABLA'] } },
+      { key: 'vehiculo_programado_id', label: 'Móvil programado', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Programado en tabla', showWhen: { field: 'tipo', in: ['TABLA'] } },
+      { key: 'hora_programada', label: 'Hora programada', type: 'time', section: 'Programado en tabla', showWhen: { field: 'tipo', in: ['TABLA'] } },
+      { key: 'ruta_programada_id', label: 'Ruta programada', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Programado en tabla', showWhen: { field: 'tipo', in: ['TABLA'] } },
 
       // ----- Real -----
-      { key: 'vehiculo_id', label: 'Vehículo despachado', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Real' },
-      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Real' },
-      { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Real', readOnly: true },
-      // Estos campos de seguimiento SÍ se pueden editar después de despachar (postDispatch)
-      { key: 'hora_real_despacho', label: 'Hora real de despacho', type: 'time', section: 'Real', postDispatch: true },
-      { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'Real', postDispatch: true },
-      { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'Real', postDispatch: true },
-      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Real', postDispatch: true, readOnly: true },
-      { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'Real', postDispatch: true },
-      { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'Real', postDispatch: true, audit: true },
+      { key: 'vehiculo_id', label: 'Vehículo despachado', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'General' },
+      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'General', required: true },
+      { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General', readOnly: true },
+      // Horas de seguimiento: ocultas en el formulario en TODAS las tablas (se registran aparte)
+      { key: 'hora_real_despacho', label: 'Hora real de despacho', type: 'time', section: 'General', postDispatch: true, formHide: true },
+      { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'General', postDispatch: true, formHide: true },
+      { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'General', postDispatch: true, formHide: true },
+      { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'General', postDispatch: true, readOnly: true },
+      { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'General', postDispatch: true },
+      { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'General', postDispatch: true, audit: true },
 
       // ----- Indicadores ----- (editables después de despachar y por el auditor)
       { key: 'completo', label: '¿Completo?', type: 'boolean', section: 'Indicadores', postDispatch: true, audit: true },
@@ -530,10 +530,12 @@ export const TABLES = {
 // En las tablas los viajes los programa el administrador: el formulario es muy restringido.
 export function configTablaPuesto(label, puesto) {
   // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
-  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'hora_finalizacion']);
+  const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'hora_finalizacion', 'hora_real_despacho', 'hora_llegada']);
   // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
   const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id', 'ubicacion']);
-  const fields = TABLES.despachos.fields
+  // En las tablas de puesto, "Real" (lo que se despacha) va dentro de "General"
+  const REUBICAR = { Real: 'General' };
+  let fields = TABLES.despachos.fields
     // Los campos de auditoría/control no aplican en las tablas por puesto (la auditoría es en Despachos)
     .filter((f) => !OCULTOS.has(f.key) && !f.auditOnly)
     .map((f) => {
@@ -541,8 +543,17 @@ export function configTablaPuesto(label, puesto) {
       if (SOLO_LECTURA.has(f.key)) nf = { ...nf, readOnly: true };
       // como en una tabla el tipo siempre es TABLA, los campos "Programado" se ven siempre (sin showWhen de tipo)
       if (nf.showWhen && nf.showWhen.field === 'tipo') { nf = { ...nf }; delete nf.showWhen; }
+      if (REUBICAR[nf.section]) nf = { ...nf, section: REUBICAR[nf.section] };
       return nf;
     });
+  // Reagrupa por sección (conservando el orden original dentro de cada una) para que no
+  // se repita el título "General" tras haber movido allí los campos de "Real".
+  const ORDEN_SECC = ['General', 'Programado en tabla', 'Indicadores', 'Notas'];
+  const _pres = [];
+  fields.forEach((f) => { const s = f.section || ''; if (!_pres.includes(s)) _pres.push(s); });
+  const _rank = (s) => { const i = ORDEN_SECC.indexOf(s); return i < 0 ? 100 + _pres.indexOf(s) : i; };
+  fields = _pres.slice().sort((a, b) => _rank(a) - _rank(b))
+    .flatMap((s) => fields.filter((f) => (f.section || '') === s));
   // Las columnas de control (auditCol) tampoco aplican aquí
   const columns = TABLES.despachos.columns.filter((c) => !c.auditCol);
   // Filtro de fecha: una sola fecha (no rango). Se quita el filtro "Tipo" (en una tabla

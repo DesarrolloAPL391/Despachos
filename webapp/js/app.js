@@ -8,6 +8,9 @@ const $ = (id) => document.getElementById(id);
 let current = null;     // nombre de la tabla actual
 let page = 0;
 let term = '';
+let soloPendientes = false; // en tablas de despacho: mostrar solo los viajes que faltan por despachar
+const estadoMoviles = new Map(); // movil -> 'mov'|'idle'|'off' (estado GPS de SONAR vía tabla `ubicaciones`)
+let _estadoMovilesTs = 0;        // marca de tiempo del último cargue (para cachear ~30s)
 let filters = {};       // filtros dinámicos activos { columna: valor }
 let editing = null;     // fila en edición (null = nuevo)
 const fkCache = {};     // cache de opciones de FK por tabla
@@ -426,6 +429,9 @@ function selectTable(name) {
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
+  soloPendientes = false;                                              // al cambiar de tabla, ver todas
+  $('pend-btn').hidden = !TABLES[name].dispatchable;                   // "Solo pendientes": en tablas de despacho
+  $('pend-btn').classList.remove('on'); $('pend-btn').textContent = '⏳ Solo pendientes';
   // Asistencia: los botones de marcación los maneja la tarjeta dinámica (abajo), no la barra
   $('marcar-in-btn').hidden = true;
   $('marcar-out-btn').hidden = true;
@@ -769,6 +775,15 @@ async function openContador() {
 }
 function closeContador() { $('cnt-modal').hidden = true; }
 $('count-btn').addEventListener('click', openContador);
+// Alterna entre ver TODA la programación del día y ver solo lo que falta por despachar
+$('pend-btn').addEventListener('click', () => {
+  soloPendientes = !soloPendientes;
+  const b = $('pend-btn');
+  b.classList.toggle('on', soloPendientes);
+  b.textContent = soloPendientes ? '📋 Ver todas' : '⏳ Solo pendientes';
+  page = 0;
+  loadData();
+});
 $('cnt-close').addEventListener('click', closeContador);
 $('cnt-cancel').addEventListener('click', closeContador);
 
@@ -1284,7 +1299,7 @@ $('search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => { term = e.target.value.trim(); page = 0; loadData(); }, 300);
 });
-$('refresh-btn').addEventListener('click', loadData);
+$('refresh-btn').addEventListener('click', () => { _estadoMovilesTs = 0; loadData(); }); // refresca datos + estado GPS
 $('prev-btn').addEventListener('click', () => { if (page > 0) { page--; loadData(); } });
 $('next-btn').addEventListener('click', () => { page++; loadData(); });
 
@@ -1325,8 +1340,25 @@ async function loadData() {
   let rows = data || [];
   let total = count || 0;
   if (useClientSearch) { rows = rows.filter((r) => rowMatchesTerm(cfg, r, term)); total = rows.length; }
+  // "Solo pendientes": deja solo los viajes de hoy que faltan por despachar (ordenados por hora).
+  // Requiere el día completo cargado (diaSel); si no, no tendría sentido paginar pendientes.
+  if (soloPendientes && cfg.dispatchable && diaSel) {
+    rows = rows.filter((r) => esPendienteDespacho(cfg, r));
+    total = rows.length;
+  } else if (cfg.dispatchable && diaSel) {
+    // AUTOMÁTICO: sube los SIN DESPACHO al comienzo (por hora) para que el despachador
+    // vea de una lo próximo por despachar; lo ya resuelto queda debajo, también por hora.
+    rows = rows.slice().sort((a, b) => {
+      const pa = esPendienteDespacho(cfg, a) ? 0 : 1;
+      const pb = esPendienteDespacho(cfg, b) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return String(a.hora || '').localeCompare(String(b.hora || ''));
+    });
+  }
   // Si la tabla tiene columna de QR, asegura el generador antes de pintar
   if ((cfg.columns || []).some((c) => c.qr)) { try { await ensureQRGen(); await ensureLogo(); } catch { /* */ } }
+  // Estado GPS de los móviles (color junto al número), igual que en el mapa
+  if (cfg.dispatchable) { try { await cargarEstadoMoviles(cfg); } catch { /* */ } }
   renderTable(cfg, rows, total, diaSel);
 }
 
@@ -1337,6 +1369,69 @@ const ICON = {
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></svg>',
 };
+
+// Estados en los que un viaje AÚN falta por despachar (SIN DESPACHO o intento fallido a SONAR).
+// Todo lo demás (SI, DESPACHADO, NO REALIZA, CANCELADO…) ya tiene decisión y NO es pendiente.
+const PENDIENTE_DESP = new Set(['', 'SIN DESPACHO', 'PENDIENTE SONAR']);
+// Un viaje está PENDIENTE por despachar si es de hoy, aún no tiene regId de SONAR
+// y su estado de despacho sigue "sin despacho".
+function esPendienteDespacho(cfg, row) {
+  if (!cfg || !cfg.dispatchable) return false;
+  const frow = row.fecha ? String(row.fecha).slice(0, 10) : '';
+  if (frow !== hoyServidor()) return false;   // solo el día de HOY
+  if (row.sonar_regid) return false;          // ya despachado en SONAR
+  const est = String(row.estado_despacho || '').trim().toUpperCase();
+  return PENDIENTE_DESP.has(est);
+}
+
+// Carga el estado GPS de cada móvil (encendido/movimiento/apagado) desde `ubicaciones`,
+// la misma tabla que alimenta el mapa. Se cachea ~30s para no recargar en cada filtro.
+async function cargarEstadoMoviles(cfg) {
+  if (!cfg || !cfg.dispatchable) return;
+  if (Date.now() - _estadoMovilesTs < 30000 && estadoMoviles.size) return;
+  const { data, error } = await sb.from('ubicaciones').select('movil, speed, motor').not('movil', 'is', null);
+  if (error) return;
+  estadoMoviles.clear();
+  (data || []).forEach((r) => { if (r.movil != null) estadoMoviles.set(String(r.movil).trim(), clasificar(r)); });
+  _estadoMovilesTs = Date.now();
+}
+
+// Actualiza la barra "próximo por despachar": cuántos faltan, cuál sigue y cuántos
+// van atrasados. `pend` = [{ tr, hora, row }] de las filas pendientes ya pintadas.
+function actualizarProximoBar(cfg, pend, diaSel) {
+  const bar = $('proximo-bar');
+  if (!bar) return;
+  const fSel = filters['fecha'] ? String(filters['fecha']).slice(0, 10) : '';
+  const aplica = !!cfg.dispatchable && diaSel && fSel === hoyServidor();
+  if (!aplica) { bar.hidden = true; return; }
+
+  if (!pend.length) { // no queda nada por despachar hoy
+    bar.hidden = false;
+    bar.className = 'proximo-bar ok';
+    bar.innerHTML = '<span class="pb-ico">✅</span> Todos los viajes de hoy están despachados';
+    return;
+  }
+
+  const now = new Date();
+  const nowHM = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const orden = pend.slice().sort((a, b) => a.hora.localeCompare(b.hora));
+  let atrasados = 0;
+  for (const p of orden) {
+    if (p.hora && p.hora < nowHM) { atrasados++; p.tr.classList.add('tr-late'); }
+  }
+  const sigue = orden[0];               // el próximo por despachar (hora más temprana)
+  sigue.tr.classList.add('tr-next');
+  const r = sigue.row;
+  const movil = getPath(r, 'vehp.numero') || getPath(r, 'veh.numero') || '—';
+  const ruta = getPath(r, 'ruta.nombre') || '';
+  const sigTxt = `Sigue: <b>${esc(sigue.hora || '')}</b> · Móvil <b>${esc(String(movil))}</b>${ruta ? ' · ' + esc(String(ruta)) : ''}`;
+  const faltan = `Faltan <b>${pend.length}</b> por despachar`;
+  const atr = atrasados ? `<span class="pb-late">⏰ ${atrasados} atrasado${atrasados > 1 ? 's' : ''}</span> · ` : '';
+  bar.hidden = false;
+  bar.className = 'proximo-bar' + (atrasados ? ' late' : '');
+  bar.innerHTML = `<span class="pb-ico">🚌</span> ${atr}${faltan} · ${sigTxt} <span class="pb-hint">(toca para ir)</span>`;
+  bar.onclick = () => { sigue.tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); sigue.tr.classList.add('tr-flash'); setTimeout(() => sigue.tr.classList.remove('tr-flash'), 1200); };
+}
 
 function renderTable(cfg, rows, count, diaSel = false) {
   const head = $('thead-row'); head.innerHTML = '';
@@ -1354,6 +1449,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;
+  const pend = []; // filas pendientes por despachar (para la barra "próximo")
 
   for (const row of rows) {
     const tr = document.createElement('tr');
@@ -1398,6 +1494,11 @@ function renderTable(cfg, rows, count, diaSel = false) {
         td.innerHTML = `<span class="doc-chip ${b.cls}" title="${b.dias == null ? 'Sin dato' : b.dias < 0 ? 'Vencido hace ' + (-b.dias) + ' día(s)' : 'Vence en ' + b.dias + ' día(s)'}">${esc(b.txt)}</span>`;
       } else if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
+      } else if (cfg.dispatchable && (c.path === 'veh.numero' || c.path === 'vehp.numero') && val != null && String(val).trim() !== '') {
+        // Punto de estado GPS junto al número de móvil (verde=movimiento, ámbar=detenido, gris=apagado)
+        const est = estadoMoviles.get(String(val).trim());
+        const t = est ? ESTADO_TXT[est] : 'Sin señal GPS';
+        td.innerHTML = `<span class="gps-dot ${est || 'none'}" title="${esc(t)}"></span>${esc(fmt(val))}`;
       } else {
         td.textContent = fmt(val);
       }
@@ -1434,21 +1535,22 @@ function renderTable(cfg, rows, count, diaSel = false) {
             dsp.onclick = () => openSonar(row);
           }
           act.appendChild(dsp);
-          const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
-          if (!row.sonar_regid) {
-            can.title = 'Sin regId: no se puede cancelar';
-            can.onclick = () => toast('Este despacho no tiene regId de SONAR: no se puede cancelar.', 'err');
-          } else if (esPasada) {
-            can.title = 'Fecha ya pasada: no se puede cancelar';
-            can.onclick = () => toast('No se puede cancelar: la fecha del viaje ya pasó.', 'err');
-          } else if (esFutura) {
-            can.title = 'Fecha adelantada: solo se cancela el día actual';
-            can.onclick = () => toast('Solo se cancela el día de HOY. Esta fila es de otra fecha (' + frow + ').', 'err');
-          } else {
-            can.title = 'Cancelar en SONAR';
-            can.onclick = () => openCancelar(row);
+          // Cancelar SOLO tiene sentido si el viaje YA se despachó (tiene regId de SONAR).
+          // Un viaje SIN DESPACHO no se cancela: no se muestra el botón.
+          if (row.sonar_regid) {
+            const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
+            if (esPasada) {
+              can.title = 'Fecha ya pasada: no se puede cancelar';
+              can.onclick = () => toast('No se puede cancelar: la fecha del viaje ya pasó.', 'err');
+            } else if (esFutura) {
+              can.title = 'Fecha adelantada: solo se cancela el día actual';
+              can.onclick = () => toast('Solo se cancela el día de HOY. Esta fila es de otra fecha (' + frow + ').', 'err');
+            } else {
+              can.title = 'Cancelar en SONAR';
+              can.onclick = () => openCancelar(row);
+            }
+            act.appendChild(can);
           }
-          act.appendChild(can);
         }
         // Editar: el admin siempre; el auditor también (para auditar, incluso fechas pasadas).
         // El despachador solo despacha/cancela.
@@ -1488,8 +1590,15 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       tr.appendChild(act);
     }
+    // Marca las filas que aún faltan por despachar (solo el día de hoy)
+    if (esPendienteDespacho(cfg, row)) {
+      tr.classList.add('tr-pend');
+      pend.push({ tr, hora: String(row.hora || '').slice(0, 5), row });
+    }
     body.appendChild(tr);
   }
+
+  actualizarProximoBar(cfg, pend, diaSel);
 
   const total = count;
   if (diaSel) { // día completo: sin paginación, se ve toda la programación del día
@@ -1700,7 +1809,11 @@ async function setupVehByGroup(form, conf) {
     const condSel = form.querySelector(`[data-key="${conf.cond}"]`);
     const fechaEl = conf.fecha ? form.querySelector(`[data-key="${conf.fecha}"]`) : null;
     if (condSel && !condSel.disabled) {
-      vehSel.addEventListener('change', async () => {
+      // Nota visible bajo el campo: deja claro que el conductor salió del Resumen
+      const nota = document.createElement('div');
+      nota.className = 'field-hint cond-src'; nota.hidden = true;
+      (condSel.closest('.field') || condSel.parentNode).appendChild(nota);
+      const traer = async () => {
         if (!vehSel.value) return;
         const nombre = await nombreConductorDeVehiculo(vehSel.value, fechaEl ? fechaEl.value : null);
         if (!nombre) return;
@@ -1708,9 +1821,15 @@ async function setupVehByGroup(form, conf) {
         if (op) {
           condSel.value = op.value;
           condSel._comboSync && condSel._comboSync();
-          toast('Conductor traído automáticamente', 'ok');
+          nota.textContent = `✓ Conductor traído del Resumen: ${op.value}`;
+          nota.hidden = false;
+          toast(`Conductor traído del Resumen: ${op.value}`, 'ok');
         }
-      });
+      };
+      vehSel.addEventListener('change', () => { nota.hidden = true; traer(); });
+      condSel.addEventListener('change', () => { nota.hidden = true; }); // si lo cambian a mano, se oculta la nota
+      // Al ABRIR el formulario: si el móvil ya está puesto y aún no hay conductor, tráelo del Resumen (y avisa)
+      if (!condSel.value) await traer();
     }
   }
 }
@@ -2291,6 +2410,65 @@ async function avisarDocsMovil(numero, boxId = 's-docwarn') {
   box.hidden = false;
 }
 
+// Campos (hermanos) que pertenecen a un título de sección: van hasta el siguiente título
+function _camposDeSeccion(title) {
+  const out = [];
+  let el = title.nextElementSibling;
+  while (el && !el.classList.contains('section-title')) { out.push(el); el = el.nextElementSibling; }
+  return out;
+}
+// Convierte las secciones del formulario en acordeón (clic en el título = plegar/desplegar).
+// Al EDITAR un despacho deja abiertas solo las secciones clave; el resto arranca plegado.
+function setupCollapsibleSections(form, cfg) {
+  const titles = [...form.querySelectorAll('.section-title')];
+  if (titles.length <= 1) return; // sin varias secciones no hay nada que plegar
+  const setCollapsed = (title, collapsed) => {
+    title.classList.toggle('collapsed', collapsed);
+    _camposDeSeccion(title).forEach((el) => el.classList.toggle('sec-hidden', collapsed));
+  };
+  const abiertas = new Set(['General', 'Real']); // lo que el despachador realmente usa
+  if (isAuditor()) { abiertas.add('Indicadores'); abiertas.add('Control / Auditoría'); } // el auditor edita esas
+  const plegarPorDefecto = !!cfg.dispatchable && !!editing;
+  for (const t of titles) {
+    if (plegarPorDefecto) setCollapsed(t, !abiertas.has(t.dataset.section || ''));
+    t.addEventListener('click', () => setCollapsed(t, !t.classList.contains('collapsed')));
+  }
+}
+// Abre todas las secciones (se usa al mostrar un error de validación para no ocultar el campo)
+function expandarTodasSecciones(form) {
+  form.querySelectorAll('.section-title.collapsed').forEach((t) => {
+    t.classList.remove('collapsed');
+    _camposDeSeccion(t).forEach((el) => el.classList.remove('sec-hidden'));
+  });
+}
+
+// "Cambio (automático)" en vivo: al elegir un vehículo distinto al programado, muestra
+// "programado → despachado"; si es el mismo, queda vacío. El valor se guarda al Guardar.
+function setupCambioAuto(form, cfg) {
+  if (!cfg.dispatchable) return;
+  const selVeh = form.querySelector('[data-key="vehiculo_id"]');
+  const cambioEl = form.querySelector('[data-key="cambio"]');
+  if (!selVeh || !cambioEl) return;
+  const progSel = form.querySelector('[data-key="vehiculo_programado_id"]');
+  const numDe = (sel) => {
+    if (!sel) return '';
+    const o = [...sel.options].find((x) => x.value === sel.value);
+    return o ? String(o.textContent || '').split('·')[0].trim() : ''; // "8174 · SMT953" → "8174"
+  };
+  const progNum = () => {
+    const n = numDe(progSel);
+    if (n) return n;
+    const v = editing ? getPath(editing, 'vehp.numero') : null; // respaldo del registro
+    return v != null ? String(v) : '';
+  };
+  const recompute = () => {
+    const pn = progNum(), nn = numDe(selVeh);
+    cambioEl.value = (pn && nn && pn !== nn) ? `${pn} → ${nn}` : '';
+  };
+  selVeh.addEventListener('change', recompute);
+  recompute(); // deja el valor coherente al abrir
+}
+
 function toggleEmptySections(form) {
   const kids = [...form.children];
   for (let i = 0; i < kids.length; i++) {
@@ -2343,7 +2521,13 @@ async function openEditor(row) {
     form.appendChild(note);
   }
 
-  for (const f of cfg.fields) {
+  // Agrupa los campos por sección (conservando el orden de aparición). Así, aunque un
+  // campo se mueva de sección en la config, el título de esa sección no se repite.
+  const _secOrden = [];
+  cfg.fields.forEach((f) => { const s = f.section || ''; if (!_secOrden.includes(s)) _secOrden.push(s); });
+  const camposForm = _secOrden.flatMap((s) => cfg.fields.filter((f) => (f.section || '') === s));
+
+  for (const f of camposForm) {
     // formHide: el campo nunca se muestra en el formulario (ej. KEY, regId, despachador, ubicación en tablas)
     if (f.formHide) continue;
     // editOnly: solo se muestra al EDITAR un registro existente (no al crear)
@@ -2354,7 +2538,8 @@ async function openEditor(row) {
     if (f.section && f.section !== lastSection) {
       lastSection = f.section;
       const h = document.createElement('div');
-      h.className = 'section-title'; h.textContent = f.section;
+      h.className = 'section-title'; h.dataset.section = f.section;
+      h.innerHTML = `<span class="sec-caret">▾</span><span class="sec-name">${esc(f.section)}</span>`;
       form.appendChild(h);
     }
 
@@ -2452,8 +2637,12 @@ async function openEditor(row) {
       input.dataset.key = f.key; input.dataset.type = f.type;
       if (f.key === cfg.pk && row && !cfg.pkEditable) input.disabled = true;
       if (f.key === cfg.pk && row && cfg.pkEditable) input.readOnly = true; // no cambiar PK al editar
+      // "Cambio" es de solo lectura pero DEBE guardarse (lo calcula el sistema al cambiar el
+      // móvil). Por eso va como readonly (se incluye al guardar), no como disabled. Si el
+      // despacho ya se hizo, se congela (disabled) para no tocar el registro.
+      if (f.autoCambio && !(isDispatched && !soyAuditor)) input.readOnly = true;
       // Un campo de auditoría (audit) se comporta como postDispatch: editable aun ya despachado
-      if (f.readOnly || (isDispatched && !f.postDispatch && !f.audit)) input.disabled = true; // solo lectura / ya despachado
+      else if (f.readOnly || (isDispatched && !f.postDispatch && !f.audit)) input.disabled = true; // solo lectura / ya despachado
       // El auditor solo edita los campos de auditoría; el resto queda de solo lectura
       if (soyAuditor && !f.audit) input.disabled = true;
       // Solo lectura "suave" para el despachador: no lo puede cambiar pero SÍ se guarda (ej. puesto)
@@ -2490,6 +2679,11 @@ async function openEditor(row) {
 
   // Buscadores en las listas largas (conductor, vehículo, ruta, etc.)
   form.querySelectorAll('select[data-type="fk"]:not(:disabled), select[data-type="sonardrv"]:not(:disabled), select[data-type="textsel"]:not(:disabled)').forEach(enhanceSelect);
+
+  // Secciones plegables: al editar un despacho, solo General y Real quedan abiertas
+  setupCollapsibleSections(form, cfg);
+  // "Cambio" se recalcula solo al elegir un móvil distinto al programado
+  setupCambioAuto(form, cfg);
 
   $('modal').hidden = false;
 }
@@ -2538,6 +2732,7 @@ $('modal-save').addEventListener('click', async () => {
     const el = $('edit-form').querySelector(`[data-key="${f.key}"]`);
     if (el && el.disabled) continue; // bloqueado → no se valida
     if (f.required && (payload[f.key] === null || payload[f.key] === undefined || payload[f.key] === '')) {
+      expandarTodasSecciones($('edit-form')); // que no quede oculto en una sección plegada
       err.textContent = `El campo "${f.label}" es obligatorio.`; err.hidden = false; return;
     }
     if (f.type === 'number' && f.min != null && payload[f.key] != null && payload[f.key] < f.min) {
@@ -2916,7 +3111,7 @@ async function traerConductorND() {
   if (dm && [...sel.options].some((o) => o.value === String(dm.dr_id))) {
     sel.value = String(dm.dr_id);
     sel._comboSync && sel._comboSync();
-    toast('Conductor traído automáticamente', 'ok');
+    toast(`Conductor traído del Resumen: ${dm.nombre || nombre}`, 'ok');
   }
 }
 function closeND() { $('nd-modal').hidden = true; }
@@ -3354,7 +3549,7 @@ async function traerConductorSonar() {
   if (dm && [...sel.options].some((o) => o.value === String(dm.dr_id))) {
     sel.value = String(dm.dr_id);
     sel._comboSync && sel._comboSync();
-    toast('Conductor traído de Resumen', 'ok');
+    toast(`Conductor traído del Resumen: ${dm.nombre || nombre}`, 'ok');
   }
 }
 function closeSonar() { $('sonar-modal').hidden = true; }
