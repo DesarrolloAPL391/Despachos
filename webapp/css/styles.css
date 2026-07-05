@@ -610,6 +610,16 @@ tbody tr:hover { background: #faf8ff; }
     transparent 68%, var(--muted) 68%, var(--muted) 78%, transparent 78%);
 }
 
+/* ----- Vista previa "como despachador" (banda superior) ----- */
+.preview-banner {
+  position: sticky; top: 0; z-index: 1400; display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: linear-gradient(135deg, #7c3aed, #5b21b6); color: #fff; font-weight: 700;
+  box-shadow: 0 4px 14px rgba(91,33,182,.35);
+}
+.preview-banner[hidden] { display: none; }
+.preview-banner .spacer { flex: 1; }
+.preview-banner .btn { background: #fff; color: #5b21b6; font-weight: 800; border: 0; }
+
 /* ----- Asignar puesto: check "fijo" y campos desactivados ----- */
 .pst-fijo-row { flex-direction: row !important; align-items: flex-start; gap: 8px; cursor: pointer;
   background: #fff7e6; border: 1px solid #f3d690; border-radius: 10px; padding: 10px 12px; }

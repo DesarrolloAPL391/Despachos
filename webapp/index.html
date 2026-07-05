@@ -564,6 +564,33 @@
     </div>
   </div>
 
+  <!-- Vista previa "como despachador" (solo admin) -->
+  <div id="preview-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3>👁️ Ver como despachador</h3>
+        <button id="preview-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form">
+        <label>Puesto a simular
+          <select id="preview-puesto"></select>
+        </label>
+        <p class="hint">Verás las <b>rutas y móviles</b> que vería un despachador de ese puesto en <b>+ Nuevo despacho</b>. No cambia permisos ni datos.</p>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="preview-cancel" class="btn">Cancelar</button>
+        <button id="preview-ok" class="btn btn-primary">Ver</button>
+      </div>
+    </div>
+  </div>
+  <!-- Banda superior cuando la vista previa está activa -->
+  <div id="preview-banner" class="preview-banner" hidden>
+    <span id="preview-banner-txt">👁️ Vista previa</span>
+    <span class="spacer"></span>
+    <button id="preview-exit" class="btn">Salir de la vista previa</button>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <!-- Ayuda para instalar (iOS / navegadores sin prompt automático) -->

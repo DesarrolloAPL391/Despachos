@@ -39,9 +39,13 @@ function menuOrder() {
 function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
-function allowedRutaSet() { return new Set((CTX?.rutas || []).map(normRuta)); }
-// Grupos del parque que el despachador tiene habilitados hoy (admin = todos → null)
-function allowedGrupoSet() { return isAdmin() ? null : new Set(CTX?.grupos || []); }
+// Vista previa "como despachador" (solo admin): simula el filtrado de un puesto sin cambiar de cuenta.
+// PREVIEW = { puesto, rutas:Set(normRuta), grupos:Set(grupo del parque) } o null.
+let PREVIEW = null;
+function filtraComoDespachador() { return !!PREVIEW || !isAdmin(); }
+function allowedRutaSet() { return PREVIEW ? PREVIEW.rutas : new Set((CTX?.rutas || []).map(normRuta)); }
+// Grupos del parque habilitados: admin = todos (null); despachador/preview = su set
+function allowedGrupoSet() { if (PREVIEW) return PREVIEW.grupos; return isAdmin() ? null : new Set(CTX?.grupos || []); }
 // Empareja el nombre de una ruta de la tabla con un itinerario de SONAR. Tolera el
 // prefijo "RUTA " del itinerario (313 ↔ RUTA 313) y sufijos de variante de la ruta
 // (ej. "135 CENTRO" → 135, "130i MADRUGADA" → 130i). Devuelve el itinerario o null.
@@ -312,6 +316,7 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
+  if (isAdmin()) addNavAction(nav, '👁️', PREVIEW ? `Vista previa: ${PREVIEW.puesto}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
@@ -2620,20 +2625,57 @@ function normH(h) {
     .normalize('NFD').replace(/[̀-ͯ]/g, '') // quitar acentos
     .replace(/\s+/g, ' ').replace(/\?/g, '').trim();
 }
+// Separa una línea de CSV respetando comillas (soporta , o ; como delimitador)
+function _splitCsvLine(line, delim) {
+  const out = []; let cur = ''; let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === delim) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
 async function parseImportFile(file, map, keyField = 'key') {
-  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  const name = (file.name || '').toLowerCase();
+  const isCsv = name.endsWith('.csv') || name.endsWith('.txt');
+  let aoa;
+  if (isCsv) {
+    // CSV → leer como TEXTO PLANO. NO usar XLSX aquí: reinterpreta "5/07/2026" como fecha
+    // de Excel/US y la daña (mes base-0, año a 2 dígitos → quedaba 0026-06-05).
+    let text = await file.text();
+    text = text.replace(/^﻿/, ''); // quitar BOM
+    const lines = text.split(/\r\n|\r|\n/);
+    const firstLine = lines.find((l) => l.trim() !== '') || '';
+    const delim = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ','; // ; o ,
+    aoa = lines.map((l) => _splitCsvLine(l, delim));
+  } else {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  }
   if (!aoa.length) return [];
   const headers = aoa[0].map(normH);
   const rows = [];
   for (let i = 1; i < aoa.length; i++) {
     const r = aoa[i];
-    if (!r || r.every((c) => String(c).trim() === '')) continue;
+    if (!r || r.every((c) => String(c == null ? '' : c).trim() === '')) continue;
     const o = {};
-    headers.forEach((h, idx) => { const k = map[h]; if (k) o[k] = r[idx] != null ? String(r[idx]) : ''; });
+    headers.forEach((h, idx) => {
+      const k = map[h]; if (!k) return;
+      let v = r[idx];
+      // Fecha real de Excel → formatearla como DD/MM/AAAA usando UTC (evita corrimiento de 1 día)
+      if (v instanceof Date && !isNaN(v)) {
+        v = `${String(v.getUTCDate()).padStart(2, '0')}/${String(v.getUTCMonth() + 1).padStart(2, '0')}/${v.getUTCFullYear()}`;
+      }
+      o[k] = v != null ? String(v) : '';
+    });
     if (o[keyField] && String(o[keyField]).trim() !== '') rows.push(o);
   }
   return rows;
@@ -2784,9 +2826,9 @@ function ahoraLocal() {
 }
 
 async function openNuevoDespacho() {
-  // Restricción: el despachador sin rutas/grupos asignados hoy no puede despachar
-  if (!isAdmin() && !allowedRutaSet().size) {
-    toast('No tienes grupos asignados hoy: no puedes despachar.', 'err');
+  // Restricción: el despachador (o el admin en vista previa) sin rutas asignadas no puede despachar
+  if (filtraComoDespachador() && !allowedRutaSet().size) {
+    toast(PREVIEW ? `El puesto "${PREVIEW.puesto}" no tiene rutas definidas.` : 'No tienes grupos asignados hoy: no puedes despachar.', 'err');
     return;
   }
   // Reset y ABRE el modal de una vez (en iOS así siempre se ve, aunque la carga tarde o falle)
@@ -2807,9 +2849,9 @@ async function openNuevoDespacho() {
     const [its, veh, drs] = await Promise.all([
       loadItinerarios(), loadVehiculos(), loadDrivers(),
     ]);
-    // Despachador: solo itinerarios de sus rutas permitidas
+    // Despachador (o admin en vista previa): solo itinerarios de sus rutas permitidas
     let itList = its;
-    if (!isAdmin()) {
+    if (filtraComoDespachador()) {
       const allow = [...allowedRutaSet()].filter(Boolean);
       itList = its.filter((i) => {
         const n = normRuta(i.nombre);
@@ -2904,6 +2946,39 @@ function _grupoDeRuta(map, itinNombre) { return map.get(String(itinNombre || '')
 // seguido de I/II (ej. 130I, 132II, 136IA, 136IIA, 193I-193II).
 const GRUPO_INTEGRADAS = 'Integradas';
 function esGrupoIntegrada(g) { return /\d\s*i/i.test(String(g || '')); }
+
+// ----- Vista previa "como despachador" (solo admin): simula el filtrado de un puesto -----
+async function openPreviewDespachador() {
+  if (!isAdmin()) return;
+  const sel = $('preview-puesto');
+  const { data } = await sb.from('puestos').select('nombre').eq('activo', true).order('nombre');
+  sel.innerHTML = (data || []).map((p) => `<option value="${esc(p.nombre)}">${esc(p.nombre)}</option>`).join('');
+  if (PREVIEW) sel.value = PREVIEW.puesto;
+  $('preview-modal').hidden = false;
+}
+async function activarPreview(puesto) {
+  const { data } = await sb.from('puestos').select('rutas').ilike('nombre', puesto).limit(1);
+  const raw = String((data && data[0]?.rutas) || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const gmap = await loadRutaGrupos();
+  const grupos = new Set();
+  for (const rn of raw) { const g = _grupoDeRuta(gmap, rn); if (g) grupos.add(g); }
+  PREVIEW = { puesto, rutas: new Set(raw.map(normRuta)), grupos };
+  $('preview-modal').hidden = true;
+  $('preview-banner-txt').textContent = `👁️ Vista previa: ${puesto} · ${raw.length} ruta(s) · ${grupos.size} grupo(s)`;
+  $('preview-banner').hidden = false;
+  buildSidebar();
+  toast(`Vista previa activada: ${puesto}`, 'ok');
+}
+function salirPreview() {
+  PREVIEW = null;
+  $('preview-banner').hidden = true;
+  buildSidebar();
+  toast('Vista previa desactivada', 'ok');
+}
+$('preview-x')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
+$('preview-cancel')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
+$('preview-ok')?.addEventListener('click', () => { const p = $('preview-puesto').value; if (p) activarPreview(p); });
+$('preview-exit')?.addEventListener('click', salirPreview);
 async function filtrarMovilesPorRuta() {
   const sel = $('nd-movil'); if (!sel) return;
   const its = await loadItinerarios();
