@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v104';
+export const APP_VERSION = 'v106';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -172,9 +172,10 @@ export const TABLES = {
     // El KEY se genera solo (no se escribe a mano)
     genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
     confirmSave: true, // pide confirmación antes de guardar/cerrar
-    // Al elegir ruta → filtra Móvil a los carros de esa ruta. En Resumen el conductor se
-    // elige a mano (NO se trae automático; el auto-traído es en despachos y tablas).
-    vehByRoute: { route: 'ruta_id', veh: 'vehiculo_id' },
+    // Al elegir ruta → filtra Móvil por el GRUPO del parque de esa ruta (ruta_grupos +
+    // parque_automotor), misma filosofía que Nuevo despacho y las tablas de puesto (incluye
+    // el pool "Integradas" cuando la ruta es integrada). En Resumen el conductor se elige a mano.
+    vehByGroup: { route: 'ruta_id', veh: 'vehiculo_id' },
     // La hora de cierre se llena sola con el momento de guardado
     autoStamp: 'hora_cierre',
     // Estado: 'Abierto' al crear; 'Cerrado' (y bloqueado) cuando al editar estén todos los campos

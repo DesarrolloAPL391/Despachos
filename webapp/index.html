@@ -106,6 +106,7 @@
         <div id="table-view" class="table-view">
           <div class="toolbar">
             <h2 id="table-title">—</h2>
+            <span id="table-puesto" class="puesto-badge" hidden></span>
             <span class="spacer"></span>
             <span id="filters" class="filters"></span>
             <input type="search" id="search" placeholder="Buscar…" />
@@ -256,6 +257,7 @@
         <button id="nd-close" class="icon-btn">✕</button>
       </div>
       <form id="nd-form" class="edit-form">
+        <div class="field full puesto-badge lg" id="nd-puesto-info" hidden></div>
         <label class="field"><span>Tipo</span>
           <select id="nd-tipo" disabled><option value="LIBRE">LIBRE (despacho manual)</option></select>
         </label>

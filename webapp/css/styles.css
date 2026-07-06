@@ -82,6 +82,16 @@ input, select, textarea { font: inherit; }
 }
 .login-card .pass-eye:hover { background: rgba(0,0,0,.04); }
 .login-card .pass-eye.on { filter: none; opacity: 1; }
+/* Indicador del puesto (en el título de las tablas y en Nuevo despacho) */
+.puesto-badge {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  padding: 3px 11px; border-radius: 999px; font-size: 13px; font-weight: 700;
+  background: var(--grad-soft, #fdeaea); color: var(--primary-dark, #C20F16);
+  border: 1px solid var(--border, #f0c9c9);
+}
+.puesto-badge.lg {
+  display: block; padding: 9px 12px; border-radius: 10px; font-size: 14px; text-align: center;
+}
 /* Botón para instalar la PWA (debajo de la tarjeta de login) */
 .install-btn {
   margin-top: 18px; background: rgba(255,255,255,.96); color: var(--primary);

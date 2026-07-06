@@ -48,6 +48,15 @@ function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').
 //   del despachador (RPC preview_contexto_despachador) para que la simulación sea fiel.
 let PREVIEW = null;
 function filtraComoDespachador() { return !!PREVIEW || !isAdmin(); }
+// Puesto actual: el simulado en vista previa, o el del despachador logueado (admin normal = ninguno)
+function puestoActual() { return PREVIEW ? (PREVIEW.puesto || '') : (CTX?.puesto || ''); }
+// Muestra "📌 Puesto" junto al título de la tabla (identifica en qué puesto estamos)
+function actualizarPuestoBadge() {
+  const el = document.getElementById('table-puesto'); if (!el) return;
+  const p = puestoActual();
+  el.textContent = p ? '📌 ' + p : '';
+  el.hidden = !p;
+}
 function allowedRutaSet() { return PREVIEW ? PREVIEW.rutas : new Set((CTX?.rutas || []).map(normRuta)); }
 // Grupos del parque habilitados: admin = todos (null); despachador/preview = su set
 function allowedGrupoSet() { if (PREVIEW) return PREVIEW.grupos; return isAdmin() ? null : new Set(CTX?.grupos || []); }
@@ -446,6 +455,7 @@ function selectTable(name) {
   const fMulti = (TABLES[name].filters || []).find((f) => f.type === 'multidate');
   if (fMulti) filters[`${fMulti.col}::in`] = [hoyServidor()];
   $('table-title').textContent = TABLES[name].label;
+  actualizarPuestoBadge(); // muestra "📌 Puesto" para identificar en qué puesto estamos
   // "Despachar" de la barra: oculto en todas partes. El despacho se hace con el botón
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
@@ -1648,22 +1658,26 @@ function renderTable(cfg, rows, count, diaSel = false) {
 
 // ---------- editor ----------
 async function loadFkOptions(fk) {
-  if (fkCache[fk.table]) return fkCache[fk.table];
+  // La caché se separa por vista previa: si el admin simula a un despachador, sus
+  // rutas filtradas NO deben quedar cacheadas para el admin (ni al revés).
+  const ck = fk.table + (fk.table === 'rutas' && PREVIEW ? '::prev:' + PREVIEW.email : '');
+  if (fkCache[ck]) return fkCache[ck];
   const { data, error } = await sb.from(fk.table).select(fk.sel).order(fk.order, { ascending: true }).limit(2000);
   if (error) { toast('Error opciones ' + fk.table, 'err'); return []; }
   let opts = (data || []).map((r) => ({
     value: r.id,
     label: typeof fk.label === 'function' ? fk.label(r) : r[fk.label],
   }));
-  // Filtro de seguridad: el despachador solo ve sus rutas permitidas
-  if (!isAdmin() && fk.table === 'rutas') {
-    const ids = new Set((CTX?.ids || []).map(String));
+  // Misma filosofía que en las tablas y en Nuevo despacho: el despachador (o el admin
+  // en vista previa) solo ve SUS rutas habilitadas. Sin rutas permitidas → ninguna.
+  if (filtraComoDespachador() && fk.table === 'rutas') {
+    const ids = new Set((PREVIEW ? PREVIEW.ids : (CTX?.ids || [])).map(String));
     const allow = allowedRutaSet();
     if (ids.size || allow.size) {
       opts = opts.filter((o) => ids.has(String(o.value)) || allow.has(normRuta(o.label)));
     }
   }
-  fkCache[fk.table] = opts;
+  fkCache[ck] = opts;
   return opts;
 }
 
@@ -3067,6 +3081,8 @@ async function openNuevoDespacho() {
   const ahora = new Date();
   $('nd-hora').value = `${_pad2(ahora.getHours())}:${_pad2(ahora.getMinutes())}`; // hora actual por defecto
   $('nd-com').value = '';
+  // Muestra el puesto en el que estamos, para identificar (despachador o vista previa)
+  const nip = $('nd-puesto-info'); if (nip) { const p = puestoActual(); nip.textContent = p ? '📌 Puesto: ' + p : ''; nip.hidden = !p; }
   $('nd-modal').hidden = false; // ← abre el modal YA, antes de cargar los datos
   try {
     // La fecha del despacho es SIEMPRE hoy (del servidor) y NADIE la puede tocar → evita trampas
@@ -3231,6 +3247,7 @@ async function activarPreview(email) {
   const vis = visibleTables();
   if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
   else { renderFilters(); loadData(); } // renderFilters: refresca el filtro de rutas a las del puesto
+  actualizarPuestoBadge();
   toast(`Vista previa: ${PREVIEW.nombre}`, 'ok');
 }
 function salirPreview() {
@@ -3241,6 +3258,7 @@ function salirPreview() {
   const vis = visibleTables();
   if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
   else { renderFilters(); loadData(); } // renderFilters: vuelve a mostrar todas las rutas (admin)
+  actualizarPuestoBadge();
   toast('Vista previa desactivada', 'ok');
 }
 $('preview-x')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
