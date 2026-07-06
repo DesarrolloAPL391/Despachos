@@ -1817,9 +1817,20 @@ async function setupRouteByPuesto(form, fieldKey, puesto) {
   sel._comboSync && sel._comboSync();
 }
 
+// Grupos del parque que corresponden a las rutas de un despachador (vía ruta_grupos).
+// En día hábil allowedGrupoSet() suele venir vacío, así que los derivamos de sus rutas.
+function gruposDeMisRutas(gmap) {
+  const rutasRaw = PREVIEW ? (PREVIEW.rutasRaw || []) : (CTX?.rutas || []);
+  const s = new Set();
+  for (const rn of rutasRaw) { const g = _grupoDeRuta(gmap, rn); if (g) s.add(g); }
+  return s;
+}
 // Igual que setupVehByRoute pero usando el GRUPO del parque (ruta_grupos + parque_automotor).
-// Al elegir la ruta, el "Móvil (real)" se limita a los carros de ese grupo (aplica a todos,
-// incluido el admin). Conserva el móvil ya guardado en la fila; si no se conoce el grupo, no filtra.
+// Misma filosofía que Nuevo despacho:
+//   • Si hay ruta elegida → móviles del GRUPO de esa ruta (+ pool Integradas si es integrada).
+//   • Si aún NO hay ruta → el despachador (o el admin en vista previa) ve los móviles de TODOS
+//     sus grupos (derivados de sus rutas); el admin sin vista previa los ve todos.
+// Conserva el móvil ya guardado en la fila y nunca deja la lista vacía (salvaguarda).
 async function setupVehByGroup(form, conf) {
   const routeSel = form.querySelector(`[data-key="${conf.route}"]`);
   const vehSel = form.querySelector(`[data-key="${conf.veh}"]`);
@@ -1827,22 +1838,38 @@ async function setupVehByGroup(form, conf) {
   const allOpts = [...vehSel.options].map((o) => ({ value: o.value, text: o.textContent }));
   const [gmap, rmap, veh] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadVehiculos()]);
   const numById = new Map(veh.map((v) => [String(v.id), String(v.numero).trim()]));
+  const esDesp = filtraComoDespachador();
+  const misGrupos = esDesp ? gruposDeMisRutas(gmap) : null; // null = admin (sin restricción)
   async function apply() {
     const keep = vehSel.value;
     const rname = (routeSel.selectedOptions[0]?.textContent || '').trim();
-    const grupo = _grupoDeRuta(gmap, rname);
-    const filtrar = !!grupo; // si no se conoce el grupo de la ruta, no se filtra (no romper)
-    const conIntegradas = filtrar && esGrupoIntegrada(grupo); // ruta con I/II → suma el pool "Integradas"
-    vehSel.innerHTML = '';
-    for (const o of allOpts) {
-      // Pertenece si es del grupo de la ruta o (si la ruta es integrada) del pool "Integradas".
-      const pg = rmap.get(numById.get(String(o.value)));
-      const dentro = pg === grupo || (conIntegradas && pg === GRUPO_INTEGRADAS);
-      // Fuera del grupo → se oculta, salvo el móvil ya guardado en la fila (para no perderlo)
-      const fuera = filtrar && o.value && !dentro;
-      if (fuera && o.value !== keep) continue;
-      vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
+    const grupoRuta = _grupoDeRuta(gmap, rname);
+    // Objetivo de grupos: ruta elegida > (si no) todos los grupos del despachador > (admin) sin filtro
+    let objetivo = null; // null = no filtrar
+    if (grupoRuta) {
+      objetivo = new Set([grupoRuta]);
+      if (misGrupos && misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g)));
+    } else if (misGrupos && misGrupos.size) {
+      objetivo = new Set(misGrupos); // sin ruta: los carros de TODOS sus grupos
     }
+    // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool
+    if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
+    const construir = (filtra) => {
+      vehSel.innerHTML = '';
+      let n = 0;
+      for (const o of allOpts) {
+        if (filtra && objetivo) {
+          const pg = rmap.get(numById.get(String(o.value)));
+          const dentro = o.value && objetivo.has(pg);
+          if (!dentro && o.value !== keep) continue; // conserva el móvil ya guardado
+        }
+        vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
+        if (o.value) n++;
+      }
+      return n;
+    };
+    // Salvaguarda: si el filtro deja la lista vacía (grupo sin móviles en parque), muestra todos
+    if (construir(true) === 0) construir(false);
     if ([...vehSel.options].some((o) => o.value === keep)) vehSel.value = keep;
     vehSel._comboSync && vehSel._comboSync();
   }
