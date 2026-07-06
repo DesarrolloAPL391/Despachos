@@ -26,9 +26,24 @@ async function registerPuestoTables() {
   if (error) return;
   for (const t of (data || [])) {
     if (!t.tabla) continue;
-    if (!TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto);
+    // Se (re)construye según el rol actual: el auditor la ve CON las columnas de control
+    // (para auditar aquí también); el despachador/admin sin ellas. Reconstruir siempre evita
+    // configs desactualizadas si cambia el rol o se registró antes sin el puesto.
+    TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto, { auditor: isAuditor() });
     if (!puestoTables.includes(t.tabla)) puestoTables.push(t.tabla);
   }
+}
+// Auditor: tablas de puesto donde tiene despachos de SUS rutas (RLS filtra en el servidor).
+// Solo esas se muestran en el menú, para no llenarlo de tablas vacías.
+async function tablasAuditablesDePuesto() {
+  const encontradas = new Set();
+  await Promise.all(puestoTables.map(async (t) => {
+    try {
+      const { count } = await sb.from(t).select('id', { count: 'exact', head: true });
+      if ((count || 0) > 0) encontradas.add(t);
+    } catch { /* sin acceso o vacía → no se muestra */ }
+  }));
+  return puestoTables.filter((t) => encontradas.has(t)); // conserva el orden
 }
 // Orden del menú con las tablas de puesto insertadas tras "despachos"
 function menuOrder() {
@@ -83,8 +98,9 @@ function visibleTables() {
   // Vista previa (admin simulando): el menú se reduce como el del despachador simulado
   if (PREVIEW) return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   if (isAdmin()) return menuOrder();
-  // Auditor: solo la pantalla de Despachos (ahí audita el control de los despachos)
-  if (isAuditor()) return ['despachos'];
+  // Auditor: la pantalla Despachos + las tablas de puesto donde tiene despachos de sus rutas
+  // (así audita TODO lo suyo, esté en la vista general o en cualquier tabla de puesto).
+  if (isAuditor()) return ['despachos', ...(CTX?.auditTables || [])];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -280,6 +296,8 @@ async function showApp(user) {
   // Registrar configs de las tablas de despacho del despachador (por si la lectura general falla)
   for (const t of (CTX?.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
+  // Auditor: descubre en qué tablas de puesto tiene despachos de sus rutas (para el menú)
+  if (CTX?.rol === 'auditor') { try { CTX.auditTables = await tablasAuditablesDePuesto(); } catch { CTX.auditTables = []; } }
   // ¿El despachador (con tablas propias) además tiene rutas que se despachan en "Despachos"?
   // Se muestra el tab "Despachos" solo si hay filas visibles para sus rutas (evita tabs vacíos).
   CTX && (CTX.verDespachos = false);
@@ -2817,8 +2835,9 @@ $('modal-save').addEventListener('click', async () => {
   // Hora de cierre automática (momento de guardado)
   if (cfg.autoStamp) payload[cfg.autoStamp] = ahoraLocal();
 
-  // Auditoría: al guardar un despacho, el auditor (y la fecha/hora) quedan registrados solos
-  if (current === 'despachos' && isAuditor()) {
+  // Auditoría: al guardar (en Despachos o en cualquier tabla de puesto), el auditor y la
+  // fecha/hora quedan registrados solos.
+  if (isAuditor() && (current === 'despachos' || puestoTables.includes(current))) {
     if (CTX?.auditor_id != null) payload.auditor_id = CTX.auditor_id;
     payload.fecha_hora_auditoria = new Date().toISOString();
   }

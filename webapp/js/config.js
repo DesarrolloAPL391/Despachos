@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v107';
+export const APP_VERSION = 'v108';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -530,7 +530,11 @@ export const TABLES = {
 
 // Construye la config de una tabla de puesto (misma función que Despachos, su propia tabla).
 // En las tablas los viajes los programa el administrador: el formulario es muy restringido.
-export function configTablaPuesto(label, puesto) {
+export function configTablaPuesto(label, puesto, opts = {}) {
+  // Cuando el que mira es AUDITOR, la tabla de puesto conserva las columnas/campos de control
+  // (control interno, horas de control, banderas, quién auditó) para que pueda auditar aquí
+  // igual que en Despachos. Para el despachador se ocultan (a él no le aplican).
+  const forAudit = !!opts.auditor;
   // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
   const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'hora_finalizacion', 'hora_real_despacho', 'hora_llegada']);
   // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
@@ -538,8 +542,8 @@ export function configTablaPuesto(label, puesto) {
   // En las tablas de puesto, "Real" (lo que se despacha) va dentro de "General"
   const REUBICAR = { Real: 'General' };
   let fields = TABLES.despachos.fields
-    // Los campos de auditoría/control no aplican en las tablas por puesto (la auditoría es en Despachos)
-    .filter((f) => !OCULTOS.has(f.key) && !f.auditOnly)
+    // Los campos de auditoría/control se ocultan al despachador; el auditor SÍ los ve/edita
+    .filter((f) => !OCULTOS.has(f.key) && (forAudit || !f.auditOnly))
     .map((f) => {
       let nf = f;
       if (SOLO_LECTURA.has(f.key)) nf = { ...nf, readOnly: true };
@@ -550,14 +554,14 @@ export function configTablaPuesto(label, puesto) {
     });
   // Reagrupa por sección (conservando el orden original dentro de cada una) para que no
   // se repita el título "General" tras haber movido allí los campos de "Real".
-  const ORDEN_SECC = ['General', 'Programado en tabla', 'Indicadores', 'Notas'];
+  const ORDEN_SECC = ['General', 'Programado en tabla', 'Indicadores', 'Control / Auditoría', 'Notas'];
   const _pres = [];
   fields.forEach((f) => { const s = f.section || ''; if (!_pres.includes(s)) _pres.push(s); });
   const _rank = (s) => { const i = ORDEN_SECC.indexOf(s); return i < 0 ? 100 + _pres.indexOf(s) : i; };
   fields = _pres.slice().sort((a, b) => _rank(a) - _rank(b))
     .flatMap((s) => fields.filter((f) => (f.section || '') === s));
-  // Las columnas de control (auditCol) tampoco aplican aquí
-  const columns = TABLES.despachos.columns.filter((c) => !c.auditCol);
+  // Las columnas de control (auditCol) se ocultan al despachador; el auditor sí las ve
+  const columns = forAudit ? TABLES.despachos.columns.slice() : TABLES.despachos.columns.filter((c) => !c.auditCol);
   // Filtro de fecha: una sola fecha (no rango). Se quita el filtro "Tipo" (en una tabla
   // de puesto todo es TABLA; el despacho LIBRE solo existe en Despachos).
   const filters = TABLES.despachos.filters
@@ -565,8 +569,8 @@ export function configTablaPuesto(label, puesto) {
     .map((f) => (f.col === 'fecha' && f.type === 'daterange') ? { col: 'fecha', label: 'Fecha', type: 'date' } : f);
   // Orden: por día (más reciente primero) y dentro del día por HORA ascendente
   const defaultOrder = { col: 'fecha', asc: false, then: { col: 'hora', asc: true } };
-  // Las tablas por puesto NO tienen relación con `auditores`: se quita el embed para no romper la carga
-  const select = TABLES.despachos.select.replace(', aud:auditor_id(nombre)', '');
+  // El embed con `auditores` (quién auditó) solo se conserva para el auditor; al despachador se le quita
+  const select = forAudit ? TABLES.despachos.select : TABLES.despachos.select.replace(', aud:auditor_id(nombre)', '');
   // Importación propia de la tabla por puesto (inserta en SU tabla, no en despachos)
   const importar = { rpc: 'importar_tabla_puesto', map: IMPORT_MAP_TABLAS, keyField: 'fecha', tablaParam: true, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' };
   // La tabla pertenece a un puesto: el campo "Ruta" se limita a las rutas de ese puesto (puestos.rutas)
