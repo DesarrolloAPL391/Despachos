@@ -26,10 +26,10 @@ async function registerPuestoTables() {
   if (error) return;
   for (const t of (data || [])) {
     if (!t.tabla) continue;
-    // Se (re)construye según el rol actual: el auditor la ve CON las columnas de control
-    // (para auditar aquí también); el despachador/admin sin ellas. Reconstruir siempre evita
-    // configs desactualizadas si cambia el rol o se registró antes sin el puesto.
-    TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto, { auditor: isAuditor() });
+    // Se (re)construye según el rol actual. El auditor y el admin la ven CON las columnas de
+    // control (el auditor para auditar; el admin para supervisar y para la "vista como auditor").
+    // Al despachador se le ocultan. Reconstruir siempre evita configs desactualizadas.
+    TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto, { auditor: isAuditor() || isAdmin() });
     if (!puestoTables.includes(t.tabla)) puestoTables.push(t.tabla);
   }
 }
@@ -95,8 +95,11 @@ function matchItinerario(its, rutaNombre) {
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
 function visibleTables() {
-  // Vista previa (admin simulando): el menú se reduce como el del despachador simulado
-  if (PREVIEW) return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
+  // Vista previa (admin simulando): el menú se reduce como el del usuario simulado
+  if (PREVIEW) {
+    if (PREVIEW.rol === 'auditor') return ['despachos', ...(PREVIEW.auditTables || [])];
+    return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
+  }
   if (isAdmin()) return menuOrder();
   // Auditor: la pantalla Despachos + las tablas de puesto donde tiene despachos de sus rutas
   // (así audita TODO lo suyo, esté en la vista general o en cualquier tabla de puesto).
@@ -367,7 +370,10 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
-  if (isAdmin()) addNavAction(nav, '👁️', PREVIEW ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
+  const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
+  const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
+  if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
+  if (isAdmin()) addNavAction(nav, '🔎', prevAud ? `Viendo: ${PREVIEW.nombre}` : 'Ver como auditor', openPreviewAuditor, 'nav-preview-aud');
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
@@ -493,7 +499,8 @@ function selectTable(name) {
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
-  $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate || isAuditor(); // sin "+ Nuevo" donde no aplica (el auditor no crea)
+  // sin "+ Nuevo" donde no aplica (el auditor no crea; tampoco en la vista previa "como auditor")
+  $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate || isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor');
   buildSidebar();
   renderFilters();
   loadData();
@@ -1386,11 +1393,14 @@ async function loadData() {
 
   qy = applyQueryFilters(qy, { skipSearch: useClientSearch });
 
-  // Vista previa (admin simulando despachador): la tabla general "Despachos" y "Resumen" se
-  // filtran a las rutas del despachador. Sin rutas (ej. domingo sin grupos) → no ve nada.
-  if (PREVIEW && (current === 'despachos' || current === 'resumen')) {
+  // Vista previa (admin simulando): se filtran las tablas a las rutas del usuario simulado.
+  // Sin rutas → no ve nada. Despachador: Despachos + Resumen. Auditor: Despachos + tablas de puesto.
+  if (PREVIEW) {
     const ids = PREVIEW.ids || [];
-    qy = ids.length ? qy.in('ruta_id', ids) : qy.eq('ruta_id', -1);
+    const filtrarPrev = PREVIEW.rol === 'auditor'
+      ? (current === 'despachos' || puestoTables.includes(current))
+      : (current === 'despachos' || current === 'resumen');
+    if (filtrarPrev) qy = ids.length ? qy.in('ruta_id', ids) : qy.eq('ruta_id', -1);
   }
 
   const { data, error, count } = await qy;
@@ -3240,8 +3250,13 @@ const GRUPO_INTEGRADAS = 'Integradas';
 function esGrupoIntegrada(g) { return /\d\s*i/i.test(String(g || '')); }
 
 // ----- Vista previa "como despachador" (solo admin): simula el filtrado de un puesto -----
+let previewMode = 'despachador'; // 'despachador' | 'auditor' — qué se está simulando
 async function openPreviewDespachador() {
   if (!isAdmin()) return;
+  previewMode = 'despachador';
+  $('preview-title').textContent = '👁️ Ver como despachador';
+  $('preview-label').firstChild.textContent = 'Despachador a simular';
+  $('preview-hint').innerHTML = 'Verás la app <b>tal cual la vería ese despachador</b> hoy: el <b>menú</b> se reduce a sus tablas y las tablas <b>Despachos</b> y <b>Resumen</b> muestran solo sus rutas. No cambia permisos ni datos.';
   const sel = $('preview-puesto');
   sel.innerHTML = '<option value="">Cargando…</option>';
   $('preview-modal').hidden = false;
@@ -3251,10 +3266,31 @@ async function openPreviewDespachador() {
     const list = data || [];
     if (!list.length) { sel.innerHTML = '<option value="">(sin despachadores)</option>'; return; }
     sel.innerHTML = list.map((d) => `<option value="${esc(d.email)}">${esc(d.nombre)}${d.puesto ? ' — ' + esc(d.puesto) : ' — (sin turno hoy)'}</option>`).join('');
-    if (PREVIEW?.email) sel.value = PREVIEW.email;
+    if (PREVIEW?.email && previewMode === 'despachador') sel.value = PREVIEW.email;
   } catch (e) {
     sel.innerHTML = '<option value="">Error al cargar</option>';
     toast('No se pudo cargar la lista de despachadores: ' + (e.message || e), 'err');
+  }
+}
+async function openPreviewAuditor() {
+  if (!isAdmin()) return;
+  previewMode = 'auditor';
+  $('preview-title').textContent = '🔎 Ver como auditor';
+  $('preview-label').firstChild.textContent = 'Auditor a simular';
+  $('preview-hint').innerHTML = 'Verás la app <b>tal cual la vería ese auditor</b>: el <b>menú</b> muestra <b>Despachos</b> y las <b>tablas de puesto</b> donde tiene despachos de sus rutas, con las columnas de control. Filtra por sus rutas. No cambia permisos ni datos.';
+  const sel = $('preview-puesto');
+  sel.innerHTML = '<option value="">Cargando…</option>';
+  $('preview-modal').hidden = false;
+  try {
+    const { data, error } = await sb.rpc('preview_listar_auditores');
+    if (error) throw error;
+    const list = data || [];
+    if (!list.length) { sel.innerHTML = '<option value="">(sin auditores)</option>'; return; }
+    sel.innerHTML = list.map((a) => `<option value="${esc(a.email)}">${esc(a.nombre)}${a.rutas ? ' — ' + esc(a.rutas) : ''}</option>`).join('');
+    if (PREVIEW?.email && previewMode === 'auditor') sel.value = PREVIEW.email;
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error al cargar</option>';
+    toast('No se pudo cargar la lista de auditores: ' + (e.message || e), 'err');
   }
 }
 async function activarPreview(email) {
@@ -3296,6 +3332,47 @@ async function activarPreview(email) {
   actualizarPuestoBadge();
   toast(`Vista previa: ${PREVIEW.nombre}`, 'ok');
 }
+// Tablas de puesto donde el auditor simulado tiene despachos de sus rutas (el admin ve todo,
+// así que filtramos por ids en el cliente, no por RLS).
+async function previewAuditTables(ids) {
+  if (!ids || !ids.length) return [];
+  const found = new Set();
+  await Promise.all(puestoTables.map(async (t) => {
+    try {
+      const { count } = await sb.from(t).select('id', { count: 'exact', head: true }).in('ruta_id', ids);
+      if ((count || 0) > 0) found.add(t);
+    } catch { /* */ }
+  }));
+  return puestoTables.filter((t) => found.has(t));
+}
+async function activarPreviewAuditor(email) {
+  let ctx;
+  try {
+    const { data, error } = await sb.rpc('preview_contexto_auditor', { p_email: email });
+    if (error) throw error;
+    ctx = data;
+  } catch (e) { toast('No se pudo activar la vista previa: ' + (e.message || e), 'err'); return; }
+  if (!ctx || ctx.rol === 'sin_acceso') { toast('Ese auditor no tiene rutas asignadas.', 'err'); return; }
+  const rutasArr = ctx.rutas || [];
+  const ids = (ctx.ids || []).map(Number).filter((n) => !isNaN(n));
+  PREVIEW = {
+    rol: 'auditor', email, nombre: ctx.nombre || email, puesto: '', dia_tipo: '',
+    rutas: new Set(rutasArr.map(normRuta)), rutasRaw: rutasArr,
+    grupos: new Set(), ids, tablas: [], verDespachos: false,
+    auditTables: await previewAuditTables(ids),
+  };
+  $('preview-modal').hidden = true;
+  $('preview-banner-txt').textContent =
+    `🔎 Viendo como auditor: ${PREVIEW.nombre} · ${rutasArr.length} ruta(s) · ${PREVIEW.auditTables.length} tabla(s) de puesto`;
+  $('preview-banner').hidden = false;
+  buildSidebar();
+  refrescarAlertasDocs();
+  const vis = visibleTables();
+  if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
+  else { renderFilters(); loadData(); }
+  actualizarPuestoBadge();
+  toast(`Vista previa auditor: ${PREVIEW.nombre}`, 'ok');
+}
 function salirPreview() {
   PREVIEW = null;
   $('preview-banner').hidden = true;
@@ -3309,7 +3386,10 @@ function salirPreview() {
 }
 $('preview-x')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
 $('preview-cancel')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
-$('preview-ok')?.addEventListener('click', () => { const e = $('preview-puesto').value; if (e) activarPreview(e); });
+$('preview-ok')?.addEventListener('click', () => {
+  const e = $('preview-puesto').value; if (!e) return;
+  if (previewMode === 'auditor') activarPreviewAuditor(e); else activarPreview(e);
+});
 $('preview-exit')?.addEventListener('click', salirPreview);
 async function filtrarMovilesPorRuta() {
   const sel = $('nd-movil'); if (!sel) return;
