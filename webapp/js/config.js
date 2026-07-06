@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v103';
+export const APP_VERSION = 'v104';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -26,7 +26,7 @@ export const TABLE_ORDER = [
 
 // Mapa de encabezados (normalizados) -> campo, para la importación de horarios de usuarios
 const IMPORT_MAP_HORARIOS = {
-  'usuarios': 'email', 'usuario': 'email', 'email': 'email', 'correo': 'email',
+  'usuarios': 'email', 'usuario': 'email', 'email': 'email', 'correo': 'email', 'id': 'email',
   'nombre': 'nombre', 'hora de inicio': 'hora_inicio', 'hora finalizacion labor': 'hora_fin',
   'observacion': 'observacion', 'fecha': 'fecha',
 };
@@ -81,7 +81,8 @@ export const TABLES = {
     // Al elegir el móvil, trae el conductor (SONAR) registrado, igual que en Despachos.
     vehByGroup: { route: 'ruta_id', veh: 'vehiculo_id', cond: 'conductor_id', fecha: 'fecha' },
     pkEditable: true, // el KEY lo escribe el usuario al crear
-    import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
+    // keyField:'fecha' → NO se exige KEY por fila; si falta, la función lo genera del contenido (como en las tablas de puesto)
+    import: { rpc: 'importar_despachos', map: IMPORT_MAP_DESPACHOS, keyField: 'fecha', kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' },
     select: '*, ruta:ruta_id(nombre), rutap:ruta_programada_id(nombre), veh:vehiculo_id(numero,placa), vehp:vehiculo_programado_id(numero,placa), cond:conductor_id(nombre), desp:despachador_id(nombre), aud:auditor_id(nombre)',
     searchCols: ['id', 'estado_despacho', 'estado'],
     defaultOrder: { col: 'fecha', asc: false, then: { col: 'hora', asc: true } },
@@ -201,8 +202,8 @@ export const TABLES = {
       { key: 'estado', label: 'Estado', badge: true, m: true },
     ],
     fields: [
-      { key: 'fecha', label: 'Fecha', type: 'date', section: 'General' },
-      { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
+      { key: 'fecha', label: 'Fecha', type: 'date', section: 'General', required: true },
+      { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General', required: true },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General', formHide: true },
       // Puesto: se llena solo con el puesto del usuario logueado; el despachador no lo edita
       { key: 'puesto', label: 'Puesto', type: 'text', section: 'General', ctxValue: 'puesto', softReadOnlyDispatcher: true },

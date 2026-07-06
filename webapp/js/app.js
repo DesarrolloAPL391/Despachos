@@ -43,7 +43,9 @@ function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
 // Vista previa "como despachador" (solo admin): simula el filtrado de un puesto sin cambiar de cuenta.
-// PREVIEW = { puesto, rutas:Set(normRuta), grupos:Set(grupo del parque) } o null.
+// PREVIEW = { email, nombre, puesto, dia_tipo, rutas:Set(normRuta), rutasRaw:[], grupos:Set,
+//   ids:[ruta_id], tablas:[{tabla,label}], verDespachos } o null. Se arma con el contexto REAL
+//   del despachador (RPC preview_contexto_despachador) para que la simulación sea fiel.
 let PREVIEW = null;
 function filtraComoDespachador() { return !!PREVIEW || !isAdmin(); }
 function allowedRutaSet() { return PREVIEW ? PREVIEW.rutas : new Set((CTX?.rutas || []).map(normRuta)); }
@@ -69,14 +71,20 @@ function matchItinerario(its, rutaNombre) {
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
 function visibleTables() {
+  // Vista previa (admin simulando): el menú se reduce como el del despachador simulado
+  if (PREVIEW) return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   if (isAdmin()) return menuOrder();
   // Auditor: solo la pantalla de Despachos (ahí audita el control de los despachos)
   if (isAuditor()) return ['despachos'];
   // despachador: todas las tablas de su puesto (puede tener varias)
-  const mine = (CTX?.tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
+  return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
+}
+// Tablas visibles para un despachador dado su conjunto de tablas de puesto + si ve "Despachos"
+function tablasDeDespachador(tablas, verDespachos) {
+  const mine = (tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
   if (mine.length) {
     // Si además tiene rutas que se despachan en la vista general, agrega "Despachos"
-    if (CTX?.verDespachos && !mine.includes('despachos')) mine.push('despachos');
+    if (verDespachos && !mine.includes('despachos')) mine.push('despachos');
     // Tablas generales para despachadores (Resumen, Conductores SONAR, …)
     for (const n of TABLE_ORDER) {
       if (n !== 'despachos' && TABLES[n].despachador && !mine.includes(n)) mine.push(n);
@@ -303,6 +311,19 @@ $('login-form').addEventListener('submit', async (e) => {
   if (error) { err.textContent = 'Correo o contraseña incorrectos.'; err.hidden = false; }
 });
 
+// Ojo para mostrar/ocultar la contraseña en el login
+$('toggle-pass')?.addEventListener('click', () => {
+  const inp = $('password'), btn = $('toggle-pass');
+  const ver = inp.type === 'password';
+  inp.type = ver ? 'text' : 'password';
+  btn.textContent = ver ? '🙈' : '👁️';
+  btn.classList.toggle('on', ver);
+  btn.setAttribute('aria-pressed', ver ? 'true' : 'false');
+  const txt = ver ? 'Ocultar contraseña' : 'Mostrar contraseña';
+  btn.setAttribute('aria-label', txt); btn.title = txt;
+  inp.focus();
+});
+
 $('logout-btn').addEventListener('click', async () => { await sb.auth.signOut(); });
 
 // ---------- navegación ----------
@@ -319,7 +340,7 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
-  if (isAdmin()) addNavAction(nav, '👁️', PREVIEW ? `Vista previa: ${PREVIEW.puesto}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
+  if (isAdmin()) addNavAction(nav, '👁️', PREVIEW ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
@@ -543,7 +564,9 @@ async function loadCheckOptions(source) {
   const cfg = TABLES[current];
   // En una tabla de puesto, el filtro de Ruta solo muestra las rutas que EXISTEN en esa tabla
   const esTablaPuesto = source === 'rutas' && !!cfg?.puesto;
-  const ckey = source + (esTablaPuesto ? '::' + current : '');
+  // El scope separa el caché por vista previa: admin normal ve todas; en vista previa, solo las del puesto simulado
+  const scope = source === 'rutas' && PREVIEW ? '::prev:' + PREVIEW.email : '';
+  const ckey = source + (esTablaPuesto ? '::' + current : '') + scope;
   if (_checkOptsCache[ckey]) return _checkOptsCache[ckey];
   const r = await sb.from(source).select('id,nombre').order('nombre');
   let opts = (r.data || []).map((x) => [x.id, x.nombre]);
@@ -553,9 +576,10 @@ async function loadCheckOptions(source) {
       const { data } = await sb.from(current).select('ruta_id').not('ruta_id', 'is', null).limit(5000);
       const ids = new Set((data || []).map((x) => Number(x.ruta_id)));
       opts = opts.filter(([id]) => ids.has(Number(id)));
-    } else if (!isAdmin() && Array.isArray(CTX?.ids) && CTX.ids.length) {
-      // Despachos general: el despachador solo ve sus rutas permitidas
-      const allow = new Set(CTX.ids.map(Number));
+    } else if (filtraComoDespachador()) {
+      // Despachos general: el despachador (o admin en vista previa) solo ve sus rutas permitidas
+      const permIds = PREVIEW ? PREVIEW.ids : (CTX?.ids || []);
+      const allow = new Set((permIds || []).map(Number));
       opts = opts.filter(([id]) => allow.has(Number(id)));
     }
   }
@@ -1333,6 +1357,13 @@ async function loadData() {
   qy = diaSel ? qy.range(0, 4999) : qy.range(from, to); // día completo trae todo; si no, paginado
 
   qy = applyQueryFilters(qy, { skipSearch: useClientSearch });
+
+  // Vista previa (admin simulando despachador): la tabla general "Despachos" y "Resumen" se
+  // filtran a las rutas del despachador. Sin rutas (ej. domingo sin grupos) → no ve nada.
+  if (PREVIEW && (current === 'despachos' || current === 'resumen')) {
+    const ids = PREVIEW.ids || [];
+    qy = ids.length ? qy.in('ruta_id', ids) : qy.eq('ruta_id', -1);
+  }
 
   const { data, error, count } = await qy;
   $('loading').hidden = true;
@@ -2338,14 +2369,16 @@ async function cargarAlertasDocumentos() {
     .select('id,numero_interno,placa,ruta,estado,vence_soat,vence_tecnomecanica,vence_tarjeta_operacion,num_soat,num_tecnomecanica,num_tarjeta_operacion')
     .eq('estado', 'Activo').limit(5000);
   if (error || !data) return [];
-  // admin: toda la flota. despachador: solo móviles de los GRUPOS de sus rutas
-  // (sus rutas SONAR → grupo del parque vía ruta_grupos; parque_automotor.ruta = grupo).
+  // admin: toda la flota. despachador (o admin en vista previa): solo móviles de los GRUPOS
+  // de sus rutas (rutas SONAR → grupo del parque vía ruta_grupos; parque_automotor.ruta = grupo).
   let permitido = null; // null = todos (admin)
-  if (!isAdmin()) {
+  if (filtraComoDespachador()) {
     const gmap = await loadRutaGrupos();
     permitido = new Set();
-    for (const rn of (CTX?.rutas || [])) { const g = _grupoDeRuta(gmap, rn); if (g) permitido.add(String(g).trim()); }
-    for (const g of (CTX?.grupos || [])) { if (g) permitido.add(String(g).trim()); } // respaldo: grupos del horario de hoy
+    const rutasSrc = PREVIEW ? (PREVIEW.rutasRaw || []) : (CTX?.rutas || []);
+    const gruposSrc = PREVIEW ? PREVIEW.grupos : (CTX?.grupos || []);
+    for (const rn of rutasSrc) { const g = _grupoDeRuta(gmap, rn); if (g) permitido.add(String(g).trim()); }
+    for (const g of gruposSrc) { if (g) permitido.add(String(g).trim()); } // respaldo: grupos del horario de hoy
   }
   const out = [];
   for (const v of data) {
@@ -2971,11 +3004,12 @@ $('imp-run').addEventListener('click', async () => {
 // ---------- Nuevo despacho (simplificado + SONAR) ----------
 let vehList = null, despList = null;
 async function loadVehiculos() {
-  if (!vehList) { const { data } = await sb.from('vehiculos').select('id,numero,placa').order('numero').limit(3000); vehList = data || []; }
+  // No cachear vacío: si una carga falla por un parpadeo de red, se reintenta la próxima vez
+  if (!vehList || !vehList.length) { const { data } = await sb.from('vehiculos').select('id,numero,placa').order('numero').limit(3000); vehList = data || []; }
   return vehList;
 }
 async function loadDespachadores() {
-  if (!despList) { const { data } = await sb.from('despachadores').select('id,nombre').order('nombre').limit(2000); despList = data || []; }
+  if (!despList || !despList.length) { const { data } = await sb.from('despachadores').select('id,nombre').order('nombre').limit(2000); despList = data || []; }
   return despList;
 }
 function fillSelect(sel, pairs, placeholder = '— selecciona —') {
@@ -3044,14 +3078,13 @@ async function openNuevoDespacho() {
     const [its, veh, drs] = await Promise.all([
       loadItinerarios(), loadVehiculos(), loadDrivers(),
     ]);
-    // Despachador (o admin en vista previa): solo itinerarios de sus rutas permitidas
+    // Despachador (o admin en vista previa): solo itinerarios de sus rutas permitidas.
+    // Coincidencia EXACTA por nombre normalizado (igual que el filtrado de las tablas): así
+    // "130I" no arrastra la ruta base "130", ni "132I" arrastra "132II".
     let itList = its;
     if (filtraComoDespachador()) {
-      const allow = [...allowedRutaSet()].filter(Boolean);
-      itList = its.filter((i) => {
-        const n = normRuta(i.nombre);
-        return allow.some((a) => n === a || n.startsWith(a) || a.startsWith(n) || n.includes(a));
-      });
+      const allow = allowedRutaSet();
+      itList = its.filter((i) => allow.has(normRuta(i.nombre)));
     }
     fillSelect($('nd-ruta'), itList.map((i) => [i.itid, i.nombre])); // solo el nombre (ej. 130, 132A) para no confundir
     fillSelect($('nd-movil'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
@@ -3062,6 +3095,8 @@ async function openNuevoDespacho() {
     enhanceById('nd-ruta', 'nd-movil', 'nd-cond');
     if ($('nd-estacion')) $('nd-estacion').checked = false;
     if ($('nd-estacion-wrap')) $('nd-estacion-wrap').hidden = true;
+    if ($('nd-puesto-todos')) $('nd-puesto-todos').checked = false;
+    if ($('nd-puesto-wrap')) $('nd-puesto-wrap').hidden = true;
     await updateNdInfo();
   } catch (e) {
     const err = $('nd-error');
@@ -3122,16 +3157,16 @@ $('nd-movil').addEventListener('change', () => { updateNdInfo(); traerConductorN
 // ---- Al elegir la ruta, cargar solo los móviles de esa ruta (parque_automotor.ruta) ----
 let _parqueRutas = null; // Map numero_interno -> ruta (grupo del parque)
 async function loadParqueRutas() {
-  if (_parqueRutas) return _parqueRutas;
+  if (_parqueRutas && _parqueRutas.size) return _parqueRutas; // no cachear vacío
   const { data } = await sb.from('parque_automotor').select('numero_interno,ruta').neq('estado', 'Desvinculado').limit(5000);
-  _parqueRutas = new Map((data || []).map((r) => [String(r.numero_interno).trim(), r.ruta || '']));
+  _parqueRutas = new Map((data || []).map((r) => [String(r.numero_interno).trim(), String(r.ruta || '').trim()]));
   return _parqueRutas;
 }
 let _rutaGrupos = null; // Map ruta_sonar(minúscula) -> grupo del parque
 async function loadRutaGrupos() {
-  if (_rutaGrupos) return _rutaGrupos;
+  if (_rutaGrupos && _rutaGrupos.size) return _rutaGrupos; // no cachear vacío
   const { data } = await sb.from('ruta_grupos').select('ruta_sonar,grupo').limit(5000);
-  _rutaGrupos = new Map((data || []).map((r) => [String(r.ruta_sonar).trim().toLowerCase(), r.grupo]));
+  _rutaGrupos = new Map((data || []).map((r) => [String(r.ruta_sonar).trim().toLowerCase(), String(r.grupo || '').trim()]));
   return _rutaGrupos;
 }
 // Grupo del parque al que pertenece un itinerario de SONAR (según tabla ruta_grupos)
@@ -3146,33 +3181,71 @@ function esGrupoIntegrada(g) { return /\d\s*i/i.test(String(g || '')); }
 async function openPreviewDespachador() {
   if (!isAdmin()) return;
   const sel = $('preview-puesto');
-  const { data } = await sb.from('puestos').select('nombre').eq('activo', true).order('nombre');
-  sel.innerHTML = (data || []).map((p) => `<option value="${esc(p.nombre)}">${esc(p.nombre)}</option>`).join('');
-  if (PREVIEW) sel.value = PREVIEW.puesto;
+  sel.innerHTML = '<option value="">Cargando…</option>';
   $('preview-modal').hidden = false;
+  try {
+    const { data, error } = await sb.rpc('preview_listar_despachadores');
+    if (error) throw error;
+    const list = data || [];
+    if (!list.length) { sel.innerHTML = '<option value="">(sin despachadores)</option>'; return; }
+    sel.innerHTML = list.map((d) => `<option value="${esc(d.email)}">${esc(d.nombre)}${d.puesto ? ' — ' + esc(d.puesto) : ' — (sin turno hoy)'}</option>`).join('');
+    if (PREVIEW?.email) sel.value = PREVIEW.email;
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error al cargar</option>';
+    toast('No se pudo cargar la lista de despachadores: ' + (e.message || e), 'err');
+  }
 }
-async function activarPreview(puesto) {
-  const { data } = await sb.from('puestos').select('rutas').ilike('nombre', puesto).limit(1);
-  const raw = String((data && data[0]?.rutas) || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const gmap = await loadRutaGrupos();
-  const grupos = new Set();
-  for (const rn of raw) { const g = _grupoDeRuta(gmap, rn); if (g) grupos.add(g); }
-  PREVIEW = { puesto, rutas: new Set(raw.map(normRuta)), grupos };
+async function activarPreview(email) {
+  let ctx;
+  try {
+    const { data, error } = await sb.rpc('preview_contexto_despachador', { p_email: email });
+    if (error) throw error;
+    ctx = data;
+  } catch (e) { toast('No se pudo activar la vista previa: ' + (e.message || e), 'err'); return; }
+  if (!ctx || ctx.rol === 'sin_acceso') { toast('Ese despachador no tiene acceso activo.', 'err'); return; }
+  const rutasArr = ctx.rutas || [];
+  PREVIEW = {
+    email, nombre: ctx.nombre || email, puesto: ctx.puesto || '(sin turno hoy)', dia_tipo: ctx.dia_tipo || '',
+    rutas: new Set(rutasArr.map(normRuta)), rutasRaw: rutasArr,
+    grupos: new Set(ctx.grupos || []),
+    ids: (ctx.ids || []).map(Number).filter((n) => !isNaN(n)),
+    tablas: ctx.tablas || [], verDespachos: false,
+  };
+  // ¿Mostrar la pestaña general "Despachos"? solo si hay filas para sus rutas (evita tab vacío)
+  if (PREVIEW.tablas.length && PREVIEW.ids.length) {
+    try {
+      const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true }).in('ruta_id', PREVIEW.ids);
+      PREVIEW.verDespachos = (count || 0) > 0;
+    } catch { /* si falla, no se muestra */ }
+  }
   $('preview-modal').hidden = true;
-  $('preview-banner-txt').textContent = `👁️ Vista previa: ${puesto} · ${raw.length} ruta(s) · ${grupos.size} grupo(s)`;
+  const nr = PREVIEW.rutasRaw.length, ng = PREVIEW.grupos.size, nt = PREVIEW.tablas.length;
+  const esDomFest = ['domingo', 'festivo'].includes(PREVIEW.dia_tipo);
+  $('preview-banner-txt').textContent =
+    `👁️ Viendo como: ${PREVIEW.nombre} · ${PREVIEW.puesto} · ${nt} tabla(s) · ${nr} ruta(s)${esDomFest ? ' · ' + ng + ' grupo(s)' : ''}`;
   $('preview-banner').hidden = false;
   buildSidebar();
-  toast(`Vista previa activada: ${puesto}`, 'ok');
+  // Alertas de documentos: ahora reflejan lo que vería ese despachador (sus grupos)
+  refrescarAlertasDocs();
+  // Si la tabla actual no la ve ese despachador, salta a la primera que sí; si la ve, recarga con el filtro
+  const vis = visibleTables();
+  if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
+  else { renderFilters(); loadData(); } // renderFilters: refresca el filtro de rutas a las del puesto
+  toast(`Vista previa: ${PREVIEW.nombre}`, 'ok');
 }
 function salirPreview() {
   PREVIEW = null;
   $('preview-banner').hidden = true;
   buildSidebar();
+  refrescarAlertasDocs(); // vuelve a mostrar las alertas de toda la flota (admin)
+  const vis = visibleTables();
+  if (!vis.includes(current)) { current = null; selectTable(vis[0] || 'despachos'); }
+  else { renderFilters(); loadData(); } // renderFilters: vuelve a mostrar todas las rutas (admin)
   toast('Vista previa desactivada', 'ok');
 }
 $('preview-x')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
 $('preview-cancel')?.addEventListener('click', () => { $('preview-modal').hidden = true; });
-$('preview-ok')?.addEventListener('click', () => { const p = $('preview-puesto').value; if (p) activarPreview(p); });
+$('preview-ok')?.addEventListener('click', () => { const e = $('preview-puesto').value; if (e) activarPreview(e); });
 $('preview-exit')?.addEventListener('click', salirPreview);
 async function filtrarMovilesPorRuta() {
   const sel = $('nd-movil'); if (!sel) return;
@@ -3181,17 +3254,31 @@ async function filtrarMovilesPorRuta() {
   const itin = its.find((i) => String(i.itid) === String(itid));
   const veh = await loadVehiculos();
   const estChk = $('nd-estacion'), estWrap = $('nd-estacion-wrap');
+  const puestoChk = $('nd-puesto-todos'), puestoWrap = $('nd-puesto-wrap');
   let lista = veh; let placeholder = '— selecciona móvil —';
   if (itin) {
     const [gmap, rmap] = await Promise.all([loadRutaGrupos(), loadParqueRutas()]);
+    // El despachador solo ve móviles de SUS grupos (admin = todos)
+    const allowG = allowedGrupoSet();
+    // Casilla "todos los móviles de mi puesto": solo para despachador/vista previa con grupos.
+    // Deja despachar CUALQUIER carro del puesto en cualquiera de sus rutas.
+    const aplicaPuesto = filtraComoDespachador() && allowG && allowG.size > 0;
+    const nombrePuesto = PREVIEW ? PREVIEW.puesto : (CTX?.puesto || '');
+    if (puestoWrap) {
+      puestoWrap.hidden = !aplicaPuesto;
+      const sp2 = puestoWrap.querySelector('span');
+      if (sp2 && aplicaPuesto) sp2.textContent = `Mostrar todos los móviles de mi puesto${nombrePuesto ? ' (' + nombrePuesto + ')' : ''}`;
+    }
+    if (!aplicaPuesto && puestoChk) puestoChk.checked = false;
+    const usarPuesto = aplicaPuesto && puestoChk && puestoChk.checked;
     // Grupos del parque de la ESTACIÓN (itinerarios.grupo): todas las rutas que comparten estación
     const estacion = itin.grupo;
     const gruposEstacion = new Set(
       its.filter((i) => i.grupo === estacion).map((i) => _grupoDeRuta(gmap, i.nombre)).filter(Boolean)
     );
     const grupoRuta = _grupoDeRuta(gmap, itin.nombre);
-    // El check solo aparece si la estación abarca más de un grupo del parque
-    const aplicaEstacion = gruposEstacion.size > 1;
+    // El check de estación solo aparece si la estación abarca más de un grupo (y no está activo "todo el puesto")
+    const aplicaEstacion = gruposEstacion.size > 1 && !usarPuesto;
     if (estWrap) {
       estWrap.hidden = !aplicaEstacion;
       const sp = estWrap.querySelector('span');
@@ -3199,26 +3286,36 @@ async function filtrarMovilesPorRuta() {
     }
     if (!aplicaEstacion && estChk) estChk.checked = false;
     const usarEstacion = aplicaEstacion && estChk && estChk.checked;
-    let objetivo = usarEstacion ? gruposEstacion : new Set(grupoRuta ? [grupoRuta] : []);
-    // El despachador solo ve móviles de SUS grupos (admin = todos)
-    const allowG = allowedGrupoSet();
-    if (allowG) objetivo = new Set([...objetivo].filter((g) => allowG.has(g)));
-    // Pool Integradas: si la ruta objetivo es integrada (I/II), suma los móviles del pool "Integradas"
+    // Objetivo de grupos: todo el puesto > toda la estación > solo el grupo de la ruta
+    let objetivo;
+    if (usarPuesto) {
+      objetivo = new Set(allowG); // todos los grupos del puesto del despachador
+    } else {
+      objetivo = usarEstacion ? gruposEstacion : new Set(grupoRuta ? [grupoRuta] : []);
+      if (allowG) objetivo = new Set([...objetivo].filter((g) => allowG.has(g)));
+    }
+    // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool "Integradas"
     if ([...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     const match = veh.filter((v) => objetivo.has(rmap.get(String(v.numero).trim())));
     if (match.length) {
       lista = match;
-      placeholder = usarEstacion
-        ? `— ${match.length} móvil(es) de la estación ${estacion} —`
-        : `— ${match.length} móvil(es) de ${grupoRuta} —`;
+      placeholder = usarPuesto
+        ? `— ${match.length} móvil(es) del puesto${nombrePuesto ? ' ' + nombrePuesto : ''} —`
+        : usarEstacion
+          ? `— ${match.length} móvil(es) de la estación ${estacion} —`
+          : `— ${match.length} móvil(es) de ${grupoRuta} —`;
     } else { placeholder = '— sin móviles asignados a esa ruta; se muestran todos —'; }
-  } else if (estWrap) { estWrap.hidden = true; if (estChk) estChk.checked = false; }
+  } else { if (estWrap) { estWrap.hidden = true; if (estChk) estChk.checked = false; } if (puestoWrap) puestoWrap.hidden = true; }
+  // Salvaguarda: la lista de móviles NUNCA debe quedar vacía. Si quedó vacía (caché sin datos),
+  // recarga los vehículos y muéstralos todos para no bloquear el despacho.
+  if (!lista.length) { vehList = null; lista = await loadVehiculos(); placeholder = '— selecciona móvil —'; }
   fillSelect(sel, lista.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]), placeholder);
   sel.value = ''; sel._comboSync && sel._comboSync();
   const c = $('nd-cond'); if (c) { c.value = ''; c._comboSync && c._comboSync(); }
   updateNdInfo();
 }
 $('nd-ruta').addEventListener('change', filtrarMovilesPorRuta);
+$('nd-puesto-todos')?.addEventListener('change', filtrarMovilesPorRuta);
 $('nd-estacion').addEventListener('change', filtrarMovilesPorRuta);
 
 // Captura el GPS del celular para llenar "ubicacion". Nunca bloquea el despacho:
@@ -3467,7 +3564,7 @@ async function minutosUltimoDespacho(vehId) {
 
 let itinList = null;
 async function loadItinerarios() {
-  if (!itinList) {
+  if (!itinList || !itinList.length) { // no cachear vacío
     const { data } = await sb.from('itinerarios').select('itid,grupo,nombre').order('nombre').limit(2000);
     itinList = data || [];
   }
@@ -3476,12 +3573,29 @@ async function loadItinerarios() {
 
 let drvList = null;
 async function loadDrivers() {
-  if (!drvList) {
+  if (!drvList || !drvList.length) {
     const { data } = await sb.from('conductores_sonar')
       .select('dr_id,nombre,codigo').eq('status', 'ENABLED').order('nombre').limit(3000);
     drvList = data || [];
   }
   return drvList;
+}
+
+// Muestra qué móvil/ruta están PROGRAMADOS en la fila y avisa si se va a despachar otro (cambio)
+function updateSonarProg() {
+  const box = $('s-prog'); if (!box) return;
+  const row = sonarRow;
+  const progNum = row ? (row.vehp?.numero ?? row.veh?.numero ?? null) : null;
+  const progRuta = row ? (row.rutap?.nombre ?? row.ruta?.nombre ?? '') : '';
+  if (progNum == null && !progRuta) { box.hidden = true; return; }
+  const selTxt = $('s-mov').selectedOptions?.[0]?.textContent || '';
+  const curNum = selTxt.split('·')[0].trim();
+  const distinto = progNum != null && curNum && String(curNum) !== String(progNum);
+  box.hidden = false;
+  box.className = 'field full sonar-info' + (distinto ? ' warn' : '');
+  let html = `📋 <b>Programado:</b> Móvil <b>${esc(String(progNum ?? '—'))}</b>${progRuta ? ' · Ruta ' + esc(String(progRuta)) : ''}`;
+  if (distinto) html += `<br>⚠️ Vas a despachar el <b>${esc(curNum)}</b> (distinto al programado) → se registrará como <b>CAMBIO</b>.`;
+  box.innerHTML = html;
 }
 
 async function updateSonarInfo() {
@@ -3533,30 +3647,41 @@ async function openSonar(row) {
   $('s-desp-name').value = CTX?.nombre || ''; // despachador = usuario en sesión (no editable)
   await traerConductorSonar(); // conductor desde Resumen, según la fecha del despacho
   await updateSonarInfo();
+  updateSonarProg();           // muestra el móvil programado y avisa si hay cambio
   $('sonar-modal').hidden = false;
 }
 // Trae el conductor registrado en Resumen para el móvil elegido (mapeado a conductor SONAR)
 async function traerConductorSonar() {
+  const note = $('s-cond-note');
+  const setNote = (cls, txt) => { if (note) { note.hidden = false; note.className = 'field full ' + cls; note.textContent = txt; } };
   const vehId = $('s-mov').value;
-  if (!vehId) return;
+  if (!vehId) { if (note) note.hidden = true; return; }
   // Conductor de Resumen para la fecha del despacho (la del viaje, no la del celular)
   const fechaDesp = sonarRow?.fecha ? String(sonarRow.fecha).slice(0, 10) : hoyServidor();
   const nombre = await nombreConductorDeVehiculo(vehId, fechaDesp);
-  if (!nombre) return;
   const sel = $('s-drv');
+  if (!nombre) { // no hay resumen para ese móvil/fecha
+    setNote('sonar-info warn', '⚠️ No hay conductor en el Resumen para este móvil/fecha. Selecciónalo (obligatorio).');
+    return;
+  }
   const drs = await loadDrivers();
   const dm = drs.find((d) => (d.nombre || '').trim().toLowerCase() === nombre.trim().toLowerCase());
   if (dm && [...sel.options].some((o) => o.value === String(dm.dr_id))) {
     sel.value = String(dm.dr_id);
     sel._comboSync && sel._comboSync();
+    setNote('sonar-info ok', `✓ Conductor traído del Resumen: ${dm.nombre || nombre}`);
     toast(`Conductor traído del Resumen: ${dm.nombre || nombre}`, 'ok');
+  } else { // el conductor del resumen no está en la lista SONAR
+    setNote('sonar-info warn', `⚠️ El conductor del Resumen (${nombre}) no está en la lista de SONAR. Selecciónalo manualmente.`);
   }
 }
 function closeSonar() { $('sonar-modal').hidden = true; }
 $('sonar-close').addEventListener('click', closeSonar);
 $('sonar-cancel').addEventListener('click', closeSonar);
 $('dispatch-btn').addEventListener('click', () => openSonar(null));
-$('s-mov').addEventListener('change', () => { updateSonarInfo(); traerConductorSonar(); });
+$('s-mov').addEventListener('change', () => { updateSonarInfo(); updateSonarProg(); traerConductorSonar(); });
+// Si el usuario elige el conductor a mano, se oculta el aviso del Resumen
+$('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n) n.hidden = true; });
 
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');

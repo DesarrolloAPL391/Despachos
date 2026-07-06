@@ -61,7 +61,10 @@
         <input type="email" id="email" autocomplete="username" required />
       </label>
       <label>Contraseña
-        <input type="password" id="password" autocomplete="current-password" required />
+        <span class="pass-wrap">
+          <input type="password" id="password" autocomplete="current-password" required />
+          <button type="button" id="toggle-pass" class="pass-eye" aria-label="Mostrar contraseña" title="Mostrar contraseña" aria-pressed="false">👁️</button>
+        </span>
       </label>
       <button type="submit" id="login-btn">Iniciar sesión</button>
       <p id="login-error" class="error" hidden></p>
@@ -260,6 +263,7 @@
         <label class="field"><span>Hora</span><input type="time" id="nd-hora" /></label>
         <label class="field"><span>Ruta / Itinerario *</span><select id="nd-ruta"></select></label>
         <label class="field check full" id="nd-estacion-wrap" hidden><input type="checkbox" id="nd-estacion" /> <span>Mostrar móviles de toda la estación</span></label>
+        <label class="field check full" id="nd-puesto-wrap" hidden><input type="checkbox" id="nd-puesto-todos" /> <span>Mostrar todos los móviles de mi puesto</span></label>
         <label class="field"><span>Móvil *</span><select id="nd-movil"></select></label>
         <label class="field"><span>Conductor *</span><select id="nd-cond"></select></label>
         <div class="field full sonar-info" id="nd-info" hidden></div>
@@ -286,9 +290,11 @@
         <button id="sonar-close" class="icon-btn">✕</button>
       </div>
       <form id="sonar-form" class="edit-form">
+        <div class="field full sonar-info" id="s-prog" hidden></div>
         <label class="field"><span>Móvil *</span><select id="s-mov"></select></label>
         <label class="field"><span>Itinerario · ruta SONAR *</span><select id="s-itin"></select></label>
-        <label class="field"><span>Conductor · SONAR</span><select id="s-drv"></select></label>
+        <label class="field"><span>Conductor · SONAR *</span><select id="s-drv"></select></label>
+        <div class="field full" id="s-cond-note" hidden></div>
         <label class="field"><span>Despachador (tú)</span><input id="s-desp-name" readonly /></label>
         <label class="field"><span>Comentarios</span><input id="s-com" /></label>
         <div class="field full sonar-info" id="s-info" hidden></div>
@@ -577,10 +583,10 @@
         <button id="preview-x" class="icon-btn">✕</button>
       </div>
       <div class="edit-form">
-        <label>Puesto a simular
+        <label>Despachador a simular
           <select id="preview-puesto"></select>
         </label>
-        <p class="hint">Verás las <b>rutas y móviles</b> que vería un despachador de ese puesto en <b>+ Nuevo despacho</b>. No cambia permisos ni datos.</p>
+        <p class="hint">Verás la app <b>tal cual la vería ese despachador</b> hoy: el <b>menú</b> se reduce a sus tablas y las tablas <b>Despachos</b> y <b>Resumen</b> muestran solo sus rutas. No cambia permisos ni datos.</p>
       </div>
       <div class="modal-foot">
         <span class="spacer"></span>
