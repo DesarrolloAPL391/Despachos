@@ -309,7 +309,11 @@ async function showApp(user) {
   // como la activa ANTES de cualquier consulta sujeta a RLS. (mi_contexto es
   // SECURITY DEFINER y no se ve afectada.) En recargas no se re-registra, así el
   // dispositivo que hizo login conserva la sesión a través de refresh de token.
-  if (pendingRegister) { pendingRegister = false; try { await sb.rpc('registrar_sesion'); } catch { /* lo revisa el timer */ } }
+  if (pendingRegister) {
+    pendingRegister = false;
+    const gps = await capturarGps(5000); // best-effort: si el usuario no da permiso, queda null (no bloquea)
+    try { await sb.rpc('registrar_sesion', { p_gps: gps }); } catch { /* lo revisa el timer */ }
+  }
   // Registrar configs de las tablas de despacho del despachador (por si la lectura general falla)
   for (const t of (CTX?.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
@@ -349,8 +353,11 @@ $('login-form').addEventListener('submit', async (e) => {
     email: $('email').value.trim(), password: $('password').value,
   });
   btn.disabled = false; btn.textContent = 'Iniciar sesión';
-  if (error) { err.textContent = 'Correo o contraseña incorrectos.'; err.hidden = false; }
-  else { pendingRegister = true; } // login nuevo: showApp registrará esta sesión como la activa
+  if (error) {
+    err.textContent = 'Correo o contraseña incorrectos.'; err.hidden = false;
+    // Auditoría: registrar el intento fallido (correo probado + dispositivo)
+    try { await sb.rpc('registrar_intento_fallido', { p_email: $('email').value.trim(), p_user_agent: navigator.userAgent }); } catch { /* no bloquea */ }
+  } else { pendingRegister = true; } // login nuevo: showApp registrará esta sesión como la activa
 });
 
 // Ojo para mostrar/ocultar la contraseña en el login
@@ -366,7 +373,10 @@ $('toggle-pass')?.addEventListener('click', () => {
   inp.focus();
 });
 
-$('logout-btn').addEventListener('click', async () => { await sb.auth.signOut(); });
+$('logout-btn').addEventListener('click', async () => {
+  try { await sb.rpc('registrar_cierre'); } catch { /* auditoría no bloquea el logout */ }
+  await sb.auth.signOut();
+});
 
 // ---------- navegación ----------
 function buildSidebar() {
@@ -389,6 +399,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
+  if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   buildBottomNav();
 }
@@ -4126,6 +4137,69 @@ function closeDsonar() { $('ds-modal').hidden = true; }
 $('dsonar-btn').addEventListener('click', openDsonar);
 $('ds-close').addEventListener('click', closeDsonar);
 $('ds-cancel').addEventListener('click', closeDsonar);
+
+// ---------- Auditoría de accesos (admin) ----------
+let AUD_ROWS = [];
+async function openAuditoria() {
+  if (!isAdmin()) return;
+  $('aud-error').hidden = true;
+  $('aud-modal').hidden = false;
+  await cargarAuditoria();
+}
+function closeAuditoria() { $('aud-modal').hidden = true; }
+async function cargarAuditoria() {
+  $('aud-error').hidden = true;
+  $('aud-results').innerHTML = '<div class="loading">Cargando…</div>';
+  const { data, error } = await sb.rpc('listar_auditoria', { p_limit: 300 });
+  if (error) {
+    $('aud-results').innerHTML = '';
+    $('aud-error').textContent = 'Error: ' + error.message; $('aud-error').hidden = false; return;
+  }
+  AUD_ROWS = data || [];
+  renderAuditoria();
+}
+function audBadge(e) {
+  const m = {
+    ingreso: ['Ingreso', 'chip-green'],
+    sesion_reemplazada: ['Reemplazó sesión', 'chip-red'],
+    intento_fallido: ['Intento fallido', 'chip-gray'],
+    cierre: ['Cierre', 'chip-gray'],
+  };
+  const [t, c] = m[e] || [e, 'chip-gray'];
+  return `<span class="chip ${c}">${esc(t)}</span>`;
+}
+function renderAuditoria() {
+  const ev = $('aud-evento').value;
+  const q = ($('aud-buscar').value || '').trim().toLowerCase();
+  let rows = AUD_ROWS;
+  if (ev) rows = rows.filter((r) => r.evento === ev);
+  if (q) rows = rows.filter((r) => (r.email || '').toLowerCase().includes(q) || (r.nombre || '').toLowerCase().includes(q));
+  if (!rows.length) { $('aud-results').innerHTML = '<div class="empty">Sin eventos con ese filtro.</div>'; return; }
+  const filas = rows.map((r) => {
+    const f = new Date(r.creado_en);
+    const cuando = isNaN(f.getTime()) ? esc(String(r.creado_en || '')) : esc(f.toLocaleString('es-CO'));
+    const disp = esc((r.user_agent || '').slice(0, 60));
+    const gps = r.gps
+      ? `<a href="https://maps.google.com/?q=${encodeURIComponent(r.gps)}" target="_blank" rel="noopener" title="${esc(r.gps)}">📍 ver</a>`
+      : '—';
+    return `<tr>
+      <td>${cuando}</td>
+      <td>${audBadge(r.evento)}</td>
+      <td>${esc(r.nombre || '')}<br><span class="muted">${esc(r.email || '')}</span></td>
+      <td>${esc(r.ip || '—')}</td>
+      <td>${gps}</td>
+      <td class="muted" title="${esc(r.user_agent || '')}">${disp}</td>
+    </tr>`;
+  }).join('');
+  $('aud-results').innerHTML = `<table class="ds-table"><thead><tr>
+    <th>Cuándo</th><th>Evento</th><th>Usuario</th><th>IP</th><th>GPS</th><th>Dispositivo</th>
+    </tr></thead><tbody>${filas}</tbody></table>`;
+}
+$('aud-close').addEventListener('click', closeAuditoria);
+$('aud-cancel').addEventListener('click', closeAuditoria);
+$('aud-reload').addEventListener('click', cargarAuditoria);
+$('aud-evento').addEventListener('change', renderAuditoria);
+$('aud-buscar').addEventListener('input', renderAuditoria);
 
 $('ds-run').addEventListener('click', async () => {
   const err = $('ds-error'); err.hidden = true;

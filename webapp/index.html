@@ -358,6 +358,35 @@
     </div>
   </div>
 
+  <!-- Modal Auditoría de accesos (admin) -->
+  <div id="aud-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>🔐 Auditoría de accesos</h3>
+        <button id="aud-close" class="icon-btn">✕</button>
+      </div>
+      <form id="aud-form" class="edit-form" onsubmit="return false">
+        <label class="field"><span>Evento</span>
+          <select id="aud-evento">
+            <option value="">Todos</option>
+            <option value="ingreso">Ingresos</option>
+            <option value="sesion_reemplazada">Sesiones reemplazadas</option>
+            <option value="intento_fallido">Intentos fallidos</option>
+            <option value="cierre">Cierres</option>
+          </select>
+        </label>
+        <label class="field"><span>Buscar correo/nombre</span><input type="text" id="aud-buscar" placeholder="filtro…" /></label>
+      </form>
+      <div id="aud-results" class="ds-results"></div>
+      <div class="modal-foot">
+        <p id="aud-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="aud-cancel" class="btn">Cerrar</button>
+        <button id="aud-reload" class="btn btn-primary">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal Asignar puesto del día (admin) -->
   <div id="pst-modal" class="modal" hidden>
     <div class="modal-card">
