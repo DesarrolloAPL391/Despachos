@@ -63,6 +63,11 @@ function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').
 //   del despachador (RPC preview_contexto_despachador) para que la simulación sea fiel.
 let PREVIEW = null;
 function filtraComoDespachador() { return !!PREVIEW || !isAdmin(); }
+// Rol EFECTIVO para las affordances de UI (columnas de control, botones por fila): en vista
+// previa refleja el rol simulado, no el del admin real, para que "Ver como…" sea fiel.
+// (No es control de acceso —el actor sigue siendo admin y la RLS manda—, solo fidelidad visual.)
+function efIsAdmin() { return PREVIEW ? false : isAdmin(); }
+function efIsAuditor() { return PREVIEW ? PREVIEW.rol === 'auditor' : isAuditor(); }
 // Puesto actual: el simulado en vista previa, o el del despachador logueado (admin normal = ninguno)
 function puestoActual() { return PREVIEW ? (PREVIEW.puesto || '') : (CTX?.puesto || ''); }
 // Muestra "📌 Puesto" junto al título de la tabla (identifica en qué puesto estamos)
@@ -239,35 +244,39 @@ function showLogin() {
   $('login-screen').hidden = false;
 }
 
-// ---------- sesión única por dispositivo (despachadores) ----------
-let sessionUser = null, sessTimer = null;
-function getDeviceId() {
-  let d = localStorage.getItem('apl_device_id');
-  if (!d) { d = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); localStorage.setItem('apl_device_id', d); }
-  return d;
+// ---------- sesión única por usuario (todos los roles) ----------
+// El enforcement REAL vive en la base de datos: una política RLS exige que el
+// session_id del JWT actual sea el registrado como activo para el usuario (ver
+// sql/03_sesion_unica.sql). Aquí solo (a) registramos esta sesión al hacer login
+// y (b) avisamos y sacamos al usuario si su sesión fue reemplazada en otro equipo.
+let sessionUser = null, sessTimer = null, pendingRegister = false;
+async function cerrarPorSesionReemplazada() {
+  if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
+  sessionUser = null;
+  alert('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.');
+  await sb.auth.signOut();
 }
-async function registrarDispositivo(user) {
-  await sb.from('dispositivos').upsert(
-    { user_id: user.id, device_id: getDeviceId(), nombre: navigator.userAgent.slice(0, 120), actualizado: new Date().toISOString() },
-    { onConflict: 'user_id' },
-  );
-}
-async function verificarDispositivo() {
+// Chequeo proactivo: pregunta al servidor si esta sesión sigue siendo la vigente.
+async function verificarSesionVigente() {
   if (!sessionUser) return;
-  const { data, error } = await sb.from('dispositivos').select('device_id').eq('user_id', sessionUser.id).maybeSingle();
-  if (error || !data) return;
-  if (data.device_id && data.device_id !== getDeviceId()) {
-    if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
-    sessionUser = null;
-    alert('Tu cuenta se abrió en otro dispositivo. Se cerrará esta sesión aquí.');
-    await sb.auth.signOut();
-  }
+  const { data, error } = await sb.rpc('mi_sesion_vigente');
+  if (error) return;              // error de red: no expulsar (se reintenta luego)
+  if (data === false) await cerrarPorSesionReemplazada();
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarDispositivo(); refreshContext(); checkAsistenciaPendiente(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); } });
 
 // Firma del contexto para detectar si el admin cambió el puesto/tablas/rutas
 function ctxSig(c) {
-  return c ? (c.puesto || '') + '|' + JSON.stringify((c.tablas || []).map((t) => t.tabla)) + '|' + (c.ids || []).join(',') : '';
+  if (!c) return '';
+  // Incluye grupos y horario: en domingo/festivo el admin puede cambiar los grupos del día
+  // sin tocar puesto/tablas/ids, y el filtrado de móviles debe refrescarse igual.
+  return [
+    c.puesto || '',
+    JSON.stringify((c.tablas || []).map((t) => t.tabla)),
+    (c.ids || []).join(','),
+    (c.grupos || []).join(','),
+    c.hora_inicio || '', c.hora_fin || '',
+  ].join('|');
 }
 // Recarga el contexto del despachador y, si cambió, reconstruye el menú al vuelo
 async function refreshContext() {
@@ -296,6 +305,11 @@ async function showApp(user) {
   // Cargar contexto/rol del usuario
   try { const { data } = await sb.rpc('mi_contexto'); CTX = data || null; }
   catch { CTX = null; }
+  // Sesión única por usuario: si venimos de un login NUEVO, registrar esta sesión
+  // como la activa ANTES de cualquier consulta sujeta a RLS. (mi_contexto es
+  // SECURITY DEFINER y no se ve afectada.) En recargas no se re-registra, así el
+  // dispositivo que hizo login conserva la sesión a través de refresh de token.
+  if (pendingRegister) { pendingRegister = false; try { await sb.rpc('registrar_sesion'); } catch { /* lo revisa el timer */ } }
   // Registrar configs de las tablas de despacho del despachador (por si la lectura general falla)
   for (const t of (CTX?.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
@@ -313,14 +327,11 @@ async function showApp(user) {
   // Mostrar nombre + rol/puesto del usuario
   $('user-email').textContent = etiquetaUsuario(user);
   updateGpsStatus();
-  // Sesión única por dispositivo (solo despachadores): este equipo pasa a ser el activo
+  // Sesión única por usuario (TODOS los roles): vigilar que esta siga siendo la
+  // sesión vigente; si otro equipo inicia sesión con la misma cuenta, aquí se cierra.
   if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
-  sessionUser = null;
-  if (CTX?.rol === 'despachador') {
-    await registrarDispositivo(user);
-    sessionUser = user;
-    sessTimer = setInterval(() => { verificarDispositivo(); refreshContext(); checkAsistenciaPendiente(); }, 45000);
-  }
+  sessionUser = user;
+  sessTimer = setInterval(() => { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); }, 30000);
   buildSidebar();
   current = null;
   selectTable(visibleTables()[0] || 'despachos');
@@ -339,6 +350,7 @@ $('login-form').addEventListener('submit', async (e) => {
   });
   btn.disabled = false; btn.textContent = 'Iniciar sesión';
   if (error) { err.textContent = 'Correo o contraseña incorrectos.'; err.hidden = false; }
+  else { pendingRegister = true; } // login nuevo: showApp registrará esta sesión como la activa
 });
 
 // Ojo para mostrar/ocultar la contraseña en el login
@@ -471,6 +483,7 @@ function selectTable(name) {
   // Si el mapa está flotante, NO lo ocultamos: debe seguir visible mientras se despacha
   if (!mapaFlotante) { $('map-view').hidden = true; if (mapTimer) { clearInterval(mapTimer); mapTimer = null; } }
   $('table-view').hidden = false;
+  clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
   // Si la tabla tiene filtro de fecha (calendario), arranca mostrando el DÍA ACTUAL
   // (no "todas las fechas"): así se ve el día completo y nunca topa el límite de filas.
@@ -771,7 +784,11 @@ function applyQueryFilters(qy, opts = {}) {
     else if (bf.op === 'eq') qy = qy.eq(bf.col, bf.val);
   });
   if (!opts.skipSearch && term && cfg.searchCols?.length) {
-    qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${term}%`).join(','));
+    // En la sintaxis de PostgREST or(...), los caracteres , ( ) " \ rompen el filtro
+    // (la coma separa condiciones, los paréntesis agrupan). Se sustituyen por espacio;
+    // un término de búsqueda no los necesita.
+    const safe = term.replace(/[,()"\\]/g, ' ').trim();
+    if (safe) qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${safe}%`).join(','));
   }
   for (const [key, val] of Object.entries(filters)) { // eq, rango de fecha (::gte/::lte) o lista (::in)
     if (key.endsWith('::gte')) {
@@ -1374,6 +1391,7 @@ function rowMatchesTerm(cfg, row, t) {
 }
 async function loadData() {
   const cfg = TABLES[current];
+  const reqTabla = current, reqPage = page; // firma de la petición: si cambia durante el await, se descarta
   refrescarFechaServidor(); // mantiene al día la fecha del servidor (sin bloquear el render)
   $('loading').hidden = false; $('empty').hidden = true;
   // Día completo: si hay un día seleccionado en el calendario, se muestra TODA la
@@ -1404,8 +1422,11 @@ async function loadData() {
   }
 
   const { data, error, count } = await qy;
+  // El usuario cambió de tabla o de página mientras respondía esta consulta: descartar
+  // la respuesta vieja para no pintar datos de otra vista sobre la actual.
+  if (reqTabla !== current || reqPage !== page) return;
   $('loading').hidden = true;
-  if (error) { toast('Error al cargar: ' + error.message, 'err'); return; }
+  if (error) { toast('Error al cargar: ' + error.message, 'err'); verificarSesionVigente(); return; }
   let rows = data || [];
   let total = count || 0;
   if (useClientSearch) { rows = rows.filter((r) => rowMatchesTerm(cfg, r, term)); total = rows.length; }
@@ -1505,7 +1526,7 @@ function actualizarProximoBar(cfg, pend, diaSel) {
 function renderTable(cfg, rows, count, diaSel = false) {
   const head = $('thead-row'); head.innerHTML = '';
   // Columnas de auditoría (auditCol): solo las ven el admin y el auditor; al despachador le sobran
-  const cols = cfg.columns.filter((c) => !(c.auditCol && !isAdmin() && !isAuditor()));
+  const cols = cfg.columns.filter((c) => !(c.auditCol && !efIsAdmin() && !efIsAuditor()));
   // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
   const hasMobile = cols.some((c) => c.m);
   cols.forEach((c) => {
@@ -1588,7 +1609,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
         }));
       } else {
-        if (cfg.dispatchable && !isAuditor()) { // el auditor no despacha ni cancela: solo audita
+        if (cfg.dispatchable && !efIsAuditor()) { // el auditor no despacha ni cancela: solo audita
           const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', innerHTML: ICON.send });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
@@ -1623,7 +1644,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
         }
         // Editar: el admin siempre; el auditor también (para auditar, incluso fechas pasadas).
         // El despachador solo despacha/cancela.
-        if (isAdmin() || isAuditor()) {
+        if (efIsAdmin() || efIsAuditor()) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
           // No se edita una fecha adelantada (futura). El auditor sí audita días anteriores.
           if (esFutura) {
@@ -1688,7 +1709,10 @@ function renderTable(cfg, rows, count, diaSel = false) {
 async function loadFkOptions(fk) {
   // La caché se separa por vista previa: si el admin simula a un despachador, sus
   // rutas filtradas NO deben quedar cacheadas para el admin (ni al revés).
-  const ck = fk.table + (fk.table === 'rutas' && PREVIEW ? '::prev:' + PREVIEW.email : '');
+  // La clave incluye las rutas del contexto: si el admin reasigna las rutas del despachador
+  // (cambia CTX.ids), la caché no debe devolver las rutas viejas del desplegable.
+  const ctxIds = fk.table === 'rutas' ? (PREVIEW ? PREVIEW.ids : (CTX?.ids || [])).join(',') : '';
+  const ck = fk.table + (fk.table === 'rutas' && PREVIEW ? '::prev:' + PREVIEW.email : '') + (ctxIds ? '::ids:' + ctxIds : '');
   if (fkCache[ck]) return fkCache[ck];
   const { data, error } = await sb.from(fk.table).select(fk.sel).order(fk.order, { ascending: true }).limit(2000);
   if (error) { toast('Error opciones ' + fk.table, 'err'); return []; }
@@ -2084,6 +2108,7 @@ function finishQr(text) {
 // Abre la cámara, lee un QR y resuelve con su texto (o null si se cancela).
 function openQrScanner() {
   const modal = $('qr-modal'), video = $('qr-video'), status = $('qr-status');
+  stopQr(); // sana cualquier cámara que hubiera quedado abierta de una apertura anterior
   status.className = 'qr-status'; status.textContent = 'Iniciando cámara…';
   modal.hidden = false;
   return new Promise((resolve) => {
@@ -2096,6 +2121,9 @@ function openQrScanner() {
         status.textContent = 'No se pudo abrir la cámara. Concede el permiso e inténtalo de nuevo.';
         return; // el usuario cierra con Cancelar
       }
+      // Si el usuario canceló mientras la cámara arrancaba, el modal ya está oculto:
+      // detener el stream recién obtenido para no dejar la cámara encendida.
+      if (modal.hidden) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; return; }
       video.srcObject = qrStream;
       try { await video.play(); } catch {}
       status.className = 'qr-status'; status.textContent = 'Apunta la cámara al QR del carnet…';
@@ -3083,8 +3111,10 @@ async function loadDespachadores() {
   return despList;
 }
 function fillSelect(sel, pairs, placeholder = '— selecciona —') {
-  sel.innerHTML = `<option value="">${placeholder}</option>` +
-    pairs.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  // Se escapan value y etiqueta: aunque los datos son semi-controlados (SONAR/parque), un
+  // valor con <, " o & rompería el <option> o su atributo value.
+  sel.innerHTML = `<option value="">${esc(placeholder)}</option>` +
+    pairs.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
 }
 function hoyLocal() {
   const d = new Date();
@@ -3436,7 +3466,10 @@ async function filtrarMovilesPorRuta() {
       objetivo = new Set(allowG); // todos los grupos del puesto del despachador
     } else {
       objetivo = usarEstacion ? gruposEstacion : new Set(grupoRuta ? [grupoRuta] : []);
-      if (allowG) objetivo = new Set([...objetivo].filter((g) => allowG.has(g)));
+      // Solo intersectar cuando allowG trae grupos (domingo/festivo). En día hábil allowG
+      // viene vacío pero truthy; sin la guarda .size el objetivo quedaría vacío y se
+      // mostrarían TODOS los móviles de la flota (salvaguarda), anulando el filtro por grupo.
+      if (allowG && allowG.size) objetivo = new Set([...objetivo].filter((g) => allowG.has(g)));
     }
     // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool "Integradas"
     if ([...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
@@ -3523,6 +3556,14 @@ async function reportarFalloSonar(tabla, id, motivo, extra) {
 
 // Ejecuta un despacho completo (BD + SONAR) a partir de un "intent". Lanza si hay error de red.
 async function doDispatch(intent) {
+  // Idempotencia: si este intent ya fue confirmado por SONAR (reintento desde la cola offline
+  // tras perder la red después de despachar), NO lo reenviamos para evitar un doble despacho.
+  // Se consulta solo en línea; sin conexión no bloquea el flujo offline.
+  if (navigator.onLine) {
+    const { data: prev, error: preErr } = await sb.from('despachos').select('sonar_regid').eq('id', intent.id).maybeSingle();
+    if (preErr && isNetworkErr(preErr)) throw preErr; // sin red: se reintenta luego
+    if (prev?.sonar_regid) return { ok: true, regid: prev.sonar_regid, status: 200, response: '', yaDespachado: true };
+  }
   let ruta_id = null;
   if (intent.itinNombre) {
     const { data, error } = await sb.from('rutas').upsert({ nombre: intent.itinNombre }, { onConflict: 'nombre' }).select('id').single();
@@ -4424,7 +4465,7 @@ async function refreshMapa(fit) {
   if (error) { toast('Error al cargar ubicaciones: ' + error.message, 'err'); return; }
   let rows = data || [];
   // Despachador: solo móviles de sus rutas (la RLS ya limita, esto es por si acaso)
-  if (!isAdmin()) { const allow = allowedRutaSet(); rows = rows.filter((r) => allow.has(normRuta(r.ruta))); }
+  if (!efIsAdmin()) { const allow = allowedRutaSet(); rows = rows.filter((r) => allow.has(normRuta(r.ruta))); }
   lastUbic = rows;
   fillRutaSelect();
   renderMarkers(fit);
@@ -4587,7 +4628,7 @@ $('syncfleet-btn').addEventListener('click', async () => {
   const { data, error } = await sb.rpc('sync_moviles');
   btn.disabled = false; btn.textContent = t;
   if (error) { toast('Error: ' + error.message, 'err'); return; }
-  if (data && data.ok) { gpsMap = null; toast(`Flota sincronizada: ${data.moviles} móviles`, 'ok'); if (current === 'vehiculosgps') loadData(); }
+  if (data && data.ok) { gpsMap = null; vehList = null; toast(`Flota sincronizada: ${data.moviles} móviles`, 'ok'); if (current === 'vehiculosgps') loadData(); }
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
 });
 
@@ -4596,7 +4637,7 @@ $('synccond-btn').addEventListener('click', async () => {
   const { data, error } = await sb.rpc('sync_conductores');
   btn.disabled = false; btn.textContent = t;
   if (error) { toast('Error: ' + error.message, 'err'); return; }
-  if (data && data.ok) { toast(`Conductores sincronizados: ${data.conductores}`, 'ok'); if (current === 'conductores_sonar') loadData(); }
+  if (data && data.ok) { drvList = null; toast(`Conductores sincronizados: ${data.conductores}`, 'ok'); if (current === 'conductores_sonar') loadData(); }
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
 });
 
