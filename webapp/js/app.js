@@ -250,19 +250,21 @@ function showLogin() {
 // sql/03_sesion_unica.sql). Aquí solo (a) registramos esta sesión al hacer login
 // y (b) avisamos y sacamos al usuario si su sesión fue reemplazada en otro equipo.
 let sessionUser = null, sessTimer = null, pendingRegister = false;
-async function cerrarPorSesionReemplazada() {
+async function cerrarSesionCon(msg) {
   if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
   sessionUser = null;
-  alert('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.');
+  alert(msg);
   await sb.auth.signOut();
 }
-// Chequeo proactivo: verifica que la sesión siga vigente Y marca actividad (para la
-// pantalla de "conectados"). heartbeat() devuelve false si esta sesión fue reemplazada.
+// Chequeo proactivo: verifica vigencia + horario Y marca actividad (para "conectados").
+// heartbeat() devuelve {estado: 'ok'|'reemplazada'|'fuera_horario'} (o boolean en versiones previas).
 async function verificarSesionVigente() {
   if (!sessionUser) return;
   const { data, error } = await sb.rpc('heartbeat');
   if (error) return;              // error de red: no expulsar (se reintenta luego)
-  if (data === false) await cerrarPorSesionReemplazada();
+  const estado = (typeof data === 'boolean') ? (data ? 'ok' : 'reemplazada') : (data?.estado || 'ok');
+  if (estado === 'reemplazada') await cerrarSesionCon('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.');
+  else if (estado === 'fuera_horario') await cerrarSesionCon('Tu turno terminó (o aún no comienza). La sesión se cerró por horario.');
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); } });
 
@@ -315,6 +317,20 @@ async function showApp(user) {
     const gps = await capturarGps(5000); // best-effort: si el usuario no da permiso, queda null (no bloquea)
     try { await sb.rpc('registrar_sesion', { p_gps: gps }); } catch { /* lo revisa el timer */ }
   }
+  // Control de acceso por horario (despachadores): si está fuera de su turno, no ingresa.
+  try {
+    const acc = await sb.rpc('mi_acceso_horario');
+    if (acc.data && acc.data.permitido === false) {
+      const d = acc.data;
+      const msg = d.tiene_turno
+        ? `Fuera de tu horario. Tu turno de hoy es ${d.hora_inicio || '—'}–${d.hora_fin || '—'}.\nNo puedes ingresar ahora.`
+        : 'No tienes turno asignado para hoy.\nPide al administrador que te asigne el horario.';
+      sessionUser = null;
+      alert(msg);
+      await sb.auth.signOut();
+      return;
+    }
+  } catch { /* si la RPC aún no existe, no bloquea el ingreso */ }
   // Registrar configs de las tablas de despacho del despachador (por si la lectura general falla)
   for (const t of (CTX?.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
