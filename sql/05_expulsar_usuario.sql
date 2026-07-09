@@ -35,11 +35,10 @@ begin
   -- 1) Revocar sesiones reales (corta el refresh token)
   delete from auth.sessions where user_id = v_uid;
 
-  -- 2) Invalidar la sesión activa -> bloqueo RLS inmediato del access token vivo
-  insert into public.sesion_activa (user_id, session_id, updated_at)
-  values (v_uid, gen_random_uuid(), now())
-  on conflict (user_id) do update
-    set session_id = gen_random_uuid(), updated_at = now();
+  -- 2) Quitar la sesión activa -> bloqueo RLS inmediato (es_sesion_vigente = false por
+  --    no existir fila) y el usuario sale YA de la lista de "conectados" (no queda como
+  --    "en línea"). Al volver a iniciar sesión, registrar_sesion recrea la fila.
+  delete from public.sesion_activa where user_id = v_uid;
 
   -- 3) Auditoría
   insert into public.auditoria_accesos (user_id, email, evento, detalle)

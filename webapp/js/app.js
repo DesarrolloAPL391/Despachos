@@ -4206,17 +4206,23 @@ $('aud-evento').addEventListener('change', renderAuditoria);
 $('aud-buscar').addEventListener('input', renderAuditoria);
 
 // ---------- Usuarios conectados (admin) ----------
+let conTimer = null;
 async function openConectados() {
   if (!isAdmin()) return;
   $('con-error').hidden = true;
   $('con-modal').hidden = false;
   await cargarConectados();
+  if (conTimer) clearInterval(conTimer);
+  conTimer = setInterval(cargarConectados, 15000); // auto-refresco mientras la pantalla está abierta
 }
-function closeConectados() { $('con-modal').hidden = true; }
+function closeConectados() {
+  $('con-modal').hidden = true;
+  if (conTimer) { clearInterval(conTimer); conTimer = null; }
+}
 async function cargarConectados() {
   $('con-error').hidden = true;
   $('con-results').innerHTML = '<div class="loading">Cargando…</div>';
-  const { data, error } = await sb.rpc('listar_conectados', { p_minutos: 3 });
+  const { data, error } = await sb.rpc('listar_conectados', { p_minutos: 2 });
   if (error) {
     $('con-results').innerHTML = '';
     $('con-error').textContent = 'Error: ' + error.message; $('con-error').hidden = false; return;
