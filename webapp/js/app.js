@@ -256,10 +256,11 @@ async function cerrarPorSesionReemplazada() {
   alert('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.');
   await sb.auth.signOut();
 }
-// Chequeo proactivo: pregunta al servidor si esta sesión sigue siendo la vigente.
+// Chequeo proactivo: verifica que la sesión siga vigente Y marca actividad (para la
+// pantalla de "conectados"). heartbeat() devuelve false si esta sesión fue reemplazada.
 async function verificarSesionVigente() {
   if (!sessionUser) return;
-  const { data, error } = await sb.rpc('mi_sesion_vigente');
+  const { data, error } = await sb.rpc('heartbeat');
   if (error) return;              // error de red: no expulsar (se reintenta luego)
   if (data === false) await cerrarPorSesionReemplazada();
 }
@@ -399,6 +400,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
   if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
+  if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   buildBottomNav();
@@ -4202,6 +4204,60 @@ $('aud-cancel').addEventListener('click', closeAuditoria);
 $('aud-reload').addEventListener('click', cargarAuditoria);
 $('aud-evento').addEventListener('change', renderAuditoria);
 $('aud-buscar').addEventListener('input', renderAuditoria);
+
+// ---------- Usuarios conectados (admin) ----------
+async function openConectados() {
+  if (!isAdmin()) return;
+  $('con-error').hidden = true;
+  $('con-modal').hidden = false;
+  await cargarConectados();
+}
+function closeConectados() { $('con-modal').hidden = true; }
+async function cargarConectados() {
+  $('con-error').hidden = true;
+  $('con-results').innerHTML = '<div class="loading">Cargando…</div>';
+  const { data, error } = await sb.rpc('listar_conectados', { p_minutos: 3 });
+  if (error) {
+    $('con-results').innerHTML = '';
+    $('con-error').textContent = 'Error: ' + error.message; $('con-error').hidden = false; return;
+  }
+  const rows = data || [];
+  if (!rows.length) { $('con-results').innerHTML = '<div class="empty">Nadie ha iniciado sesión aún.</div>'; return; }
+  const enLinea = rows.filter((r) => r.en_linea).length;
+  const filas = rows.map((r) => {
+    const f = new Date(r.ultimo);
+    const cuando = isNaN(f.getTime()) ? esc(String(r.ultimo || '')) : esc(f.toLocaleString('es-CO'));
+    const estado = r.en_linea
+      ? '<span class="gps-dot on"></span> <b>En línea</b>'
+      : '<span class="gps-dot none"></span> <span class="muted">Inactivo</span>';
+    return `<tr>
+      <td>${estado}</td>
+      <td>${esc(r.nombre || '')}<br><span class="muted">${esc(r.email || '')}</span></td>
+      <td>${esc(r.rol || '')}</td>
+      <td>${cuando}</td>
+      <td><button class="act act-stop" title="Cerrar su sesión" data-kick="${esc(r.email)}">🚪</button></td>
+    </tr>`;
+  }).join('');
+  $('con-results').innerHTML = `<div class="cnt-total">🟢 En línea ahora: <b>${enLinea}</b> · Con sesión abierta: <b>${rows.length}</b></div>
+    <table class="ds-table"><thead><tr><th>Estado</th><th>Usuario</th><th>Rol</th><th>Última actividad</th><th></th></tr></thead><tbody>${filas}</tbody></table>`;
+  $('con-results').querySelectorAll('button[data-kick]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const email = b.dataset.kick;
+      const ok = await confirmAction({
+        title: '🚪 Cerrar sesión', lead: `Se cerrará la sesión de:\n${email}`,
+        message: 'El usuario saldrá al login de inmediato.\n¿Continuar?', okLabel: 'Cerrar sesión', danger: true,
+      });
+      if (!ok) return;
+      const res = await sb.rpc('admin_expulsar_usuario', { p_email: email });
+      if (res.error) { toast('Error: ' + res.error.message, 'err'); return; }
+      if (res.data?.ok) { toast('Sesión cerrada para ' + email, 'ok'); cargarConectados(); }
+      else toast('No se pudo: ' + (res.data?.error || '?'), 'err');
+    });
+  });
+}
+$('con-close').addEventListener('click', closeConectados);
+$('con-cancel').addEventListener('click', closeConectados);
+$('con-reload').addEventListener('click', cargarConectados);
 
 $('ds-run').addEventListener('click', async () => {
   const err = $('ds-error'); err.hidden = true;
