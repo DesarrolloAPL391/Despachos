@@ -4206,6 +4206,25 @@ $('aud-evento').addEventListener('change', renderAuditoria);
 $('aud-buscar').addEventListener('input', renderAuditoria);
 
 // ---------- Usuarios conectados (admin) ----------
+// "hace X" a partir de una fecha
+function tiempoRelativo(d) {
+  const s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (s < 60) return 'hace instantes';
+  const m = Math.floor(s / 60); if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60); if (h < 24) return `hace ${h} h`;
+  const dd = Math.floor(h / 24); return dd === 1 ? 'ayer' : `hace ${dd} días`;
+}
+// color estable del avatar según el nombre
+function avatarColor(str) {
+  let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
+  return `hsl(${h}, 55%, 45%)`;
+}
+function rolChipCls(rol) {
+  const r = String(rol || '').toLowerCase();
+  if (r === 'admin') return 'chip-red';
+  if (r === 'auditor') return 'chip-violet';
+  return 'chip-indigo';
+}
 let conTimer = null;
 async function openConectados() {
   if (!isAdmin()) return;
@@ -4229,23 +4248,35 @@ async function cargarConectados() {
   }
   const rows = data || [];
   if (!rows.length) { $('con-results').innerHTML = '<div class="empty">Nadie ha iniciado sesión aún.</div>'; return; }
-  const enLinea = rows.filter((r) => r.en_linea).length;
-  const filas = rows.map((r) => {
+  const online = rows.filter((r) => r.en_linea);
+  const offline = rows.filter((r) => !r.en_linea);
+  const card = (r) => {
+    const nombre = (r.nombre || r.email || '—').trim();
+    const inicial = esc(nombre[0] || '?');
     const f = new Date(r.ultimo);
-    const cuando = isNaN(f.getTime()) ? esc(String(r.ultimo || '')) : esc(f.toLocaleString('es-CO'));
-    const estado = r.en_linea
-      ? '<span class="gps-dot on"></span> <b>En línea</b>'
-      : '<span class="gps-dot none"></span> <span class="muted">Inactivo</span>';
-    return `<tr>
-      <td>${estado}</td>
-      <td>${esc(r.nombre || '')}<br><span class="muted">${esc(r.email || '')}</span></td>
-      <td>${esc(r.rol || '')}</td>
-      <td>${cuando}</td>
-      <td><button class="act act-stop" title="Cerrar su sesión" data-kick="${esc(r.email)}">🚪</button></td>
-    </tr>`;
-  }).join('');
-  $('con-results').innerHTML = `<div class="cnt-total">🟢 En línea ahora: <b>${enLinea}</b> · Con sesión abierta: <b>${rows.length}</b></div>
-    <table class="ds-table"><thead><tr><th>Estado</th><th>Usuario</th><th>Rol</th><th>Última actividad</th><th></th></tr></thead><tbody>${filas}</tbody></table>`;
+    const cuando = isNaN(f.getTime()) ? '' : tiempoRelativo(f);
+    const meta = r.en_linea
+      ? '<span class="con-live"><span class="dot"></span>En línea</span>'
+      : `<span class="con-when">${esc(cuando)}</span>`;
+    return `<div class="con-card ${r.en_linea ? '' : 'off'}">
+      <div class="con-av" style="background:${avatarColor(nombre)}">${inicial}</div>
+      <div class="con-main">
+        <div class="con-name">${esc(nombre)}<span class="con-chip ${rolChipCls(r.rol)}">${esc(r.rol || '—')}</span></div>
+        <div class="con-mail">${esc(r.email || '')}</div>
+      </div>
+      <div class="con-meta">
+        ${meta}
+        <button class="con-kick" data-kick="${esc(r.email)}" title="Cerrar su sesión">🚪</button>
+      </div>
+    </div>`;
+  };
+  let html = `<div class="con-head">
+      <div class="con-stat on"><div class="n">${online.length}</div><div class="l">🟢 En línea ahora</div></div>
+      <div class="con-stat total"><div class="n">${rows.length}</div><div class="l">Con sesión abierta</div></div>
+    </div>`;
+  if (online.length) html += `<div class="con-sec">En línea (${online.length})</div><div class="con-list">${online.map(card).join('')}</div>`;
+  if (offline.length) html += `<div class="con-sec">Inactivos (${offline.length})</div><div class="con-list">${offline.map(card).join('')}</div>`;
+  $('con-results').innerHTML = html;
   $('con-results').querySelectorAll('button[data-kick]').forEach((b) => {
     b.addEventListener('click', async () => {
       const email = b.dataset.kick;
