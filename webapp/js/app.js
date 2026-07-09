@@ -4258,11 +4258,16 @@ async function cargarConectados() {
     const meta = r.en_linea
       ? '<span class="con-live"><span class="dot"></span>En línea</span>'
       : `<span class="con-when">${esc(cuando)}</span>`;
+    const info = [];
+    if (r.ruta) info.push(`📍 ${esc(r.ruta)}`);
+    if (r.hora_inicio) info.push(`🕒 ${esc(r.hora_inicio)}${r.hora_fin ? '–' + esc(r.hora_fin) : ''}`);
+    const infoLine = info.length ? `<div class="con-info">${info.join(' · ')}</div>` : '';
     return `<div class="con-card ${r.en_linea ? '' : 'off'}">
       <div class="con-av" style="background:${avatarColor(nombre)}">${inicial}</div>
       <div class="con-main">
         <div class="con-name">${esc(nombre)}<span class="con-chip ${rolChipCls(r.rol)}">${esc(r.rol || '—')}</span></div>
         <div class="con-mail">${esc(r.email || '')}</div>
+        ${infoLine}
       </div>
       <div class="con-meta">
         ${meta}

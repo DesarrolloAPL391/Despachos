@@ -26,8 +26,11 @@ begin
 end;
 $$;
 
+-- Se recrea con columnas nuevas (ruta/horario del día), por eso el drop.
+drop function if exists public.listar_conectados(int);
 create or replace function public.listar_conectados(p_minutos int default 3)
-returns table (email text, nombre text, rol text, ultimo timestamptz, en_linea boolean)
+returns table (email text, nombre text, rol text, ultimo timestamptz, en_linea boolean,
+               ruta text, hora_inicio text, hora_fin text)
 language sql
 stable
 security definer
@@ -37,10 +40,24 @@ as $$
          coalesce(p.nombre, ''),
          coalesce(p.rol, ''),
          sa.updated_at,
-         sa.updated_at > now() - make_interval(mins => greatest(1, coalesce(p_minutos, 3)))
+         sa.updated_at > now() - make_interval(mins => greatest(1, coalesce(p_minutos, 3))),
+         h.ruta,
+         h.hora_inicio,
+         h.hora_fin
   from public.sesion_activa sa
   join auth.users u on u.id = sa.user_id
   left join public.perfiles p on p.id = sa.user_id
+  -- Ruta y horario del día (zona Colombia) desde la programación de horarios
+  left join lateral (
+    select ho.observacion as ruta,
+           to_char(ho.hora_inicio, 'HH24:MI') as hora_inicio,
+           to_char(ho.hora_fin,    'HH24:MI') as hora_fin
+    from public.horarios ho
+    where lower(ho.email) = lower(u.email)
+      and ho.fecha = (now() at time zone 'America/Bogota')::date
+    order by ho.updated_at desc nulls last
+    limit 1
+  ) h on true
   where public.es_admin()
   order by sa.updated_at desc;
 $$;
