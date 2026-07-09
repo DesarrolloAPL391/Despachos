@@ -523,6 +523,7 @@ function selectTable(name) {
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
+  $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
   // sin "+ Nuevo" donde no aplica (el auditor no crea; tampoco en la vista previa "como auditor")
   $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate || isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor');
   buildSidebar();
@@ -4162,6 +4163,7 @@ function audBadge(e) {
   const m = {
     ingreso: ['Ingreso', 'chip-green'],
     sesion_reemplazada: ['Reemplazó sesión', 'chip-red'],
+    expulsado_por_admin: ['Expulsado por admin', 'chip-red'],
     intento_fallido: ['Intento fallido', 'chip-gray'],
     cierre: ['Cierre', 'chip-gray'],
   };
@@ -4738,6 +4740,21 @@ $('perfil-pass-btn').addEventListener('click', async () => {
   const { data, error } = await sb.rpc('admin_reset_pass', { p_email: email, p_pass: pass });
   if (error) { toast('Error: ' + error.message, 'err'); return; }
   if (data?.ok) toast('Contraseña restablecida para ' + email, 'ok');
+  else toast('No se pudo: ' + (data?.error || '?'), 'err');
+});
+$('perfil-kick-btn').addEventListener('click', async () => {
+  const email = (prompt('Correo del usuario a EXPULSAR (se cerrará su sesión ahora):') || '').trim();
+  if (!email) return;
+  const ok = await confirmAction({
+    title: '🚪 Expulsar sesión',
+    lead: `Se cerrará la sesión activa de:\n${email}`,
+    message: 'El usuario será sacado al login de inmediato y no podrá seguir operando hasta volver a iniciar sesión.\n¿Continuar?',
+    okLabel: 'Expulsar', danger: true,
+  });
+  if (!ok) return;
+  const { data, error } = await sb.rpc('admin_expulsar_usuario', { p_email: email });
+  if (error) { toast('Error: ' + error.message, 'err'); return; }
+  if (data?.ok) toast('Sesión cerrada para ' + email, 'ok');
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
 });
 
