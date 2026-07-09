@@ -4742,20 +4742,29 @@ $('perfil-pass-btn').addEventListener('click', async () => {
   if (data?.ok) toast('Contraseña restablecida para ' + email, 'ok');
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
 });
+// Bloquear cuenta = combo: cierra la sesión AHORA + cambia la contraseña (para que no vuelva a entrar).
 $('perfil-kick-btn').addEventListener('click', async () => {
-  const email = (prompt('Correo del usuario a EXPULSAR (se cerrará su sesión ahora):') || '').trim();
+  const email = (prompt('Correo de la cuenta a BLOQUEAR (se cierra su sesión y se cambia su clave):') || '').trim();
   if (!email) return;
+  const sugerida = 'Apl' + Math.random().toString(36).slice(2, 6) + '*'; // clave nueva sugerida
+  const pass = (prompt('Nueva contraseña para la cuenta (mín. 6 caracteres):', sugerida) || '').trim();
+  if (pass.length < 6) { toast('La contraseña debe tener al menos 6 caracteres', 'err'); return; }
   const ok = await confirmAction({
-    title: '🚪 Expulsar sesión',
-    lead: `Se cerrará la sesión activa de:\n${email}`,
-    message: 'El usuario será sacado al login de inmediato y no podrá seguir operando hasta volver a iniciar sesión.\n¿Continuar?',
-    okLabel: 'Expulsar', danger: true,
+    title: '🚫 Bloquear cuenta',
+    lead: `Se hará dos cosas con la cuenta:\n${email}`,
+    message: `1) Se cierra su sesión de inmediato (sale al login).\n2) Su contraseña cambia a:  ${pass}\n\nAnota o comunica la nueva clave al dueño legítimo.\n¿Continuar?`,
+    okLabel: 'Bloquear', danger: true,
   });
   if (!ok) return;
-  const { data, error } = await sb.rpc('admin_expulsar_usuario', { p_email: email });
-  if (error) { toast('Error: ' + error.message, 'err'); return; }
-  if (data?.ok) toast('Sesión cerrada para ' + email, 'ok');
-  else toast('No se pudo: ' + (data?.error || '?'), 'err');
+  // 1) Expulsar la sesión activa
+  const kick = await sb.rpc('admin_expulsar_usuario', { p_email: email });
+  if (kick.error) { toast('Error al cerrar sesión: ' + kick.error.message, 'err'); return; }
+  if (!kick.data?.ok) { toast('No se pudo: ' + (kick.data?.error || '?'), 'err'); return; }
+  // 2) Cambiar la contraseña
+  const rp = await sb.rpc('admin_reset_pass', { p_email: email, p_pass: pass });
+  if (rp.error) { toast('Sesión cerrada, pero falló el cambio de clave: ' + rp.error.message, 'err'); return; }
+  if (rp.data?.ok) toast(`Cuenta bloqueada: sesión cerrada y clave nueva → ${pass}`, 'ok');
+  else toast('Sesión cerrada, pero no se pudo cambiar la clave: ' + (rp.data?.error || '?'), 'err');
 });
 
 init();
