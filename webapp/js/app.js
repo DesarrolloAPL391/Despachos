@@ -261,13 +261,17 @@ async function cerrarSesionCon(msg) {
 }
 // Chequeo proactivo: verifica vigencia + horario Y marca actividad (para "conectados").
 // heartbeat() devuelve {estado: 'ok'|'reemplazada'|'fuera_horario'} (o boolean en versiones previas).
+// Devuelve true si la sesión sigue viva; false si se cerró (para usarla como guardia).
+// El servidor es la autoridad: solo cierra si dice 'reemplazada'/'fuera_horario', así que
+// se puede llamar de forma reactiva (p.ej. al recibir datos vacíos) sin riesgo de falsos cierres.
 async function verificarSesionVigente() {
-  if (!sessionUser) return;
+  if (!sessionUser) return false;
   const { data, error } = await sb.rpc('heartbeat');
-  if (error) return;              // error de red: no expulsar (se reintenta luego)
+  if (error) return true;         // error de red: no expulsar (se reintenta luego)
   const estado = (typeof data === 'boolean') ? (data ? 'ok' : 'reemplazada') : (data?.estado || 'ok');
-  if (estado === 'reemplazada') await cerrarSesionCon('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.');
-  else if (estado === 'fuera_horario') await cerrarSesionCon('Tu turno terminó (o aún no comienza). La sesión se cerró por horario.');
+  if (estado === 'reemplazada') { await cerrarSesionCon('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.'); return false; }
+  if (estado === 'fuera_horario') { await cerrarSesionCon('Tu turno terminó (o aún no comienza). La sesión se cerró por horario.'); return false; }
+  return true;
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); } });
 
@@ -355,7 +359,7 @@ async function showApp(user) {
   // sesión vigente; si otro equipo inicia sesión con la misma cuenta, aquí se cierra.
   if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
   sessionUser = user;
-  sessTimer = setInterval(() => { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); }, 30000);
+  sessTimer = setInterval(() => { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); }, 12000);
   buildSidebar();
   current = null;
   selectTable(visibleTables()[0] || 'despachos');
@@ -2938,6 +2942,10 @@ $('modal-save').addEventListener('click', async () => {
     if (!ok) return;
   }
 
+  // Guardia de sesión: si esta sesión fue desplazada por otro equipo, sale al login con
+  // aviso claro ANTES de intentar guardar (evita el "guardado" silencioso que no cambia nada).
+  if (!(await verificarSesionVigente())) return;
+
   const saveBtn = $('modal-save');
   saveBtn.dataset.busy = '1'; saveBtn.disabled = true;
   let res;
@@ -2945,7 +2953,7 @@ $('modal-save').addEventListener('click', async () => {
     if (editing) {
       const id = editing[cfg.pk];
       delete payload[cfg.pk]; // nunca actualizamos la PK
-      res = await sb.from(current).update(payload).eq(cfg.pk, id);
+      res = await sb.from(current).update(payload).eq(cfg.pk, id).select(); // .select() => saber cuántas filas se afectaron
     } else {
       if (cfg.genKey) payload[cfg.pk] = cfg.genKey(payload); // KEY generada automáticamente
       else if (!cfg.pkEditable) delete payload[cfg.pk]; // PK autogenerada por la BD
@@ -2956,6 +2964,13 @@ $('modal-save').addEventListener('click', async () => {
   }
 
   if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
+  // Update que no afectó ninguna fila: casi siempre la sesión fue desplazada (RLS devolvió
+  // vacío). Verificar: si está muerta, ya salió al login; si no, avisar sin dejarlo en silencio.
+  if (editing && (res.data || []).length === 0) {
+    if (!(await verificarSesionVigente())) return;
+    err.textContent = 'No se pudo guardar el cambio (sesión o permisos). Actualiza la página e inténtalo de nuevo.';
+    err.hidden = false; return;
+  }
   closeModal();
   toast(cerrado ? 'Registro completo: cerrado y bloqueado' : (editing ? 'Registro actualizado' : 'Registro creado'), 'ok');
   loadData();
@@ -4655,7 +4670,11 @@ function renderMarkers(fit) {
 }
 async function refreshMapa(fit) {
   const { data, error } = await sb.from('ubicaciones').select('*').not('latitude', 'is', null);
-  if (error) { toast('Error al cargar ubicaciones: ' + error.message, 'err'); return; }
+  if (error) { toast('Error al cargar ubicaciones: ' + error.message, 'err'); verificarSesionVigente(); return; }
+  // Si a un despachador le llegan 0 ubicaciones, casi siempre es que su sesión fue
+  // desplazada (la RLS devuelve vacío). Verificar de una: si está muerta, sale al login
+  // con el aviso; si está viva, sigue normal (no hay falso cierre: decide el servidor).
+  if (!efIsAdmin() && (data || []).length === 0) { if (!(await verificarSesionVigente())) return; }
   let rows = data || [];
   // Despachador: móviles de sus RUTAS o de sus GRUPOS del parque. En 'ubicaciones'
   // muchos vehículos vienen etiquetados con el nombre del GRUPO (ej. "Laureles"),
