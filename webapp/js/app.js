@@ -4657,8 +4657,19 @@ async function refreshMapa(fit) {
   const { data, error } = await sb.from('ubicaciones').select('*').not('latitude', 'is', null);
   if (error) { toast('Error al cargar ubicaciones: ' + error.message, 'err'); return; }
   let rows = data || [];
-  // Despachador: solo móviles de sus rutas (la RLS ya limita, esto es por si acaso)
-  if (!efIsAdmin()) { const allow = allowedRutaSet(); rows = rows.filter((r) => allow.has(normRuta(r.ruta))); }
+  // Despachador: móviles de sus RUTAS o de sus GRUPOS del parque. En 'ubicaciones'
+  // muchos vehículos vienen etiquetados con el nombre del GRUPO (ej. "Laureles"),
+  // no con el número de ruta (190, 191…). Sin incluir el grupo, el mapa salía en
+  // "0 móviles" para puestos como Laureles. La RLS ya limita; esto ajusta la vista.
+  if (!efIsAdmin()) {
+    const allowR = allowedRutaSet();
+    const grupos = allowedGrupoSet();
+    const allowG = grupos ? new Set([...grupos].map(normRuta)) : null;
+    rows = rows.filter((r) => {
+      const nr = normRuta(r.ruta);
+      return allowR.has(nr) || (allowG && allowG.has(nr));
+    });
+  }
   lastUbic = rows;
   fillRutaSelect();
   renderMarkers(fit);
