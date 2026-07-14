@@ -254,7 +254,10 @@ async function cerrarSesionCon(msg) {
   if (sessTimer) { clearInterval(sessTimer); sessTimer = null; }
   sessionUser = null;
   alert(msg);
-  await sb.auth.signOut();
+  // scope:'local' => cierra SOLO este dispositivo. Sin esto, signOut() por defecto
+  // es GLOBAL y revoca TODAS las sesiones del usuario, incluida la sesión buena
+  // (la que sí está trabajando): provocaba destrucción mutua y expulsiones en bucle.
+  await sb.auth.signOut({ scope: 'local' });
 }
 // Chequeo proactivo: verifica vigencia + horario Y marca actividad (para "conectados").
 // heartbeat() devuelve {estado: 'ok'|'reemplazada'|'fuera_horario'} (o boolean en versiones previas).
@@ -327,7 +330,7 @@ async function showApp(user) {
         : 'No tienes turno asignado para hoy.\nPide al administrador que te asigne el horario.';
       sessionUser = null;
       alert(msg);
-      await sb.auth.signOut();
+      await sb.auth.signOut({ scope: 'local' });
       return;
     }
   } catch { /* si la RPC aún no existe, no bloquea el ingreso */ }
@@ -392,7 +395,7 @@ $('toggle-pass')?.addEventListener('click', () => {
 
 $('logout-btn').addEventListener('click', async () => {
   try { await sb.rpc('registrar_cierre'); } catch { /* auditoría no bloquea el logout */ }
-  await sb.auth.signOut();
+  await sb.auth.signOut({ scope: 'local' }); // solo este dispositivo (no revocar otras sesiones del usuario)
 });
 
 // ---------- navegación ----------
