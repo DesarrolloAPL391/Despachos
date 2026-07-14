@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v124';
+export const APP_VERSION = 'v125';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -485,8 +485,8 @@ export const TABLES = {
     columns: [
       { key: 'dr_id', label: 'DrvId' },
       { key: 'nombre', label: 'Nombre', m: true },
-      { key: 'cedula', label: 'Cédula' },
-      { key: 'codigo', label: 'Código', m: true },
+      { key: 'cedula', label: 'Cédula', despHide: true }, // dato sensible: oculto al despachador
+      { key: 'codigo', label: 'Código', m: true, despHide: true }, // oculto al despachador
       { key: 'cellphone', label: 'Celular' },
       { key: 'status', label: 'Estado', badge: true, m: true },
     ],

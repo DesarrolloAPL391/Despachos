@@ -1458,6 +1458,14 @@ async function loadData() {
     if (filtrarPrev) qy = ids.length ? qy.in('ruta_id', ids) : qy.eq('ruta_id', -1);
   }
 
+  // Parque automotor: el despachador (y el admin en vista previa) solo ve los carros de SU(S)
+  // grupo(s) del parque (derivados de sus rutas vía ruta_grupos). La columna 'ruta' del parque
+  // es el nombre del grupo (ej. "Laureles"). El admin sin vista previa los ve todos.
+  if (current === 'parque_automotor' && filtraComoDespachador()) {
+    const grupos = [...gruposDeMisRutas(await loadRutaGrupos())];
+    if (grupos.length) qy = qy.in('ruta', grupos);
+  }
+
   const { data, error, count } = await qy;
   // El usuario cambió de tabla o de página mientras respondía esta consulta: descartar
   // la respuesta vieja para no pintar datos de otra vista sobre la actual.
@@ -1562,8 +1570,11 @@ function actualizarProximoBar(cfg, pend, diaSel) {
 
 function renderTable(cfg, rows, count, diaSel = false) {
   const head = $('thead-row'); head.innerHTML = '';
-  // Columnas de auditoría (auditCol): solo las ven el admin y el auditor; al despachador le sobran
-  const cols = cfg.columns.filter((c) => !(c.auditCol && !efIsAdmin() && !efIsAuditor()));
+  // Columnas de auditoría (auditCol) y sensibles (despHide, ej. cédula/código del conductor):
+  // solo las ven el admin y el auditor; al despachador se le ocultan.
+  const cols = cfg.columns.filter((c) =>
+    !(c.auditCol && !efIsAdmin() && !efIsAuditor()) &&
+    !(c.despHide && !efIsAdmin() && !efIsAuditor()));
   // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
   const hasMobile = cols.some((c) => c.m);
   cols.forEach((c) => {
