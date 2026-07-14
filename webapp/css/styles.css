@@ -243,6 +243,10 @@ tbody tr:hover { background: #faf8ff; }
 .gps-dot.idle { background: #f59e0b; }   /* ámbar: detenido (encendido) */
 .gps-dot.off  { background: #6b7280; }   /* gris: apagado */
 .gps-dot.none { background: transparent; box-shadow: inset 0 0 0 1.5px #cbd5e1; } /* sin señal GPS */
+/* Conteo de viajes despachados por móvil (badge junto al número, calculado en el frontend) */
+.movil-count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 5px; border-radius: 9px;
+  background: var(--ok, #16a34a); color: #fff; font-size: 11px; font-weight: 800; line-height: 17px;
+  text-align: center; vertical-align: middle; }
 
 /* En pantallas anchas (web) la tabla puede ser más ancha que el área visible. La
    columna de ACCIONES queda FIJA a la derecha para que despachar/cancelar/editar
@@ -378,6 +382,10 @@ tbody tr:hover { background: #faf8ff; }
 .map-popup .pi-row b { text-align: right; max-width: 190px; }
 .map-popup .pi-link { display: inline-block; margin-top: 8px; font-weight: 700; color: var(--primary); text-decoration: none; }
 .empty, .loading { padding: 30px; text-align: center; color: var(--muted); }
+/* Carga de la tabla: spinner centrado (transición ágil al cambiar de vista) */
+.loading { display: flex; flex-direction: column; align-items: center; gap: 12px; font-weight: 600; }
+.loading::before { content: ''; width: 34px; height: 34px; border: 4px solid #f0d9da;
+  border-top-color: var(--primary, #ED1C24); border-radius: 50%; animation: busy-rot .8s linear infinite; }
 
 .pager { display: flex; align-items: center; gap: 12px; justify-content: center; padding: 12px 0 4px; }
 .page-info { color: var(--muted); font-size: 14px; }

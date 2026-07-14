@@ -1430,7 +1430,7 @@ async function loadData() {
   const cfg = TABLES[current];
   const reqTabla = current, reqPage = page; // firma de la petición: si cambia durante el await, se descarta
   refrescarFechaServidor(); // mantiene al día la fecha del servidor (sin bloquear el render)
-  $('loading').hidden = false; $('empty').hidden = true;
+  $('tbody').innerHTML = ''; $('loading').hidden = false; $('empty').hidden = true; // limpia YA (evita ver la tabla anterior "congelada")
   // Día completo: si hay un día seleccionado en el calendario, se muestra TODA la
   // programación de ese día sin paginar.
   const diaSel = !!filters['fecha'] && (cfg.filters || []).some((f) => f.col === 'fecha' && f.type === 'date');
@@ -1589,6 +1589,20 @@ function renderTable(cfg, rows, count, diaSel = false) {
   $('empty').hidden = rows.length > 0;
   const pend = []; // filas pendientes por despachar (para la barra "próximo")
 
+  // Conteo de viajes DESPACHADOS por móvil (se calcula en el frontend sobre las filas ya
+  // cargadas del día; se muestra junto al número de móvil). No consulta a la base.
+  const despByMovil = {};
+  if (cfg.dispatchable) {
+    for (const r of rows) {
+      const est = String(r.estado_despacho || '').toUpperCase();
+      const mv = r.veh && r.veh.numero;
+      if (mv != null && String(mv).trim() !== '' && (est === 'DESPACHADO' || est === 'SI' || r.sonar_regid)) {
+        const k = String(mv).trim();
+        despByMovil[k] = (despByMovil[k] || 0) + 1;
+      }
+    }
+  }
+
   for (const row of rows) {
     const tr = document.createElement('tr');
     for (const c of cols) {
@@ -1636,7 +1650,13 @@ function renderTable(cfg, rows, count, diaSel = false) {
         // Punto de estado GPS junto al número de móvil (verde=movimiento, ámbar=detenido, gris=apagado)
         const est = estadoMoviles.get(String(val).trim());
         const t = est ? ESTADO_TXT[est] : 'Sin señal GPS';
-        td.innerHTML = `<span class="gps-dot ${est || 'none'}" title="${esc(t)}"></span>${esc(fmt(val))}`;
+        let html = `<span class="gps-dot ${est || 'none'}" title="${esc(t)}"></span>${esc(fmt(val))}`;
+        // Conteo de viajes despachados hoy por este móvil (solo en la columna "Móvil" real)
+        if (c.path === 'veh.numero') {
+          const n = despByMovil[String(val).trim()];
+          if (n) html += ` <span class="movil-count" title="${n} viaje(s) despachado(s) hoy por el móvil ${esc(String(val))}">${n}</span>`;
+        }
+        td.innerHTML = html;
       } else {
         td.textContent = fmt(val);
       }
@@ -2960,6 +2980,7 @@ $('modal-save').addEventListener('click', async () => {
 
   const saveBtn = $('modal-save');
   saveBtn.dataset.busy = '1'; saveBtn.disabled = true;
+  showBusy('Guardando…'); // capa que bloquea la pantalla (evita doble clic mientras guarda)
   let res;
   try {
     if (editing) {
@@ -2972,6 +2993,7 @@ $('modal-save').addEventListener('click', async () => {
       res = await sb.from(current).insert(payload);
     }
   } finally {
+    hideBusy();
     saveBtn.dataset.busy = '0'; saveBtn.disabled = false;
   }
 
