@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v123';
+export const APP_VERSION = 'v124';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -480,6 +480,7 @@ export const TABLES = {
   },
   conductores_sonar: {
     label: 'Conductores SONAR', icon: '🪪', readonly: true, despachador: true, pk: 'id', pkEditable: false, select: '*',
+    baseFilter: [{ col: 'status', op: 'eq', val: 'ENABLED' }], // solo conductores habilitados (ocultar DISABLED)
     searchCols: ['nombre', 'cedula', 'codigo'], defaultOrder: { col: 'nombre', asc: true },
     columns: [
       { key: 'dr_id', label: 'DrvId' },
