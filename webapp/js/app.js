@@ -1679,9 +1679,10 @@ function renderTable(cfg, rows, count, diaSel = false) {
             act.appendChild(can);
           }
         }
-        // Editar: el admin siempre; el auditor también (para auditar, incluso fechas pasadas).
-        // El despachador solo despacha/cancela.
-        if (efIsAdmin() || efIsAuditor()) {
+        // Editar: el admin y el auditor siempre; el despachador TAMBIÉN en su tabla de puesto
+        // (la RLS lo limita a sus propias filas y a su horario). Antes solo admin/auditor
+        // tenían el lápiz; el despachador ahora puede editar los campos del viaje, no solo despachar.
+        if (efIsAdmin() || efIsAuditor() || filtraComoDespachador()) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
           // No se edita una fecha adelantada (futura). El auditor sí audita días anteriores.
           if (esFutura) {
