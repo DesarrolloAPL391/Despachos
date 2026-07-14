@@ -3864,7 +3864,26 @@ async function openSonar(row) {
   $('s-com').value = '';
 
   const [veh, its, drs] = await Promise.all([loadVehiculos(), loadItinerarios(), loadDrivers()]);
-  fillSelect($('s-mov'), veh.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
+  // El despachador solo ve los móviles de SU(S) grupo(s) del parque (igual que el mapa y el
+  // formulario de editar), para no despachar carros de otro puesto. El admin (sin vista previa)
+  // los ve todos. Misma lógica que setupVehByGroup: ruta elegida > todos sus grupos.
+  let vehMov = veh;
+  if (filtraComoDespachador()) {
+    const [gmap, rmap] = await Promise.all([loadRutaGrupos(), loadParqueRutas()]);
+    const rname = (row?.ruta?.nombre || row?.rutap?.nombre || '').trim();
+    const grupoRuta = _grupoDeRuta(gmap, rname);
+    const misGrupos = gruposDeMisRutas(gmap);
+    let objetivo = null;
+    if (grupoRuta) { objetivo = new Set([grupoRuta]); if (misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g))); }
+    else if (misGrupos.size) objetivo = new Set(misGrupos);
+    if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
+    if (objetivo && objetivo.size) {
+      const progNum = String(row?.veh?.numero || row?.vehp?.numero || '').trim(); // conservar el móvil programado
+      const f = veh.filter((v) => objetivo.has(rmap.get(String(v.numero).trim())) || String(v.numero).trim() === progNum);
+      if (f.length) vehMov = f; // salvaguarda: si el filtro quedara vacío, deja todos
+    }
+  }
+  fillSelect($('s-mov'), vehMov.map((v) => [v.id, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]));
   fillSelect($('s-itin'), its.map((i) => [i.itid, i.nombre])); // solo el nombre (ej. 130, 132A) para no confundir
   fillSelect($('s-drv'), drs.map((d) => [d.dr_id, `${d.nombre || ''}${d.codigo ? ' · ' + d.codigo : ''}`]));
 
