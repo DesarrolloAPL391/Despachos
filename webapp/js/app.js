@@ -102,13 +102,14 @@ function matchItinerario(its, rutaNombre) {
 function visibleTables() {
   // Vista previa (admin simulando): el menú se reduce como el del usuario simulado
   if (PREVIEW) {
-    if (PREVIEW.rol === 'auditor') return ['despachos', ...(PREVIEW.auditTables || [])];
+    if (PREVIEW.rol === 'auditor') return ['despachos', 'despachos_sonar', ...(PREVIEW.auditTables || [])];
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
-  // Auditor: la pantalla Despachos + las tablas de puesto donde tiene despachos de sus rutas
+  // Auditor: la pantalla Despachos + "Auditoría SONAR" (los viajes REALES que trae SONAR,
+  // donde revisa los incompletos) + las tablas de puesto donde tiene despachos de sus rutas
   // (así audita TODO lo suyo, esté en la vista general o en cualquier tabla de puesto).
-  if (isAuditor()) return ['despachos', ...(CTX?.auditTables || [])];
+  if (isAuditor()) return ['despachos', 'despachos_sonar', ...(CTX?.auditTables || [])];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -217,8 +218,12 @@ function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
   if (s === 'TABLA') return 'chip chip-indigo';
   if (s === 'LIBRE') return 'chip chip-violet';
-  if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI' || s === 'INGRESO') return 'chip chip-green';
+  if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI' || s === 'INGRESO'
+      || s === 'COMPLETO') return 'chip chip-green';
   if (s === 'APAGADO') return 'chip chip-gray';
+  // Auditoría SONAR: "Incompleto" es lo que el auditor tiene que revisar → ámbar (no es un error, es trabajo)
+  if (s === 'INCOMPLETO') return 'chip chip-amber';
+  if (s === 'EN PROGRESO') return 'chip chip-indigo';
   if (s === 'NO REALIZA EL VIAJE' || s === 'DISABLED' || s === 'CANCELADO' || s === 'NO') return 'chip chip-red';
   if (s === 'PENDIENTE SONAR') return 'chip chip-amber';
   if (s === 'SALIDA') return 'chip chip-amber';
@@ -1720,7 +1725,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
         // Eventos del bus en SONAR: herramienta de AUDITORÍA (velocidad contra el límite de la
         // vía, pasos por las geocercas de control, puertas abiertas en marcha, retrasos).
         // Igual que las columnas de control: la ven el auditor y el admin, el despachador NO.
-        if (cfg.dispatchable && (efIsAdmin() || efIsAuditor())) {
+        if (cfg.eventosSonar && (efIsAdmin() || efIsAuditor())) {
           const ev = Object.assign(document.createElement('button'),
             { className: 'act act-evt', innerHTML: '🔎', title: 'Eventos del bus en SONAR (auditoría)' });
           ev.onclick = () => abrirEventosAuditor(row);
@@ -4602,16 +4607,22 @@ function _evtExceso(e) {
 function _evtLocal(fecha, hhmm) { // 'YYYY-MM-DD' + 'HH:MM' -> valor de datetime-local
   return `${fecha}T${(hhmm || '00:00').slice(0, 5)}`;
 }
+// El móvil/ruta/hora vienen distinto según la tabla: en Despachos son objetos embebidos
+// (veh.numero, ruta.nombre) y en Auditoría SONAR son texto plano (movil, ruta, hora_inicio).
+function _evtMovil(row) { return row.veh?.numero || row.vehp?.numero || row.movil || ''; }
+function _evtRuta(row) { return row.ruta?.nombre || row.rutap?.nombre || (typeof row.ruta === 'string' ? row.ruta : '') || ''; }
+function _evtHora(row) { return String(row.hora || row.hora_inicio || '00:00').slice(0, 5); }
 async function abrirEventosAuditor(row) {
   _evtRow = row; _evtItems = []; _evtFiltro = 'todo';
-  const movil = row.veh?.numero || row.vehp?.numero || '';
-  $('evt-movil').textContent = `${movil}${row.ruta?.nombre ? ' · ' + row.ruta.nombre : ''}`;
+  const movil = _evtMovil(row);
+  const rt = _evtRuta(row);
+  $('evt-movil').textContent = `${movil}${rt ? ' · ' + rt : ''}`;
   $('evt-lista').innerHTML = ''; $('evt-resumen').textContent = '';
   $('evt-msg').textContent = '';
   document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => c.classList.toggle('evt-on', c.dataset.f === 'todo'));
   // Ventana por defecto: desde la hora del viaje hasta 3 h después (un viaje típico).
   const f = String(row.fecha || hoyServidor()).slice(0, 10);
-  const ini = String(row.hora || '00:00').slice(0, 5);
+  const ini = _evtHora(row);
   const fin = new Date(`${f}T${ini}:00`); fin.setHours(fin.getHours() + 3);
   $('evt-desde').value = _evtLocal(f, ini);
   $('evt-hasta').value = `${fin.getFullYear()}-${_pad2(fin.getMonth() + 1)}-${_pad2(fin.getDate())}T${_pad2(fin.getHours())}:${_pad2(fin.getMinutes())}`;
@@ -4621,8 +4632,9 @@ async function abrirEventosAuditor(row) {
 }
 async function verEventosAuditor() {
   if (!_evtRow) return;
-  const movil = _evtRow.veh?.numero || _evtRow.vehp?.numero;
-  const mid = await gpsIdFor(movil);
+  const movil = _evtMovil(_evtRow);
+  // Auditoría SONAR ya trae el tracker (mid); en Despachos hay que buscarlo por el móvil.
+  const mid = _evtRow.mid || await gpsIdFor(movil);
   const msg = $('evt-msg');
   if (!mid) { msg.textContent = '🚫 El móvil ' + movil + ' no tiene Id GPS en SONAR.'; return; }
   const desde = ($('evt-desde').value || '').replace('T', ' ');

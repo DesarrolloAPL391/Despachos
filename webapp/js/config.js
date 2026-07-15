@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v130';
+export const APP_VERSION = 'v131';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -18,7 +18,7 @@ const NOVEDADES = [
 ];
 
 export const TABLE_ORDER = [
-  'despachos', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
+  'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'parque_automotor', 'itinerarios',
 ];
 // Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
@@ -73,6 +73,7 @@ export const TABLES = {
     icon: '🚍',
     pk: 'id',
     dispatchable: true, // permite despachar/cancelar a SONAR desde las filas
+    eventosSonar: true, // botón 🔎 de eventos del bus (auditor/admin). Lo heredan las tablas de puesto
     noDelete: true, // un despacho no se elimina (ni TABLA ni LIBRE)
     confirmSave: true, // pide confirmación antes de guardar cambios
     despachador: true, // visible para despachadores (filtrado por sus rutas)
@@ -159,6 +160,49 @@ export const TABLES = {
       { key: 'control_interno', label: 'Control interno', type: 'textarea', section: 'Control / Auditoría', audit: true, auditOnly: true },
       { key: 'hora_llegada_control', label: 'Hora de llegada a control', type: 'time', section: 'Control / Auditoría', audit: true, auditOnly: true },
       { key: 'hora_salida_control', label: 'Hora de salida de control', type: 'time', section: 'Control / Auditoría', audit: true, auditOnly: true },
+    ],
+  },
+
+  // Despachos REALES traídos de SONAR (los trae sync_despachos_sonar, nadie los escribe a mano).
+  // El auditor solo ve los de SUS rutas (RLS) y su trabajo es revisar los INCOMPLETOS.
+  // El estado lo calcula la base con la regla oficial (lclose + lcanceled), no se edita.
+  despachos_sonar: {
+    label: 'Auditoría SONAR',
+    icon: '🧾',
+    pk: 'itl_id',
+    pkEditable: false,
+    noDelete: true,
+    eventosSonar: true, // 🔎 en cada fila: ver el recorrido y saber POR QUÉ quedó incompleto
+    select: '*',
+    searchCols: ['movil', 'placa', 'ruta', 'conductor'],
+    defaultOrder: { col: 'fecha', asc: false, then: { col: 'hora_inicio', asc: true } },
+    filters: [
+      { col: 'fecha', label: 'Fecha', type: 'date' },
+      { col: 'estado', label: 'Estado', options: ['Completo', 'Incompleto', 'Cancelado', 'En progreso'] },
+      { col: 'auditado', label: 'Auditado', options: [true, false] },
+    ],
+    columns: [
+      { key: 'fecha', label: 'Fecha' },
+      { key: 'hora_inicio', label: 'Hora', m: true },
+      { key: 'ruta', label: 'Ruta', m: true },
+      { key: 'movil', label: 'Móvil', m: true },
+      { key: 'placa', label: 'Placa' },
+      { key: 'conductor', label: 'Conductor' },
+      { key: 'estado', label: 'Estado', badge: true, m: true },
+      { key: 'auditado', label: 'Auditado', badge: true },
+      { key: 'auditor_email', label: 'Auditor' },
+      { key: 'observacion', label: 'Observación' },
+    ],
+    // Lo único editable es el trabajo del auditor; lo que vino de SONAR es de solo lectura.
+    fields: [
+      { key: 'ruta', label: 'Ruta', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
+      { key: 'movil', label: 'Móvil', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
+      { key: 'placa', label: 'Placa', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
+      { key: 'conductor', label: 'Conductor', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
+      { key: 'hora_inicio', label: 'Hora de inicio', type: 'time', readOnly: true, section: 'Lo que dice SONAR' },
+      { key: 'estado', label: 'Estado (lo calcula SONAR)', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
+      { key: 'auditado', label: '¿Auditado?', type: 'boolean', section: 'Auditoría' },
+      { key: 'observacion', label: 'Observación del auditor', type: 'textarea', section: 'Auditoría' },
     ],
   },
 
