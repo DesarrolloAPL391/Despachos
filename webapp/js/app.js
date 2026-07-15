@@ -182,8 +182,11 @@ function fmt(v) {
   // Quitar los segundos a las horas (HH:MM:SS -> HH:MM), tanto en horas sueltas como en fechas+hora
   return String(v).replace(/(\b\d{1,2}:\d{2}):\d{2}(\.\d+)?/g, '$1');
 }
+// Escapa también las comillas: esc() se usa dentro de atributos (title="...", href="..."),
+// y sin escaparlas un dato guardado podía cerrar el atributo e inyectar código.
 function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 // Convierte "YYYY-MM-DD" → "DD/MM/AAAA" (para mostrar la fecha del filtro)
 function fechaLegible(v) {
