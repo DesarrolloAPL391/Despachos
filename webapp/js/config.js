@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v128';
+export const APP_VERSION = 'v129';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -132,7 +132,9 @@ export const TABLES = {
       { key: 'ruta_programada_id', label: 'Ruta programada', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Programado en tabla', showWhen: { field: 'tipo', in: ['TABLA'] } },
 
       // ----- Real -----
-      { key: 'vehiculo_id', label: 'Vehículo despachado', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'General' },
+      // qr: el bus se identifica escaneando su QR (número o placa). Las tablas de puesto
+      // heredan este campo vía configTablaPuesto → el lector queda en todas sin tocar nada más.
+      { key: 'vehiculo_id', label: 'Vehículo despachado', type: 'fk', qr: true, fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'General' },
       { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'General', required: true },
       { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General', readOnly: true },
       // Horas de seguimiento: ocultas en el formulario en TODAS las tablas (se registran aparte)
@@ -209,7 +211,7 @@ export const TABLES = {
       // Puesto: se llena solo con el puesto del usuario logueado; el despachador no lo edita
       { key: 'puesto', label: 'Puesto', type: 'text', section: 'General', ctxValue: 'puesto', softReadOnlyDispatcher: true },
 
-      { key: 'vehiculo_id', label: 'Móvil', type: 'fk', fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación' },
+      { key: 'vehiculo_id', label: 'Móvil', type: 'fk', qr: true, fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación' },
       { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación' },
       // Viajes: solo aparece al EDITAR el registro, y siempre positivo
       { key: 'viajes', label: 'Viajes', type: 'number', min: 0, editOnly: true, section: 'Operación' },

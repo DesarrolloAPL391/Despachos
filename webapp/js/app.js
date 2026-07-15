@@ -1895,6 +1895,9 @@ async function setupVehByRoute(form, conf) {
     }
     if ([...vehSel.options].some((o) => o.value === keep)) vehSel.value = keep;
     vehSel._comboSync && vehSel._comboSync();
+    // El valor se fija por código (no dispara 'change'): hay que refrescar a mano el visor
+    // del QR, o al cambiar de ruta seguiría mostrando un móvil que ya no está en la lista.
+    vehSel._qrApply && vehSel._qrApply();
   }
   routeSel.addEventListener('change', apply);
   await apply();
@@ -2000,6 +2003,9 @@ async function setupVehByGroup(form, conf) {
     if (construir(true) === 0) construir(false);
     if ([...vehSel.options].some((o) => o.value === keep)) vehSel.value = keep;
     vehSel._comboSync && vehSel._comboSync();
+    // El valor se fija por código (no dispara 'change'): hay que refrescar a mano el visor
+    // del QR, o al cambiar de ruta seguiría mostrando un móvil que ya no está en la lista.
+    vehSel._qrApply && vehSel._qrApply();
   }
   routeSel.addEventListener('change', apply);
   await apply();
@@ -2087,21 +2093,27 @@ function enhanceById(...ids) {
   for (const id of ids) { const el = $(id); if (el) { enhanceSelect(el); el._comboSync && el._comboSync(); } }
 }
 
-/* ===== Lector de QR del carnet del conductor (campos sonardrv con qr:true) ===== */
+/* ===== Lector de QR: carnet del conductor y QR del bus (campos con qr:true) ===== */
 // Pone un botón "📷 Escanear QR", un visor bloqueado para lo escaneado y un check
 // "Elegir de la lista (sin QR)" que SOLO el usuario marca para escoger a mano.
-// Escaneado  = check DESMARCADO + conductor bloqueado (no editable).
+// Escaneado  = check DESMARCADO + valor bloqueado (no editable).
 // Manual     = check MARCADO + lista desplegable editable.
-function attachQrScanner(sel) {
+// El tipo decide qué se escanea; el resto del comportamiento es idéntico.
+const QR_TIPOS = {
+  conductor: { boton: '📷 Escanear QR', titulo: 'Escanear el carnet del conductor', scan: (s) => scanConductorToSelect(s) },
+  vehiculo: { boton: '📷 Escanear QR del bus', titulo: 'Escanear el QR del bus', scan: (s) => scanVehiculoToSelect(s) },
+};
+function attachQrScanner(sel, tipo = 'conductor') {
+  const qcfg = QR_TIPOS[tipo] || QR_TIPOS.conductor;
   const row = document.createElement('div');
   row.className = 'drv-row';
   sel.parentNode.insertBefore(row, sel);
   row.appendChild(sel); // enhanceSelect envolverá el select en .combo dentro de esta fila
 
   const btn = document.createElement('button');
-  btn.type = 'button'; btn.className = 'qr-btn'; btn.innerHTML = '📷 Escanear QR';
-  btn.title = 'Escanear el carnet del conductor';
-  btn.addEventListener('click', () => scanConductorToSelect(sel));
+  btn.type = 'button'; btn.className = 'qr-btn'; btn.innerHTML = qcfg.boton;
+  btn.title = qcfg.titulo;
+  btn.addEventListener('click', () => qcfg.scan(sel));
   row.appendChild(btn);
 
   // Visor de solo lectura: muestra el conductor escaneado, bloqueado.
@@ -2110,7 +2122,7 @@ function attachQrScanner(sel) {
   const lockedName = document.createElement('span'); lockedName.className = 'qr-locked-name';
   const rescan = document.createElement('button');
   rescan.type = 'button'; rescan.className = 'qr-rescan'; rescan.textContent = '↻ Reescanear';
-  rescan.addEventListener('click', () => scanConductorToSelect(sel));
+  rescan.addEventListener('click', () => qcfg.scan(sel));
   locked.append(Object.assign(document.createElement('span'), { className: 'qr-lock-ico', textContent: '🔒' }), lockedName, rescan);
   row.appendChild(locked);
 
@@ -2131,6 +2143,9 @@ function attachQrScanner(sel) {
     if (hasVal && !manual) lockedName.textContent = sel.selectedOptions[0]?.textContent || sel.value;
   };
   cb.addEventListener('change', apply);
+  // El móvil se puede repoblar solo al cambiar la ruta (vehByGroup): así el visor
+  // bloqueado no queda mostrando un carro que ya no está en la lista.
+  sel.addEventListener('change', apply);
   setTimeout(apply, 0); // tras enhanceSelect (ya existe el .combo)
   sel._qrApply = apply;
 }
@@ -2155,6 +2170,56 @@ async function scanConductorToSelect(sel) {
   if (sel._comboSync) sel._comboSync();
   if (sel._qrApply) sel._qrApply(); // muestra el conductor escaneado, bloqueado
   toast('Conductor: ' + match.value, 'ok');
+}
+
+// Normaliza placas/números para comparar: solo letras y números, en mayúscula
+// ("ABC-123", "abc 123" y "ABC123" son la misma placa).
+function normPlaca(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+// Escanea el QR del bus y selecciona el móvil que coincida.
+// No se depende de un formato fijo del sticker: se acepta el número de móvil ("130"),
+// la placa ("ABC123"), o una URL/JSON que traiga cualquiera de los dos. Si no coincide
+// con ningún móvil de la lista, se avisa MOSTRANDO lo leído (para poder ajustarlo) y el
+// despachador siempre puede seguir con "Elegir de la lista (sin QR)".
+async function scanVehiculoToSelect(sel) {
+  const text = await openQrScanner('Apunta la cámara al QR del bus…');
+  if (!text) return; // cancelado o sin lectura
+  const bruto = String(text).trim();
+  let candidatos = [bruto];
+  try { // si el QR trae JSON, se miran las claves usuales
+    const j = JSON.parse(bruto);
+    if (j && typeof j === 'object') {
+      const c = [j.movil, j.numero, j.numero_interno, j.placa, j.plate, j.bus].filter((x) => x != null).map(String);
+      if (c.length) candidatos = c;
+    }
+  } catch { /* no era JSON: se usa el texto tal cual */ }
+
+  const opts = [...sel.options].filter((o) => o.value);
+  // Cada opción es "130 · ABC123" (labelVeh)
+  const datos = (o) => {
+    const p = String(o.textContent).split('·');
+    return { num: (p[0] || '').trim(), pla: (p[1] || '').trim() };
+  };
+  let match = null;
+  for (const c of candidatos) {
+    const t = normPlaca(c);
+    if (!t) continue;
+    match = opts.find((o) => { const p = normPlaca(datos(o).pla); return p && p === t; })            // placa exacta
+      || opts.find((o) => { const n = normPlaca(datos(o).num); return n && n === t; })               // número exacto
+      // el QR puede ser una URL o traer texto alrededor: se busca la placa dentro
+      || opts.find((o) => { const p = normPlaca(datos(o).pla); return p.length >= 5 && t.includes(p); });
+    if (match) break;
+  }
+  if (!match) {
+    toast(`QR no reconocido: "${bruto.slice(0, 40)}". Si el bus está en la lista, marca "Elegir de la lista (sin QR)".`, 'err');
+    return;
+  }
+  sel.value = match.value;
+  sel.dispatchEvent(new Event('change', { bubbles: true })); // igual que elegirlo a mano (trae el conductor)
+  if (sel._comboSync) sel._comboSync();
+  if (sel._qrApply) sel._qrApply(); // muestra el móvil escaneado, bloqueado
+  toast('Móvil: ' + match.textContent, 'ok');
 }
 
 let qrStream = null, qrRAF = null, qrDetector = null, qrResolve = null;
@@ -2182,7 +2247,7 @@ function finishQr(text) {
 }
 
 // Abre la cámara, lee un QR y resuelve con su texto (o null si se cancela).
-function openQrScanner() {
+function openQrScanner(pista = 'Apunta la cámara al QR del carnet…') {
   const modal = $('qr-modal'), video = $('qr-video'), status = $('qr-status');
   stopQr(); // sana cualquier cámara que hubiera quedado abierta de una apertura anterior
   status.className = 'qr-status'; status.textContent = 'Iniciando cámara…';
@@ -2202,7 +2267,7 @@ function openQrScanner() {
       if (modal.hidden) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; return; }
       video.srcObject = qrStream;
       try { await video.play(); } catch {}
-      status.className = 'qr-status'; status.textContent = 'Apunta la cámara al QR del carnet…';
+      status.className = 'qr-status'; status.textContent = pista;
 
       // Decodificador: BarcodeDetector nativo (Android) o jsQR como respaldo.
       let useNative = false;
@@ -2866,8 +2931,12 @@ async function _openEditorInterno(row) {
       if (f.softReadOnlyDispatcher && !isAdmin()) input.readOnly = true;
       wrap.appendChild(input);
       if (f.hint) wrap.appendChild(Object.assign(document.createElement('span'), { className: 'field-hint', textContent: f.hint }));
-      // Lector de QR del carnet junto al campo Conductor (solo donde se marca f.qr, ej. Resumen)
-      if (f.type === 'sonardrv' && f.qr && !input.disabled) attachQrScanner(input);
+      // Lector de QR junto al campo (solo donde se marca f.qr en la config):
+      // carnet en el Conductor, y QR del bus en el Móvil (todas las tablas de despacho).
+      if (f.qr && !input.disabled) {
+        if (f.type === 'sonardrv') attachQrScanner(input, 'conductor');
+        else if (f.type === 'fk') attachQrScanner(input, 'vehiculo');
+      }
     }
     form.appendChild(wrap);
     if (f.showWhen) controls.push(f);
