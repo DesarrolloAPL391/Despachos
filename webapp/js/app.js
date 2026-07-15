@@ -1717,6 +1717,15 @@ function renderTable(cfg, rows, count, diaSel = false) {
             act.appendChild(can);
           }
         }
+        // Eventos del bus en SONAR: herramienta de AUDITORÍA (velocidad contra el límite de la
+        // vía, pasos por las geocercas de control, puertas abiertas en marcha, retrasos).
+        // Igual que las columnas de control: la ven el auditor y el admin, el despachador NO.
+        if (cfg.dispatchable && (efIsAdmin() || efIsAuditor())) {
+          const ev = Object.assign(document.createElement('button'),
+            { className: 'act act-evt', innerHTML: '🔎', title: 'Eventos del bus en SONAR (auditoría)' });
+          ev.onclick = () => abrirEventosAuditor(row);
+          act.appendChild(ev);
+        }
         // Editar: el admin y el auditor siempre; el despachador TAMBIÉN en su tabla de puesto
         // (la RLS lo limita a sus propias filas y a su horario). Antes solo admin/auditor
         // tenían el lápiz; el despachador ahora puede editar los campos del viaje, no solo despachar.
@@ -4572,6 +4581,105 @@ function mapPopup(r) {
   </div>`;
 }
 // Panel inferior deslizable con la info del móvil (estilo apps de mapas)
+// ===== Eventos del bus en SONAR (SOLO AUDITORES) =====
+// Una sola llamada (GET_TrackerEventsHistoryV2) trae lo que el auditor necesita:
+// pasos por las geocercas de control ("Ingreso a CONTROL EL PALO"), excesos de
+// velocidad (con el límite de la vía), puertas abiertas en marcha y avisos de retraso.
+let _evtRow = null, _evtItems = [], _evtFiltro = 'todo';
+// Clasifica cada evento por su texto (SONAR los manda en español, ya legibles).
+function _evtTipo(e) {
+  const t = String(e.evento || '').toLowerCase();
+  if (/^ingreso a |^salida de /.test(t)) return 'geo';
+  if (/puerta/.test(t)) return 'puerta';
+  if (/retraso|ruta|itinerario/.test(t)) return 'ruta';
+  if (/exceso/.test(t)) return 'exceso';
+  return 'otro';
+}
+// Exceso REAL: la velocidad del bus supera el límite de esa vía (RoadSpeed).
+function _evtExceso(e) {
+  return e.velocidad != null && e.limite != null && Number(e.limite) > 0 && Number(e.velocidad) > Number(e.limite);
+}
+function _evtLocal(fecha, hhmm) { // 'YYYY-MM-DD' + 'HH:MM' -> valor de datetime-local
+  return `${fecha}T${(hhmm || '00:00').slice(0, 5)}`;
+}
+async function abrirEventosAuditor(row) {
+  _evtRow = row; _evtItems = []; _evtFiltro = 'todo';
+  const movil = row.veh?.numero || row.vehp?.numero || '';
+  $('evt-movil').textContent = `${movil}${row.ruta?.nombre ? ' · ' + row.ruta.nombre : ''}`;
+  $('evt-lista').innerHTML = ''; $('evt-resumen').textContent = '';
+  $('evt-msg').textContent = '';
+  document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => c.classList.toggle('evt-on', c.dataset.f === 'todo'));
+  // Ventana por defecto: desde la hora del viaje hasta 3 h después (un viaje típico).
+  const f = String(row.fecha || hoyServidor()).slice(0, 10);
+  const ini = String(row.hora || '00:00').slice(0, 5);
+  const fin = new Date(`${f}T${ini}:00`); fin.setHours(fin.getHours() + 3);
+  $('evt-desde').value = _evtLocal(f, ini);
+  $('evt-hasta').value = `${fin.getFullYear()}-${_pad2(fin.getMonth() + 1)}-${_pad2(fin.getDate())}T${_pad2(fin.getHours())}:${_pad2(fin.getMinutes())}`;
+  $('evt-modal').hidden = false;
+  if (!movil) { $('evt-msg').textContent = 'Este viaje no tiene móvil asignado.'; return; }
+  await verEventosAuditor();
+}
+async function verEventosAuditor() {
+  if (!_evtRow) return;
+  const movil = _evtRow.veh?.numero || _evtRow.vehp?.numero;
+  const mid = await gpsIdFor(movil);
+  const msg = $('evt-msg');
+  if (!mid) { msg.textContent = '🚫 El móvil ' + movil + ' no tiene Id GPS en SONAR.'; return; }
+  const desde = ($('evt-desde').value || '').replace('T', ' ');
+  const hasta = ($('evt-hasta').value || '').replace('T', ' ');
+  if (!desde || !hasta) { msg.textContent = 'Elige el rango de horas.'; return; }
+  const btn = $('evt-ver'); btn.disabled = true; btn.textContent = 'Consultando…';
+  msg.textContent = 'Consultando SONAR…'; $('evt-lista').innerHTML = '';
+  try {
+    const { data, error } = await sb.rpc('sonar_eventos_auditor', { p_mid: mid, p_desde: desde, p_hasta: hasta });
+    if (error) { msg.textContent = 'No se pudo consultar SONAR: ' + error.message; return; }
+    if (!data || !data.ok) { msg.textContent = data?.error || 'SONAR no respondió.'; return; }
+    _evtItems = data.items || [];
+    msg.textContent = '';
+    pintarEventosAuditor();
+  } finally {
+    btn.disabled = false; btn.textContent = '🔎 Consultar';
+  }
+}
+function pintarEventosAuditor() {
+  const cont = $('evt-lista');
+  const geo = _evtItems.filter((e) => _evtTipo(e) === 'geo').length;
+  const exc = _evtItems.filter(_evtExceso).length;
+  const pue = _evtItems.filter((e) => /puerta abierta/i.test(e.evento || '')).length;
+  $('evt-resumen').textContent = `${_evtItems.length} eventos · ${geo} pasos por control · ${exc} excesos · ${pue} con puerta abierta`;
+  const lista = _evtItems.filter((e) => {
+    if (_evtFiltro === 'todo') return true;
+    if (_evtFiltro === 'exceso') return _evtExceso(e) || _evtTipo(e) === 'exceso';
+    return _evtTipo(e) === _evtFiltro;
+  });
+  if (!lista.length) { cont.innerHTML = '<div class="empty">Sin eventos de ese tipo en el rango.</div>'; return; }
+  cont.innerHTML = lista.map((e) => {
+    const t = _evtTipo(e);
+    const ex = _evtExceso(e);
+    const ico = ex ? '🚨' : t === 'geo' ? '📍' : t === 'puerta' ? '🚪' : t === 'ruta' ? '🛣️' : '•';
+    const vel = (e.velocidad != null)
+      ? `<span class="evt-vel ${ex ? 'evt-mal' : ''}">${esc(String(e.velocidad))}${e.limite ? ' / ' + esc(String(e.limite)) : ''} km/h</span>` : '';
+    const hora = String(e.hora || '').slice(11, 16);
+    return `<div class="evt-it ${ex ? 'evt-it-mal' : ''}">
+      <span class="evt-h">${esc(hora)}</span>
+      <span class="evt-ico">${ico}</span>
+      <span class="evt-tx">${esc(e.evento || '')}${e.direccion ? `<i class="evt-dir">${esc(e.direccion)}</i>` : ''}</span>
+      ${vel}
+    </div>`;
+  }).join('');
+}
+function cerrarEventos() { $('evt-modal').hidden = true; _evtRow = null; _evtItems = []; }
+$('evt-x').addEventListener('click', cerrarEventos);
+$('evt-cerrar').addEventListener('click', cerrarEventos);
+$('evt-ver').addEventListener('click', verEventosAuditor);
+document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => {
+  c.addEventListener('click', () => {
+    _evtFiltro = c.dataset.f;
+    document.querySelectorAll('#evt-modal .evt-chip').forEach((o) => o.classList.toggle('evt-on', o === c));
+    pintarEventosAuditor();
+  });
+});
+
 // ===== Recorrido del bus (SONAR GET_TrackerEventsHistory) =====
 let recLayer = null;   // capa Leaflet con el recorrido dibujado
 let _recVeh = null;    // { mid, movil, ruta } del móvil elegido

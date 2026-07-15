@@ -625,6 +625,35 @@
     </div>
   </div>
 
+  <!-- Eventos del bus en SONAR (SOLO AUDITORES): geocercas, excesos, puertas -->
+  <div id="evt-modal" class="modal" hidden>
+    <div class="modal-card rec-card">
+      <div class="modal-head">
+        <h3>🔎 Eventos del bus · <span id="evt-movil"></span></h3>
+        <button id="evt-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form rec-body">
+        <label class="field"><span>Desde</span><input id="evt-desde" type="datetime-local"></label>
+        <label class="field"><span>Hasta</span><input id="evt-hasta" type="datetime-local"></label>
+        <div class="field full evt-filtros">
+          <button type="button" class="evt-chip evt-on" data-f="todo">Todo</button>
+          <button type="button" class="evt-chip" data-f="geo">📍 Puntos de control</button>
+          <button type="button" class="evt-chip" data-f="exceso">🚨 Excesos</button>
+          <button type="button" class="evt-chip" data-f="puerta">🚪 Puertas</button>
+          <button type="button" class="evt-chip" data-f="ruta">🛣️ Ruta / retrasos</button>
+        </div>
+        <p id="evt-msg" class="field-hint full"></p>
+        <div id="evt-lista" class="evt-lista full"></div>
+      </div>
+      <div class="modal-foot">
+        <span id="evt-resumen" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="evt-cerrar" class="btn">Cerrar</button>
+        <button id="evt-ver" class="btn btn-primary">🔎 Consultar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Vista previa "como despachador" (solo admin) -->
   <div id="preview-modal" class="modal" hidden>
     <div class="modal-card confirm-card">
