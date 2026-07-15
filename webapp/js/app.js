@@ -140,6 +140,10 @@ function getPath(obj, path) {
 let _confirmResolve = null;
 function confirmAction({ title = 'Confirmar', lead = '', message = '', okLabel = 'Confirmar', danger = false, noCancel = false } = {}) {
   return new Promise((resolve) => {
+    // Si ya había una confirmación esperando respuesta, se le responde "no" ANTES de
+    // reemplazarla. Sin esto su promesa quedaba colgada para siempre: el flujo que la
+    // esperaba nunca seguía ni liberaba su botón (quedaba muerto sin avisar).
+    if (_confirmResolve) { const previa = _confirmResolve; _confirmResolve = null; previa(false); }
     _confirmResolve = resolve;
     $('confirm-title').textContent = title;
     $('confirm-lead').textContent = lead;
@@ -2685,7 +2689,18 @@ function toggleEmptySections(form) {
   }
 }
 
+// Misma guarda que en openSonar: el formulario carga listas (conductores, móviles, rutas)
+// con varios await, así que dos clics seguidos en ✏️ mezclaban los campos de una fila con
+// los de otra y se podía guardar el dato equivocado sobre el viaje equivocado.
+let _editorAbriendo = false;
 async function openEditor(row) {
+  if (_editorAbriendo) return;
+  _editorAbriendo = true;
+  showBusy('Abriendo…');
+  try { await _openEditorInterno(row); }
+  finally { _editorAbriendo = false; hideBusy(); }
+}
+async function _openEditorInterno(row) {
   const cfg = TABLES[current];
   if (row && cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
   // La fecha es clave: solo se opera el día actual.
@@ -3885,7 +3900,21 @@ async function updateSonarInfo() {
 }
 
 let sonarRow = null, sonarTable = 'despachos';
+// Guarda anti-reentrada: abrir el despacho hace varias consultas (móviles, itinerarios,
+// conductores, conductor del Resumen). Si se tocaba ✈️ en una fila y enseguida en otra, las
+// dos cargas se pisaban y el modal podía quedar con el viaje de una y el móvil de la otra
+// → se despachaba el carro equivocado. El segundo clic se ignora hasta que termine el primero.
+let _sonarAbriendo = false;
+// Devuelve false si se ignoró el clic (ya había una apertura en curso), para que quien
+// preselecciona campos después (ej. despacharDesdeMapa) no escriba sobre un modal a medio cargar.
 async function openSonar(row) {
+  if (_sonarAbriendo) return false;
+  _sonarAbriendo = true;
+  showBusy('Abriendo despacho…');
+  try { await _openSonarInterno(row); return true; }
+  finally { _sonarAbriendo = false; hideBusy(); }
+}
+async function _openSonarInterno(row) {
   // La fecha es clave: solo se despacha el día actual (fecha del servidor, no del celular)
   if (row && row.fecha) {
     const f = String(row.fecha).slice(0, 10);
@@ -4655,7 +4684,7 @@ function closeVehSheet() {
 // Despachar el móvil del panel: abre el modal SONAR con ese móvil preseleccionado
 async function despacharDesdeMapa(movil) {
   closeVehSheet();
-  await openSonar(null);
+  if (!(await openSonar(null))) return; // otra apertura en curso: no pisar sus campos
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.numero) === String(movil));
   if (vr) { $('s-mov').value = String(vr.id); $('s-mov')._comboSync && $('s-mov')._comboSync(); await updateSonarInfo(); }
