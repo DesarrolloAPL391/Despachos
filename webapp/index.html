@@ -155,6 +155,7 @@
             <button class="mf" data-f="off">⚪ Apagados</button>
             <select id="map-ruta" class="map-ruta"><option value="">Todas las rutas</option></select>
             <input type="search" id="map-search" class="map-search" placeholder="Buscar móvil(es) o placa…" />
+            <button id="map-lista-btn" class="btn" title="Elegir móviles de una lista">📋 Lista</button>
             <span class="spacer"></span>
             <span id="map-count" class="page-info"></span>
             <button id="rec-clear" class="btn" hidden>🛣️✕ Quitar recorrido</button>
@@ -162,6 +163,20 @@
           </div>
           <!-- Barra de móviles en seguimiento (aparece al seleccionar carros) -->
           <div id="map-seguidos" class="map-seguidos" hidden></div>
+          <!-- Lista buscable de móviles: marca varios para seguirlos en el mapa -->
+          <div id="map-lista" class="map-lista" hidden>
+            <div class="ml-head">
+              <input type="search" id="ml-search" class="ml-search" placeholder="🔎 Buscar móvil, placa o ruta…" />
+              <button id="ml-close" class="icon-btn" aria-label="Cerrar lista">✕</button>
+            </div>
+            <div id="ml-items" class="ml-items"></div>
+            <div class="ml-foot">
+              <span id="ml-count" class="ml-count"></span>
+              <span class="spacer"></span>
+              <button id="ml-ver" class="btn seg-btn">👁️ Ver seleccionados</button>
+              <button id="ml-clear" class="btn seg-btn">Limpiar</button>
+            </div>
+          </div>
           <div id="map" class="map"></div>
           <!-- Panel inferior deslizable con la info del móvil -->
           <div id="veh-sheet" class="veh-sheet" hidden>

@@ -385,6 +385,33 @@ tbody tr:hover { background: #faf8ff; }
 .seg-chip b { color: #a78bda; font-weight: 800; }
 .seg-btn { padding: 5px 11px; font-size: 12.5px; }
 
+/* Lista buscable de móviles (panel flotante sobre el mapa) */
+.map-lista { position: absolute; z-index: 900; top: 8px; left: 12px; right: 12px;
+  max-width: 380px; max-height: 62%; display: flex; flex-direction: column;
+  background: #fff; border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.22); overflow: hidden; }
+.map-lista[hidden] { display: none; }
+.ml-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: #f7f9fc; }
+.ml-search { flex: 1; border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; font-size: 14px; }
+.ml-items { flex: 1; overflow-y: auto; min-height: 60px; }
+.ml-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #eef0f5; cursor: pointer; }
+.ml-item:hover { background: #f6f4fd; }
+.ml-item.sel { background: #ede7fb; }
+.ml-check { width: 20px; height: 20px; flex: 0 0 auto; border: 2px solid #c9c9d6; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 13px; color: #fff; }
+.ml-item.sel .ml-check { background: #7c3aed; border-color: #7c3aed; }
+.ml-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.ml-dot.mov { background: #16a34a; } .ml-dot.idle { background: #f59e0b; } .ml-dot.off { background: #9aa0ac; }
+.ml-main { flex: 1; min-width: 0; }
+.ml-mov { font-weight: 800; font-size: 14px; }
+.ml-sub { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ml-zoom { flex: 0 0 auto; border: 1px solid var(--border); background: #fff; border-radius: 8px;
+  padding: 4px 8px; font-size: 14px; cursor: pointer; }
+.ml-zoom:hover { background: #f0f0f5; }
+.ml-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); background: #f7f9fc; }
+.ml-count { font-size: 12.5px; font-weight: 700; color: #5b21b6; }
+.ml-empty { padding: 22px; text-align: center; color: var(--muted); font-size: 13px; }
+
 /* Barra de filtros del mapa */
 .map-filters { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }
 .map-filters .mf { border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }

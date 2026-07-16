@@ -4982,9 +4982,14 @@ $('veh-sheet-close')?.addEventListener('click', closeVehSheet);
 })();
 
 let lastUbic = [], mapFilter = 'todos', routeFilter = '', vehSearch = [];
+// Marcadores reutilizables: movil -> { marker, pos, icon }. Evita reconstruir toda la
+// flota en cada refresco/filtro; solo mueve los que cambiaron de sitio y reconstruye el
+// ícono si cambió su estado. Así el mapa va fluido aunque haya cientos de móviles.
+let markerMap = new Map();
 // Seguimiento: móviles seleccionados para vigilar. soloSeguidos = mostrar únicamente esos.
 let seguidos = new Set(), soloSeguidos = false;
 const _mk = (m) => String(m ?? '').trim();
+const _movKey = (r) => _mk(r.movil) || (r.mid != null ? '#' + r.mid : '@' + r.latitude + ',' + r.longitude);
 function toggleSeguir(movil) {
   const k = _mk(movil); if (!k) return;
   if (seguidos.has(k)) seguidos.delete(k); else seguidos.add(k);
@@ -4998,6 +5003,7 @@ function quitarSeguido(movil) {
 function limpiarSeguidos() { seguidos.clear(); soloSeguidos = false; renderSeguidosBar(); renderMarkers(false); }
 // Barra de seguidos: aparece solo cuando hay móviles seleccionados.
 function renderSeguidosBar() {
+  syncListaSel();
   const bar = $('map-seguidos'); if (!bar) return;
   if (!seguidos.size) { bar.hidden = true; bar.innerHTML = ''; return; }
   bar.hidden = false;
@@ -5011,6 +5017,17 @@ function renderSeguidosBar() {
   $('seg-ver').addEventListener('click', () => { soloSeguidos = !soloSeguidos; renderSeguidosBar(); renderMarkers(true); });
   $('seg-clear').addEventListener('click', limpiarSeguidos);
 }
+// Refleja en la lista qué móviles están seleccionados (sin reconstruirla).
+function syncListaSel() {
+  const box = $('ml-items'); if (!box) return;
+  box.querySelectorAll('.ml-item').forEach((el) => {
+    const on = seguidos.has(_mk(el.dataset.m));
+    el.classList.toggle('sel', on);
+    const chk = el.querySelector('.ml-check'); if (chk) chk.textContent = on ? '✓' : '';
+  });
+  const c = $('ml-count');
+  if (c) c.textContent = seguidos.size ? `🎯 ${seguidos.size} seleccionado(s)` : 'Toca un móvil para seguirlo';
+}
 function fillRutaSelect() {
   const sel = $('map-ruta'); if (!sel) return;
   const prev = sel.value;
@@ -5020,10 +5037,19 @@ function fillRutaSelect() {
     + rutas.map((rt) => `<option value="${esc(rt)}">${esc(rt)}</option>`).join('');
   if (rutas.includes(prev)) sel.value = prev; else routeFilter = '';
 }
+function _buildBusIcon(r, cls, seg) {
+  const ruta = r.ruta ? ` <small>${esc(r.ruta)}</small>` : '';
+  return L.divIcon({
+    className: 'bus-marker',
+    html: `<div class="bus-pin ${cls}${seg ? ' seg' : ''}"><span>🚌</span>${esc(r.movil || '—')}${ruta}</div>`,
+    iconSize: null, iconAnchor: [26, 24], popupAnchor: [0, -22],
+  });
+}
+// Dibuja/actualiza la flota REUTILIZANDO marcadores: mueve el que cambió de sitio y
+// rehace el ícono solo si cambió su estado. Nada de borrar y recrear todo en cada refresco.
 function renderMarkers(fit) {
   if (!flotaLayer) return;
-  flotaLayer.clearLayers();
-  const pts = [];
+  const pts = [], vivos = new Set();
   for (const r of lastUbic) {
     if (r.latitude == null || r.longitude == null) continue;
     const cls = clasificar(r);
@@ -5035,20 +5061,30 @@ function renderMarkers(fit) {
     }
     const seg = seguidos.has(_mk(r.movil));
     if (soloSeguidos && !seg) continue; // modo "ver seguidos": oculta los demás
-    const ruta = r.ruta ? ` <small>${esc(r.ruta)}</small>` : '';
-    const icon = L.divIcon({
-      className: 'bus-marker',
-      html: `<div class="bus-pin ${cls}${seg ? ' seg' : ''}"><span>🚌</span>${esc(r.movil || '—')}${ruta}</div>`,
-      iconSize: null, iconAnchor: [26, 24], popupAnchor: [0, -22],
-    });
-    const m = L.marker([r.latitude, r.longitude], { icon, title: `Móvil ${r.movil || ''}` });
-    m._row = r;
-    // Un clic hace ZOOM al carro y abre su panel (mejor en celular)
-    m.on('click', () => { zoomAlMovil(r); openVehSheet(r); });
-    flotaLayer.addLayer(m);
+    const key = _movKey(r);
+    vivos.add(key);
+    const posSig = r.latitude + ',' + r.longitude;
+    const iconSig = cls + '|' + (seg ? 1 : 0) + '|' + (r.movil || '') + '|' + (r.ruta || '');
+    const ex = markerMap.get(key);
+    if (ex) {
+      if (ex.pos !== posSig) { ex.marker.setLatLng([r.latitude, r.longitude]); ex.pos = posSig; }
+      if (ex.icon !== iconSig) { ex.marker.setIcon(_buildBusIcon(r, cls, seg)); ex.icon = iconSig; }
+      ex.marker._row = r;
+    } else {
+      const m = L.marker([r.latitude, r.longitude], { icon: _buildBusIcon(r, cls, seg), title: `Móvil ${r.movil || ''}` });
+      m._row = r;
+      // Un clic hace ZOOM al carro y abre su panel (usa la fila viva del marcador)
+      m.on('click', () => { zoomAlMovil(m._row); openVehSheet(m._row); });
+      flotaLayer.addLayer(m);
+      markerMap.set(key, { marker: m, pos: posSig, icon: iconSig });
+    }
     pts.push([r.latitude, r.longitude]);
   }
-  const filtrando = mapFilter !== 'todos' || routeFilter || soloSeguidos;
+  // Quita los marcadores que ya no aplican (fuera del filtro o desaparecidos)
+  for (const [key, ent] of markerMap) {
+    if (!vivos.has(key)) { flotaLayer.removeLayer(ent.marker); markerMap.delete(key); }
+  }
+  const filtrando = mapFilter !== 'todos' || routeFilter || soloSeguidos || vehSearch.length;
   $('map-count').textContent = filtrando ? `${pts.length} de ${lastUbic.length}` : `${pts.length} móviles`;
   if (fit && pts.length) flotaMap.fitBounds(pts, { padding: [30, 30], maxZoom: 16 });
 }
@@ -5189,10 +5225,70 @@ document.querySelectorAll('#map-filters .mf').forEach((b) => {
   });
 });
 $('map-ruta').addEventListener('change', (e) => { routeFilter = e.target.value; renderMarkers(true); });
+// Buscador del mapa con "debounce": no redibuja en cada tecla, sino ~200 ms después de
+// dejar de escribir. Con cientos de móviles esto quita el tironeo al teclear.
+let _searchTimer = null;
 $('map-search').addEventListener('input', (e) => {
-  vehSearch = e.target.value.toLowerCase().split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
-  renderMarkers(true);
+  const v = e.target.value.toLowerCase();
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    vehSearch = v.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    renderMarkers(true);
+  }, 200);
 });
+
+// ----- Lista buscable de móviles: marcar varios para seguirlos -----
+let listaFiltro = '';
+function toggleListaMoviles(forzar) {
+  const p = $('map-lista'); if (!p) return;
+  const abrir = forzar != null ? forzar : p.hidden;
+  p.hidden = !abrir;
+  $('map-lista-btn')?.classList.toggle('btn-primary', abrir);
+  if (abrir) { renderListaItems(); setTimeout(() => $('ml-search')?.focus(), 30); }
+}
+function renderListaItems() {
+  const box = $('ml-items'); if (!box) return;
+  const q = listaFiltro.trim().toLowerCase();
+  const filas = lastUbic
+    .filter((r) => {
+      if (!q) return true;
+      return String(r.movil || '').toLowerCase().includes(q)
+        || String(r.placa || '').toLowerCase().includes(q)
+        || String(r.ruta || '').toLowerCase().includes(q);
+    })
+    .sort((a, b) => String(a.movil || '').localeCompare(String(b.movil || ''), 'es', { numeric: true }));
+  if (!filas.length) { box.innerHTML = `<div class="ml-empty">Sin móviles${q ? ' para “' + esc(q) + '”' : ''}.</div>`; syncListaSel(); return; }
+  box.innerHTML = filas.map((r) => {
+    const cls = clasificar(r);
+    const sel = seguidos.has(_mk(r.movil));
+    const sub = [r.ruta, r.placa, ESTADO_TXT[cls]].filter(Boolean).join(' · ');
+    return `<div class="ml-item ${sel ? 'sel' : ''}" data-m="${esc(r.movil || '')}">
+      <span class="ml-check">${sel ? '✓' : ''}</span>
+      <span class="ml-dot ${cls}"></span>
+      <span class="ml-main"><span class="ml-mov">${esc(r.movil || '—')}</span><span class="ml-sub">${esc(sub)}</span></span>
+      <button class="ml-zoom" title="Ver en el mapa">🔍</button>
+    </div>`;
+  }).join('');
+  // Clic en la fila => seguir/dejar de seguir. Clic en 🔍 => centrar el mapa en ese móvil.
+  box.querySelectorAll('.ml-item').forEach((el) => {
+    const movil = el.dataset.m;
+    el.querySelector('.ml-zoom').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const r = lastUbic.find((x) => _mk(x.movil) === _mk(movil));
+      if (r) { zoomAlMovil(r); openVehSheet(r); }
+    });
+    el.addEventListener('click', () => toggleSeguir(movil));
+  });
+  syncListaSel();
+}
+$('map-lista-btn')?.addEventListener('click', () => toggleListaMoviles());
+$('ml-close')?.addEventListener('click', () => toggleListaMoviles(false));
+$('ml-clear')?.addEventListener('click', limpiarSeguidos);
+$('ml-ver')?.addEventListener('click', () => {
+  if (!seguidos.size) { toast('Marca al menos un móvil en la lista', 'err'); return; }
+  soloSeguidos = true; renderSeguidosBar(); renderMarkers(true); toggleListaMoviles(false);
+});
+$('ml-search')?.addEventListener('input', (e) => { listaFiltro = e.target.value; renderListaItems(); });
 
 // ---------- Conectividad y cola offline de despachos ----------
 const QKEY = 'apl_pending_despachos';
