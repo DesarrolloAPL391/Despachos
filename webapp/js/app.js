@@ -4912,6 +4912,16 @@ async function openVehSheet(r) {
   const bRec = Object.assign(document.createElement('button'), { className: 'btn', textContent: '🛣️ Recorrido' });
   bRec.onclick = () => abrirRecorrido(r);
   acts.appendChild(bRec);
+  // Seguir / dejar de seguir este móvil (para vigilar varios a la vez)
+  const bSeg = Object.assign(document.createElement('button'), { className: 'btn' });
+  const pintarSeg = () => {
+    const on = seguidos.has(_mk(r.movil));
+    bSeg.textContent = on ? '✓ Siguiendo' : '🎯 Seguir';
+    bSeg.classList.toggle('btn-primary', on);
+  };
+  pintarSeg();
+  bSeg.onclick = () => { toggleSeguir(r.movil); pintarSeg(); };
+  acts.appendChild(bSeg);
   if (isAdmin()) {
     const bDsp = Object.assign(document.createElement('button'), { className: 'btn btn-primary', textContent: '🛰️ Despachar' });
     bDsp.onclick = () => despacharDesdeMapa(r.movil);
@@ -4972,6 +4982,35 @@ $('veh-sheet-close')?.addEventListener('click', closeVehSheet);
 })();
 
 let lastUbic = [], mapFilter = 'todos', routeFilter = '', vehSearch = [];
+// Seguimiento: móviles seleccionados para vigilar. soloSeguidos = mostrar únicamente esos.
+let seguidos = new Set(), soloSeguidos = false;
+const _mk = (m) => String(m ?? '').trim();
+function toggleSeguir(movil) {
+  const k = _mk(movil); if (!k) return;
+  if (seguidos.has(k)) seguidos.delete(k); else seguidos.add(k);
+  if (!seguidos.size) soloSeguidos = false;
+  renderSeguidosBar(); renderMarkers(false);
+}
+function quitarSeguido(movil) {
+  seguidos.delete(_mk(movil)); if (!seguidos.size) soloSeguidos = false;
+  renderSeguidosBar(); renderMarkers(false);
+}
+function limpiarSeguidos() { seguidos.clear(); soloSeguidos = false; renderSeguidosBar(); renderMarkers(false); }
+// Barra de seguidos: aparece solo cuando hay móviles seleccionados.
+function renderSeguidosBar() {
+  const bar = $('map-seguidos'); if (!bar) return;
+  if (!seguidos.size) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  const chips = [...seguidos].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
+    .map((m) => `<span class="seg-chip" data-m="${esc(m)}" title="Quitar">${esc(m)} <b>✕</b></span>`).join('');
+  bar.innerHTML = `<span class="seg-lbl">🎯 Siguiendo (${seguidos.size}):</span>${chips}`
+    + `<button class="btn seg-btn ${soloSeguidos ? 'btn-primary' : ''}" id="seg-ver">👁️ Ver en pantalla</button>`
+    + `<button class="btn seg-btn" id="seg-clear">Limpiar</button>`;
+  bar.querySelectorAll('.seg-chip').forEach((c) => c.addEventListener('click', () => quitarSeguido(c.dataset.m)));
+  // "Ver en pantalla": alterna mostrar solo los seguidos y los encuadra en el mapa
+  $('seg-ver').addEventListener('click', () => { soloSeguidos = !soloSeguidos; renderSeguidosBar(); renderMarkers(true); });
+  $('seg-clear').addEventListener('click', limpiarSeguidos);
+}
 function fillRutaSelect() {
   const sel = $('map-ruta'); if (!sel) return;
   const prev = sel.value;
@@ -4994,21 +5033,29 @@ function renderMarkers(fit) {
       const m = String(r.movil || '').toLowerCase(), p = String(r.placa || '').toLowerCase();
       if (!vehSearch.some((q) => m.includes(q) || p.includes(q))) continue;
     }
+    const seg = seguidos.has(_mk(r.movil));
+    if (soloSeguidos && !seg) continue; // modo "ver seguidos": oculta los demás
     const ruta = r.ruta ? ` <small>${esc(r.ruta)}</small>` : '';
     const icon = L.divIcon({
       className: 'bus-marker',
-      html: `<div class="bus-pin ${cls}"><span>🚌</span>${esc(r.movil || '—')}${ruta}</div>`,
+      html: `<div class="bus-pin ${cls}${seg ? ' seg' : ''}"><span>🚌</span>${esc(r.movil || '—')}${ruta}</div>`,
       iconSize: null, iconAnchor: [26, 24], popupAnchor: [0, -22],
     });
     const m = L.marker([r.latitude, r.longitude], { icon, title: `Móvil ${r.movil || ''}` });
     m._row = r;
-    m.on('click', () => openVehSheet(r)); // abre el panel inferior (mejor en celular)
+    // Un clic hace ZOOM al carro y abre su panel (mejor en celular)
+    m.on('click', () => { zoomAlMovil(r); openVehSheet(r); });
     flotaLayer.addLayer(m);
     pts.push([r.latitude, r.longitude]);
   }
-  const filtrando = mapFilter !== 'todos' || routeFilter;
+  const filtrando = mapFilter !== 'todos' || routeFilter || soloSeguidos;
   $('map-count').textContent = filtrando ? `${pts.length} de ${lastUbic.length}` : `${pts.length} móviles`;
-  if (fit && pts.length) flotaMap.fitBounds(pts, { padding: [30, 30] });
+  if (fit && pts.length) flotaMap.fitBounds(pts, { padding: [30, 30], maxZoom: 16 });
+}
+// Acerca el mapa a un móvil (sin alejar si ya estás más cerca).
+function zoomAlMovil(r) {
+  if (!flotaMap || r.latitude == null || r.longitude == null) return;
+  flotaMap.flyTo([r.latitude, r.longitude], Math.max(flotaMap.getZoom(), 16), { duration: 0.6 });
 }
 async function refreshMapa(fit) {
   const { data, error } = await sb.from('ubicaciones').select('*').not('latitude', 'is', null);

@@ -369,6 +369,21 @@ tbody tr:hover { background: #faf8ff; }
 .bus-pin.mov { background: #16a34a; }
 .bus-pin.idle { background: #f59e0b; }
 .bus-pin.off { background: #6b7280; opacity: .85; }
+/* Móvil en seguimiento: aro resaltado + al frente */
+.bus-pin.seg { outline: 3px solid #7c3aed; outline-offset: 2px; box-shadow: 0 0 0 3px rgba(124,58,237,.35), 0 2px 9px rgba(0,0,0,.5); z-index: 500; }
+.bus-marker:has(.bus-pin.seg) { z-index: 500 !important; }
+
+/* Barra de móviles en seguimiento */
+.map-seguidos { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--border); background: #f3f0fc; }
+.map-seguidos[hidden] { display: none; }
+.map-seguidos .seg-lbl { font-weight: 800; font-size: 13px; color: #5b21b6; }
+.seg-chip { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  background: #fff; border: 1px solid #d6c9f5; color: #5b21b6; border-radius: 999px;
+  padding: 4px 10px; font-size: 12.5px; font-weight: 700; }
+.seg-chip:hover { background: #ede7fb; }
+.seg-chip b { color: #a78bda; font-weight: 800; }
+.seg-btn { padding: 5px 11px; font-size: 12.5px; }
 
 /* Barra de filtros del mapa */
 .map-filters { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }
