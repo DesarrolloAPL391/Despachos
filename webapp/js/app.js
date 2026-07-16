@@ -5010,7 +5010,7 @@ function renderSeguidosBar() {
   const chips = [...seguidos].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }))
     .map((m) => `<span class="seg-chip" data-m="${esc(m)}" title="Quitar">${esc(m)} <b>✕</b></span>`).join('');
   bar.innerHTML = `<span class="seg-lbl">🎯 Siguiendo (${seguidos.size}):</span>${chips}`
-    + `<button class="btn seg-btn ${soloSeguidos ? 'btn-primary' : ''}" id="seg-ver">👁️ Ver en pantalla</button>`
+    + `<button class="btn seg-btn ${soloSeguidos ? 'btn-primary' : ''}" id="seg-ver">${soloSeguidos ? '🎯 Siguiendo en vivo' : '👁️ Ver en pantalla'}</button>`
     + `<button class="btn seg-btn" id="seg-clear">Limpiar</button>`;
   bar.querySelectorAll('.seg-chip').forEach((c) => c.addEventListener('click', () => quitarSeguido(c.dataset.m)));
   // "Ver en pantalla": alterna mostrar solo los seguidos y los encuadra en el mapa
@@ -5086,7 +5086,14 @@ function renderMarkers(fit) {
   }
   const filtrando = mapFilter !== 'todos' || routeFilter || soloSeguidos || vehSearch.length;
   $('map-count').textContent = filtrando ? `${pts.length} de ${lastUbic.length}` : `${pts.length} móviles`;
-  if (fit && pts.length) flotaMap.fitBounds(pts, { padding: [30, 30], maxZoom: 16 });
+  if (fit && pts.length) encuadrar(pts);
+}
+// Encuadra el mapa a unos puntos. Con un solo carro recentra SIN cambiarte el zoom
+// (para seguirlo de cerca); con varios, ajusta la vista para verlos a todos.
+function encuadrar(pts) {
+  if (!flotaMap || !pts.length) return;
+  if (pts.length === 1) flotaMap.setView(pts[0], Math.max(flotaMap.getZoom(), 15), { animate: true });
+  else flotaMap.fitBounds(pts, { padding: [30, 30], maxZoom: 16 });
 }
 // Acerca el mapa a un móvil (sin alejar si ya estás más cerca).
 function zoomAlMovil(r) {
@@ -5116,7 +5123,9 @@ async function refreshMapa(fit) {
   }
   lastUbic = rows;
   fillRutaSelect();
-  renderMarkers(fit);
+  // En modo "Ver seleccionados" el mapa PERSIGUE a los carros vigilados: re-encuadra en
+  // cada refresco (aunque sea el automático de 60 s) para no perderles el rastro al moverse.
+  renderMarkers(fit || (soloSeguidos && seguidos.size > 0));
 }
 // Crea el mapa Leaflet una sola vez (lo reusan la vista completa y la ventana flotante)
 function ensureFlotaMap() {
