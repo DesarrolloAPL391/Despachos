@@ -722,7 +722,7 @@ tbody tr:hover { background: #faf8ff; }
 .map-fab[hidden] { display: none; }
 @media (min-width: 761px) { .map-fab { bottom: 20px; } }
 .map-float {
-  position: fixed; z-index: 1600; left: 12px; top: 76px; width: 370px; height: 340px;
+  position: fixed; z-index: 1600; left: 12px; top: 76px; width: 370px; height: 420px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 20px 55px rgba(0,0,0,.38); display: flex; flex-direction: column; overflow: hidden;
   max-width: calc(100vw - 16px); max-height: calc(100vh - 90px);
@@ -739,7 +739,26 @@ tbody tr:hover { background: #faf8ff; }
 /* El #map-view completo vive aquí dentro cuando está flotante */
 .map-float-body .map-view { position: static !important; height: 100% !important; display: flex; flex-direction: column; }
 .map-float-body #map { flex: 1 !important; height: auto !important; min-height: 0; }
-.map-float-body .map-filters { flex-wrap: wrap; gap: 4px; padding: 6px; }
+/* Controles compactos en UNA sola fila deslizable: el mapa ocupa casi toda la
+   ventana (las pantallas de celular son pequeñas). Se deslizan de lado si no caben. */
+.map-float-body .map-filters {
+  flex-wrap: nowrap; gap: 5px; padding: 5px 6px;
+  overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+}
+.map-float-body .map-filters::-webkit-scrollbar { height: 4px; }
+.map-float-body .map-filters .spacer { display: none; }
+.map-float-body .map-filters .mf,
+.map-float-body .map-filters .btn { padding: 4px 9px; font-size: 12px; flex: 0 0 auto; white-space: nowrap; }
+.map-float-body .map-ruta { padding: 4px 8px; font-size: 12px; max-width: 118px; flex: 0 0 auto; }
+.map-float-body .map-search { max-width: 120px; flex: 0 0 auto; font-size: 12px; padding: 5px 9px; }
+.map-float-body #map-count { flex: 0 0 auto; white-space: nowrap; align-self: center; }
+/* Barra de seguidos también compacta y deslizable dentro del flotante */
+.map-float-body #map-seguidos { flex-wrap: nowrap; overflow-x: auto; padding: 6px 8px; gap: 6px; }
+.map-float-body #map-seguidos > * { flex: 0 0 auto; }
+/* Con los controles ocultos, el mapa toma toda la ventana */
+.map-float.controls-off .map-filters,
+.map-float.controls-off #map-seguidos { display: none !important; }
+.map-float.controls-off #map-lista { display: none; }
 .map-float-resize {
   position: absolute; right: 2px; bottom: 2px; width: 20px; height: 20px; cursor: nwse-resize; z-index: 1610;
   background: linear-gradient(135deg, transparent 45%, var(--muted) 45%, var(--muted) 55%, transparent 55%,

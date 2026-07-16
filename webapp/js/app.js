@@ -5188,6 +5188,15 @@ function toggleMapaFlotante() { mapaFlotante ? cerrarMapaFlotante() : abrirMapaF
 $('map-fab')?.addEventListener('click', toggleMapaFlotante);
 $('map-float-close')?.addEventListener('click', cerrarMapaFlotante);
 $('map-float-full')?.addEventListener('click', () => { cerrarMapaFlotante(); showMapView(); });
+// Ocultar/mostrar los filtros del flotante para darle todo el espacio al mapa
+$('map-float-controls')?.addEventListener('click', () => {
+  const p = $('map-float'); if (!p) return;
+  const oculto = p.classList.toggle('controls-off');
+  const b = $('map-float-controls');
+  if (b) { b.classList.toggle('btn-primary', oculto); b.title = oculto ? 'Mostrar filtros' : 'Ocultar filtros'; }
+  if (oculto) toggleListaMoviles(false); // si estaba abierta la lista, ciérrala
+  setTimeout(() => flotaMap && flotaMap.invalidateSize(), 60); // el mapa recupera el espacio
+});
 // Arrastrar la ventana por la barra superior y redimensionar por la esquina (mouse + touch)
 (function () {
   const panel = $('map-float'), head = $('map-float-head'), rz = $('map-float-resize');
