@@ -2913,7 +2913,11 @@ async function _openEditorInterno(row) {
       } else if (f.type === 'enum') {
         input = document.createElement('select');
         if (!f.required) input.innerHTML = '<option value="">— ninguno —</option>';
-        for (const o of f.options) {
+        // Si el valor actual no está entre las opciones (ej. un DESPACHADO/PENDIENTE puesto por
+        // el sistema), se agrega para no perderlo al guardar.
+        const opciones = [...f.options];
+        if (val != null && String(val) !== '' && !opciones.includes(String(val))) opciones.unshift(String(val));
+        for (const o of opciones) {
           const op = document.createElement('option');
           op.value = o; op.textContent = o;
           if ((val ?? '') === o) op.selected = true;
@@ -3048,6 +3052,18 @@ $('modal-save').addEventListener('click', async () => {
   if (isAuditor() && (current === 'despachos' || puestoTables.includes(current))) {
     if (CTX?.auditor_id != null) payload.auditor_id = CTX.auditor_id;
     payload.fecha_hora_auditoria = new Date().toISOString();
+  }
+
+  // Control del despachador: si marcó una DECISIÓN del viaje (SI / NO realiza…), queda
+  // registrado quién y cuándo, para que el auditor sepa quién lo reportó. (El botón ✈️
+  // que sí manda a SONAR ya sella esto por su cuenta; aquí es la marca manual.)
+  if (cfg.dispatchable && !isAuditor()) {
+    const est = String(payload.estado_despacho || '').toUpperCase();
+    const decidido = est === 'SI' || est.startsWith('NO REALIZA') || est.startsWith('NO SE REALIZA');
+    if (decidido) {
+      if (CTX?.despachador_id != null && !payload.despachador_id) payload.despachador_id = CTX.despachador_id;
+      if (!payload.despachado_en) payload.despachado_en = new Date().toISOString();
+    }
   }
 
   // Estado: 'Abierto' al crear; al editar, si están todos los campos requeridos → 'Cerrado' (bloqueado)

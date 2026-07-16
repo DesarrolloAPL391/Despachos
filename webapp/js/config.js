@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v131';
+export const APP_VERSION = 'v132';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -122,7 +122,10 @@ export const TABLES = {
       { key: 'fecha', label: 'Fecha', type: 'date', section: 'General' },
       { key: 'hora', label: 'Hora', type: 'time', section: 'General' },
       { key: 'ruta_id', label: 'Ruta', type: 'fk', fk: { table: 'rutas', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'General' },
-      { key: 'estado_despacho', label: 'Estado del despacho', type: 'text', section: 'General' },
+      // Control del despachador: marca si el viaje se realizó (SI) o no (NO REALIZA EL VIAJE).
+      // Es lo que el auditor luego contrasta contra lo que dice SONAR (Auditoría SONAR).
+      { key: 'estado_despacho', label: '¿Se realizó el viaje?', type: 'enum',
+        options: ['SIN DESPACHO', 'SI', 'NO REALIZA EL VIAJE', 'NO SE REALIZA POR OTRO MOTIVO'], section: 'General' },
       { key: 'sonar_regid', label: 'regId SONAR', type: 'text', section: 'General' },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General', formHide: true },
       { key: 'cambio', label: 'Cambio (automático)', type: 'text', section: 'General', readOnly: true, autoCambio: true, hint: 'Se registra solo al elegir un móvil distinto al programado.' },
@@ -585,7 +588,8 @@ export function configTablaPuesto(label, puesto, opts = {}) {
   // No se muestran en el formulario (se ponen solos al despachar o no aplican en una tabla)
   const OCULTOS = new Set(['tipo', 'id', 'sonar_regid', 'despachador_id', 'hora_finalizacion', 'hora_real_despacho', 'hora_llegada']);
   // Se muestran pero NO se pueden modificar (programación del admin o capturado al despachar, ej. ubicación GPS)
-  const SOLO_LECTURA = new Set(['fecha', 'estado_despacho', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id', 'ubicacion']);
+  // estado_despacho NO va aquí: el despachador debe poder marcar SI / NO REALIZA EL VIAJE (control)
+  const SOLO_LECTURA = new Set(['fecha', 'vehiculo_programado_id', 'hora_programada', 'ruta_programada_id', 'ubicacion']);
   // En las tablas de puesto, "Real" (lo que se despacha) va dentro de "General"
   const REUBICAR = { Real: 'General' };
   let fields = TABLES.despachos.fields
