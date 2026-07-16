@@ -293,6 +293,14 @@
         <button id="sonar-close" class="icon-btn">✕</button>
       </div>
       <form id="sonar-form" class="edit-form">
+        <label class="field full"><span>¿Se realizó el viaje? *</span>
+          <select id="s-realizo">
+            <option value="SI">SÍ — despachar en SONAR</option>
+            <option value="NO REALIZA EL VIAJE">NO realizó el viaje</option>
+            <option value="NO SE REALIZA POR OTRO MOTIVO">No se realiza por otro motivo</option>
+          </select>
+        </label>
+        <label class="field full" id="s-nov-wrap" hidden><span>Novedad (obligatoria) *</span><select id="s-novedad"></select></label>
         <div class="field full sonar-info" id="s-prog" hidden></div>
         <label class="field"><span>Móvil *</span><select id="s-mov"></select></label>
         <label class="field"><span>Itinerario · ruta SONAR *</span><select id="s-itin"></select></label>

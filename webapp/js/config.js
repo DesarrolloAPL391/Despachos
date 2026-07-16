@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v132';
+export const APP_VERSION = 'v133';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -146,7 +146,9 @@ export const TABLES = {
       { key: 'hora_finalizacion', label: 'Hora finalización', type: 'time', section: 'General', postDispatch: true, formHide: true },
       { key: 'hora_llegada', label: 'Hora de llegada', type: 'time', section: 'General', postDispatch: true, formHide: true },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'General', postDispatch: true, readOnly: true },
-      { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'General', postDispatch: true },
+      // Si el viaje NO se realizó, la novedad (el motivo) es obligatoria.
+      { key: 'estado', label: 'Novedad operativa', type: 'enum', options: NOVEDADES, section: 'General', postDispatch: true,
+        requiredWhen: { field: 'estado_despacho', in: ['NO REALIZA EL VIAJE', 'NO SE REALIZA POR OTRO MOTIVO'] } },
       { key: 'realizo_programado', label: '¿El carro programado realizó el viaje?', type: 'boolean', section: 'General', postDispatch: true, audit: true },
 
       // ----- Indicadores ----- (editables después de despachar y por el auditor)

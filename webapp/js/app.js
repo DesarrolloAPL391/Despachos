@@ -3035,9 +3035,14 @@ $('modal-save').addEventListener('click', async () => {
   for (const f of cfg.fields) {
     const el = $('edit-form').querySelector(`[data-key="${f.key}"]`);
     if (el && el.disabled) continue; // bloqueado → no se valida
-    if (f.required && (payload[f.key] === null || payload[f.key] === undefined || payload[f.key] === '')) {
+    // required fijo, o condicional (requiredWhen: obligatorio solo si otro campo tiene cierto valor,
+    // ej. la novedad es obligatoria cuando el viaje NO se realizó)
+    const obligatorio = f.required
+      || (f.requiredWhen && f.requiredWhen.in.includes(payload[f.requiredWhen.field]));
+    if (obligatorio && (payload[f.key] === null || payload[f.key] === undefined || payload[f.key] === '')) {
       expandarTodasSecciones($('edit-form')); // que no quede oculto en una sección plegada
-      err.textContent = `El campo "${f.label}" es obligatorio.`; err.hidden = false; return;
+      const motivo = f.requiredWhen ? ` (obligatoria porque el viaje no se realizó)` : '';
+      err.textContent = `El campo "${f.label}" es obligatorio${motivo}.`; err.hidden = false; return;
     }
     if (f.type === 'number' && f.min != null && payload[f.key] != null && payload[f.key] < f.min) {
       err.textContent = `"${f.label}" debe ser ${f.min === 0 ? 'un número positivo' : 'mayor o igual a ' + f.min}.`; err.hidden = false; return;
@@ -4062,6 +4067,13 @@ async function _openSonarInterno(row) {
   }
   enhanceById('s-mov', 's-itin', 's-drv');
   $('s-desp-name').value = CTX?.nombre || ''; // despachador = usuario en sesión (no editable)
+  // "¿Se realizó el viaje?": por defecto SÍ (despachar). Solo tiene sentido sobre una fila
+  // existente; en "Nuevo despacho" (sin fila) se oculta y se fuerza SÍ.
+  const novOpts = (TABLES[current]?.fields || TABLES.despachos.fields).find((f) => f.key === 'estado')?.options || [];
+  fillSelect($('s-novedad'), novOpts.map((o) => [o, o]));
+  $('s-realizo').value = 'SI';
+  $('s-realizo').closest('.field').classList.toggle('hidden-field', !row);
+  aplicarSonarRealizo();
   await traerConductorSonar(); // conductor desde Resumen, según la fecha del despacho
   await updateSonarInfo();
   updateSonarProg();           // muestra el móvil programado y avisa si hay cambio
@@ -4097,12 +4109,52 @@ $('sonar-close').addEventListener('click', closeSonar);
 $('sonar-cancel').addEventListener('click', closeSonar);
 $('dispatch-btn').addEventListener('click', () => openSonar(null));
 $('s-mov').addEventListener('change', () => { updateSonarInfo(); updateSonarProg(); traerConductorSonar(); });
+
+// Alterna el modal según "¿Se realizó el viaje?": SÍ = despacho normal a SONAR;
+// NO = solo se pide la novedad (obligatoria) y se marca la fila, sin llamar a SONAR.
+function aplicarSonarRealizo() {
+  const esNo = $('s-realizo').value !== 'SI';
+  ['s-mov', 's-itin', 's-drv', 's-com'].forEach((id) => {
+    const w = $(id)?.closest('.field'); if (w) w.classList.toggle('hidden-field', esNo);
+  });
+  if (esNo) ['s-cond-note', 's-info', 's-docwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+  $('s-nov-wrap').hidden = !esNo;
+  $('sonar-send').textContent = esNo ? 'Guardar novedad' : 'Despachar';
+  if (!esNo) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ
+}
+$('s-realizo').addEventListener('change', aplicarSonarRealizo);
+
+// Marca la fila como NO realizada (con novedad obligatoria). No toca SONAR.
+async function marcarNoRealiza() {
+  const btn = $('sonar-send'); const err = $('sonar-error'); err.hidden = true;
+  const modo = $('s-realizo').value;         // 'NO REALIZA EL VIAJE' | 'NO SE REALIZA POR OTRO MOTIVO'
+  const nov = $('s-novedad').value;
+  if (!sonarRow?.id) { err.textContent = 'No hay un viaje seleccionado para marcar.'; err.hidden = false; return; }
+  if (!nov) { err.textContent = 'La novedad es obligatoria cuando el viaje no se realizó.'; err.hidden = false; return; }
+  if (!(await verificarSesionVigente())) return; // el turno pudo terminar
+  btn.dataset.busy = '1'; btn.disabled = true; showBusy('Guardando…');
+  const patch = { estado_despacho: modo, estado: nov, despachado_en: new Date().toISOString() };
+  if (CTX?.despachador_id != null) patch.despachador_id = CTX.despachador_id;
+  try {
+    const { data, error } = await sb.from(sonarTable).update(patch).eq('id', sonarRow.id).select();
+    if (error) { err.textContent = 'No se pudo guardar: ' + error.message; err.hidden = false; return; }
+    if (!data || !data.length) { err.textContent = 'No se guardó: tu turno terminó o el registro no es editable.'; err.hidden = false; return; }
+    toast('Marcado: ' + modo, 'ok');
+    closeSonar();
+    if (current === sonarTable) loadData();
+  } finally {
+    hideBusy(); btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo();
+  }
+}
 // Si el usuario elige el conductor a mano, se oculta el aviso del Resumen
 $('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n) n.hidden = true; });
 
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');
   if (btn.dataset.busy === '1') return; // evita doble click / doble despacho
+  // Si el despachador marcó que el viaje NO se realizó, no se despacha a SONAR:
+  // se guarda la novedad y punto.
+  if ($('s-realizo').value !== 'SI') { await marcarNoRealiza(); return; }
   const err = $('sonar-error'); err.hidden = true;
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
