@@ -3773,6 +3773,16 @@ function sonarFechaHora(fecha, hora) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
+// ¿La hora elegida (Colombia, para HOY) ya pasó respecto a la hora actual? No se puede
+// despachar en horas pasadas (ej. poner 17:00 cuando ya son las 22:00). Hora vacía/inválida
+// => no bloquea (se despacha "ahora"). refDate es solo para pruebas.
+function horaYaPaso(hora, refDate) {
+  const hm = String(hora || '').trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!hm) return false;
+  const selMin = (+hm[1]) * 60 + (+hm[2]);
+  const ref = refDate || new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+  return selMin < (ref.getHours() * 60 + ref.getMinutes());
+}
 // Ejecuta un despacho completo (BD + SONAR) a partir de un "intent". Lanza si hay error de red.
 async function doDispatch(intent) {
   // Idempotencia: si este intent ya fue confirmado por SONAR (reintento desde la cola offline
@@ -3834,6 +3844,10 @@ $('nd-save').addEventListener('click', async () => {
   const drvId = $('nd-cond').value;
   if (!itid || !vehVal || !drvId) {
     err.textContent = 'Ruta, Móvil y Conductor son obligatorios.'; err.hidden = false; return;
+  }
+  // No se puede despachar en una hora que ya pasó
+  if (horaYaPaso($('nd-hora').value)) {
+    err.textContent = 'La hora de despacho ya pasó. Usa la hora actual o una posterior.'; err.hidden = false; return;
   }
   const its = await loadItinerarios(), veh = await loadVehiculos(), drs = await loadDrivers();
   const itin = its.find((i) => i.itid === itid);
@@ -4183,6 +4197,8 @@ $('sonar-send').addEventListener('click', async () => {
   if (!vr) { err.textContent = 'Selecciona un móvil.'; err.hidden = false; return; }
   if (!itin) { err.textContent = 'Selecciona un itinerario / ruta.'; err.hidden = false; return; }
   if (!drv) { err.textContent = 'Selecciona un conductor.'; err.hidden = false; return; }
+  // No se puede despachar en una hora que ya pasó (backdating)
+  if (horaYaPaso(horaSel)) { err.textContent = 'La hora de despacho ya pasó. Usa la hora actual o una posterior.'; err.hidden = false; return; }
   const g = await gpsInfoFor(vr.numero); const mId = g?.tracker_id;
   if (!mId) { err.textContent = 'Ese móvil no tiene Id GPS en SONAR.'; err.hidden = false; return; }
 
