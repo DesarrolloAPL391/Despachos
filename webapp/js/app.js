@@ -4048,6 +4048,7 @@ async function _openSonarInterno(row) {
   const sbtn = $('sonar-send'); sbtn.disabled = false; sbtn.textContent = 'Despachar'; // reset por si quedó deshabilitado
   const res = $('sonar-result'); res.hidden = true; res.textContent = '';
   $('s-com').value = '';
+  $('s-hora').value = ''; // hora de despacho editable (se llena abajo con la del viaje si hay fila)
 
   const [veh, its, drs] = await Promise.all([loadVehiculos(), loadItinerarios(), loadDrivers()]);
   // El despachador solo ve los móviles de SU(S) grupo(s) del parque (igual que el mapa y el
@@ -4078,6 +4079,7 @@ async function _openSonarInterno(row) {
     if (movil) { const vr = veh.find((v) => String(v.numero) === String(movil)); if (vr) $('s-mov').value = vr.id; }
     const m = matchItinerario(its, row.ruta?.nombre || row.rutap?.nombre);
     if (m) $('s-itin').value = m.itid;
+    $('s-hora').value = String(row.hora || '').slice(0, 5); // hora del viaje (editable, HH:MM)
     // El conductor NO se toma de la programación de la tabla (puede estar desactualizada);
     // se trae de Resumen para la fecha del despacho (abajo). Si no hay, queda vacío.
     $('s-com').value = 'Despacho ' + (row.id || '');
@@ -4176,6 +4178,7 @@ $('sonar-send').addEventListener('click', async () => {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const itin = $('s-itin').value, drv = $('s-drv').value, com = $('s-com').value.trim();
+  const horaSel = $('s-hora')?.value || ''; // hora de despacho (editable); '' = ahora
   // Campos obligatorios para despachar
   if (!vr) { err.textContent = 'Selecciona un móvil.'; err.hidden = false; return; }
   if (!itin) { err.textContent = 'Selecciona un itinerario / ruta.'; err.hidden = false; return; }
@@ -4229,7 +4232,8 @@ $('sonar-send').addEventListener('click', async () => {
   try {
     ({ data, error } = await sb.rpc('despachar_sonar', {
       p_mid: String(mId), p_itinerary: itin, p_drvid: drv,
-      p_utc: sonarFechaHora(sonarRow?.fecha, sonarRow?.hora), // hora del viaje (Colombia); '' = ahora
+      // hora seleccionada por el despachador (Colombia); si la dejó vacía, la del viaje; si no hay, ahora
+      p_utc: sonarFechaHora(sonarRow?.fecha || hoyServidor(), horaSel || sonarRow?.hora),
       p_comments: com,
     }));
   } finally {
@@ -4268,6 +4272,8 @@ $('sonar-send').addEventListener('click', async () => {
         cambio: huboCambio ? `${numDe(progId)} → ${numDe(newVehId)}` : null,
         despachado_en: new Date().toISOString(), // hora del despacho (para el aviso de 20 min)
       };
+      // Si el despachador cambió la hora de despacho, se refleja en la fila de la tabla
+      if (horaSel) patch.hora = horaSel;
       // Queda registrado quién despachó (el usuario que tiene la sesión)
       if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id;
       if (ubicGps) patch.ubicacion = ubicGps; // GPS del celular al despachar
