@@ -3758,6 +3758,21 @@ async function reportarFalloSonar(tabla, id, motivo, extra) {
   } catch (e) { /* el webhook nunca bloquea */ }
 }
 
+// Arma la fecha+hora para el campo <UTC_datetime> de SONAR (SET_ItAssign_v2).
+// El campo ES UTC de verdad: verificado el 16/07/2026 enviando 22:00 y SONAR lo
+// registró como 17:00 (hora Colombia) -> restó 5h. Por eso convertimos la hora
+// Colombia (UTC-5) a UTC SUMANDO 5 horas (con cambio de día si aplica). Formato
+// 'YYYY-MM-DD HH:MM:SS'. Si falta la hora, devuelve '' y SONAR sella en el momento del envío.
+function sonarFechaHora(fecha, hora) {
+  if (!fecha || !hora) return '';
+  const fm = String(fecha).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const hm = String(hora).trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!fm || !hm) return '';
+  const d = new Date(Date.UTC(+fm[1], +fm[2] - 1, +fm[3], +hm[1] + 5, +hm[2], +(hm[3] || 0)));
+  if (isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
 // Ejecuta un despacho completo (BD + SONAR) a partir de un "intent". Lanza si hay error de red.
 async function doDispatch(intent) {
   // Idempotencia: si este intent ya fue confirmado por SONAR (reintento desde la cola offline
@@ -3789,7 +3804,9 @@ async function doDispatch(intent) {
   const ins = await sb.from('despachos').upsert(payload, { onConflict: 'id' });
   if (ins.error) throw ins.error;
   const { data: sd, error: se } = await sb.rpc('despachar_sonar', {
-    p_mid: intent.mId || '', p_itinerary: intent.itid, p_drvid: intent.drvId, p_utc: '', p_comments: intent.com || ('Despacho ' + intent.id),
+    p_mid: intent.mId || '', p_itinerary: intent.itid, p_drvid: intent.drvId,
+    p_utc: sonarFechaHora(intent.fecha, intent.hora), // hora seleccionada (Colombia); '' = ahora
+    p_comments: intent.com || ('Despacho ' + intent.id),
   });
   const datosFallo = { movil: intent.movilNum ?? null, ruta: intent.itinNombre ?? null, conductor: intent.drvNombre ?? null, fecha: intent.fecha ?? null, hora: intent.hora ?? null };
   if (se) {
@@ -4211,7 +4228,9 @@ $('sonar-send').addEventListener('click', async () => {
   let data, error;
   try {
     ({ data, error } = await sb.rpc('despachar_sonar', {
-      p_mid: String(mId), p_itinerary: itin, p_drvid: drv, p_utc: '', p_comments: com,
+      p_mid: String(mId), p_itinerary: itin, p_drvid: drv,
+      p_utc: sonarFechaHora(sonarRow?.fecha, sonarRow?.hora), // hora del viaje (Colombia); '' = ahora
+      p_comments: com,
     }));
   } finally {
     hideBusy();
