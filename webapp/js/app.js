@@ -545,6 +545,7 @@ function selectTable(name) {
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
+  $('cump-btn').hidden = !(TABLES[name].dispatchable && (isAdmin() || isAuditor())); // Cumplimiento: auditor/admin
   soloPendientes = false;                                              // al cambiar de tabla, ver todas
   $('pend-btn').hidden = !TABLES[name].dispatchable;                   // "Solo pendientes": en tablas de despacho
   $('pend-btn').classList.remove('on'); $('pend-btn').textContent = '⏳ Solo pendientes';
@@ -3301,6 +3302,115 @@ async function exportarExcel() {
   }
 }
 $('export-btn').addEventListener('click', exportarExcel);
+
+// ---------- Tablero de Cumplimiento (SOLO auditor y admin) ----------
+// Resumen del día para la tabla actual (Despachos o una tabla de puesto): cuántos viajes
+// se programaron, cuántos se despacharon, % de cumplimiento, viajes perdidos y en qué
+// franjas horarias una ruta se quedó sin cobertura. Con gráficas.
+const _CUMP_DESP = new Set(['DESPACHADO', 'SI']);                                   // realizados
+const _CUMP_PERD = new Set(['NO REALIZA EL VIAJE', 'NO SE REALIZA POR OTRO MOTIVO', 'CANCELADO']); // perdidos
+function _cumpClasif(e) {
+  const s = String(e || '').trim().toUpperCase();
+  if (_CUMP_DESP.has(s)) return 'desp';
+  if (_CUMP_PERD.has(s)) return 'perd';
+  return 'sin'; // SIN DESPACHO / PENDIENTE SONAR / vacío
+}
+function _horaNum(h) { const m = String(h || '').match(/^(\d{1,2}):/); return m ? +m[1] : null; }
+function _pctCump(a, b) { return b ? Math.round((a / b) * 100) : 0; }
+function _colCump(p) { return p >= 90 ? '#16a34a' : p >= 70 ? '#f59e0b' : '#dc2626'; }
+// Agrega las filas (tabla+día) en métricas de cumplimiento. Pura → testeable.
+function agregarCumplimiento(rows) {
+  const tot = { prog: 0, desp: 0, perd: 0, sin: 0 };
+  const porRuta = new Map();   // ruta -> {prog,desp,perd,sin}
+  const porHora = new Map();   // h -> {prog,desp,perd,sin}
+  const rutaHora = new Map();  // ruta -> Map(h -> {prog,desp})
+  const perdidos = [];
+  for (const r of rows) {
+    const cls = _cumpClasif(r.estado_despacho);
+    const ruta = (r.ruta && r.ruta.nombre) || '(sin ruta)';
+    const h = _horaNum(r.hora);
+    tot.prog++; tot[cls]++;
+    const pr = porRuta.get(ruta) || { prog: 0, desp: 0, perd: 0, sin: 0 }; pr.prog++; pr[cls]++; porRuta.set(ruta, pr);
+    if (h != null) {
+      const ph = porHora.get(h) || { prog: 0, desp: 0, perd: 0, sin: 0 }; ph.prog++; ph[cls]++; porHora.set(h, ph);
+      const rh = rutaHora.get(ruta) || new Map();
+      const cell = rh.get(h) || { prog: 0, desp: 0 }; cell.prog++; if (cls === 'desp') cell.desp++; rh.set(h, cell); rutaHora.set(ruta, rh);
+    }
+    if (cls === 'perd') perdidos.push({ ruta, hora: r.hora, motivo: r.estado || '', movil: (r.veh && r.veh.numero) || '' });
+  }
+  const gaps = []; // franjas ruta+hora con viajes programados pero 0 despachados
+  for (const [ruta, rh] of rutaHora) {
+    for (const [h, cell] of rh) if (cell.prog > 0 && cell.desp === 0) gaps.push({ ruta, h, prog: cell.prog });
+  }
+  gaps.sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || a.h - b.h);
+  return { tot, porRuta, porHora, perdidos, gaps };
+}
+let _cumpTabla = 'despachos';
+async function openCumplimiento() {
+  _cumpTabla = current;
+  $('cump-fecha').value = filters['fecha'] || hoyServidor();
+  $('cump-modal').hidden = false;
+  await cargarCumplimiento();
+}
+async function cargarCumplimiento() {
+  const fecha = $('cump-fecha').value || hoyServidor();
+  $('cump-body').innerHTML = '<div class="loading">Calculando…</div>';
+  const { data, error } = await sb.from(_cumpTabla)
+    .select('hora, estado_despacho, estado, ruta:ruta_id(nombre), veh:vehiculo_id(numero)')
+    .eq('fecha', fecha).limit(6000);
+  if (error) { $('cump-body').innerHTML = '<div class="cump-empty">Error al calcular: ' + esc(error.message) + '</div>'; return; }
+  renderCumplimiento(agregarCumplimiento(data || []), fecha);
+}
+function renderCumplimiento(agg, fecha) {
+  const t = agg.tot, cumpl = _pctCump(t.desp, t.prog);
+  $('cump-title').textContent = `📊 Cumplimiento · ${TABLES[_cumpTabla]?.label || _cumpTabla}`;
+  const sub = $('cump-sub'); if (sub) sub.textContent = (typeof fechaLegible === 'function' ? fechaLegible(fecha) : fecha);
+  if (!t.prog) { $('cump-body').innerHTML = '<div class="cump-empty">No hay viajes programados para ese día.</div>'; return; }
+  const kpi = (val, lbl, cls, style) => `<div class="cump-kpi ${cls || ''}"${style ? ` style="${style}"` : ''}><div class="k-val">${val}</div><div class="k-lbl">${lbl}</div></div>`;
+  const kpis = `<div class="cump-kpis">${
+    kpi(t.prog, 'Programados', '') +
+    kpi(t.desp, 'Despachados', 'good') +
+    kpi(cumpl + '%', 'Cumplimiento', 'hero', `--acc:${_colCump(cumpl)}`) +
+    kpi(t.perd, 'Viajes perdidos', 'bad') +
+    kpi(t.sin, 'Sin despachar', 'warn')}</div>`;
+  // Cumplimiento por ruta (barras horizontales, color por semáforo)
+  const rutas = [...agg.porRuta.entries()].sort((a, b) => b[1].prog - a[1].prog);
+  const barsRuta = rutas.map(([ruta, d]) => {
+    const p = _pctCump(d.desp, d.prog);
+    return `<div class="crow"><div class="crow-lbl" title="${esc(ruta)}">${esc(ruta)}</div>`
+      + `<div class="crow-track"><div class="crow-fill" style="width:${p}%;background:${_colCump(p)}"></div></div>`
+      + `<div class="crow-val"><b style="color:${_colCump(p)}">${p}%</b> <small>${d.desp}/${d.prog}</small></div></div>`;
+  }).join('');
+  const chartRuta = `<div class="cump-card"><h4>Cumplimiento por ruta</h4>${barsRuta}</div>`;
+  // Cobertura por hora (barras apiladas: despachado / perdido / sin despachar)
+  const horas = [...agg.porHora.keys()].sort((a, b) => a - b);
+  const maxH = Math.max(1, ...horas.map((h) => agg.porHora.get(h).prog));
+  const seg = (n, cls) => n ? `<div class="cbar-seg ${cls}" style="height:${(n / maxH * 100).toFixed(1)}%" title="${n}"></div>` : '';
+  const barsHora = horas.map((h) => {
+    const d = agg.porHora.get(h);
+    return `<div class="cbar-col"><div class="cbar-n">${d.desp}/${d.prog}</div>`
+      + `<div class="cbar">${seg(d.desp, 'desp')}${seg(d.perd, 'perd')}${seg(d.sin, 'sin')}</div>`
+      + `<div class="cbar-x">${String(h).padStart(2, '0')}h</div></div>`;
+  }).join('');
+  const chartHora = `<div class="cump-card"><h4>Cobertura por hora</h4><div class="cbar-wrap">${barsHora}</div>`
+    + `<div class="cump-leg"><span class="lg desp">✓ Despachado</span><span class="lg perd">✕ Perdido</span><span class="lg sin">○ Sin despachar</span></div></div>`;
+  // Franjas sin cobertura
+  const gapsHtml = agg.gaps.length
+    ? `<div class="cump-card"><h4>⚠️ Franjas sin cobertura (${agg.gaps.length})</h4><div class="cump-chips">${
+      agg.gaps.map((g) => `<span class="cump-gap">${esc(g.ruta)} · ${String(g.h).padStart(2, '0')}:00–${String(g.h).padStart(2, '0')}:59 <b>${g.prog}</b></span>`).join('')}</div></div>`
+    : '<div class="cump-card ok-note">✅ Todas las franjas horarias con viajes tuvieron al menos un despacho.</div>';
+  // Viajes perdidos (detalle)
+  const perd = agg.perdidos.slice().sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || String(a.hora).localeCompare(String(b.hora)));
+  const perdHtml = perd.length
+    ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length})</h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
+      perd.map((p) => `<tr><td>${esc(p.ruta)}</td><td>${esc(String(p.hora || '').slice(0, 5))}</td><td>${esc(String(p.movil || ''))}</td><td>${esc(p.motivo || '—')}</td></tr>`).join('')}</tbody></table></div></div>`
+    : '<div class="cump-card ok-note">✅ Ningún viaje perdido.</div>';
+  $('cump-body').innerHTML = kpis + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + gapsHtml + perdHtml;
+}
+$('cump-btn')?.addEventListener('click', openCumplimiento);
+$('cump-close')?.addEventListener('click', () => { $('cump-modal').hidden = true; });
+$('cump-fecha')?.addEventListener('change', cargarCumplimiento);
+$('cump-refresh')?.addEventListener('click', cargarCumplimiento);
 
 $('imp-run').addEventListener('click', async () => {
   const err = $('imp-error'); err.hidden = true;

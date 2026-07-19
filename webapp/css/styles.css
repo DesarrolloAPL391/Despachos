@@ -414,6 +414,66 @@ tbody tr:hover { background: #faf8ff; }
 .ml-count { font-size: 12.5px; font-weight: 700; color: #5b21b6; }
 .ml-empty { padding: 22px; text-align: center; color: var(--muted); font-size: 13px; }
 
+/* ===== Tablero de Cumplimiento (auditor/admin) ===== */
+.cump-card-modal { max-width: 1020px; width: 96vw; }
+.cump-subtitle { font-size: 12.5px; color: var(--muted); font-weight: 600; margin-top: 2px; text-transform: capitalize; }
+.cump-fecha-lbl { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+.cump-fecha-lbl input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.cump-body { padding: 14px 18px 20px; overflow-y: auto; max-height: 80vh; }
+/* KPIs */
+.cump-kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 14px; }
+.cump-kpi { border: 1px solid var(--border); border-radius: 14px; padding: 12px 10px; text-align: center; background: #fff; }
+.cump-kpi .k-val { font-size: 26px; font-weight: 800; line-height: 1.1; color: var(--text, #1c1c1c); }
+.cump-kpi .k-lbl { font-size: 11.5px; color: var(--muted); font-weight: 700; margin-top: 3px; text-transform: uppercase; letter-spacing: .3px; }
+.cump-kpi.good .k-val { color: #16a34a; }
+.cump-kpi.bad .k-val { color: #dc2626; }
+.cump-kpi.warn .k-val { color: #b45309; }
+.cump-kpi.hero { background: color-mix(in srgb, var(--acc) 10%, #fff); border-color: color-mix(in srgb, var(--acc) 35%, #fff); }
+.cump-kpi.hero .k-val { color: var(--acc); font-size: 30px; }
+/* Tarjetas de gráficas */
+.cump-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cump-card { border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; background: #fff; margin-bottom: 14px; }
+.cump-card h4 { margin: 0 0 12px; font-size: 14px; color: var(--primary-dark); }
+.cump-card.ok-note { color: #15803d; font-weight: 700; background: #f0fdf4; border-color: #bbf7d0; }
+.cump-empty { padding: 30px; text-align: center; color: var(--muted); }
+/* Barras por ruta (horizontal) */
+.crow { display: grid; grid-template-columns: 96px 1fr 74px; align-items: center; gap: 10px; margin: 7px 0; }
+.crow-lbl { font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crow-track { height: 12px; background: #eef0f5; border-radius: 999px; overflow: hidden; }
+.crow-fill { height: 100%; border-radius: 999px; min-width: 3px; transition: width .3s; }
+.crow-val { text-align: right; font-size: 12px; white-space: nowrap; }
+.crow-val small { color: var(--muted); }
+/* Barras por hora (apiladas verticales) */
+.cbar-wrap { display: flex; gap: 6px; align-items: flex-end; height: 190px; overflow-x: auto; padding-bottom: 4px; }
+.cbar-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 0 0 auto; }
+.cbar-n { font-size: 9.5px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+.cbar { width: 26px; height: 150px; display: flex; flex-direction: column-reverse; background: #f5f6fa; border-radius: 5px; overflow: hidden; }
+.cbar-seg { width: 100%; }
+.cbar-seg.desp { background: #16a34a; }
+.cbar-seg.perd { background: #dc2626; box-shadow: inset 0 2px 0 #fff; }
+.cbar-seg.sin  { background: #cbd5e1; box-shadow: inset 0 2px 0 #fff; }
+.cbar-x { font-size: 10.5px; color: var(--muted); font-weight: 700; }
+.cump-leg { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; font-weight: 700; }
+.cump-leg .lg { display: inline-flex; align-items: center; gap: 5px; color: var(--text, #333); }
+.cump-leg .lg::before { content: ''; width: 12px; height: 12px; border-radius: 3px; }
+.cump-leg .lg.desp::before { background: #16a34a; }
+.cump-leg .lg.perd::before { background: #dc2626; }
+.cump-leg .lg.sin::before  { background: #cbd5e1; }
+/* Franjas sin cobertura */
+.cump-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.cump-gap { display: inline-flex; align-items: center; gap: 5px; background: #fef2f2; border: 1px solid #f6c9c9;
+  color: #b91c1c; border-radius: 999px; padding: 4px 11px; font-size: 12.5px; font-weight: 700; }
+.cump-gap b { background: #b91c1c; color: #fff; border-radius: 8px; padding: 0 6px; font-size: 11px; }
+/* Tabla de perdidos */
+.cump-tablewrap { max-height: 240px; overflow: auto; }
+.cump-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cump-table th, .cump-table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.cump-table th { position: sticky; top: 0; background: #f7f9fc; font-size: 11.5px; text-transform: uppercase; color: var(--primary-dark); }
+@media (max-width: 760px) {
+  .cump-kpis { grid-template-columns: repeat(2, 1fr); }
+  .cump-grid { grid-template-columns: 1fr; }
+}
+
 /* Barra de filtros del mapa */
 .map-filters { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }
 .map-filters .mf { border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
