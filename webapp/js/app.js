@@ -546,6 +546,7 @@ function selectTable(name) {
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
   $('cump-btn').hidden = !(TABLES[name].dispatchable && (isAdmin() || isAuditor())); // Cumplimiento: auditor/admin
+  if ($('cump-panel') && !$('cump-panel').hidden && _cumpTabla !== name) cerrarCumplimiento(); // no dejar el panel con datos de otra tabla
   soloPendientes = false;                                              // al cambiar de tabla, ver todas
   $('pend-btn').hidden = !TABLES[name].dispatchable;                   // "Solo pendientes": en tablas de despacho
   $('pend-btn').classList.remove('on'); $('pend-btn').textContent = '⏳ Solo pendientes';
@@ -3318,37 +3319,44 @@ $('export-btn').addEventListener('click', exportarExcel);
 // franjas horarias una ruta se quedó sin cobertura. Con gráficas.
 const _CUMP_DESP = new Set(['DESPACHADO', 'SI']);                                   // realizado (fallback app, sin SONAR)
 const _CUMP_PERD = new Set(['NO REALIZA EL VIAJE', 'NO SE REALIZA POR OTRO MOTIVO', 'CANCELADO']); // perdido (fallback app)
+const _CUMP_GRACIA = 5; // minutos de gracia para considerar "a tiempo"
 // Clasifica un viaje usando el ESTADO REAL de SONAR (cruzado por regId) cuando existe;
 // si no hay estado real, cae a la programación/novedad de la app.
-//   comp=Completo · inc=Incompleto · perd=Cancelado/No realiza · curso=En progreso o aún sin reportar · sin=Sin despacho
-function _cumpClasif(r, realMap) {
+//   comp=Completo · inc=Incompleto · perd=Cancelado/No realiza · curso=En progreso o (hoy) aún sin reportar · sin=Sin despacho
+// realMap: Map(regId(str) -> { estado, inicio(HH:MM) }). esPasado: el día ya terminó.
+function _cumpClasif(r, realMap, esPasado) {
   const rid = r.sonar_regid ? String(r.sonar_regid) : '';
   const real = rid && realMap ? realMap.get(rid) : null;
-  if (real === 'Completo') return 'comp';
-  if (real === 'Incompleto') return 'inc';
-  if (real === 'Cancelado') return 'perd';
-  if (real === 'En progreso') return 'curso';
-  if (rid) return 'curso';                       // despachado en la app, SONAR aún no reporta (el cron lo llenará)
+  const est = real && real.estado;
+  if (est === 'Completo') return 'comp';
+  if (est === 'Incompleto') return 'inc';
+  if (est === 'Cancelado') return 'perd';
+  if (est === 'En progreso') return 'curso';
+  if (rid) return esPasado ? 'sin' : 'curso';   // pasado sin dato de SONAR → sin; hoy → en curso (el cron lo llenará)
   const s = String(r.estado_despacho || '').trim().toUpperCase();
   if (_CUMP_DESP.has(s)) return 'comp';          // realizado sin SONAR (MADRUGADA/CENTRO marcado SI)
   if (_CUMP_PERD.has(s)) return 'perd';
   return 'sin';                                  // SIN DESPACHO / PENDIENTE / vacío
 }
 function _horaNum(h) { const m = String(h || '').match(/^(\d{1,2}):/); return m ? +m[1] : null; }
+function _minDia(h) { const m = String(h || '').match(/^(\d{1,2}):(\d{2})/); return m ? +m[1] * 60 + +m[2] : null; }
 function _pctCump(a, b) { return b ? Math.round((a / b) * 100) : 0; }
 function _colCump(p) { return p >= 90 ? '#16a34a' : p >= 70 ? '#f59e0b' : '#dc2626'; }
 // Agrega las filas (tabla+día) en métricas de cumplimiento REALES de SONAR. Pura → testeable.
-// realMap: Map(regId(str) -> 'Completo'|'Incompleto'|'Cancelado'|'En progreso'). Realizados = comp+inc.
-function agregarCumplimiento(rows, realMap) {
+// Realizados = comp+inc. Puntualidad: realizados con hora real vs hora programada (± gracia).
+function agregarCumplimiento(rows, realMap, esPasado) {
   const zero = () => ({ prog: 0, comp: 0, inc: 0, perd: 0, curso: 0, sin: 0 });
   const tot = zero();
+  const punt = { aTiempo: 0, tarde: 0 };
   const porRuta = new Map();   // ruta -> {prog,comp,inc,perd,curso,sin}
   const porHora = new Map();   // h -> {prog,comp,inc,perd,curso,sin}
   const rutaHora = new Map();  // ruta -> Map(h -> {prog,cubierto})
   const perdidos = [];
   for (const r of rows) {
-    const cls = _cumpClasif(r, realMap);
+    const cls = _cumpClasif(r, realMap, esPasado);
     const ruta = (r.ruta && r.ruta.nombre) || '(sin ruta)';
+    const rid = r.sonar_regid ? String(r.sonar_regid) : '';
+    const real = rid && realMap ? realMap.get(rid) : null;
     const h = _horaNum(r.hora);
     tot.prog++; tot[cls]++;
     const pr = porRuta.get(ruta) || zero(); pr.prog++; pr[cls]++; porRuta.set(ruta, pr);
@@ -3360,10 +3368,13 @@ function agregarCumplimiento(rows, realMap) {
       if (cls === 'comp' || cls === 'inc' || cls === 'curso') cell.cubierto++; // hubo servicio (o está corriendo)
       rh.set(h, cell); rutaHora.set(ruta, rh);
     }
+    // Puntualidad: solo realizados (comp/inc) con hora real de SONAR vs hora programada
+    if (cls === 'comp' || cls === 'inc') {
+      const prog = _minDia(r.hora), ini = _minDia(real && real.inicio);
+      if (prog != null && ini != null) { if (ini <= prog + _CUMP_GRACIA) punt.aTiempo++; else punt.tarde++; }
+    }
     if (cls === 'perd') {
-      const rid = r.sonar_regid ? String(r.sonar_regid) : '';
-      const real = rid && realMap ? realMap.get(rid) : null;
-      const motivo = real === 'Cancelado' ? 'Cancelado (SONAR)' : (r.estado || 'No realizó');
+      const motivo = (real && real.estado === 'Cancelado') ? 'Cancelado (SONAR)' : (r.estado || 'No realizó');
       perdidos.push({ ruta, hora: r.hora, motivo, movil: (r.veh && r.veh.numero) || '' });
     }
   }
@@ -3372,43 +3383,81 @@ function agregarCumplimiento(rows, realMap) {
     for (const [h, cell] of rh) if (cell.prog > 0 && cell.cubierto === 0) gaps.push({ ruta, h, prog: cell.prog });
   }
   gaps.sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || a.h - b.h);
-  return { tot, porRuta, porHora, perdidos, gaps };
+  return { tot, punt, porRuta, porHora, perdidos, gaps };
 }
 let _cumpTabla = 'despachos';
+const _cumpRefrescados = new Set(); // 'tabla|fecha' ya traídos de SONAR esta sesión (evita re-llamar)
 async function openCumplimiento() {
+  // Toggle: si ya está abierto para esta misma tabla, se cierra
+  if (!$('cump-panel').hidden && _cumpTabla === current) { cerrarCumplimiento(); return; }
   _cumpTabla = current;
   $('cump-fecha').value = filters['fecha'] || hoyServidor();
-  $('cump-modal').hidden = false;
+  $('cump-panel').hidden = false;
   await cargarCumplimiento();
+}
+function cerrarCumplimiento() { $('cump-panel').hidden = true; }
+// Carga los estados reales de SONAR (por regId) en un Map(regId -> {estado, inicio})
+async function _cargarEstadosSonar(regids) {
+  const realMap = new Map();
+  for (let i = 0; i < regids.length; i += 300) {
+    const { data: ds } = await sb.from('despachos_sonar').select('itl_id, estado, hora_inicio').in('itl_id', regids.slice(i, i + 300));
+    (ds || []).forEach((d) => realMap.set(String(d.itl_id), { estado: d.estado, inicio: d.hora_inicio }));
+  }
+  return realMap;
 }
 async function cargarCumplimiento() {
   const fecha = $('cump-fecha').value || hoyServidor();
   $('cump-body').innerHTML = '<div class="loading">Calculando…</div>';
-  const { data: rows, error } = await sb.from(_cumpTabla)
-    .select('hora, estado_despacho, estado, sonar_regid, ruta:ruta_id(nombre), veh:vehiculo_id(numero)')
-    .eq('fecha', fecha).limit(6000);
+  const sel = 'hora, estado_despacho, estado, sonar_regid, ruta:ruta_id(nombre), veh:vehiculo_id(numero)';
+  let { data: rows, error } = await sb.from(_cumpTabla).select(sel).eq('fecha', fecha).limit(6000);
   if (error) { $('cump-body').innerHTML = '<div class="cump-empty">Error al calcular: ' + esc(error.message) + '</div>'; return; }
-  // Estado REAL de SONAR por regId (lo mantiene fresco el cron 'refrescar-estados-sonar' cada 10 min).
-  const regids = [...new Set((rows || []).map((r) => r.sonar_regid).filter(Boolean).map(Number))];
-  const realMap = new Map();
-  for (let i = 0; i < regids.length; i += 300) {
-    const { data: ds } = await sb.from('despachos_sonar').select('itl_id, estado').in('itl_id', regids.slice(i, i + 300));
-    (ds || []).forEach((d) => realMap.set(String(d.itl_id), d.estado));
+  rows = rows || [];
+  const regids = [...new Set(rows.map((r) => r.sonar_regid).filter(Boolean).map(Number))];
+  let realMap = await _cargarEstadosSonar(regids);
+  // ¿Despachos de la app sin estado real (día pasado no sincronizado, o recién despachado)?
+  // → traerlos de SONAR: UNA llamada por móvil (cada una trae todos sus viajes del día y
+  // demora ~0.5s, bajo el statement_timeout de 8s). Una sola vez por tabla+día en la sesión.
+  const clave = `${_cumpTabla}|${fecha}`;
+  const faltan = new Map(); // numero de móvil -> un regId faltante de ese móvil
+  for (const r of rows) {
+    if (r.sonar_regid && !realMap.has(String(r.sonar_regid))) {
+      const n = r.veh && r.veh.numero;
+      if (n && !faltan.has(String(n))) faltan.set(String(n), r.sonar_regid);
+    }
   }
-  renderCumplimiento(agregarCumplimiento(rows || [], realMap), fecha);
+  if (faltan.size && !_cumpRefrescados.has(clave)) {
+    _cumpRefrescados.add(clave);
+    const lista = [...faltan.entries()];
+    for (let i = 0; i < lista.length; i++) {
+      const [numero, regid] = lista[i];
+      showBusy(`Trayendo estados de SONAR… ${i + 1}/${lista.length}`);
+      try {
+        const g = await gpsInfoFor(numero);
+        if (g && g.tracker_id) await sb.rpc('estado_sonar_en_vivo', { p_mid: String(g.tracker_id), p_fecha: fecha, p_regid: Number(regid) });
+      } catch { /* un móvil que falle no bloquea el resto */ }
+    }
+    hideBusy();
+    realMap = await _cargarEstadosSonar(regids);
+  }
+  renderCumplimiento(agregarCumplimiento(rows, realMap, fecha < hoyServidor()), fecha);
 }
 function renderCumplimiento(agg, fecha) {
   const t = agg.tot, realizados = t.comp + t.inc, cumpl = _pctCump(realizados, t.prog);
-  $('cump-title').textContent = `📊 Cumplimiento · ${TABLES[_cumpTabla]?.label || _cumpTabla}`;
-  const sub = $('cump-sub'); if (sub) sub.textContent = (typeof fechaLegible === 'function' ? fechaLegible(fecha) : fecha) + ' · estado real de SONAR';
+  const puntTot = agg.punt.aTiempo + agg.punt.tarde, punt = _pctCump(agg.punt.aTiempo, puntTot);
+  $('cump-title').textContent = '📊 Cumplimiento';
+  const sub = $('cump-sub'); if (sub) sub.textContent = `${TABLES[_cumpTabla]?.label || _cumpTabla} · ${typeof fechaLegible === 'function' ? fechaLegible(fecha) : fecha}`;
   if (!t.prog) { $('cump-body').innerHTML = '<div class="cump-empty">No hay viajes programados para ese día.</div>'; return; }
-  const kpi = (val, lbl, cls, style) => `<div class="cump-kpi ${cls || ''}"${style ? ` style="${style}"` : ''}><div class="k-val">${val}</div><div class="k-lbl">${lbl}</div></div>`;
-  const kpis = `<div class="cump-kpis">${
-    kpi(t.prog, 'Programados', '') +
-    kpi(t.comp, 'Completos', 'good') +
-    kpi(t.inc, 'Incompletos', 'warn') +
-    kpi(t.perd, 'Perdidos', 'bad') +
-    kpi(cumpl + '%', 'Cumplimiento', 'hero', `--acc:${_colCump(cumpl)}`)}</div>`;
+  const pct = (n) => _pctCump(n, t.prog);
+  // Dos indicadores grandes: Cumplimiento y Puntualidad
+  const hero = `<div class="cump-heros">
+    <div class="cump-hero" style="--acc:${_colCump(cumpl)}"><div class="ch-val">${cumpl}%</div><div class="ch-lbl">Cumplimiento</div><div class="ch-sub">${realizados}/${t.prog} realizados</div></div>
+    <div class="cump-hero" style="--acc:${puntTot ? _colCump(punt) : '#94a3b8'}"><div class="ch-val">${puntTot ? punt + '%' : '—'}</div><div class="ch-lbl">Puntualidad</div><div class="ch-sub">${puntTot ? agg.punt.aTiempo + '/' + puntTot + ' a tiempo' : 'sin datos'}</div></div>
+  </div>`;
+  // Desglose que CUADRA: comp+inc+curso+perd+sin = programados
+  const stat = (dot, lbl, n) => `<div class="cump-stat"><span class="cs-dot ${dot}"></span><span class="cs-lbl">${lbl}</span><b class="cs-n">${n}</b><span class="cs-pct">${pct(n)}%</span></div>`;
+  const desglose = `<div class="cump-stats"><div class="cump-stats-head"><b>${t.prog}</b> programados</div>`
+    + stat('desp', 'Completos', t.comp) + stat('inc', 'Incompletos', t.inc) + stat('curso', 'En curso', t.curso)
+    + stat('perd', 'Perdidos', t.perd) + stat('sin', 'Sin despachar', t.sin) + '</div>';
   // Cumplimiento por ruta (barras horizontales, color por semáforo): realizados = Completo + Incompleto
   const rutas = [...agg.porRuta.entries()].sort((a, b) => b[1].prog - a[1].prog);
   const barsRuta = rutas.map(([ruta, d]) => {
@@ -3417,7 +3466,7 @@ function renderCumplimiento(agg, fecha) {
       + `<div class="crow-track"><div class="crow-fill" style="width:${p}%;background:${_colCump(p)}"></div></div>`
       + `<div class="crow-val"><b style="color:${_colCump(p)}">${p}%</b> <small>${rz}/${d.prog}</small></div></div>`;
   }).join('');
-  const chartRuta = `<div class="cump-card"><h4>Cumplimiento por ruta <small>(realizados = Completo + Incompleto)</small></h4>${barsRuta}</div>`;
+  const chartRuta = `<div class="cump-card"><h4>Cumplimiento por ruta</h4>${barsRuta}</div>`;
   // Cobertura por hora (barras apiladas: completo / incompleto / en curso / perdido / sin despachar)
   const horas = [...agg.porHora.keys()].sort((a, b) => a - b);
   const maxH = Math.max(1, ...horas.map((h) => agg.porHora.get(h).prog));
@@ -3441,10 +3490,10 @@ function renderCumplimiento(agg, fecha) {
     ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length})</h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
       perd.map((p) => `<tr><td>${esc(p.ruta)}</td><td>${esc(String(p.hora || '').slice(0, 5))}</td><td>${esc(String(p.movil || ''))}</td><td>${esc(p.motivo || '—')}</td></tr>`).join('')}</tbody></table></div></div>`
     : '<div class="cump-card ok-note">✅ Ningún viaje perdido.</div>';
-  $('cump-body').innerHTML = kpis + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + gapsHtml + perdHtml;
+  $('cump-body').innerHTML = hero + desglose + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + gapsHtml + perdHtml;
 }
 $('cump-btn')?.addEventListener('click', openCumplimiento);
-$('cump-close')?.addEventListener('click', () => { $('cump-modal').hidden = true; });
+$('cump-close')?.addEventListener('click', cerrarCumplimiento);
 $('cump-fecha')?.addEventListener('change', cargarCumplimiento);
 $('cump-refresh')?.addEventListener('click', cargarCumplimiento);
 
