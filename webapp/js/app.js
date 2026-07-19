@@ -4733,21 +4733,51 @@ $('cancel-send').addEventListener('click', async () => {
   }
 });
 
-// ---------- Consultar despachos de SONAR por móvil ----------
-async function openDsonar() {
+// ---------- Consultar despachos de SONAR (uno o VARIOS móviles) ----------
+let _dsVeh = [];              // vehículos cargados (número + placa)
+const _dsSel = new Set();     // números de móvil seleccionados
+async function openDsonar(preselect) {
   $('ds-error').hidden = true;
   $('ds-results').innerHTML = '';
-  $('ds-info').hidden = true;
   $('ds-fecha').value = hoyLocal();
-  const veh = await loadVehiculos();
-  fillSelect($('ds-mov'), veh.map((v) => [v.numero, `${v.numero}${v.placa ? ' · ' + v.placa : ''}`]), 'Selecciona móvil');
-  enhanceById('ds-mov');
+  $('ds-search').value = '';
+  _dsSel.clear();
+  if (preselect) _dsSel.add(String(preselect));
+  _dsVeh = await loadVehiculos();
+  renderDsLista();
   $('ds-modal').hidden = false;
 }
 function closeDsonar() { $('ds-modal').hidden = true; }
-$('dsonar-btn').addEventListener('click', openDsonar);
+// Lista de móviles con checkboxes, filtrada por la búsqueda
+function renderDsLista() {
+  const q = ($('ds-search').value || '').trim().toLowerCase();
+  const items = _dsVeh
+    .filter((v) => !q || String(v.numero).toLowerCase().includes(q) || String(v.placa || '').toLowerCase().includes(q))
+    .slice(0, 500)
+    .map((v) => {
+      const on = _dsSel.has(String(v.numero));
+      return `<label class="ds-item${on ? ' on' : ''}"><input type="checkbox" data-mov="${esc(String(v.numero))}"${on ? ' checked' : ''}>`
+        + `<span>${esc(String(v.numero))}</span>${v.placa ? `<small>${esc(v.placa)}</small>` : ''}</label>`;
+    }).join('');
+  $('ds-lista').innerHTML = items || '<div class="empty">Sin móviles.</div>';
+  updateDsCount();
+}
+function updateDsCount() {
+  const n = _dsSel.size;
+  $('ds-count').textContent = n ? `— ${n} seleccionado${n > 1 ? 's' : ''}` : '';
+  const btn = $('ds-run'); if (btn) btn.disabled = n === 0;
+}
+$('dsonar-btn').addEventListener('click', () => openDsonar());
 $('ds-close').addEventListener('click', closeDsonar);
 $('ds-cancel').addEventListener('click', closeDsonar);
+$('ds-search')?.addEventListener('input', renderDsLista);
+$('ds-lista')?.addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-mov]'); if (!cb) return;
+  const m = cb.dataset.mov;
+  if (cb.checked) _dsSel.add(m); else _dsSel.delete(m);
+  cb.closest('.ds-item')?.classList.toggle('on', cb.checked);
+  updateDsCount();
+});
 
 // ---------- Auditoría de accesos (admin) ----------
 let AUD_ROWS = [];
@@ -4911,51 +4941,58 @@ $('con-reload').addEventListener('click', cargarConectados);
 
 $('ds-run').addEventListener('click', async () => {
   const err = $('ds-error'); err.hidden = true;
-  const movil = $('ds-mov').value;
   const fecha = $('ds-fecha').value;
-  if (!movil) { err.textContent = 'Selecciona un móvil.'; err.hidden = false; return; }
+  const moviles = [..._dsSel];
+  if (!moviles.length) { err.textContent = 'Selecciona al menos un móvil.'; err.hidden = false; return; }
   if (!fecha) { err.textContent = 'Selecciona una fecha.'; err.hidden = false; return; }
-  const g = await gpsInfoFor(movil);
-  const mId = g?.tracker_id;
-  if (!mId) { err.textContent = 'Ese móvil no tiene Tracker (mId) en SONAR.'; err.hidden = false; return; }
 
-  const btn = $('ds-run'); btn.disabled = true; btn.textContent = 'Consultando…';
-  $('ds-results').innerHTML = '<div class="empty">Consultando SONAR…</div>';
-  try {
-    const { data, error } = await sb.rpc('despachos_sonar', {
-      p_mid: String(mId), p_ini: `${fecha} 00:00:00`, p_fin: `${fecha} 23:59:59`,
-    });
-    if (error) throw error;
-    if (!data || !data.ok) throw new Error(data?.error || 'SONAR no respondió');
-    renderDsonar(data.items || []);
-  } catch (e) {
-    $('ds-results').innerHTML = '';
-    err.textContent = 'Error: ' + (e.message || e); err.hidden = false;
-  } finally {
-    btn.disabled = false; btn.textContent = 'Consultar';
+  const btn = $('ds-run'); btn.disabled = true;
+  const all = []; const fallos = [];
+  for (let i = 0; i < moviles.length; i++) {
+    const movil = moviles[i];
+    btn.textContent = `Consultando ${i + 1}/${moviles.length}…`;
+    $('ds-results').innerHTML = `<div class="empty">Consultando SONAR… (${i + 1}/${moviles.length})</div>`;
+    try {
+      const g = await gpsInfoFor(movil);
+      const mId = g?.tracker_id;
+      if (!mId) { fallos.push(`${movil}: sin Tracker (mId)`); continue; }
+      const { data, error } = await sb.rpc('despachos_sonar', {
+        p_mid: String(mId), p_ini: `${fecha} 00:00:00`, p_fin: `${fecha} 23:59:59`,
+      });
+      if (error) { fallos.push(`${movil}: ${error.message}`); continue; }
+      if (!data || !data.ok) { fallos.push(`${movil}: ${data?.error || 'sin respuesta'}`); continue; }
+      (data.items || []).forEach((d) => all.push(Object.assign({ movil }, d)));
+    } catch (e) { fallos.push(`${movil}: ${e.message || e}`); }
   }
+  renderDsonar(all, fallos, moviles.length);
+  btn.disabled = false; btn.textContent = 'Consultar';
 });
 
+// Estado del viaje según las banderas de SONAR (misma regla que el tablero de cumplimiento)
 function dsEstado(d) {
-  if (String(d.corriendo) === 'true') return ['En curso', 'chip-green'];
-  if (String(d.cancelado) === 'true') return ['Cancelado', 'chip-red'];
-  if (String(d.cerrado) === 'true') return ['Cerrado', 'chip-gray'];
+  const b = (v) => String(v) === 'true';
+  if (b(d.corriendo)) return ['En curso', 'chip-blue'];
+  if (b(d.cerrado)) return b(d.cancelado) ? ['Incompleto', 'chip-amber'] : ['Completo', 'chip-green'];
+  if (b(d.cancelado)) return ['Cancelado', 'chip-red'];
   return ['—', 'chip-gray'];
 }
-function renderDsonar(items) {
-  if (!items.length) { $('ds-results').innerHTML = '<div class="empty">Sin despachos para ese móvil y fecha.</div>'; return; }
+// Una sola tabla ordenada por móvil y hora, con resumen y avisos de fallos por móvil
+function renderDsonar(items, fallos, nMov) {
+  const cont = $('ds-results');
+  const aviso = (fallos && fallos.length)
+    ? `<div class="ds-fallos">⚠️ No se pudo consultar: ${esc(fallos.join(' · '))}</div>` : '';
+  if (!items.length) { cont.innerHTML = aviso + '<div class="empty">Sin despachos para los móviles y la fecha.</div>'; return; }
+  items.sort((a, b) => String(a.movil).localeCompare(String(b.movil), 'es', { numeric: true })
+    || String(a.hora || '').localeCompare(String(b.hora || '')));
   const filas = items.map((d) => {
     const [txt, cls] = dsEstado(d);
-    return `<tr>
-      <td>${esc(d.hora || '')}</td>
-      <td>${esc(d.ruta || '')}</td>
-      <td>${esc(d.conductor || '')}</td>
-      <td style="text-align:right">${d.minutos ?? ''}</td>
-      <td><span class="chip ${cls}">${txt}</span></td>
-    </tr>`;
+    return `<tr><td><b>${esc(String(d.movil))}</b></td><td>${esc(d.hora || '')}</td><td>${esc(d.ruta || '')}</td>`
+      + `<td>${esc(d.conductor || '')}</td><td style="text-align:right">${d.minutos ?? ''}</td>`
+      + `<td><span class="chip ${cls}">${txt}</span></td></tr>`;
   }).join('');
-  $('ds-results').innerHTML = `<table class="ds-table"><thead><tr>
-    <th>Hora</th><th>Ruta</th><th>Conductor</th><th>Min</th><th>Estado</th>
+  const resumen = `<div class="ds-sum">${nMov || _dsSel.size} móvil(es) · ${items.length} viaje(s)</div>`;
+  cont.innerHTML = aviso + resumen + `<table class="ds-table"><thead><tr>
+    <th>Móvil</th><th>Hora</th><th>Ruta</th><th>Conductor</th><th>Min</th><th>Estado</th>
     </tr></thead><tbody>${filas}</tbody></table>`;
 }
 
@@ -5297,8 +5334,8 @@ async function despacharDesdeMapa(movil) {
 // Consultar en SONAR el móvil del panel
 async function consultarDesdeMapa(movil) {
   closeVehSheet();
-  await openDsonar();
-  $('ds-mov').value = String(movil); $('ds-mov')._comboSync && $('ds-mov')._comboSync();
+  await openDsonar(movil);   // abre con ese móvil ya marcado
+  $('ds-run').click();       // y consulta de una vez
 }
 $('veh-sheet-close')?.addEventListener('click', closeVehSheet);
 

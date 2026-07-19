@@ -391,10 +391,13 @@
         <h3>📡 Despachos de SONAR</h3>
         <button id="ds-close" class="icon-btn">✕</button>
       </div>
-      <form id="ds-form" class="edit-form">
-        <label class="field"><span>Móvil *</span><select id="ds-mov"></select></label>
+      <form id="ds-form" class="edit-form" onsubmit="return false">
         <label class="field"><span>Fecha</span><input type="date" id="ds-fecha" /></label>
-        <div class="field full sonar-info" id="ds-info" hidden></div>
+        <div class="field full">
+          <span>Móviles <small id="ds-count" class="ds-count"></small></span>
+          <input type="search" id="ds-search" placeholder="Buscar móvil o placa…" autocomplete="off" />
+          <div id="ds-lista" class="ds-lista"></div>
+        </div>
       </form>
       <div id="ds-results" class="ds-results"></div>
       <div class="modal-foot">
