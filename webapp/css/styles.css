@@ -493,6 +493,17 @@ tbody tr:hover { background: #faf8ff; }
 .cump-card h4 .cump-dl { float: right; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border: 1px solid #bbf7d0;
   background: #f0fdf4; color: #15803d; border-radius: 7px; cursor: pointer; }
 .cump-card h4 .cump-dl:hover { background: #dcfce7; }
+/* Conciliación Resumen ↔ SONAR */
+.recon-card { max-width: 900px; }
+.recon-body { max-height: 74vh; overflow: auto; padding: 14px 18px 20px; }
+.recon-sum { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13.5px; font-weight: 700; }
+.recon-sum .ok { color: #15803d; } .recon-sum .bad { color: #b91c1c; }
+.recon-sum .cump-dl { float: none; margin-left: auto; }
+.recon-hint { font-size: 12px; color: var(--muted); margin: 6px 0 12px; }
+.recon-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.recon-table tr.recon-bad { background: #fff5f5; }
+.recon-table tr.recon-bad td:nth-child(5) b { color: #b91c1c; }
+.recon-table tr.recon-ok td:nth-child(5) b { color: #15803d; }
 .cbar-x { font-size: 10.5px; color: var(--muted); font-weight: 700; }
 .cump-leg { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; font-weight: 700; }
 .cump-leg .lg { display: inline-flex; align-items: center; gap: 5px; color: var(--text, #333); }

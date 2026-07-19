@@ -123,6 +123,7 @@
             <button id="dsonar-btn" class="btn" hidden>📡 Despachos SONAR</button>
             <button id="import-btn" class="btn" hidden>📥 Importar</button>
             <button id="export-btn" class="btn" hidden>📊 Descargar Excel</button>
+            <button id="recon-btn" class="btn" hidden>🔍 Conciliar SONAR</button>
             <button id="del-day-btn" class="btn btn-danger" hidden>🗑️ Borrar día</button>
             <button id="perfil-new-btn" class="btn" hidden>➕ Crear acceso</button>
             <button id="perfil-pass-btn" class="btn" hidden>🔑 Restablecer clave</button>
@@ -286,6 +287,23 @@
   </div>
 
   <!-- Modal Tablero de Cumplimiento (solo auditor y admin) -->
+  <!-- Modal Conciliación Resumen ↔ SONAR (solo lectura; auditor/admin) -->
+  <div id="recon-modal" class="modal" hidden>
+    <div class="modal-card recon-card">
+      <div class="modal-head">
+        <div>
+          <h3>🔍 Conciliación Resumen ↔ SONAR</h3>
+          <div id="recon-sub" class="cump-subtitle"></div>
+        </div>
+        <span class="spacer"></span>
+        <label class="cump-fecha-lbl">📅 <input type="date" id="recon-fecha" /></label>
+        <button id="recon-sonar" class="btn" title="Traer los conteos reales desde SONAR">↻ Traer de SONAR</button>
+        <button id="recon-close" class="icon-btn">✕</button>
+      </div>
+      <div id="recon-body" class="recon-body"></div>
+    </div>
+  </div>
+
   <!-- Modal Nuevo despacho (simplificado + SONAR) -->
   <div id="nd-modal" class="modal" hidden>
     <div class="modal-card">

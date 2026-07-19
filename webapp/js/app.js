@@ -559,6 +559,7 @@ function selectTable(name) {
   $('synccond-btn').hidden = name !== 'conductores_sonar' || !isAdmin(); // sincronizar conductores: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
   $('export-btn').hidden = !(name === 'resumen' && isAdmin());   // Descargar Excel: admin en Resumen
+  $('recon-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor())); // Conciliar SONAR: auditor/admin en Resumen
   // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
@@ -3548,6 +3549,96 @@ $('cump-btn')?.addEventListener('click', openCumplimiento);
 $('cump-close')?.addEventListener('click', cerrarCumplimiento);
 $('cump-fecha')?.addEventListener('change', cargarCumplimiento);
 $('cump-refresh')?.addEventListener('click', cargarCumplimiento);
+
+// ---------- Conciliación Resumen ↔ SONAR (solo lectura; auditor/admin) ----------
+// Cruza, por móvil y día, los viajes REALES de SONAR (Completos+Incompletos) contra
+// los `viajes` que el despachador registró en Resumen. No escribe nada.
+let _reconUltimo = null;
+async function openReconciliacion() {
+  if (!(isAdmin() || isAuditor())) return;
+  $('recon-fecha').value = hoyServidor();
+  $('recon-modal').hidden = false;
+  await cargarReconciliacion(false);
+}
+function closeReconciliacion() { $('recon-modal').hidden = true; }
+async function cargarReconciliacion(traerSonar) {
+  const fecha = $('recon-fecha').value || hoyServidor();
+  $('recon-body').innerHTML = '<div class="loading">Cargando…</div>';
+  // 1) Resumen del día: viajes registrados por móvil (suma si el móvil tiene varias filas)
+  const { data: res, error } = await sb.from('resumen')
+    .select('viajes, estado, veh:vehiculo_id(numero), ruta:ruta_id(nombre)').eq('fecha', fecha).limit(4000);
+  if (error) { $('recon-body').innerHTML = '<div class="cump-empty">Error: ' + esc(error.message) + '</div>'; return; }
+  const porMovil = new Map();
+  (res || []).forEach((r) => {
+    const n = r.veh && r.veh.numero; if (!n) return;
+    const k = String(n);
+    const o = porMovil.get(k) || { movil: k, ruta: (r.ruta && r.ruta.nombre) || '', resumen: 0, estados: new Set(), real: 0 };
+    o.resumen += (r.viajes || 0);
+    if (r.estado) o.estados.add(r.estado);
+    if (!o.ruta && r.ruta && r.ruta.nombre) o.ruta = r.ruta.nombre;
+    porMovil.set(k, o);
+  });
+  const moviles = [...porMovil.keys()];
+  if (!moviles.length) { $('recon-body').innerHTML = '<div class="cump-empty">No hay Resumen registrado para ese día.</div>'; _reconUltimo = null; return; }
+  // 2) (opcional) Traer de SONAR el conteo exacto de esos móviles (una llamada por móvil)
+  if (traerSonar) {
+    for (let i = 0; i < moviles.length; i++) {
+      showBusy(`Trayendo de SONAR… ${i + 1}/${moviles.length}`);
+      try {
+        const g = await gpsInfoFor(moviles[i]);
+        if (g && g.tracker_id) await sb.rpc('estado_sonar_en_vivo', { p_mid: String(g.tracker_id), p_fecha: fecha, p_regid: 0 });
+      } catch { /* un móvil que falle no bloquea el resto */ }
+    }
+    hideBusy();
+  }
+  // 3) Contar viajes reales (Completo+Incompleto) por móvil desde despachos_sonar
+  for (let i = 0; i < moviles.length; i += 200) {
+    const { data: ds } = await sb.from('despachos_sonar').select('movil, estado').eq('fecha', fecha).in('movil', moviles.slice(i, i + 200));
+    (ds || []).forEach((d) => { if (d.estado === 'Completo' || d.estado === 'Incompleto') { const o = porMovil.get(String(d.movil)); if (o) o.real++; } });
+  }
+  const filas = [...porMovil.values()].map((o) => ({ movil: o.movil, ruta: o.ruta, resumen: o.resumen, real: o.real, estado: [...o.estados].join(', ') }));
+  renderReconciliacion(filas, fecha);
+}
+function renderReconciliacion(filas, fecha) {
+  _reconUltimo = { filas, fecha };
+  $('recon-sub').textContent = `${typeof fechaLegible === 'function' ? fechaLegible(fecha) : fecha} · SONAR (Completos+Incompletos) vs viajes registrados`;
+  filas.sort((a, b) => Math.abs(b.real - b.resumen) - Math.abs(a.real - a.resumen) || a.movil.localeCompare(b.movil, 'es', { numeric: true }));
+  const cuadran = filas.filter((f) => f.real === f.resumen).length;
+  const difer = filas.length - cuadran;
+  const resumen = `<div class="recon-sum"><b>${filas.length}</b> móviles · <span class="ok">${cuadran} cuadran</span> · <span class="bad">${difer} con diferencia</span><button id="recon-dl" class="cump-dl" type="button">⬇️ Excel</button></div>`
+    + `<div class="recon-hint">SONAR = Completos + Incompletos ya sincronizados. Para el conteo exacto del día, pulsa «↻ Traer de SONAR».</div>`;
+  const rows = filas.map((f) => {
+    const d = f.real - f.resumen, cls = d === 0 ? 'ok' : 'bad', dtxt = d > 0 ? '+' + d : String(d);
+    return `<tr class="recon-${cls}"><td><b>${esc(f.movil)}</b></td><td>${esc(f.ruta)}</td><td class="num">${f.real}</td>`
+      + `<td class="num">${f.resumen}</td><td class="num"><b>${dtxt}</b></td><td>${esc(f.estado || '—')}</td></tr>`;
+  }).join('');
+  $('recon-body').innerHTML = resumen + `<div class="cump-tablewrap"><table class="cump-table recon-table"><thead><tr>`
+    + `<th>Móvil</th><th>Ruta</th><th>SONAR</th><th>Resumen</th><th>Dif.</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  $('recon-dl')?.addEventListener('click', descargarReconciliacion);
+}
+async function descargarReconciliacion() {
+  if (!_reconUltimo || !_reconUltimo.filas.length) { toast('Nada que descargar.', 'ok'); return; }
+  const { filas, fecha } = _reconUltimo;
+  const aoa = [['Móvil', 'Ruta', 'SONAR (real)', 'Resumen', 'Diferencia', 'Estado'],
+    ...filas.map((f) => [f.movil, f.ruta, f.real, f.resumen, f.real - f.resumen, f.estado])];
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 16 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Conciliacion');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `conciliacion_resumen_sonar_${fecha}.xlsx`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${filas.length} móvil(es).`, 'ok');
+  } catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e), 'err'); }
+}
+$('recon-btn')?.addEventListener('click', openReconciliacion);
+$('recon-close')?.addEventListener('click', closeReconciliacion);
+$('recon-fecha')?.addEventListener('change', () => cargarReconciliacion(false));
+$('recon-sonar')?.addEventListener('click', () => cargarReconciliacion(true));
 
 $('imp-run').addEventListener('click', async () => {
   const err = $('imp-error'); err.hidden = true;
