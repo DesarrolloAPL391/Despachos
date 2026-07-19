@@ -4946,26 +4946,30 @@ $('ds-run').addEventListener('click', async () => {
   if (!moviles.length) { err.textContent = 'Selecciona al menos un móvil.'; err.hidden = false; return; }
   if (!fecha) { err.textContent = 'Selecciona una fecha.'; err.hidden = false; return; }
 
-  const btn = $('ds-run'); btn.disabled = true;
+  const btn = $('ds-run'); btn.disabled = true; btn.textContent = 'Consultando…';
   const all = []; const fallos = [];
-  for (let i = 0; i < moviles.length; i++) {
-    const movil = moviles[i];
-    btn.textContent = `Consultando ${i + 1}/${moviles.length}…`;
-    $('ds-results').innerHTML = `<div class="empty">Consultando SONAR… (${i + 1}/${moviles.length})</div>`;
-    try {
-      const g = await gpsInfoFor(movil);
-      const mId = g?.tracker_id;
-      if (!mId) { fallos.push(`${movil}: sin Tracker (mId)`); continue; }
-      const { data, error } = await sb.rpc('despachos_sonar', {
-        p_mid: String(mId), p_ini: `${fecha} 00:00:00`, p_fin: `${fecha} 23:59:59`,
-      });
-      if (error) { fallos.push(`${movil}: ${error.message}`); continue; }
-      if (!data || !data.ok) { fallos.push(`${movil}: ${data?.error || 'sin respuesta'}`); continue; }
-      (data.items || []).forEach((d) => all.push(Object.assign({ movil }, d)));
-    } catch (e) { fallos.push(`${movil}: ${e.message || e}`); }
+  showBusy(`Consultando SONAR… 0/${moviles.length}`);
+  try {
+    for (let i = 0; i < moviles.length; i++) {
+      const movil = moviles[i];
+      showBusy(`Consultando SONAR… ${i + 1}/${moviles.length}  ·  móvil ${movil}`);
+      try {
+        const g = await gpsInfoFor(movil);
+        const mId = g?.tracker_id;
+        if (!mId) { fallos.push(`${movil}: sin Tracker (mId)`); continue; }
+        const { data, error } = await sb.rpc('despachos_sonar', {
+          p_mid: String(mId), p_ini: `${fecha} 00:00:00`, p_fin: `${fecha} 23:59:59`,
+        });
+        if (error) { fallos.push(`${movil}: ${error.message}`); continue; }
+        if (!data || !data.ok) { fallos.push(`${movil}: ${data?.error || 'sin respuesta'}`); continue; }
+        (data.items || []).forEach((d) => all.push(Object.assign({ movil }, d)));
+      } catch (e) { fallos.push(`${movil}: ${e.message || e}`); }
+    }
+  } finally {
+    hideBusy();
+    btn.disabled = false; btn.textContent = 'Consultar';
   }
   renderDsonar(all, fallos, moviles.length);
-  btn.disabled = false; btn.textContent = 'Consultar';
 });
 
 // Estado del viaje según las banderas de SONAR (misma regla que el tablero de cumplimiento)
