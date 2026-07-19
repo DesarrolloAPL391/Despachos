@@ -4086,6 +4086,17 @@ async function updateSonarInfo() {
 }
 
 let sonarRow = null, sonarTable = 'despachos';
+// Rutas de MADRUGADA y CENTRO NO se despachan a SONAR: solo se marca si el viaje se
+// realizó o no. sonarSinEnvio queda en true cuando el viaje (o el itinerario elegido)
+// es de ese tipo, y entonces el modal oculta el despacho y solo pide realizado/no.
+let sonarSinEnvio = false;
+function esRutaSinSonar(nombre) { return /madrugada|centro/i.test(String(nombre || '')); }
+// Recalcula si el viaje actual va SIN SONAR (por la ruta del despacho o el itinerario elegido)
+function recomputeSinSonar() {
+  const rutaRow = sonarRow ? (sonarRow.ruta?.nombre || sonarRow.rutap?.nombre || '') : '';
+  const itinSel = (itinList || []).find((i) => String(i.itid) === String($('s-itin')?.value));
+  sonarSinEnvio = esRutaSinSonar(rutaRow) || esRutaSinSonar(itinSel?.nombre || '');
+}
 // Guarda anti-reentrada: abrir el despacho hace varias consultas (móviles, itinerarios,
 // conductores, conductor del Resumen). Si se tocaba ✈️ en una fila y enseguida en otra, las
 // dos cargas se pisaban y el modal podía quedar con el viaje de una y el móvil de la otra
@@ -4157,6 +4168,7 @@ async function _openSonarInterno(row) {
   fillSelect($('s-novedad'), novOpts.map((o) => [o, o]));
   $('s-realizo').value = 'SI';
   $('s-realizo').closest('.field').classList.toggle('hidden-field', !row);
+  recomputeSinSonar(); // ¿esta ruta va SIN SONAR (MADRUGADA/CENTRO)?
   aplicarSonarRealizo();
   await traerConductorSonar(); // conductor desde Resumen, según la fecha del despacho
   await updateSonarInfo();
@@ -4198,15 +4210,20 @@ $('s-mov').addEventListener('change', () => { updateSonarInfo(); updateSonarProg
 // NO = solo se pide la novedad (obligatoria) y se marca la fila, sin llamar a SONAR.
 function aplicarSonarRealizo() {
   const esNo = $('s-realizo').value !== 'SI';
+  // MADRUGADA/CENTRO no se despachan a SONAR: se ocultan los campos de despacho aunque sea "SÍ".
+  const ocultarDespacho = esNo || sonarSinEnvio;
   ['s-mov', 's-itin', 's-drv', 's-com'].forEach((id) => {
-    const w = $(id)?.closest('.field'); if (w) w.classList.toggle('hidden-field', esNo);
+    const w = $(id)?.closest('.field'); if (w) w.classList.toggle('hidden-field', ocultarDespacho);
   });
-  if (esNo) ['s-cond-note', 's-info', 's-docwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
-  $('s-nov-wrap').hidden = !esNo;
-  $('sonar-send').textContent = esNo ? 'Guardar novedad' : 'Despachar';
-  if (!esNo) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ
+  if (ocultarDespacho) ['s-cond-note', 's-info', 's-docwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+  $('s-nov-wrap').hidden = !esNo; // la novedad solo es obligatoria cuando NO se realizó
+  const aviso = $('s-sinsonar'); if (aviso) aviso.hidden = !sonarSinEnvio;
+  $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : 'Despachar');
+  if (!ocultarDespacho) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ (con SONAR)
 }
 $('s-realizo').addEventListener('change', aplicarSonarRealizo);
+// Si cambian el itinerario, recalcular si va SIN SONAR (MADRUGADA/CENTRO) y reajustar el modal
+$('s-itin').addEventListener('change', () => { recomputeSinSonar(); aplicarSonarRealizo(); });
 
 // Marca la fila como NO realizada (con novedad obligatoria). No toca SONAR.
 async function marcarNoRealiza() {
@@ -4230,12 +4247,36 @@ async function marcarNoRealiza() {
     hideBusy(); btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo();
   }
 }
+// Marca la fila como REALIZADA sin despachar a SONAR (rutas MADRUGADA/CENTRO).
+async function marcarRealizadoSinSonar() {
+  const btn = $('sonar-send'); const err = $('sonar-error'); err.hidden = true;
+  if (!sonarRow?.id) { err.textContent = 'No hay un viaje seleccionado para marcar.'; err.hidden = false; return; }
+  if (!(await verificarSesionVigente())) return; // el turno pudo terminar
+  btn.dataset.busy = '1'; btn.disabled = true; showBusy('Guardando…');
+  const patch = { estado_despacho: 'SI', despachado_en: new Date().toISOString() };
+  if (CTX?.despachador_id != null) patch.despachador_id = CTX.despachador_id;
+  try {
+    const { data, error } = await sb.from(sonarTable).update(patch).eq('id', sonarRow.id).select();
+    if (error) { err.textContent = 'No se pudo guardar: ' + error.message; err.hidden = false; return; }
+    if (!data || !data.length) { err.textContent = 'No se guardó: tu turno terminó o el registro no es editable.'; err.hidden = false; return; }
+    toast('Marcado: se realizó el viaje', 'ok');
+    closeSonar();
+    if (current === sonarTable) loadData();
+  } finally {
+    hideBusy(); btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo();
+  }
+}
 // Si el usuario elige el conductor a mano, se oculta el aviso del Resumen
 $('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n) n.hidden = true; });
 
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');
   if (btn.dataset.busy === '1') return; // evita doble click / doble despacho
+  // Rutas MADRUGADA/CENTRO: NUNCA se despachan a SONAR; solo se marca si se realizó o no.
+  if (sonarSinEnvio) {
+    if ($('s-realizo').value === 'SI') { await marcarRealizadoSinSonar(); } else { await marcarNoRealiza(); }
+    return;
+  }
   // Si el despachador marcó que el viaje NO se realizó, no se despacha a SONAR:
   // se guarda la novedad y punto.
   if ($('s-realizo').value !== 'SI') { await marcarNoRealiza(); return; }
