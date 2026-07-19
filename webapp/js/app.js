@@ -3386,7 +3386,32 @@ function agregarCumplimiento(rows, realMap, esPasado) {
   return { tot, punt, porRuta, porHora, perdidos, gaps };
 }
 let _cumpTabla = 'despachos';
+let _cumpUltimo = null;              // { agg, fecha } del último render (para descargar perdidos)
 const _cumpRefrescados = new Set(); // 'tabla|fecha' ya traídos de SONAR esta sesión (evita re-llamar)
+// Descarga los viajes perdidos del día a Excel (.xlsx via SheetJS)
+async function descargarPerdidos() {
+  if (!_cumpUltimo || !_cumpUltimo.agg.perdidos.length) { toast('No hay viajes perdidos para descargar.', 'ok'); return; }
+  const { agg, fecha } = _cumpUltimo;
+  const perd = agg.perdidos.slice().sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || String(a.hora).localeCompare(String(b.hora)));
+  const aoa = [['Ruta', 'Hora', 'Móvil', 'Motivo'], ...perd.map((p) => [p.ruta, String(p.hora || '').slice(0, 5), String(p.movil || ''), p.motivo || ''])];
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 10 }, { wch: 32 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Perdidos');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `viajes_perdidos_${String(TABLES[_cumpTabla]?.label || _cumpTabla).replace(/\s+/g, '_')}_${fecha}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${perd.length} viaje(s) perdido(s).`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
+  }
+}
 async function openCumplimiento() {
   // Toggle: si ya está abierto para esta misma tabla, se cierra
   if (!$('cump-panel').hidden && _cumpTabla === current) { cerrarCumplimiento(); return; }
@@ -3442,6 +3467,7 @@ async function cargarCumplimiento() {
   renderCumplimiento(agregarCumplimiento(rows, realMap, fecha < hoyServidor()), fecha);
 }
 function renderCumplimiento(agg, fecha) {
+  _cumpUltimo = { agg, fecha };
   const t = agg.tot, realizados = t.comp + t.inc, cumpl = _pctCump(realizados, t.prog);
   const puntTot = agg.punt.aTiempo + agg.punt.tarde, punt = _pctCump(agg.punt.aTiempo, puntTot);
   $('cump-title').textContent = '📊 Cumplimiento';
@@ -3484,13 +3510,39 @@ function renderCumplimiento(agg, fecha) {
     ? `<div class="cump-card"><h4>⚠️ Franjas sin cobertura (${agg.gaps.length})</h4><div class="cump-chips">${
       agg.gaps.map((g) => `<span class="cump-gap">${esc(g.ruta)} · ${String(g.h).padStart(2, '0')}:00–${String(g.h).padStart(2, '0')}:59 <b>${g.prog}</b></span>`).join('')}</div></div>`
     : '<div class="cump-card ok-note">✅ Todas las franjas horarias con viajes tuvieron al menos un despacho.</div>';
-  // Viajes perdidos (detalle)
+  // Pérdidas por hora (barras; hora pico resaltada = la tendencia de cuándo se cae el servicio)
+  const perdHoras = horas.map((h) => [h, agg.porHora.get(h).perd]);
+  const maxPerdH = Math.max(1, ...perdHoras.map((x) => x[1]));
+  const totPerdH = perdHoras.reduce((s, x) => s + x[1], 0);
+  const horaPico = totPerdH ? perdHoras.reduce((a, b) => (b[1] > a[1] ? b : a))[0] : null;
+  const perdBars = perdHoras.map(([h, n]) => {
+    const peak = n === maxPerdH && n > 0;
+    return `<div class="cbar-col"><div class="cbar-n">${n || ''}</div>`
+      + `<div class="cbar"><div class="cbar-seg perd${peak ? ' peak' : ''}" style="height:${(n / maxPerdH * 100).toFixed(1)}%" title="${n} perdidos"></div></div>`
+      + `<div class="cbar-x">${String(h).padStart(2, '0')}h</div></div>`;
+  }).join('');
+  const chartPerdHora = totPerdH
+    ? `<div class="cump-card"><h4>Pérdidas por hora <small>· pico ${String(horaPico).padStart(2, '0')}h (${maxPerdH})</small></h4><div class="cbar-wrap">${perdBars}</div></div>`
+    : '';
+  // Mayor motivo de pérdida (ranking; el mayor arriba)
+  const motivos = new Map();
+  agg.perdidos.forEach((p) => { const k = (p.motivo || 'Sin motivo').trim() || 'Sin motivo'; motivos.set(k, (motivos.get(k) || 0) + 1); });
+  const motTop = [...motivos.entries()].sort((a, b) => b[1] - a[1]);
+  const maxMot = motTop.length ? motTop[0][1] : 1;
+  const motHtml = motTop.length
+    ? `<div class="cump-card"><h4>Motivos de pérdida <small>· mayor: ${esc(motTop[0][0])}</small></h4>${
+      motTop.map(([m, n]) => `<div class="crow"><div class="crow-lbl" title="${esc(m)}">${esc(m)}</div>`
+        + `<div class="crow-track"><div class="crow-fill" style="width:${Math.round(n / maxMot * 100)}%;background:#dc2626"></div></div>`
+        + `<div class="crow-val"><b>${n}</b> <small>${_pctCump(n, agg.perdidos.length)}%</small></div></div>`).join('')}</div>`
+    : '';
+  // Viajes perdidos (detalle) + descarga a Excel
   const perd = agg.perdidos.slice().sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || String(a.hora).localeCompare(String(b.hora)));
   const perdHtml = perd.length
-    ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length})</h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
+    ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length}) <button id="cump-perd-dl" class="cump-dl" type="button">⬇️ Excel</button></h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
       perd.map((p) => `<tr><td>${esc(p.ruta)}</td><td>${esc(String(p.hora || '').slice(0, 5))}</td><td>${esc(String(p.movil || ''))}</td><td>${esc(p.motivo || '—')}</td></tr>`).join('')}</tbody></table></div></div>`
     : '<div class="cump-card ok-note">✅ Ningún viaje perdido.</div>';
-  $('cump-body').innerHTML = hero + desglose + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + gapsHtml + perdHtml;
+  $('cump-body').innerHTML = hero + desglose + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
+  $('cump-perd-dl')?.addEventListener('click', descargarPerdidos);
 }
 $('cump-btn')?.addEventListener('click', openCumplimiento);
 $('cump-close')?.addEventListener('click', cerrarCumplimiento);

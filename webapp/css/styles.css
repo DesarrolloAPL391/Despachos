@@ -488,7 +488,11 @@ tbody tr:hover { background: #faf8ff; }
 .cbar-seg.inc   { background: #f59e0b; box-shadow: inset 0 2px 0 #fff; }
 .cbar-seg.curso { background: #3b82f6; box-shadow: inset 0 2px 0 #fff; }
 .cbar-seg.perd  { background: #dc2626; box-shadow: inset 0 2px 0 #fff; }
+.cbar-seg.perd.peak { background: #991b1b; box-shadow: inset 0 0 0 2px #fca5a5; }
 .cbar-seg.sin   { background: #cbd5e1; box-shadow: inset 0 2px 0 #fff; }
+.cump-card h4 .cump-dl { float: right; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border: 1px solid #bbf7d0;
+  background: #f0fdf4; color: #15803d; border-radius: 7px; cursor: pointer; }
+.cump-card h4 .cump-dl:hover { background: #dcfce7; }
 .cbar-x { font-size: 10.5px; color: var(--muted); font-weight: 700; }
 .cump-leg { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; font-weight: 700; }
 .cump-leg .lg { display: inline-flex; align-items: center; gap: 5px; color: var(--text, #333); }
