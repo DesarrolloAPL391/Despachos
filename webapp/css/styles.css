@@ -139,7 +139,9 @@ input, select, textarea { font: inherit; }
   box-shadow: inset 3px 0 0 var(--primary);
 }
 /* isolation: contiene los z-index altos de Leaflet para que el mapa no tape el menú */
-.main { flex: 1; padding: 16px; min-width: 0; display: flex; flex-direction: column; isolation: isolate; }
+/* min-height:0 completa la cadena de scroll: sin él, con muchas filas la tabla crecía y
+   scrolleaba la PÁGINA (el encabezado sticky se iba). Con él, scrollea la tabla y el título queda fijo. */
+.main { flex: 1; min-height: 0; padding: 16px; min-width: 0; display: flex; flex-direction: column; isolation: isolate; }
 
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar h2 { margin: 0; font-size: 20px; }
