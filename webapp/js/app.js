@@ -1724,6 +1724,15 @@ function renderTable(cfg, rows, count, diaSel = false) {
             act.appendChild(can);
           }
         }
+        // Estado REAL del viaje en SONAR, cruzado EN VIVO por el regId (Completo /
+        // Incompleto / Cancelado / En progreso). Solo en viajes ya despachados (con
+        // regId). Lo ven todos los que operan la tabla: es el resultado de SU despacho.
+        if (cfg.dispatchable && row.sonar_regid) {
+          const st = Object.assign(document.createElement('button'),
+            { className: 'act act-sonar', innerHTML: '🛰️', title: 'Estado real del viaje en SONAR (en vivo)' });
+          st.onclick = () => estadoSonarEnVivo(row);
+          act.appendChild(st);
+        }
         // Eventos del bus en SONAR: herramienta de AUDITORÍA (velocidad contra el límite de la
         // vía, pasos por las geocercas de control, puertas abiertas en marcha, retrasos).
         // Igual que las columnas de control: la ven el auditor y el admin, el despachador NO.
@@ -4547,6 +4556,55 @@ async function updateCancelInfo() {
 // Regla general: un despacho solo se cancela si lleva 50 min o menos despachado
 const MAX_MIN_CANCELAR = 50;
 function minsDesde(ts) { return ts ? Math.floor((Date.now() - toDate(ts).getTime()) / 60000) : null; }
+
+// Cruza EN VIVO el despacho (por su regId) con el viaje REAL de SONAR y muestra el
+// estado (Completo/Incompleto/Cancelado/En progreso). El regId que guardó la app al
+// despachar ES el itlId de SONAR. El RPC además guarda el viaje en despachos_sonar.
+async function estadoSonarEnVivo(row) {
+  if (!row?.sonar_regid) { toast('Este viaje no tiene regId de SONAR.', 'err'); return; }
+  const movil = row.veh?.numero;
+  if (!movil) { toast('No se pudo identificar el móvil del viaje.', 'err'); return; }
+  const g = await gpsInfoFor(movil);
+  const mId = g?.tracker_id;
+  if (!mId) { toast('El móvil ' + movil + ' no tiene Id GPS (mId) en SONAR.', 'err'); return; }
+  const fecha = row.fecha ? String(row.fecha).slice(0, 10) : hoyServidor();
+  showBusy('Consultando SONAR…');
+  let data, error;
+  try {
+    ({ data, error } = await sb.rpc('estado_sonar_en_vivo', {
+      p_mid: String(mId), p_fecha: fecha, p_regid: Number(row.sonar_regid),
+    }));
+  } catch (e) { error = e; }
+  hideBusy();
+  if (error || !data?.ok) {
+    toast('No se pudo consultar SONAR: ' + (data?.error || error?.message || 'error'), 'err');
+    return;
+  }
+  if (!data.encontrado) {
+    await confirmAction({
+      title: '🛰️ Estado en SONAR',
+      lead: 'Móvil ' + movil + ' · regId ' + row.sonar_regid,
+      message: 'Este despacho aún NO aparece como viaje en SONAR para el ' + fecha + '.\n\n'
+        + 'Puede que el viaje todavía no haya iniciado, o que se haya despachado con otro tracker.',
+      okLabel: 'Cerrar', noCancel: true,
+    });
+    return;
+  }
+  const ICON_EST = { 'Completo': '🟢', 'Incompleto': '🟠', 'Cancelado': '🔴', 'En progreso': '🔵' };
+  const ico = ICON_EST[data.estado] || '⚪';
+  const min = data.elapsed_seg != null ? Math.round(data.elapsed_seg / 60) : null;
+  await confirmAction({
+    title: ico + ' ' + (data.estado || 'Estado desconocido'),
+    lead: 'Viaje real en SONAR (regId ' + data.regid + ')',
+    message:
+      'Móvil:     ' + (data.movil || movil) + (data.placa ? '  · ' + data.placa : '') + '\n'
+      + 'Ruta:      ' + (data.ruta || '—') + '\n'
+      + 'Conductor: ' + (data.conductor || '—') + '\n'
+      + 'Inicio:    ' + (data.hora_inicio || '—') + (min != null ? '   (' + min + ' min)' : '')
+      + (data.comentario ? '\nComent.:   ' + data.comentario : ''),
+    okLabel: 'Cerrar', noCancel: true,
+  });
+}
 
 async function openCancelar(row) {
   if (row && !row.sonar_regid) { toast('Este despacho no tiene regId: no se puede cancelar.', 'err'); return; }

@@ -239,6 +239,8 @@ tbody tr:hover { background: #faf8ff; }
 /* 🔎 Eventos del bus (solo auditor/admin) */
 .act-evt { background: #eef6ff; border-color: #cfe2f7; color: #1d4ed8; }
 .act-evt:hover:not(:disabled) { background: #dbeafe; }
+.act-sonar { background: #f5f0ff; border-color: #ddd0f5; color: #6d28d9; }
+.act-sonar:hover:not(:disabled) { background: #ece2fd; }
 .act-del  { background: #fef2f2; border-color: #f6c9c9; color: #c1121f; }
 .act-del:hover:not(:disabled)  { background: #fde0e0; }
 .lock-badge { font-size: 15px; opacity: .6; cursor: default; }
