@@ -556,6 +556,7 @@ function selectTable(name) {
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('synccond-btn').hidden = name !== 'conductores_sonar' || !isAdmin(); // sincronizar conductores: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
+  $('export-btn').hidden = !(name === 'resumen' && isAdmin());   // Descargar Excel: admin en Resumen
   // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
@@ -3250,6 +3251,56 @@ function closeImport() { $('imp-modal').hidden = true; }
 $('import-btn').addEventListener('click', openImport);
 $('imp-close').addEventListener('click', closeImport);
 $('imp-cancel').addEventListener('click', closeImport);
+
+// ---------- Descargar la tabla actual en Excel (.xlsx real, no CSV) ----------
+async function exportarExcel() {
+  const cfg = TABLES[current];
+  const cols = cfg.columns || [];
+  if (!cols.length) { toast('Esta tabla no tiene columnas para exportar.', 'err'); return; }
+  const btn = $('export-btn'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    // Trae TODAS las filas que cumplen los filtros activos (paginando de a 1000)
+    const filas = [];
+    for (let desde = 0; desde <= 100000; desde += 1000) {
+      let qy = sb.from(current).select(cfg.select)
+        .order(cfg.defaultOrder.col, { ascending: cfg.defaultOrder.asc, nullsFirst: false });
+      if (cfg.defaultOrder.then) qy = qy.order(cfg.defaultOrder.then.col, { ascending: cfg.defaultOrder.then.asc, nullsFirst: false });
+      qy = applyQueryFilters(qy).range(desde, desde + 999);
+      const { data, error } = await qy;
+      if (error) throw error;
+      const lote = data || [];
+      filas.push(...lote);
+      if (lote.length < 1000) break;
+    }
+    if (!filas.length) { toast('No hay datos para exportar con los filtros actuales.', 'err'); return; }
+    // Cabeceras + filas usando las columnas visibles (resuelve rutas anidadas tipo "ruta.nombre")
+    const cab = cols.map((c) => c.label || c.key || c.path);
+    const aoa = [cab, ...filas.map((r) => cols.map((c) => {
+      const v = c.path ? getPath(r, c.path) : r[c.key];
+      return v == null ? '' : v;
+    }))];
+    // .xlsx real con SheetJS (se baja de esm.sh; requiere internet, igual que la importación)
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = cab.map((h) => ({ wch: Math.min(40, Math.max(12, String(h).length + 2)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, String(cfg.label || 'Datos').slice(0, 31));
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${String(cfg.label || 'datos').replace(/\s+/g, '_')}_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${filas.length} fila(s).`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = prev;
+  }
+}
+$('export-btn').addEventListener('click', exportarExcel);
 
 $('imp-run').addEventListener('click', async () => {
   const err = $('imp-error'); err.hidden = true;
