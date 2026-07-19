@@ -4386,6 +4386,16 @@ $('sonar-send').addEventListener('click', async () => {
       if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id;
       if (ubicGps) patch.ubicacion = ubicGps; // GPS del celular al despachar
       if (data.regid) patch.sonar_regid = String(data.regid);
+      // Guardar el CONDUCTOR despachado (el elegido o el traído del Resumen) para que se vea en la
+      // tabla. s-drv es un conductor SONAR (dr_id); se refleja en `conductores` por NOMBRE, igual
+      // que el despacho manual. Si el mapeo falla, no bloquea el despacho (ya quedó hecho en SONAR).
+      try {
+        const drow = (await loadDrivers()).find((d) => String(d.dr_id) === String(drv));
+        if (drow?.nombre) {
+          const { data: c } = await sb.from('conductores').upsert({ nombre: drow.nombre }, { onConflict: 'nombre' }).select('id').single();
+          if (c?.id) patch.conductor_id = c.id;
+        }
+      } catch { /* el conductor no se pudo mapear: el despacho sigue válido */ }
       await sb.from(sonarTable).update(patch).eq('id', sonarRow.id);
       if (current === sonarTable) loadData();
     }
