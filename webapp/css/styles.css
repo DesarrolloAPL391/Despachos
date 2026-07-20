@@ -585,10 +585,14 @@ tbody tr:hover { background: #faf8ff; }
   .layout { transition: padding-right .22s ease; }
   #app.rec-open .layout { padding-right: 400px; }
   #app.rec-open .rec-vivo { top: var(--rec-top, 0px); height: calc(100% - var(--rec-top, 0px));
-    box-shadow: -14px 0 42px rgba(15, 23, 42, .10); border-left: 1px solid var(--border); }
+    box-shadow: none; border-left: 2px solid var(--border); } /* acoplado: divisoria limpia, no flotante */
   #app.rec-open .rec-vivo-scrim { display: none; }
   #app.rec-open .map-fab { display: none; }
 }
+/* Fila del bus cuyo recorrido se está viendo al lado (conecta tabla ↔ panel) */
+.rv-row.rv-sel td { background: #eef2ff !important; }
+.rv-row.rv-sel .rv-c-mov { box-shadow: inset 3px 0 0 #4f46e5; }
+.rv-row.rv-sel .rv-c-mov b { color: var(--primary-dark); }
 .rvt-cab { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted);
   padding: 0 2px 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .rvt-cab b { color: var(--text, #1c1c1c); font-size: 14px; }

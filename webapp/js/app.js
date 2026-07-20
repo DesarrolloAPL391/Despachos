@@ -3751,7 +3751,8 @@ function renderRutasVivo() {
           + `<span class="rvp-t">${m.par_pasadas || 0}/${m.par_total}</span></div>`
         : '<span class="rvp-t">—</span>';
       const clk = m.mid ? ' rv-clk' : '';
-      return `<tr class="rv-row${clk}" data-mid="${esc(m.mid || '')}" data-itid="${r.it_id}" data-movil="${esc(m.movil || '')}" data-ruta="${esc(r.ruta || '')}" data-cond="${esc(m.conductor || '')}"${m.mid ? ' title="Ver recorrido completo"' : ''}>`
+      const sel = (_recSelMovil && String(m.movil).trim() === String(_recSelMovil).trim()) ? ' rv-sel' : '';
+      return `<tr class="rv-row${clk}${sel}" data-mid="${esc(m.mid || '')}" data-itid="${r.it_id}" data-movil="${esc(m.movil || '')}" data-ruta="${esc(r.ruta || '')}" data-cond="${esc(m.conductor || '')}"${m.mid ? ' title="Ver recorrido completo"' : ''}>`
         + `<td class="rv-c-mov"><b>${esc(String(m.movil).trim())}</b></td>`
         + `<td class="rv-c-cond" title="${esc(m.conductor || '')}">${esc(_rvNombre(m.conductor))}</td>`
         + `<td class="rv-c-t">${_rvDur(m.en_ruta_seg)}</td>`
@@ -3770,10 +3771,15 @@ $('rutas-close')?.addEventListener('click', cerrarRutasVivo);
 $('rutas-refresh')?.addEventListener('click', () => cargarRutasVivo(false));
 $('rutas-search')?.addEventListener('input', renderRutasVivo);
 $('rutas-auto')?.addEventListener('change', _armarAutoRutas);
+// Móvil cuyo recorrido se muestra al lado (para resaltar su fila, incluso tras refrescar)
+let _recSelMovil = null;
 // Tocar una fila abre el recorrido completo de ese bus
 $('rutas-body')?.addEventListener('click', (e) => {
   const el = e.target.closest('.rv-row');
   if (!el || !el.dataset.mid) return;
+  _recSelMovil = el.dataset.movil;
+  document.querySelectorAll('#rutas-body .rv-row.rv-sel').forEach((r) => r.classList.remove('rv-sel'));
+  el.classList.add('rv-sel');
   abrirRecorridoBus(el.dataset.mid, +el.dataset.itid, el.dataset.movil, el.dataset.ruta, el.dataset.cond);
 });
 
@@ -3821,6 +3827,8 @@ async function _ejecutarRecorrido(params, movil, ruta, cond, vacio) {
   }
 }
 function cerrarRecorridoBus() {
+  _recSelMovil = null;
+  document.querySelectorAll('.rv-row.rv-sel').forEach((r) => r.classList.remove('rv-sel'));
   document.getElementById('app').classList.remove('rec-open'); // devuelve el ancho a la tabla
   $('rec-vivo').classList.remove('open');
   $('rec-vivo-scrim').hidden = true;
