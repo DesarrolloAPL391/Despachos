@@ -429,6 +429,7 @@ function buildSidebar() {
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
   if (isAdmin() || isAuditor()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -440,6 +441,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
+  const ar = $('nav-rutas'); if (ar) ar.classList.toggle('active', currentView === 'rutas');
   buildBottomNav();
 }
 
@@ -533,6 +535,8 @@ function selectTable(name) {
   // Si el mapa está flotante, NO lo ocultamos: debe seguir visible mientras se despacha
   if (!mapaFlotante) { $('map-view').hidden = true; if (mapTimer) { clearInterval(mapTimer); mapTimer = null; } }
   $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
@@ -3430,7 +3434,9 @@ async function openCumplimiento() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true;
   $('map-view').hidden = true;
+  $('rutas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('cump-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
@@ -3595,6 +3601,81 @@ $('cump-fecha')?.addEventListener('change', () => cargarCumplimiento(false));
 $('cump-puesto')?.addEventListener('change', () => cargarCumplimiento(false));
 $('cump-ruta')?.addEventListener('change', renderCumpFiltrado);
 $('cump-refresh')?.addEventListener('click', () => cargarCumplimiento(true));
+
+// ---------- Rutas en vivo: semáforo por ruta desde SONAR (auditor/admin) ----------
+// Una sola llamada a rutas_en_vivo() (RPC → GET_MobileOperationInfo, flota 990) trae
+// TODAS las rutas con bus rodando ahora + cuántos y cuáles móviles. Se refresca solo.
+let _rutasTimer = null, _rutasUltimo = null;
+async function openRutasVivo() {
+  if (!(isAdmin() || isAuditor())) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'rutas';
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('rutas-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-rutas')?.classList.add('active');
+  buildBottomNav();
+  await cargarRutasVivo(false);
+  _armarAutoRutas();
+}
+function cerrarRutasVivo() {
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  $('rutas-view').hidden = true;
+  selectTable(current); // vuelve a la tabla que estaba abierta
+}
+function _armarAutoRutas() {
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  if ($('rutas-auto')?.checked) {
+    _rutasTimer = setInterval(() => { if (currentView === 'rutas') cargarRutasVivo(true); }, 60000);
+  }
+}
+async function cargarRutasVivo(silencioso) {
+  const body = $('rutas-body');
+  if (!silencioso && body) body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  try {
+    const { data, error } = await sb.rpc('rutas_en_vivo');
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
+    _rutasUltimo = data;
+    renderRutasVivo();
+  } catch (e) {
+    if (!silencioso && body) body.innerHTML = `<div class="cump-empty">No se pudo consultar SONAR.<br><small>${esc(e.message || e)}</small></div>`;
+  }
+}
+function renderRutasVivo() {
+  const d = _rutasUltimo; if (!d) return;
+  const term = ($('rutas-search')?.value || '').trim().toLowerCase();
+  let rutas = (d.rutas || []).slice()
+    .sort((a, b) => String(a.ruta).localeCompare(String(b.ruta), 'es', { numeric: true }));
+  if (term) {
+    rutas = rutas.filter((r) => String(r.ruta).toLowerCase().includes(term)
+      || (r.moviles || []).some((m) => String(m.movil).toLowerCase().includes(term)
+        || String(m.placa || '').toLowerCase().includes(term)));
+  }
+  const sub = $('rutas-sub');
+  if (sub) sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · actualizado ${d.hora}`;
+  if (!rutas.length) {
+    $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
+    return;
+  }
+  const cards = rutas.map((r) => {
+    const chips = (r.moviles || []).map((m) =>
+      `<span class="rv-movil" title="${esc((m.placa || '') + (m.conductor ? ' · ' + m.conductor : ''))}">${esc(m.movil)}</span>`).join('');
+    return `<div class="rv-card"><div class="rv-head"><span class="rv-dot"></span>`
+      + `<span class="rv-ruta">${esc(r.ruta)}</span><span class="rv-n">${r.n}</span></div>`
+      + `<div class="rv-moviles">${chips}</div></div>`;
+  }).join('');
+  $('rutas-body').innerHTML = `<div class="rv-grid">${cards}</div>`;
+}
+$('rutas-close')?.addEventListener('click', cerrarRutasVivo);
+$('rutas-refresh')?.addEventListener('click', () => cargarRutasVivo(false));
+$('rutas-search')?.addEventListener('input', renderRutasVivo);
+$('rutas-auto')?.addEventListener('change', _armarAutoRutas);
 
 // ---------- Conciliación Resumen ↔ SONAR (solo lectura; auditor/admin) ----------
 // Cruza, por móvil y día, los viajes REALES de SONAR (Completos+Incompletos) contra
@@ -5761,6 +5842,8 @@ async function showMapView() {
   document.getElementById('app').classList.add('view-map');
   cerrarPanelesFlotantes();
   $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;
   closeVehSheet();

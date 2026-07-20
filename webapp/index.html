@@ -220,6 +220,20 @@
           </div>
           <div id="cump-body" class="cump-body"></div>
         </div>
+
+        <!-- Vista de Rutas en vivo (semáforo por ruta desde SONAR; auditor/admin) -->
+        <div id="rutas-view" class="rutas-view" hidden>
+          <div class="toolbar rutas-toolbar">
+            <h2>🟢 Rutas en vivo</h2>
+            <span id="rutas-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <input type="search" id="rutas-search" placeholder="Buscar ruta o móvil…" />
+            <label class="rutas-auto" title="Actualizar automáticamente cada minuto"><input type="checkbox" id="rutas-auto" checked /> Auto</label>
+            <button id="rutas-refresh" class="btn">↻ Actualizar</button>
+            <button id="rutas-close" class="btn">← Volver</button>
+          </div>
+          <div id="rutas-body" class="rutas-body"></div>
+        </div>
       </main>
     </div>
 
