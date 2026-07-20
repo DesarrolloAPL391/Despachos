@@ -3636,7 +3636,7 @@ function _armarAutoRutas() {
 }
 async function cargarRutasVivo(silencioso) {
   const body = $('rutas-body');
-  if (!silencioso && body) body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  if (!silencioso && body) body.innerHTML = '<div class="cump-empty">Cargando…</div>';
   try {
     const { data, error } = await sb.rpc('rutas_en_vivo');
     if (error) throw error;
@@ -3658,7 +3658,13 @@ function renderRutasVivo() {
         || String(m.placa || '').toLowerCase().includes(term)));
   }
   const sub = $('rutas-sub');
-  if (sub) sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · actualizado ${d.hora}`;
+  if (sub) {
+    const edad = d.edad_seg || 0;
+    const edadTxt = edad < 90 ? `hace ${edad}s` : `hace ${Math.round(edad / 60)} min`;
+    const stale = edad > 180; // el cron refresca cada minuto; >3 min = algo falla
+    sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · ${stale ? '⚠️ ' : ''}actualizado ${d.hora || '—'} (${edadTxt})`;
+    sub.classList.toggle('rutas-stale', stale);
+  }
   if (!rutas.length) {
     $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
     return;

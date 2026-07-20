@@ -523,6 +523,7 @@ tbody tr:hover { background: #faf8ff; }
 .rutas-toolbar { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
 .rutas-toolbar input[type="search"] { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; min-width: 180px; }
 .rutas-auto { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.rutas-stale { color: #b45309 !important; font-weight: 700; }
 .rutas-body { flex: 1; min-height: 0; padding: 16px 4px 24px; overflow-y: auto; }
 .rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
 .rv-card { border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; background: #fff; }
