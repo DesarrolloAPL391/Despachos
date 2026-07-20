@@ -22,11 +22,23 @@ create table if not exists public.moviles_operacion (
   conductor   text,
   it_id       bigint,
   ruta        text,
+  inicio      timestamptz,   -- itInittime: cuándo arrancó la ruta (SONAR lo da en UTC)
+  ultimo_gps  timestamptz,   -- lastGPSDate: último reporte GPS (UTC)
   lat         double precision,
   lon         double precision,
   actualizado timestamptz not null default now()
 );
+-- columnas nuevas si la tabla ya existía de una versión anterior
+alter table public.moviles_operacion add column if not exists inicio     timestamptz;
+alter table public.moviles_operacion add column if not exists ultimo_gps timestamptz;
 alter table public.moviles_operacion enable row level security;  -- sin políticas: solo vía SECURITY DEFINER
+
+-- Convierte un texto de fecha de SONAR (UTC) a timestamptz. SONAR a veces manda
+-- "0000-00-00 00:00:00" (placeholder nulo) que NO es fecha válida → devuelve null.
+create or replace function public._utc_ts(t text)
+returns timestamptz language sql immutable set search_path = public as $$
+  select case when $1 ~ '^(19|20)[0-9][0-9]-' then ($1::timestamp at time zone 'UTC') else null end
+$$;
 
 -- 2) NÚCLEO (sin guard de rol; solo lo corre pg_cron/postgres): llama SONAR y refresca el caché.
 create or replace function public.refrescar_moviles_operacion_core()
@@ -78,16 +90,19 @@ begin
       (xpath('/x:MobileOperationInfo/x:driverName/text()',    n, array[array['x', v_ns]]))[1]::text as conductor,
       nullif((xpath('/x:MobileOperationInfo/x:itId/text()',   n, array[array['x', v_ns]]))[1]::text, '')::bigint as it_id,
       (xpath('/x:MobileOperationInfo/x:itDescription/text()', n, array[array['x', v_ns]]))[1]::text as ruta,
+      -- SONAR entrega itInittime y lastGPSDate en UTC → guardar como timestamptz UTC (ignora "0000-..." )
+      public._utc_ts((xpath('/x:MobileOperationInfo/x:itInittime/text()',  n, array[array['x', v_ns]]))[1]::text) as inicio,
+      public._utc_ts((xpath('/x:MobileOperationInfo/x:lastGPSDate/text()', n, array[array['x', v_ns]]))[1]::text) as ultimo_gps,
       nullif((xpath('/x:MobileOperationInfo/x:latitude/text()',  n, array[array['x', v_ns]]))[1]::text, '')::double precision as lat,
       nullif((xpath('/x:MobileOperationInfo/x:longitude/text()', n, array[array['x', v_ns]]))[1]::text, '')::double precision as lon
     from unnest(xpath('//x:MobileOperationInfo', v_xml, array[array['x', v_ns]])) as n
   )
-  insert into public.moviles_operacion (mid, movil, placa, conductor, it_id, ruta, lat, lon, actualizado)
-  select mid, movil, placa, conductor, it_id, ruta, lat, lon, v_ts from parsed where mid is not null
+  insert into public.moviles_operacion (mid, movil, placa, conductor, it_id, ruta, inicio, ultimo_gps, lat, lon, actualizado)
+  select mid, movil, placa, conductor, it_id, ruta, inicio, ultimo_gps, lat, lon, v_ts from parsed where mid is not null
   on conflict (mid) do update set
     movil = excluded.movil, placa = excluded.placa, conductor = excluded.conductor,
-    it_id = excluded.it_id, ruta = excluded.ruta, lat = excluded.lat, lon = excluded.lon,
-    actualizado = excluded.actualizado;
+    it_id = excluded.it_id, ruta = excluded.ruta, inicio = excluded.inicio, ultimo_gps = excluded.ultimo_gps,
+    lat = excluded.lat, lon = excluded.lon, actualizado = excluded.actualizado;
   get diagnostics v_n = row_count;
 
   delete from public.moviles_operacion where actualizado < v_ts;  -- móviles que ya no reporta
@@ -119,8 +134,11 @@ as $fn$
                    'it_id', it_id, 'ruta', ruta, 'n', n, 'moviles', moviles) order by ruta)
           from (
             select it_id, ruta, count(*) as n,
-                   jsonb_agg(jsonb_build_object('movil', movil, 'placa', placa, 'conductor', conductor)
-                             order by movil) as moviles
+                   jsonb_agg(jsonb_build_object(
+                     'movil', movil, 'placa', placa, 'conductor', conductor,
+                     'en_ruta_seg', case when inicio     is not null then extract(epoch from (now() - inicio))::int end,
+                     'gps_seg',     case when ultimo_gps is not null then extract(epoch from (now() - ultimo_gps))::int end
+                   ) order by movil) as moviles
             from public.moviles_operacion
             where coalesce(it_id, 0) <> 0
             group by it_id, ruta
@@ -144,3 +162,4 @@ select public.refrescar_moviles_operacion_core();
 drop function if exists public._probe_rutas_vivo();
 drop function if exists public._probe2();
 drop function if exists public._probe_timing();
+drop function if exists public._probe_campos();

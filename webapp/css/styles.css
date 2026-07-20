@@ -525,15 +525,23 @@ tbody tr:hover { background: #faf8ff; }
 .rutas-auto { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; }
 .rutas-stale { color: #b45309 !important; font-weight: 700; }
 .rutas-body { flex: 1; min-height: 0; padding: 16px 4px 24px; overflow-y: auto; }
-.rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 .rv-card { border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; background: #fff; }
-.rv-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.rv-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rv-dot { width: 11px; height: 11px; border-radius: 50%; background: #16a34a; flex: 0 0 auto; box-shadow: 0 0 0 3px #dcfce7; }
 .rv-ruta { font-size: 17px; font-weight: 800; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-n { font-size: 12px; font-weight: 800; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 999px; padding: 2px 9px; }
-.rv-moviles { display: flex; flex-wrap: wrap; gap: 5px; }
-.rv-movil { font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; background: #eef2ff; color: #3730a3;
-  border: 1px solid #e0e7ff; border-radius: 7px; padding: 3px 8px; cursor: default; }
+.rv-buses { display: flex; flex-direction: column; }
+.rv-bus { padding: 7px 0; border-top: 1px solid #f1f3f7; }
+.rv-bus:first-child { border-top: 0; }
+.rv-bus-l { display: flex; align-items: center; gap: 7px; }
+.rv-movil { font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; background: #eef2ff; color: #3730a3;
+  border: 1px solid #e0e7ff; border-radius: 7px; padding: 2px 8px; flex: 0 0 auto; }
+.rv-cond { font-size: 12px; color: #475569; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-bus-r { display: flex; gap: 6px; margin-top: 5px; }
+.rv-meta { font-size: 11px; font-weight: 700; color: #475569; background: #f5f6fa; border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
+.rv-gps-bad { color: #b91c1c; background: #fef2f2; border-color: #f6c9c9; }
 
 /* Barra de filtros del mapa */
 .map-filters { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }

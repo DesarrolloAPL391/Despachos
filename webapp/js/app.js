@@ -3606,6 +3606,17 @@ $('cump-refresh')?.addEventListener('click', () => cargarCumplimiento(true));
 // Una sola llamada a rutas_en_vivo() (RPC → GET_MobileOperationInfo, flota 990) trae
 // TODAS las rutas con bus rodando ahora + cuántos y cuáles móviles. Se refresca solo.
 let _rutasTimer = null, _rutasUltimo = null;
+// "8100 seg" → "2h 15m" / "41 min"
+function _rvDur(seg) {
+  if (seg == null) return '—';
+  const m = Math.max(0, Math.round(seg / 60));
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+// "MUÑOZ GOEZ YIMI" → "Muñoz Goez Yimi" (los nombres de SONAR vienen en mayúscula)
+function _rvNombre(s) {
+  return String(s || '').toLowerCase().replace(/(^|[\s.])([a-záéíóúñ])/g, (t, p, c) => p + c.toUpperCase());
+}
 async function openRutasVivo() {
   if (!(isAdmin() || isAuditor())) return;
   if (mapaFlotante) cerrarMapaFlotante();
@@ -3655,7 +3666,8 @@ function renderRutasVivo() {
   if (term) {
     rutas = rutas.filter((r) => String(r.ruta).toLowerCase().includes(term)
       || (r.moviles || []).some((m) => String(m.movil).toLowerCase().includes(term)
-        || String(m.placa || '').toLowerCase().includes(term)));
+        || String(m.placa || '').toLowerCase().includes(term)
+        || String(m.conductor || '').toLowerCase().includes(term)));
   }
   const sub = $('rutas-sub');
   if (sub) {
@@ -3670,11 +3682,21 @@ function renderRutasVivo() {
     return;
   }
   const cards = rutas.map((r) => {
-    const chips = (r.moviles || []).map((m) =>
-      `<span class="rv-movil" title="${esc((m.placa || '') + (m.conductor ? ' · ' + m.conductor : ''))}">${esc(m.movil)}</span>`).join('');
+    const buses = (r.moviles || []).map((m) => {
+      const gps = m.gps_seg;
+      const gpsBad = gps != null && gps > 600; // >10 min sin reportar GPS
+      const gpsTxt = gps == null ? '—' : (gps < 90 ? `${gps}s` : _rvDur(gps));
+      const cond = m.conductor ? `<span class="rv-cond" title="${esc(m.conductor)}">${esc(_rvNombre(m.conductor))}</span>` : '';
+      return `<div class="rv-bus">`
+        + `<div class="rv-bus-l"><span class="rv-movil" title="${esc(m.placa || '')}">${esc(m.movil)}</span>${cond}</div>`
+        + `<div class="rv-bus-r">`
+        + `<span class="rv-meta" title="Tiempo en la ruta">🕒 ${_rvDur(m.en_ruta_seg)}</span>`
+        + `<span class="rv-meta${gpsBad ? ' rv-gps-bad' : ''}" title="Última señal GPS">📡 ${gpsTxt}</span>`
+        + `</div></div>`;
+    }).join('');
     return `<div class="rv-card"><div class="rv-head"><span class="rv-dot"></span>`
       + `<span class="rv-ruta">${esc(r.ruta)}</span><span class="rv-n">${r.n}</span></div>`
-      + `<div class="rv-moviles">${chips}</div></div>`;
+      + `<div class="rv-buses">${buses}</div></div>`;
   }).join('');
   $('rutas-body').innerHTML = `<div class="rv-grid">${cards}</div>`;
 }
