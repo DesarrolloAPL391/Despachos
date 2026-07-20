@@ -3696,18 +3696,18 @@ async function cargarRutasVivo(silencioso) {
   const body = $('rutas-body');
   if (!silencioso && body) body.innerHTML = '<div class="cump-empty">Cargando…</div>';
   try {
-    const { data, error } = await sb.rpc('rutas_en_vivo');
+    // linea_en_vivo() es superset de rutas_en_vivo(): sirve a la tabla Y a la línea
+    const { data, error } = await sb.rpc('linea_en_vivo');
     if (error) throw error;
     if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
     _rutasUltimo = data;
-    renderRutasVivo();
+    _renderRutas();
   } catch (e) {
     if (!silencioso && body) body.innerHTML = `<div class="cump-empty">No se pudo consultar SONAR.<br><small>${esc(e.message || e)}</small></div>`;
   }
 }
-function renderRutasVivo() {
-  const d = _rutasUltimo; if (!d) return;
-  const term = ($('rutas-search')?.value || '').trim().toLowerCase();
+// Filtro y subtítulo compartidos por la vista de tabla y la de línea.
+function _rutasFiltradas(d, term) {
   let rutas = (d.rutas || []).slice()
     .sort((a, b) => String(a.ruta).localeCompare(String(b.ruta), 'es', { numeric: true }));
   if (term) {
@@ -3716,14 +3716,23 @@ function renderRutasVivo() {
         || String(m.placa || '').toLowerCase().includes(term)
         || String(m.conductor || '').toLowerCase().includes(term)));
   }
-  const sub = $('rutas-sub');
-  if (sub) {
-    const edad = d.edad_seg || 0;
-    const edadTxt = edad < 90 ? `hace ${edad}s` : `hace ${Math.round(edad / 60)} min`;
-    const stale = edad > 180; // el cron refresca cada minuto; >3 min = algo falla
-    sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · ${stale ? '⚠️ ' : ''}actualizado ${d.hora || '—'} (${edadTxt})`;
-    sub.classList.toggle('rutas-stale', stale);
-  }
+  return rutas;
+}
+function _rutasSub(d) {
+  const sub = $('rutas-sub'); if (!sub) return;
+  const edad = d.edad_seg || 0;
+  const edadTxt = edad < 90 ? `hace ${edad}s` : `hace ${Math.round(edad / 60)} min`;
+  const stale = edad > 180; // el cron refresca cada minuto; >3 min = algo falla
+  sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · ${stale ? '⚠️ ' : ''}actualizado ${d.hora || '—'} (${edadTxt})`;
+  sub.classList.toggle('rutas-stale', stale);
+}
+// Despachador: dibuja la tabla o la línea según el modo elegido.
+function _renderRutas() { if (_rutasModo === 'linea') renderLineaVivo(); else renderRutasVivo(); }
+function renderRutasVivo() {
+  const d = _rutasUltimo; if (!d) return;
+  const term = ($('rutas-search')?.value || '').trim().toLowerCase();
+  const rutas = _rutasFiltradas(d, term);
+  _rutasSub(d);
   if (!rutas.length) {
     $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
     return;
@@ -3769,12 +3778,25 @@ function renderRutasVivo() {
 }
 $('rutas-close')?.addEventListener('click', cerrarRutasVivo);
 $('rutas-refresh')?.addEventListener('click', () => cargarRutasVivo(false));
-$('rutas-search')?.addEventListener('input', renderRutasVivo);
+$('rutas-search')?.addEventListener('input', _renderRutas);
 $('rutas-auto')?.addEventListener('change', _armarAutoRutas);
+// Interruptor Tabla / Línea (misma data, dos visualizaciones)
+let _rutasModo = 'tabla';
+$('rutas-modo')?.addEventListener('click', (e) => {
+  const b = e.target.closest('.rm-btn'); if (!b) return;
+  _rutasModo = b.dataset.modo;
+  $('rutas-modo').querySelectorAll('.rm-btn').forEach((x) => x.classList.toggle('active', x === b));
+  _renderRutas();
+});
 // Móvil cuyo recorrido se muestra al lado (para resaltar su fila, incluso tras refrescar)
 let _recSelMovil = null;
-// Tocar una fila abre el recorrido completo de ese bus
+// Tocar una fila (tabla) o un pin (línea) abre el recorrido completo de ese bus
 $('rutas-body')?.addEventListener('click', (e) => {
+  const pin = e.target.closest('.lv-pin');
+  if (pin && pin.dataset.mid) {
+    abrirRecorridoBus(pin.dataset.mid, +pin.dataset.itid, pin.dataset.movil, pin.dataset.ruta, pin.dataset.cond);
+    return;
+  }
   const el = e.target.closest('.rv-row');
   if (!el || !el.dataset.mid) return;
   _recSelMovil = el.dataset.movil;
@@ -3782,6 +3804,75 @@ $('rutas-body')?.addEventListener('click', (e) => {
   el.classList.add('rv-sel');
   abrirRecorridoBus(el.dataset.mid, +el.dataset.itid, el.dataset.movil, el.dataset.ruta, el.dataset.cond);
 });
+
+// ---------- Vista "Línea en vivo": monitor tipo SONAR (una línea por ruta) ----------
+function _lvEstado(a) {
+  if (a == null) return 'off';
+  if (a < -1) return 'adel';
+  if (a <= 5) return 'ok';
+  return 'atras';
+}
+function renderLineaVivo() {
+  const d = _rutasUltimo; if (!d) return;
+  const term = ($('rutas-search')?.value || '').trim().toLowerCase();
+  const rutas = _rutasFiltradas(d, term);
+  _rutasSub(d);
+  if (!rutas.length) {
+    $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
+    return;
+  }
+  const leyenda = `<div class="lv-leyenda">`
+    + `<span class="lv-lg lv-lg-ok">En ruta</span>`
+    + `<span class="lv-lg lv-lg-adel">« Adelantado</span>`
+    + `<span class="lv-lg lv-lg-atras">» Atrasado</span>`
+    + `<span class="lv-lg lv-lg-off">Sin señal</span></div>`;
+  const bloques = rutas.map((r) => {
+    const pts = (r.puntos || []).slice().sort((a, b) => a.idx - b.idx);
+    const idx0 = pts.length ? pts[0].idx : 0;
+    // agrupa los buses por el índice del punto donde van (los sin señal, al inicio)
+    const porIdx = new Map();
+    (r.moviles || []).forEach((m) => {
+      const k = (m.idx == null ? idx0 : m.idx);
+      if (!porIdx.has(k)) porIdx.set(k, []);
+      porIdx.get(k).push(m);
+    });
+    const chips = `<span class="lv-chip">🚌 ${r.n}</span>`
+      + (r.atrasados ? `<span class="lv-chip lv-c-atras">» ${r.atrasados}</span>` : '')
+      + (r.adelantados ? `<span class="lv-chip lv-c-adel">« ${r.adelantados}</span>` : '');
+    const cab = `<div class="lv-head"><span class="lv-ruta-nom">${esc(r.ruta)}</span>${chips}</div>`;
+    if (!pts.length) {
+      const chipsMov = (r.moviles || []).map((m) => `<span class="lv-nobus">${esc(String(m.movil).trim())}</span>`).join('');
+      return `<div class="lv-ruta">${cab}<div class="lv-sinpuntos">Sin puntos de itinerario · ${chipsMov}</div></div>`;
+    }
+    const rows = pts.map((p) => {
+      const buses = porIdx.get(p.idx) || [];
+      const has = buses.length > 0;
+      const pins = buses.map((m) => {
+        const est = _lvEstado(m.atraso);
+        const chev = est === 'adel' ? '«' : (est === 'atras' ? '»' : '');
+        const atrTxt = m.atraso == null ? '' : (m.atraso <= 0 ? m.atraso + 'm' : '+' + m.atraso + 'm');
+        const tip = `Móvil ${String(m.movil).trim()}${m.conductor ? ' · ' + _rvNombre(m.conductor) : ''}`
+          + `${m.hora ? ' · ' + m.hora : ''}${m.atraso != null ? ' · ' + atrTxt : ''} · toca para ver recorrido`;
+        return `<div class="lv-pin lv-${est}" title="${esc(tip)}"`
+          + ` data-mid="${esc(m.mid || '')}" data-itid="${r.it_id}" data-movil="${esc(m.movil || '')}"`
+          + ` data-ruta="${esc(r.ruta || '')}" data-cond="${esc(m.conductor || '')}">`
+          + `<span class="lv-pin-mov">${chev ? `<i>${chev}</i>` : ''}${esc(String(m.movil).trim())}</span>`
+          + `<span class="lv-pin-hora">${esc(m.hora || atrTxt || '·')}</span></div>`;
+      }).join('');
+      return {
+        pin: `<div class="lv-cell${has ? ' lv-has' : ''}">${pins}</div>`,
+        node: `<div class="lv-cell${has ? ' lv-has' : ''}"><div class="lv-node">${p.idx}</div></div>`,
+        name: `<div class="lv-cell"><div class="lv-name" title="${esc(p.nombre || '')}">${esc(p.nombre || '')}</div></div>`,
+      };
+    });
+    const track = `<div class="lv-track">`
+      + `<div class="lv-row lv-row-pins">${rows.map((x) => x.pin).join('')}</div>`
+      + `<div class="lv-row lv-row-nodes">${rows.map((x) => x.node).join('')}</div>`
+      + `<div class="lv-row lv-row-names">${rows.map((x) => x.name).join('')}</div></div>`;
+    return `<div class="lv-ruta">${cab}<div class="lv-track-wrap">${track}</div></div>`;
+  }).join('');
+  $('rutas-body').innerHTML = leyenda + `<div class="lv-cont">${bloques}</div>`;
+}
 
 // ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
 // Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.

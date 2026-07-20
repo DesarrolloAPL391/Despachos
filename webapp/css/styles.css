@@ -567,6 +567,60 @@ tbody tr:hover { background: #faf8ff; }
 .rvp-bar span { display: block; height: 100%; background: #4f46e5; border-radius: 999px; }
 .rvp-t { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text, #1c1c1c); }
 
+/* ---- Interruptor Tabla / Línea (barra de Rutas en vivo) ---- */
+.rutas-modo { display: inline-flex; background: #eef0f5; border-radius: 999px; padding: 3px; gap: 2px; }
+.rm-btn { border: 0; background: transparent; color: #475569; font-size: 12.5px; font-weight: 700;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.rm-btn.active { background: #fff; color: var(--primary-dark); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); }
+
+/* ---- Vista "Línea en vivo" (monitor tipo SONAR: línea de puntos por ruta) ---- */
+.lv-leyenda { display: flex; gap: 16px; flex-wrap: wrap; padding: 0 2px 12px; font-size: 11.5px; font-weight: 700; }
+.lv-lg { display: inline-flex; align-items: center; gap: 5px; color: #64748b; }
+.lv-lg::before { content: ''; width: 11px; height: 11px; border-radius: 50%; border: 2px solid currentColor; }
+.lv-lg-ok { color: #16a34a; } .lv-lg-adel { color: #2563eb; } .lv-lg-atras { color: #dc2626; } .lv-lg-off { color: #94a3b8; }
+.lv-cont { display: flex; flex-direction: column; gap: 16px; }
+.lv-ruta { border: 1px solid var(--border); border-radius: 14px; background: #fff; padding: 12px 8px 8px; box-shadow: var(--shadow-sm); }
+.lv-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; }
+.lv-ruta-nom { font-size: 15px; font-weight: 800; background: #0f2438; color: #fff; padding: 3px 13px; border-radius: 999px; }
+.lv-chip { font-size: 11.5px; font-weight: 800; color: #475569; background: #f1f5f9; padding: 3px 9px; border-radius: 999px; }
+.lv-chip.lv-c-atras { background: #fef2f2; color: #b91c1c; }
+.lv-chip.lv-c-adel { background: #eff6ff; color: #1d4ed8; }
+.lv-track-wrap { overflow-x: auto; padding: 4px 2px; }
+.lv-track { display: inline-block; min-width: 100%; }
+.lv-row { display: flex; }
+.lv-cell { flex: 0 0 88px; position: relative; }
+/* fila de pines (buses): se apilan apoyados sobre el nodo de abajo */
+.lv-row-pins .lv-cell { display: flex; flex-direction: column-reverse; align-items: center; justify-content: flex-start;
+  min-height: 90px; gap: 4px; padding-bottom: 2px; }
+.lv-row-pins .lv-cell.lv-has::before { content: ''; position: absolute; left: 50%; transform: translateX(-50%);
+  top: 14px; bottom: 0; width: 2px; background: #cbd5e1; z-index: 0; }
+.lv-pin { position: relative; z-index: 1; background: #fff; border: 2px solid #16a34a; border-radius: 10px;
+  padding: 3px 8px; min-width: 48px; text-align: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .14); cursor: pointer; }
+.lv-pin:hover { box-shadow: 0 3px 12px rgba(0, 0, 0, .2); transform: translateY(-1px); }
+.lv-pin-mov { display: block; font-size: 12.5px; font-weight: 800; line-height: 1.15; color: #0f2438; font-variant-numeric: tabular-nums; }
+.lv-pin-mov i { font-style: normal; margin-right: 1px; }
+.lv-pin-hora { display: block; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lv-pin.lv-ok    { border-color: #16a34a; }
+.lv-pin.lv-adel  { border-color: #2563eb; } .lv-pin.lv-adel  .lv-pin-mov i { color: #2563eb; }
+.lv-pin.lv-atras { border-color: #dc2626; } .lv-pin.lv-atras .lv-pin-mov i { color: #dc2626; }
+.lv-pin.lv-off   { border-color: #cbd5e1; opacity: .7; }
+/* fila de nodos (círculos numerados) + línea horizontal detrás */
+.lv-row-nodes { position: relative; padding: 3px 0; }
+.lv-row-nodes::before { content: ''; position: absolute; left: 44px; right: 44px; top: 50%;
+  height: 3px; background: #0f2438; transform: translateY(-50%); z-index: 0; }
+.lv-row-nodes .lv-cell { display: flex; justify-content: center; }
+.lv-node { position: relative; z-index: 1; width: 27px; height: 27px; border-radius: 50%;
+  background: #3b7ea1; color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; box-shadow: 0 0 0 3px #fff; }
+.lv-cell.lv-has .lv-node { background: #0f2438; box-shadow: 0 0 0 3px #bfdbfe; }
+/* fila de nombres de cada punto */
+.lv-row-names .lv-cell { display: flex; justify-content: center; padding-top: 5px; }
+.lv-name { font-size: 10px; color: #64748b; text-align: center; max-width: 84px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.lv-sinpuntos { font-size: 12px; color: var(--muted); padding: 4px 6px 8px; }
+.lv-nobus { display: inline-block; font-weight: 800; font-size: 12px; color: #0f2438; background: #f1f5f9;
+  border-radius: 8px; padding: 2px 8px; margin: 2px; }
+
 /* Panel deslizable: recorrido en vivo de un bus */
 .rec-vivo-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .28); z-index: 3400; }
 .rec-vivo { position: fixed; top: 0; right: 0; height: 100%; width: 400px; max-width: 92vw; background: #fff;
