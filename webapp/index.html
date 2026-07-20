@@ -234,6 +234,21 @@
           </div>
           <div id="rutas-body" class="rutas-body"></div>
         </div>
+
+        <!-- Vista "Cumplimiento por puntos": malla coloreada tipo SONAR (auditor/admin) -->
+        <div id="malla-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🕒 Cumplimiento por puntos</h2>
+            <span id="malla-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Ruta <select id="malla-ruta"></select></label>
+            <label class="cump-fecha-lbl">📅 <input type="date" id="malla-fecha" /></label>
+            <input type="search" id="malla-search" placeholder="Buscar móvil…" />
+            <button id="malla-refresh" class="btn">↻ Actualizar</button>
+            <button id="malla-close" class="btn">← Volver</button>
+          </div>
+          <div id="malla-body" class="malla-body"></div>
+        </div>
       </main>
     </div>
 

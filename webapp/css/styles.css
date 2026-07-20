@@ -273,7 +273,7 @@ tbody tr:hover { background: #faf8ff; }
   tr.tr-next td.row-actions { background: #fff4d6; }
 }
 
-.table-view, .map-view, .cump-view, .rutas-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.table-view, .map-view, .cump-view, .rutas-view, .malla-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .map-view { position: relative; }
 
 /* Panel inferior deslizable con la info del móvil */
@@ -620,6 +620,34 @@ tbody tr:hover { background: #faf8ff; }
 .lv-sinpuntos { font-size: 12px; color: var(--muted); padding: 4px 6px 8px; }
 .lv-nobus { display: inline-block; font-weight: 800; font-size: 12px; color: #0f2438; background: #f1f5f9;
   border-radius: 8px; padding: 2px 8px; margin: 2px; }
+
+/* ---- Malla "Cumplimiento por puntos" (grilla coloreada tipo SONAR) ---- */
+.malla-body { flex: 1; min-height: 0; padding: 12px 14px 14px; display: flex; flex-direction: column; }
+.mc-leyenda { padding: 0 2px 10px; }
+.mc-wrap { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+.mc-tabla { border-collapse: separate; border-spacing: 0; font-size: 12px; width: max-content; min-width: 100%; }
+.mc-tabla th, .mc-tabla td { padding: 5px 8px; white-space: nowrap; border-bottom: 1px solid #eef0f5; border-right: 1px solid #eef0f5; text-align: center; }
+.mc-tabla thead th { position: sticky; top: 0; z-index: 3; background: #f7f9fc; color: var(--primary-dark);
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .2px; font-weight: 800; border-bottom: 2px solid var(--border); }
+.mc-h-pt { max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+/* dos primeras columnas fijas al hacer scroll horizontal */
+.mc-h-hora, .mc-hora { width: 56px; min-width: 56px; position: sticky; left: 0; z-index: 2; background: #fff;
+  text-align: left; font-variant-numeric: tabular-nums; font-weight: 700; }
+.mc-h-mov, .mc-mov { width: 66px; min-width: 66px; position: sticky; left: 56px; z-index: 2; background: #fff;
+  text-align: left; font-weight: 800; font-variant-numeric: tabular-nums; border-right: 2px solid var(--border); }
+.mc-tabla thead .mc-h-hora, .mc-tabla thead .mc-h-mov { z-index: 4; background: #f7f9fc; }
+.mc-tabla tbody tr:hover td { filter: brightness(0.96); }
+/* celdas coloreadas: verde a tiempo, azul adelantado, rojo atrasado, gris sin dato */
+.mc { color: #0f2438; font-variant-numeric: tabular-nums; }
+.mc-d { font-size: 10px; opacity: .85; margin-left: 3px; }
+.mc-ok    { background: #dcfce7; }
+.mc-adel  { background: #dbeafe; }
+.mc-atras { background: #fee2e2; color: #7f1d1d; }
+.mc-gray  { background: #eef0f5; color: #64748b; }
+.mc-none  { background: #fff; }
+.mc-row-live .mc-hora { box-shadow: inset 3px 0 0 #2563eb; }
+.mc-row-cancel { opacity: .5; }
+.mc-row-cancel .mc-mov { text-decoration: line-through; }
 
 /* Panel deslizable: recorrido en vivo de un bus */
 .rec-vivo-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .28); z-index: 3400; }

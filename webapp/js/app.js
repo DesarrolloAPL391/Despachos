@@ -431,6 +431,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -444,6 +445,7 @@ function buildSidebar() {
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
+  const amll = $('nav-malla'); if (amll) amll.classList.toggle('active', currentView === 'malla');
   buildBottomNav();
 }
 
@@ -539,6 +541,7 @@ function selectTable(name) {
   if (!mapaFlotante) { $('map-view').hidden = true; if (mapTimer) { clearInterval(mapTimer); mapTimer = null; } }
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -3446,6 +3449,7 @@ async function openCumplimiento() {
   $('table-view').hidden = true;
   $('map-view').hidden = true;
   $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -3675,6 +3679,7 @@ async function openRutasVivo(modo) {
   $('table-view').hidden = true;
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
+  $('malla-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -3875,6 +3880,102 @@ function renderLineaVivo() {
   }).join('');
   $('rutas-body').innerHTML = leyenda + `<div class="lv-cont">${bloques}</div>`;
 }
+
+// ---------- Vista "Cumplimiento por puntos": malla coloreada tipo SONAR ----------
+let _mallaUltimo = null;
+async function openMalla() {
+  if (!(isAdmin() || isAuditor())) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'malla';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('malla-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-malla')?.classList.add('active');
+  buildBottomNav();
+  if (!$('malla-fecha').value) $('malla-fecha').value = hoyServidor();
+  await _llenarRutasMalla();
+  await cargarMalla();
+}
+function cerrarMalla() {
+  $('malla-view').hidden = true;
+  selectTable(current);
+}
+async function _llenarRutasMalla() {
+  const sel = $('malla-ruta'); if (!sel || sel.options.length) return; // ya está lleno
+  try {
+    const { data } = await sb.rpc('rutas_itinerario');
+    const rutas = (data && data.rutas) || [];
+    sel.innerHTML = rutas.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+  } catch (e) { /* deja el selector vacío; el usuario reintenta */ }
+}
+async function cargarMalla() {
+  const body = $('malla-body');
+  const ruta = $('malla-ruta').value;
+  const fecha = $('malla-fecha').value || hoyServidor();
+  if (!ruta) { body.innerHTML = '<div class="cump-empty">Elige una ruta.</div>'; return; }
+  body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  try {
+    const { data, error } = await sb.rpc('malla_cumplimiento', { p_ruta: ruta, p_fecha: fecha });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
+    _mallaUltimo = data;
+    renderMalla();
+  } catch (e) {
+    body.innerHTML = `<div class="cump-empty">No se pudo consultar SONAR.<br><small>${esc(e.message || e)}</small></div>`;
+  }
+}
+// Color de una celda por su desviación: verde a tiempo (0), azul adelantado (<0), rojo atrasado (>0).
+function _mallaCls(d) {
+  if (d == null) return 'mc-gray';
+  if (d === 0) return 'mc-ok';
+  if (d < 0) return 'mc-adel';
+  return 'mc-atras';
+}
+function renderMalla() {
+  const d = _mallaUltimo; if (!d) return;
+  const term = ($('malla-search')?.value || '').trim().toLowerCase();
+  const puntos = (d.puntos || []).slice().sort((a, b) => a.idx - b.idx);
+  let viajes = (d.viajes || []).slice().sort((a, b) => String(a.sort || '').localeCompare(String(b.sort || '')));
+  if (term) viajes = viajes.filter((v) => String(v.movil || v.mid || '').toLowerCase().includes(term));
+  const sub = $('malla-sub');
+  if (sub) sub.textContent = `${(d.viajes || []).length} viajes · ${puntos.length} puntos · ${d.ruta} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}`;
+  if (!viajes.length) { $('malla-body').innerHTML = `<div class="cump-empty">Sin viajes ese día${term ? ' (con ese filtro)' : ''}.</div>`; return; }
+  const leyenda = `<div class="lv-leyenda mc-leyenda">`
+    + `<span class="lv-lg lv-lg-ok">A tiempo</span>`
+    + `<span class="lv-lg lv-lg-adel">Adelantado</span>`
+    + `<span class="lv-lg lv-lg-atras">Atrasado</span>`
+    + `<span class="lv-lg lv-lg-off">Sin dato</span></div>`;
+  const th = `<tr><th class="mc-h-hora">Hora</th><th class="mc-h-mov">Vehículo</th>`
+    + puntos.map((p) => `<th class="mc-h-pt" title="${esc(p.nombre || '')}">${esc(p.nombre || ('#' + p.idx))}</th>`).join('') + `</tr>`;
+  const filas = viajes.map((v) => {
+    const cel = v.celdas || {};
+    const cancel = (v.canceled === 'Y' || v.canceled === '1');
+    const cells = puntos.map((p) => {
+      const c = cel[p.idx];
+      if (!c || !c.h) return `<td class="mc mc-none"></td>`;
+      const dd = c.d == null ? '' : ` (${Math.abs(c.d)}m)`;
+      return `<td class="mc ${_mallaCls(c.d)}">${esc(c.h)}<span class="mc-d">${dd}</span></td>`;
+    }).join('');
+    const rowCls = (cancel ? 'mc-row-cancel' : '') + (v.running === 'Y' ? ' mc-row-live' : '');
+    return `<tr class="${rowCls.trim()}"><td class="mc-hora">${esc(v.hora || '—')}</td>`
+      + `<td class="mc-mov">${esc(String(v.movil || v.mid || '—').trim())}</td>${cells}</tr>`;
+  }).join('');
+  $('malla-body').innerHTML = leyenda
+    + `<div class="mc-wrap"><table class="mc-tabla"><thead>${th}</thead><tbody>${filas}</tbody></table></div>`;
+}
+$('malla-close')?.addEventListener('click', cerrarMalla);
+$('malla-refresh')?.addEventListener('click', cargarMalla);
+$('malla-ruta')?.addEventListener('change', cargarMalla);
+$('malla-fecha')?.addEventListener('change', cargarMalla);
+$('malla-search')?.addEventListener('input', renderMalla);
 
 // ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
 // Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.
@@ -6137,6 +6238,7 @@ async function showMapView() {
   cerrarPanelesFlotantes();
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;
