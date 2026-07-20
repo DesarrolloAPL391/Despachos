@@ -224,13 +224,9 @@
         <!-- Vista de Rutas en vivo (semáforo por ruta desde SONAR; auditor/admin) -->
         <div id="rutas-view" class="rutas-view" hidden>
           <div class="toolbar rutas-toolbar">
-            <h2>🟢 Rutas en vivo</h2>
+            <h2 id="rutas-h2">🟢 Rutas en vivo</h2>
             <span id="rutas-sub" class="cump-subtitle"></span>
             <span class="spacer"></span>
-            <div id="rutas-modo" class="rutas-modo">
-              <button class="rm-btn active" data-modo="tabla" title="Ver como tabla por ruta">▦ Tabla</button>
-              <button class="rm-btn" data-modo="linea" title="Ver como línea (monitor tipo SONAR)">📈 Línea</button>
-            </div>
             <input type="search" id="rutas-search" placeholder="Buscar ruta o móvil…" />
             <label class="rutas-auto" title="Actualizar automáticamente cada minuto"><input type="checkbox" id="rutas-auto" checked /> Auto</label>
             <button id="rutas-refresh" class="btn">↻ Actualizar</button>

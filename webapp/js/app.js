@@ -430,6 +430,7 @@ function buildSidebar() {
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
   if (isAdmin() || isAuditor()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -441,7 +442,8 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
-  const ar = $('nav-rutas'); if (ar) ar.classList.toggle('active', currentView === 'rutas');
+  const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
+  const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
   buildBottomNav();
 }
 
@@ -3663,9 +3665,10 @@ function _rvDur(seg) {
 function _rvNombre(s) {
   return String(s || '').toLowerCase().replace(/(^|[\s.])([a-záéíóúñ])/g, (t, p, c) => p + c.toUpperCase());
 }
-async function openRutasVivo() {
+async function openRutasVivo(modo) {
   if (!(isAdmin() || isAuditor())) return;
   if (mapaFlotante) cerrarMapaFlotante();
+  _rutasModo = (modo === 'linea') ? 'linea' : 'tabla';
   currentView = 'rutas';
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
@@ -3675,12 +3678,16 @@ async function openRutasVivo() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
+  const h2 = $('rutas-h2');
+  if (h2) h2.textContent = _rutasModo === 'linea' ? '🚏 Despachos en vivo lineal' : '🟢 Rutas en vivo';
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
-  $('nav-rutas')?.classList.add('active');
+  $(_rutasModo === 'linea' ? 'nav-lineal' : 'nav-rutas')?.classList.add('active');
   buildBottomNav();
   await cargarRutasVivo(false);
   _armarAutoRutas();
 }
+// Ítem de menú "Despachos en vivo lineal": abre la misma vista, en modo línea.
+function openDespachosLineal() { return openRutasVivo('linea'); }
 function cerrarRutasVivo() {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('rutas-view').hidden = true;
@@ -3780,14 +3787,9 @@ $('rutas-close')?.addEventListener('click', cerrarRutasVivo);
 $('rutas-refresh')?.addEventListener('click', () => cargarRutasVivo(false));
 $('rutas-search')?.addEventListener('input', _renderRutas);
 $('rutas-auto')?.addEventListener('change', _armarAutoRutas);
-// Interruptor Tabla / Línea (misma data, dos visualizaciones)
+// Modo de la vista de Rutas en vivo: 'tabla' o 'linea'. Cada uno tiene su ítem de menú
+// ("Rutas en vivo" y "Despachos en vivo lineal"); openRutasVivo(modo) lo fija.
 let _rutasModo = 'tabla';
-$('rutas-modo')?.addEventListener('click', (e) => {
-  const b = e.target.closest('.rm-btn'); if (!b) return;
-  _rutasModo = b.dataset.modo;
-  $('rutas-modo').querySelectorAll('.rm-btn').forEach((x) => x.classList.toggle('active', x === b));
-  _renderRutas();
-});
 // Móvil cuyo recorrido se muestra al lado (para resaltar su fila, incluso tras refrescar)
 let _recSelMovil = null;
 // Tocar una fila (tabla) o un pin (línea) abre el recorrido completo de ese bus
