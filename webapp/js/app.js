@@ -3687,8 +3687,9 @@ function renderRutasVivo() {
       const gpsBad = gps != null && gps > 600; // >10 min sin reportar GPS
       const gpsTxt = gps == null ? '—' : (gps < 90 ? `${gps}s` : _rvDur(gps));
       const cond = m.conductor ? `<span class="rv-cond" title="${esc(m.conductor)}">${esc(_rvNombre(m.conductor))}</span>` : '';
-      return `<div class="rv-bus">`
-        + `<div class="rv-bus-l"><span class="rv-movil" title="${esc(m.placa || '')}">${esc(m.movil)}</span>${cond}</div>`
+      const clk = m.mid ? ' rv-clk' : '';
+      return `<div class="rv-bus${clk}" data-mid="${esc(m.mid || '')}" data-itid="${r.it_id}" data-movil="${esc(m.movil || '')}" data-ruta="${esc(r.ruta || '')}" data-cond="${esc(m.conductor || '')}"${m.mid ? ' title="Ver recorrido de paradas"' : ''}>`
+        + `<div class="rv-bus-l"><span class="rv-movil" title="${esc(m.placa || '')}">${esc(m.movil)}</span>${cond}${m.mid ? '<span class="rv-go">›</span>' : ''}</div>`
         + `<div class="rv-bus-r">`
         + `<span class="rv-meta" title="Tiempo en la ruta">🕒 ${_rvDur(m.en_ruta_seg)}</span>`
         + `<span class="rv-meta${gpsBad ? ' rv-gps-bad' : ''}" title="Última señal GPS">📡 ${gpsTxt}</span>`
@@ -3704,6 +3705,73 @@ $('rutas-close')?.addEventListener('click', cerrarRutasVivo);
 $('rutas-refresh')?.addEventListener('click', () => cargarRutasVivo(false));
 $('rutas-search')?.addEventListener('input', renderRutasVivo);
 $('rutas-auto')?.addEventListener('change', _armarAutoRutas);
+// Tocar un bus abre su recorrido de paradas
+$('rutas-body')?.addEventListener('click', (e) => {
+  const el = e.target.closest('.rv-bus');
+  if (!el || !el.dataset.mid) return;
+  abrirRecorridoBus(el.dataset.mid, +el.dataset.itid, el.dataset.movil, el.dataset.ruta, el.dataset.cond);
+});
+
+// ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
+// Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.
+function _recEst(diff) {
+  if (diff == null) return { cls: 'pend', short: '', long: 'sin dato' };
+  if (diff <= 5)  return { cls: 'ok',   short: '✓',          long: 'a tiempo' };
+  if (diff <= 15) return { cls: 'warn', short: `+${diff}m`,  long: `+${diff} min` };
+  return { cls: 'bad', short: `+${diff}m`, long: `+${diff} min` };
+}
+async function abrirRecorridoBus(mid, itid, movil, ruta, cond) {
+  if (!mid) { toast('Ese móvil no tiene Id GPS en SONAR.', 'err'); return; }
+  $('rec-vivo-title').textContent = `🚌 Móvil ${movil}`;
+  $('rec-vivo-sub').textContent = `Ruta ${ruta} · consultando…`;
+  $('rec-vivo-body').innerHTML = '<div class="cump-empty">Consultando recorrido en SONAR…</div>';
+  $('rec-vivo').hidden = false; $('rec-vivo-scrim').hidden = false;
+  requestAnimationFrame(() => $('rec-vivo').classList.add('open'));
+  try {
+    const { data, error } = await sb.rpc('recorrido_bus', { p_mid: mid, p_itid: itid });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
+    if (!data.encontrado) {
+      $('rec-vivo-sub').textContent = `Ruta ${ruta}`;
+      $('rec-vivo-body').innerHTML = '<div class="cump-empty">Este móvil no tiene un viaje activo en SONAR ahora mismo.</div>';
+      return;
+    }
+    renderRecorrido(data, movil, ruta, cond);
+  } catch (e) {
+    $('rec-vivo-body').innerHTML = `<div class="cump-empty">No se pudo traer el recorrido.<br><small>${esc(e.message || e)}</small></div>`;
+  }
+}
+function cerrarRecorridoBus() {
+  $('rec-vivo').classList.remove('open');
+  $('rec-vivo-scrim').hidden = true;
+  setTimeout(() => { $('rec-vivo').hidden = true; }, 250);
+}
+function renderRecorrido(d, movil, ruta, cond) {
+  const est = _recEst(d.atraso);
+  $('rec-vivo-sub').innerHTML = `Ruta ${esc(ruta)}${cond ? ' · ' + esc(_rvNombre(cond)) : ''} · `
+    + `<b class="rd-${est.cls}">${d.atraso == null ? '—' : est.long}</b> · ${d.pasados}/${d.total} paradas`;
+  const pasados = d.pasados || 0;
+  const items = (d.puntos || []).map((p, i) => {
+    const pend = p.real == null;
+    const e = _recEst(p.diff);
+    const esBus = !pend && i === pasados - 1; // la última parada alcanzada = por donde va el bus
+    const dif = pend ? '' : `<span class="rvt-diff rd-${e.cls}">${e.short}</span>`;
+    const times = pend
+      ? `<span class="rvt-prog">prog ${esc(p.esperada || '—')}</span>`
+      : `llegó <b>${esc(p.real)}</b> · prog ${esc(p.esperada || '—')}`;
+    return `<div class="rvt-item rvt-${pend ? 'pend' : e.cls}${esBus ? ' rvt-here' : ''}">`
+      + `<div class="rvt-dotcol"><span class="rvt-dot"></span></div>`
+      + `<div class="rvt-main"><div class="rvt-name">${esBus ? '🚌 ' : ''}${esc(p.nombre)}</div>`
+      + `<div class="rvt-times">${times}</div></div>`
+      + dif + `</div>`;
+  }).join('');
+  const cab = `<div class="rvt-cab">`
+    + `<span><b>${esc(d.inicio || '—')}</b> inicio</span>`
+    + `<span>${d.en_curso ? '🟢 En curso' : '⚪ Finalizado'}</span></div>`;
+  $('rec-vivo-body').innerHTML = cab + `<div class="rvt">${items}</div>`;
+}
+$('rec-vivo-close')?.addEventListener('click', cerrarRecorridoBus);
+$('rec-vivo-scrim')?.addEventListener('click', cerrarRecorridoBus);
 
 // ---------- Conciliación Resumen ↔ SONAR (solo lectura; auditor/admin) ----------
 // Cruza, por móvil y día, los viajes REALES de SONAR (Completos+Incompletos) contra

@@ -135,7 +135,7 @@ as $fn$
           from (
             select it_id, ruta, count(*) as n,
                    jsonb_agg(jsonb_build_object(
-                     'movil', movil, 'placa', placa, 'conductor', conductor,
+                     'movil', movil, 'placa', placa, 'conductor', conductor, 'mid', mid,
                      'en_ruta_seg', case when inicio     is not null then extract(epoch from (now() - inicio))::int end,
                      'gps_seg',     case when ultimo_gps is not null then extract(epoch from (now() - ultimo_gps))::int end
                    ) order by movil) as moviles

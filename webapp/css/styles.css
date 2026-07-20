@@ -542,6 +542,46 @@ tbody tr:hover { background: #faf8ff; }
 .rv-meta { font-size: 11px; font-weight: 700; color: #475569; background: #f5f6fa; border: 1px solid var(--border);
   border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
 .rv-gps-bad { color: #b91c1c; background: #fef2f2; border-color: #f6c9c9; }
+.rv-clk { cursor: pointer; border-radius: 8px; transition: background .12s; }
+.rv-clk:hover { background: #f6f8fc; }
+.rv-go { margin-left: auto; color: #94a3b8; font-weight: 800; font-size: 17px; line-height: 1; }
+
+/* Panel deslizable: recorrido en vivo de un bus */
+.rec-vivo-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .28); z-index: 3400; }
+.rec-vivo { position: fixed; top: 0; right: 0; height: 100%; width: 392px; max-width: 92vw; background: #fff;
+  z-index: 3500; box-shadow: -10px 0 34px rgba(0, 0, 0, .18); display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform .25s ease; }
+.rec-vivo.open { transform: translateX(0); }
+.rec-vivo-head { display: flex; align-items: flex-start; gap: 10px; padding: 16px 16px 12px; border-bottom: 1px solid var(--border); }
+.rec-vivo-htxt { flex: 1 1 auto; min-width: 0; }
+.rec-vivo-title { font-size: 17px; font-weight: 800; }
+.rec-vivo-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+.rec-vivo-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 16px 26px; }
+.rvt-cab { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted);
+  padding: 0 2px 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.rvt-cab b { color: var(--text, #1c1c1c); font-size: 14px; }
+/* Línea de tiempo de paradas */
+.rvt-item { display: grid; grid-template-columns: 22px 1fr auto; align-items: start; gap: 9px; position: relative; padding: 7px 6px; }
+.rvt-item::before { content: ''; position: absolute; left: 16px; top: 17px; bottom: -5px; width: 2px; background: #e5e7eb; }
+.rvt-item:last-child::before { display: none; }
+.rvt-dotcol { display: flex; justify-content: center; }
+.rvt-dot { width: 13px; height: 13px; border-radius: 50%; margin-top: 3px; background: #cbd5e1;
+  border: 2px solid #fff; box-shadow: 0 0 0 1px #cbd5e1; position: relative; z-index: 1; }
+.rvt-ok   .rvt-dot { background: #16a34a; box-shadow: 0 0 0 1px #16a34a; }
+.rvt-warn .rvt-dot { background: #f59e0b; box-shadow: 0 0 0 1px #f59e0b; }
+.rvt-bad  .rvt-dot { background: #dc2626; box-shadow: 0 0 0 1px #dc2626; }
+.rvt-pend .rvt-dot { background: #fff; box-shadow: 0 0 0 2px #cbd5e1; }
+.rvt-main { min-width: 0; }
+.rvt-name { font-size: 13.5px; font-weight: 700; }
+.rvt-pend .rvt-name { color: #94a3b8; font-weight: 600; }
+.rvt-times { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.rvt-prog { color: #b0b7c3; }
+.rvt-diff { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; white-space: nowrap; margin-top: 3px; }
+.rvt-diff.rd-ok { background: #f0fdf4; } .rvt-diff.rd-warn { background: #fffbeb; } .rvt-diff.rd-bad { background: #fef2f2; }
+.rd-ok { color: #15803d; } .rd-warn { color: #b45309; } .rd-bad { color: #b91c1c; } .rd-pend { color: #94a3b8; }
+.rvt-here { background: #eff6ff; border-radius: 10px; }
+.rvt-here .rvt-name { font-weight: 800; }
+.rvt-here .rvt-dot { box-shadow: 0 0 0 4px #bfdbfe; }
 
 /* Barra de filtros del mapa */
 .map-filters { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }
