@@ -569,7 +569,7 @@ tbody tr:hover { background: #faf8ff; }
 
 /* Panel deslizable: recorrido en vivo de un bus */
 .rec-vivo-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .28); z-index: 3400; }
-.rec-vivo { position: fixed; top: 0; right: 0; height: 100%; width: 392px; max-width: 92vw; background: #fff;
+.rec-vivo { position: fixed; top: 0; right: 0; height: 100%; width: 400px; max-width: 92vw; background: #fff;
   z-index: 3500; box-shadow: -10px 0 34px rgba(0, 0, 0, .18); display: flex; flex-direction: column;
   transform: translateX(100%); transition: transform .25s ease; }
 .rec-vivo.open { transform: translateX(0); }
@@ -578,6 +578,17 @@ tbody tr:hover { background: #faf8ff; }
 .rec-vivo-title { font-size: 17px; font-weight: 800; }
 .rec-vivo-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
 .rec-vivo-body { flex: 1 1 auto; overflow-y: auto; padding: 14px 16px 26px; }
+/* Escritorio ancho: el recorrido se ACOPLA al lado de la tabla (no la tapa).
+   Reserva su columna a la derecha, arranca bajo la barra superior, sin velo; la
+   tabla se encoge y sigue usable. En pantalla angosta queda el overlay de siempre. */
+@media (min-width: 1024px) {
+  .layout { transition: padding-right .22s ease; }
+  #app.rec-open .layout { padding-right: 400px; }
+  #app.rec-open .rec-vivo { top: var(--rec-top, 0px); height: calc(100% - var(--rec-top, 0px));
+    box-shadow: -14px 0 42px rgba(15, 23, 42, .10); border-left: 1px solid var(--border); }
+  #app.rec-open .rec-vivo-scrim { display: none; }
+  #app.rec-open .map-fab { display: none; }
+}
 .rvt-cab { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted);
   padding: 0 2px 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
 .rvt-cab b { color: var(--text, #1c1c1c); font-size: 14px; }

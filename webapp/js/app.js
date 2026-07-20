@@ -530,6 +530,7 @@ $('app-ver').textContent = APP_VERSION;
 function selectTable(name) {
   // salir de la vista de mapa si estaba activa
   currentView = 'tabla';
+  cerrarRecorridoBus();
   document.getElementById('app').classList.remove('view-map');
   cerrarPanelesFlotantes();
   // Si el mapa está flotante, NO lo ocultamos: debe seguir visible mientras se despacha
@@ -3438,6 +3439,7 @@ async function openCumplimiento() {
   // Vista a pantalla completa (como el Mapa), no un modal
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'cump';
+  cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true;
   $('map-view').hidden = true;
@@ -3665,6 +3667,7 @@ async function openRutasVivo() {
   if (!(isAdmin() || isAuditor())) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'rutas';
+  cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true;
   $('map-view').hidden = true;
@@ -3800,6 +3803,8 @@ async function _ejecutarRecorrido(params, movil, ruta, cond, vacio) {
   $('rec-vivo-sub').textContent = `Ruta ${ruta} · consultando…`;
   $('rec-vivo-body').innerHTML = '<div class="cump-empty">Consultando recorrido en SONAR…</div>';
   $('rec-vivo').hidden = false; $('rec-vivo-scrim').hidden = false;
+  document.getElementById('app').classList.add('rec-open'); // en pantalla ancha reserva su columna al lado
+  _syncRecTop();
   requestAnimationFrame(() => $('rec-vivo').classList.add('open'));
   try {
     const { data, error } = await sb.rpc('recorrido_bus', params);
@@ -3816,10 +3821,19 @@ async function _ejecutarRecorrido(params, movil, ruta, cond, vacio) {
   }
 }
 function cerrarRecorridoBus() {
+  document.getElementById('app').classList.remove('rec-open'); // devuelve el ancho a la tabla
   $('rec-vivo').classList.remove('open');
   $('rec-vivo-scrim').hidden = true;
   setTimeout(() => { $('rec-vivo').hidden = true; }, 250);
 }
+// Acopla el panel justo debajo de la barra superior (solo aplica en modo escritorio).
+function _syncRecTop() {
+  const tb = document.querySelector('.topbar');
+  document.documentElement.style.setProperty('--rec-top', (tb ? tb.offsetHeight : 0) + 'px');
+}
+window.addEventListener('resize', () => {
+  if (document.getElementById('app').classList.contains('rec-open')) _syncRecTop();
+});
 function renderRecorrido(d, movil, ruta, cond) {
   const est = _recEst(d.atraso);
   $('rec-vivo-sub').innerHTML = `Ruta ${esc(ruta)}${cond ? ' · ' + esc(_rvNombre(cond)) : ''} · `
@@ -6017,6 +6031,7 @@ async function showMapView() {
   if (typeof L === 'undefined') { toast('No se pudo cargar el mapa (revisa tu conexión a internet)', 'err'); return; }
   if (mapaFlotante) cerrarMapaFlotante(); // si estaba flotante, devolver el mapa a su lugar
   currentView = 'mapa';
+  cerrarRecorridoBus();
   document.getElementById('app').classList.add('view-map');
   cerrarPanelesFlotantes();
   $('cump-view').hidden = true;
