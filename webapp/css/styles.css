@@ -274,20 +274,6 @@ tbody tr:hover { background: #faf8ff; }
 }
 
 .table-view, .map-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
-/* Cumplimiento al lado de la tabla (split): la tabla se angosta, el panel a la derecha */
-#table-view { flex-direction: row; gap: 12px; align-items: stretch; }
-.table-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.cump-panel { flex: 0 0 clamp(340px, 30vw, 440px); min-height: 0; display: flex; flex-direction: column;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
-.cump-panel[hidden] { display: none; }
-.cump-panel-head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }
-.cump-panel-titles { flex: 1 1 120px; min-width: 0; }
-.cump-panel-titles h3 { margin: 0; font-size: 16px; font-weight: 700; }
-.cump-panel-head .icon-btn { background: #e6eaf0; color: var(--text); width: 30px; height: 30px; font-size: 15px; }
-@media (max-width: 760px) {
-  #table-view { flex-direction: column; }
-  .cump-panel { flex: 0 0 auto; max-height: 60vh; }
-}
 .map-view { position: relative; }
 
 /* Panel inferior deslizable con la info del móvil */
@@ -436,9 +422,13 @@ tbody tr:hover { background: #faf8ff; }
 .cump-subtitle { font-size: 12.5px; color: var(--muted); font-weight: 600; margin-top: 2px; text-transform: capitalize; }
 .cump-fecha-lbl { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
 .cump-fecha-lbl input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
-.cump-body { flex: 1; min-height: 0; padding: 12px 14px 18px; overflow-y: auto; }
+.cump-body { flex: 1; min-height: 0; padding: 14px 18px 20px; overflow-y: auto; }
+.cump-card-modal { max-width: 1040px; width: 96vw; }
+.cump-filtros { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 18px; border-bottom: 1px solid var(--border); background: #fafbfd; }
+.cump-fl { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.cump-fl select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-weight: 600; }
 /* KPIs rediseñados: dos indicadores grandes + desglose que cuadra */
-.cump-heros { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.cump-heros { display: grid; grid-template-columns: repeat(2, minmax(150px, 220px)); gap: 10px; margin-bottom: 12px; }
 .cump-hero { border: 1px solid color-mix(in srgb, var(--acc) 35%, #fff); background: color-mix(in srgb, var(--acc) 12%, #fff);
   border-radius: 14px; padding: 12px 8px; text-align: center; }
 .cump-hero .ch-val { font-size: 30px; font-weight: 800; line-height: 1; color: var(--acc); }
@@ -466,7 +456,7 @@ tbody tr:hover { background: #faf8ff; }
 .cump-kpi.hero { background: color-mix(in srgb, var(--acc) 10%, #fff); border-color: color-mix(in srgb, var(--acc) 35%, #fff); }
 .cump-kpi.hero .k-val { color: var(--acc); font-size: 30px; }
 /* Tarjetas de gráficas */
-.cump-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.cump-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .cump-card { border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; background: #fff; margin-bottom: 14px; }
 .cump-card h4 { margin: 0 0 12px; font-size: 14px; color: var(--primary-dark); }
 .cump-card.ok-note { color: #15803d; font-weight: 700; background: #f0fdf4; border-color: #bbf7d0; }

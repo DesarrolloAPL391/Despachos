@@ -428,6 +428,7 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -545,8 +546,6 @@ function selectTable(name) {
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
-  $('cump-btn').hidden = !(TABLES[name].dispatchable && (isAdmin() || isAuditor())); // Cumplimiento: auditor/admin
-  if ($('cump-panel') && !$('cump-panel').hidden && _cumpTabla !== name) cerrarCumplimiento(); // no dejar el panel con datos de otra tabla
   soloPendientes = false;                                              // al cambiar de tabla, ver todas
   $('pend-btn').hidden = !TABLES[name].dispatchable;                   // "Solo pendientes": en tablas de despacho
   $('pend-btn').classList.remove('on'); $('pend-btn').textContent = '⏳ Solo pendientes';
@@ -892,7 +891,7 @@ async function openContador() {
     const e = map.get(movil); e.count++; if (r.desp?.nombre) e.desp.add(r.desp.nombre);
   }
   const filas = [...map.entries()].map(([movil, e]) => ({ movil, count: e.count, desp: [...e.desp] }))
-    .sort((a, b) => b.count - a.count || String(a.movil).localeCompare(String(b.movil)));
+    .sort((a, b) => String(a.movil).localeCompare(String(b.movil), 'es', { numeric: true })); // menor a mayor por número interno
 
   if (!filas.length) { $('cnt-results').innerHTML = '<div class="empty">No hay despachos realizados con esos filtros.</div>'; return; }
 
@@ -3386,9 +3385,11 @@ function agregarCumplimiento(rows, realMap, esPasado) {
   gaps.sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || a.h - b.h);
   return { tot, punt, porRuta, porHora, perdidos, gaps };
 }
-let _cumpTabla = 'despachos';
+let _cumpTabla = 'todas';            // puesto seleccionado en el filtro ('todas' o una tabla despachable)
 let _cumpUltimo = null;              // { agg, fecha } del último render (para descargar perdidos)
-const _cumpRefrescados = new Set(); // 'tabla|fecha' ya traídos de SONAR esta sesión (evita re-llamar)
+let _cumpRowsAll = [], _cumpRealMap = new Map(), _cumpFecha = ''; // caché para re-filtrar por ruta sin re-consultar
+const _cumpRefrescados = new Set(); // 'puesto|fecha' ya traídos de SONAR esta sesión (evita re-llamar)
+function cumpTablas() { return visibleTables().filter((k) => TABLES[k] && TABLES[k].dispatchable); }
 // Descarga los viajes perdidos del día a Excel (.xlsx via SheetJS)
 async function descargarPerdidos() {
   if (!_cumpUltimo || !_cumpUltimo.agg.perdidos.length) { toast('No hay viajes perdidos para descargar.', 'ok'); return; }
@@ -3414,14 +3415,17 @@ async function descargarPerdidos() {
   }
 }
 async function openCumplimiento() {
-  // Toggle: si ya está abierto para esta misma tabla, se cierra
-  if (!$('cump-panel').hidden && _cumpTabla === current) { cerrarCumplimiento(); return; }
-  _cumpTabla = current;
-  $('cump-fecha').value = filters['fecha'] || hoyServidor();
-  $('cump-panel').hidden = false;
-  await cargarCumplimiento();
+  if (!(isAdmin() || isAuditor())) return;
+  const tablas = cumpTablas();
+  $('cump-puesto').innerHTML = [['todas', 'Todas'], ...tablas.map((t) => [t, TABLES[t].label || t])]
+    .map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
+  $('cump-puesto').value = 'todas';
+  $('cump-ruta').innerHTML = '<option value="">Todas</option>';
+  $('cump-fecha').value = (typeof filters !== 'undefined' && filters['fecha']) || hoyServidor();
+  $('cump-modal').hidden = false;
+  await cargarCumplimiento(false);
 }
-function cerrarCumplimiento() { $('cump-panel').hidden = true; }
+function cerrarCumplimiento() { $('cump-modal').hidden = true; }
 // Carga los estados reales de SONAR (por regId) en un Map(regId -> {estado, inicio})
 async function _cargarEstadosSonar(regids) {
   const realMap = new Map();
@@ -3431,29 +3435,36 @@ async function _cargarEstadosSonar(regids) {
   }
   return realMap;
 }
-async function cargarCumplimiento() {
+async function cargarCumplimiento(forzarSonar) {
   const fecha = $('cump-fecha').value || hoyServidor();
+  const puesto = $('cump-puesto').value || 'todas';
+  _cumpTabla = puesto; _cumpFecha = fecha;
   $('cump-body').innerHTML = '<div class="loading">Calculando…</div>';
+  // 1) Filas: una tabla de puesto, o TODAS las despachables (disjuntas → sin doble conteo)
+  const tablas = puesto === 'todas' ? cumpTablas() : [puesto];
   const sel = 'hora, estado_despacho, estado, sonar_regid, ruta:ruta_id(nombre), veh:vehiculo_id(numero)';
-  let { data: rows, error } = await sb.from(_cumpTabla).select(sel).eq('fecha', fecha).limit(6000);
-  if (error) { $('cump-body').innerHTML = '<div class="cump-empty">Error al calcular: ' + esc(error.message) + '</div>'; return; }
-  rows = rows || [];
+  let rows = [];
+  for (const t of tablas) {
+    const { data, error } = await sb.from(t).select(sel).eq('fecha', fecha).limit(6000);
+    if (error) { $('cump-body').innerHTML = '<div class="cump-empty">Error al calcular: ' + esc(error.message) + '</div>'; return; }
+    rows = rows.concat(data || []);
+  }
+  // 2) Estado real de SONAR por regId
   const regids = [...new Set(rows.map((r) => r.sonar_regid).filter(Boolean).map(Number))];
   let realMap = await _cargarEstadosSonar(regids);
-  // ¿Despachos de la app sin estado real (día pasado no sincronizado, o recién despachado)?
-  // → traerlos de SONAR: UNA llamada por móvil (cada una trae todos sus viajes del día y
-  // demora ~0.5s, bajo el statement_timeout de 8s). Una sola vez por tabla+día en la sesión.
-  const clave = `${_cumpTabla}|${fecha}`;
-  const faltan = new Map(); // numero de móvil -> un regId faltante de ese móvil
+  // 3) ¿Faltan estados reales? → traerlos de SONAR (una llamada por móvil, bajo el timeout de 8s).
+  //    Automático una vez por puesto+día; el botón ↻ lo fuerza. Tope de seguridad de 150 móviles.
+  const faltan = new Map();
   for (const r of rows) {
     if (r.sonar_regid && !realMap.has(String(r.sonar_regid))) {
       const n = r.veh && r.veh.numero;
       if (n && !faltan.has(String(n))) faltan.set(String(n), r.sonar_regid);
     }
   }
-  if (faltan.size && !_cumpRefrescados.has(clave)) {
+  const clave = `${puesto}|${fecha}`;
+  if (faltan.size && (forzarSonar || !_cumpRefrescados.has(clave))) {
     _cumpRefrescados.add(clave);
-    const lista = [...faltan.entries()];
+    const lista = [...faltan.entries()].slice(0, 150);
     for (let i = 0; i < lista.length; i++) {
       const [numero, regid] = lista[i];
       showBusy(`Trayendo estados de SONAR… ${i + 1}/${lista.length}`);
@@ -3465,14 +3476,32 @@ async function cargarCumplimiento() {
     hideBusy();
     realMap = await _cargarEstadosSonar(regids);
   }
-  renderCumplimiento(agregarCumplimiento(rows, realMap, fecha < hoyServidor()), fecha);
+  _cumpRowsAll = rows; _cumpRealMap = realMap;
+  llenarRutasCump(rows);
+  renderCumpFiltrado();
+}
+// Llena el filtro de rutas con las presentes ese día (conserva la selección si sigue existiendo)
+function llenarRutasCump(rows) {
+  const rutas = [...new Set(rows.map((r) => (r.ruta && r.ruta.nombre) || '').filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+  const sel = $('cump-ruta'), prev = sel.value;
+  sel.innerHTML = '<option value="">Todas</option>' + rutas.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+  if (rutas.includes(prev)) sel.value = prev;
+}
+// Re-filtra por ruta (sin re-consultar) y vuelve a pintar
+function renderCumpFiltrado() {
+  const ruta = $('cump-ruta').value;
+  const rows = ruta ? _cumpRowsAll.filter((r) => ((r.ruta && r.ruta.nombre) || '') === ruta) : _cumpRowsAll;
+  renderCumplimiento(agregarCumplimiento(rows, _cumpRealMap, _cumpFecha < hoyServidor()), _cumpFecha);
 }
 function renderCumplimiento(agg, fecha) {
   _cumpUltimo = { agg, fecha };
   const t = agg.tot, realizados = t.comp + t.inc, cumpl = _pctCump(realizados, t.prog);
   const puntTot = agg.punt.aTiempo + agg.punt.tarde, punt = _pctCump(agg.punt.aTiempo, puntTot);
   $('cump-title').textContent = '📊 Cumplimiento';
-  const sub = $('cump-sub'); if (sub) sub.textContent = `${TABLES[_cumpTabla]?.label || _cumpTabla} · ${typeof fechaLegible === 'function' ? fechaLegible(fecha) : fecha}`;
+  const puestoLbl = _cumpTabla === 'todas' ? 'Todas' : (TABLES[_cumpTabla]?.label || _cumpTabla);
+  const rutaLbl = ($('cump-ruta') && $('cump-ruta').value) ? ` · ruta ${$('cump-ruta').value}` : '';
+  const sub = $('cump-sub'); if (sub) sub.textContent = `${puestoLbl}${rutaLbl} · ${typeof fechaLegible === 'function' ? fechaLegible(fecha) : fecha}`;
   if (!t.prog) { $('cump-body').innerHTML = '<div class="cump-empty">No hay viajes programados para ese día.</div>'; return; }
   const pct = (n) => _pctCump(n, t.prog);
   // Dos indicadores grandes: Cumplimiento y Puntualidad
@@ -3545,10 +3574,11 @@ function renderCumplimiento(agg, fecha) {
   $('cump-body').innerHTML = hero + desglose + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
   $('cump-perd-dl')?.addEventListener('click', descargarPerdidos);
 }
-$('cump-btn')?.addEventListener('click', openCumplimiento);
 $('cump-close')?.addEventListener('click', cerrarCumplimiento);
-$('cump-fecha')?.addEventListener('change', cargarCumplimiento);
-$('cump-refresh')?.addEventListener('click', cargarCumplimiento);
+$('cump-fecha')?.addEventListener('change', () => cargarCumplimiento(false));
+$('cump-puesto')?.addEventListener('change', () => cargarCumplimiento(false));
+$('cump-ruta')?.addEventListener('change', renderCumpFiltrado);
+$('cump-refresh')?.addEventListener('click', () => cargarCumplimiento(true));
 
 // ---------- Conciliación Resumen ↔ SONAR (solo lectura; auditor/admin) ----------
 // Cruza, por móvil y día, los viajes REALES de SONAR (Completos+Incompletos) contra
