@@ -26,11 +26,24 @@ create table if not exists public.moviles_operacion (
   ultimo_gps  timestamptz,   -- lastGPSDate: último reporte GPS (UTC)
   lat         double precision,
   lon         double precision,
+  -- progreso del recorrido (lo llena el cron de 20_recorrido_vivo.sql)
+  regid          bigint,
+  par_total      int,        -- paradas del itinerario
+  par_pasadas    int,        -- paradas ya recorridas en el viaje en curso
+  atraso         int,        -- min de atraso en la última parada (negativo = adelantado)
+  ultima_parada  text,       -- nombre de la última geocerca alcanzada
+  prog_actualizado timestamptz,
   actualizado timestamptz not null default now()
 );
 -- columnas nuevas si la tabla ya existía de una versión anterior
 alter table public.moviles_operacion add column if not exists inicio     timestamptz;
 alter table public.moviles_operacion add column if not exists ultimo_gps timestamptz;
+alter table public.moviles_operacion add column if not exists regid          bigint;
+alter table public.moviles_operacion add column if not exists par_total      int;
+alter table public.moviles_operacion add column if not exists par_pasadas    int;
+alter table public.moviles_operacion add column if not exists atraso         int;
+alter table public.moviles_operacion add column if not exists ultima_parada  text;
+alter table public.moviles_operacion add column if not exists prog_actualizado timestamptz;
 alter table public.moviles_operacion enable row level security;  -- sin políticas: solo vía SECURITY DEFINER
 
 -- Convierte un texto de fecha de SONAR (UTC) a timestamptz. SONAR a veces manda
@@ -137,7 +150,9 @@ as $fn$
                    jsonb_agg(jsonb_build_object(
                      'movil', movil, 'placa', placa, 'conductor', conductor, 'mid', mid,
                      'en_ruta_seg', case when inicio     is not null then extract(epoch from (now() - inicio))::int end,
-                     'gps_seg',     case when ultimo_gps is not null then extract(epoch from (now() - ultimo_gps))::int end
+                     'gps_seg',     case when ultimo_gps is not null then extract(epoch from (now() - ultimo_gps))::int end,
+                     'regid', regid, 'par_total', par_total, 'par_pasadas', par_pasadas,
+                     'atraso', atraso, 'ultima_parada', ultima_parada
                    ) order by movil) as moviles
             from public.moviles_operacion
             where coalesce(it_id, 0) <> 0

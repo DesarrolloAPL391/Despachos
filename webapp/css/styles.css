@@ -545,6 +545,27 @@ tbody tr:hover { background: #faf8ff; }
 .rv-clk { cursor: pointer; border-radius: 8px; transition: background .12s; }
 .rv-clk:hover { background: #f6f8fc; }
 .rv-go { margin-left: auto; color: #94a3b8; font-weight: 800; font-size: 17px; line-height: 1; }
+/* Tabla de Rutas en vivo: por ruta, con el recorrido visible sin clic */
+.rv-tablewrap { overflow-x: auto; }
+.rv-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rv-tabla th, .rv-tabla td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #f1f3f7; white-space: nowrap; }
+.rv-tabla thead th { position: sticky; top: 0; z-index: 1; background: #f7f9fc; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .3px; color: var(--primary-dark); border-bottom: 1px solid var(--border); }
+.rv-grp td { background: #fff; padding-top: 15px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
+.rv-grp .rv-dot { display: inline-block; vertical-align: middle; }
+.rv-grp b { font-size: 15px; vertical-align: middle; }
+.rv-grp-n { font-size: 11.5px; color: var(--muted); font-weight: 700; margin-left: 4px; }
+.rv-row.rv-clk { cursor: pointer; }
+.rv-row.rv-clk:hover td { background: #f6f8fc; }
+.rv-c-mov b { font-variant-numeric: tabular-nums; }
+.rv-c-cond { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: #475569; }
+.rv-c-par { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: #475569; }
+.rv-c-t, .rv-c-gps { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rv-c-gps.rv-gps-bad { color: #b91c1c; background: transparent; border: 0; font-weight: 700; }
+.rvp { display: flex; align-items: center; gap: 7px; }
+.rvp-bar { width: 68px; height: 7px; background: #eef0f5; border-radius: 999px; overflow: hidden; flex: 0 0 auto; }
+.rvp-bar span { display: block; height: 100%; background: #4f46e5; border-radius: 999px; }
+.rvp-t { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text, #1c1c1c); }
 
 /* Panel deslizable: recorrido en vivo de un bus */
 .rec-vivo-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .28); z-index: 3400; }

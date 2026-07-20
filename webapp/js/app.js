@@ -3725,33 +3725,51 @@ function renderRutasVivo() {
     $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
     return;
   }
-  const cards = rutas.map((r) => {
-    const buses = (r.moviles || []).map((m) => {
+  // Atraso en la última parada: adelantado (verde) / a tiempo / +min (ámbar/rojo)
+  const atr = (a) => {
+    if (a == null) return { t: '—', c: 'pend' };
+    if (a <= -1) return { t: a + 'm', c: 'ok' };
+    if (a <= 5) return { t: '✓', c: 'ok' };
+    if (a <= 15) return { t: '+' + a + 'm', c: 'warn' };
+    return { t: '+' + a + 'm', c: 'bad' };
+  };
+  const filasRuta = rutas.map((r) => {
+    const buses = (r.moviles || []).slice()
+      .sort((a, b) => String(a.movil).localeCompare(String(b.movil), 'es', { numeric: true }));
+    const grp = `<tr class="rv-grp"><td colspan="7"><span class="rv-dot"></span> <b>${esc(r.ruta)}</b>`
+      + ` <span class="rv-grp-n">${r.n} ${r.n === 1 ? 'bus' : 'buses'}</span></td></tr>`;
+    const filas = buses.map((m) => {
       const gps = m.gps_seg;
-      const gpsBad = gps != null && gps > 600; // >10 min sin reportar GPS
+      const gpsBad = gps != null && gps > 600;
       const gpsTxt = gps == null ? '—' : (gps < 90 ? `${gps}s` : _rvDur(gps));
-      const cond = m.conductor ? `<span class="rv-cond" title="${esc(m.conductor)}">${esc(_rvNombre(m.conductor))}</span>` : '';
+      const a = atr(m.atraso);
+      const prog = m.par_total
+        ? `<div class="rvp"><div class="rvp-bar"><span style="width:${Math.round((m.par_pasadas || 0) / m.par_total * 100)}%"></span></div>`
+          + `<span class="rvp-t">${m.par_pasadas || 0}/${m.par_total}</span></div>`
+        : '<span class="rvp-t">—</span>';
       const clk = m.mid ? ' rv-clk' : '';
-      return `<div class="rv-bus${clk}" data-mid="${esc(m.mid || '')}" data-itid="${r.it_id}" data-movil="${esc(m.movil || '')}" data-ruta="${esc(r.ruta || '')}" data-cond="${esc(m.conductor || '')}"${m.mid ? ' title="Ver recorrido de paradas"' : ''}>`
-        + `<div class="rv-bus-l"><span class="rv-movil" title="${esc(m.placa || '')}">${esc(m.movil)}</span>${cond}${m.mid ? '<span class="rv-go">›</span>' : ''}</div>`
-        + `<div class="rv-bus-r">`
-        + `<span class="rv-meta" title="Tiempo en la ruta">🕒 ${_rvDur(m.en_ruta_seg)}</span>`
-        + `<span class="rv-meta${gpsBad ? ' rv-gps-bad' : ''}" title="Última señal GPS">📡 ${gpsTxt}</span>`
-        + `</div></div>`;
+      return `<tr class="rv-row${clk}" data-mid="${esc(m.mid || '')}" data-itid="${r.it_id}" data-movil="${esc(m.movil || '')}" data-ruta="${esc(r.ruta || '')}" data-cond="${esc(m.conductor || '')}"${m.mid ? ' title="Ver recorrido completo"' : ''}>`
+        + `<td class="rv-c-mov"><b>${esc(String(m.movil).trim())}</b></td>`
+        + `<td class="rv-c-cond" title="${esc(m.conductor || '')}">${esc(_rvNombre(m.conductor))}</td>`
+        + `<td class="rv-c-t">${_rvDur(m.en_ruta_seg)}</td>`
+        + `<td class="rv-c-prog">${prog}</td>`
+        + `<td class="rv-c-par" title="${esc(m.ultima_parada || '')}">${esc(m.ultima_parada || '—')}</td>`
+        + `<td class="rv-c-atr"><span class="rvt-diff rd-${a.c}">${a.t}</span></td>`
+        + `<td class="rv-c-gps${gpsBad ? ' rv-gps-bad' : ''}">${gpsTxt}</td></tr>`;
     }).join('');
-    return `<div class="rv-card"><div class="rv-head"><span class="rv-dot"></span>`
-      + `<span class="rv-ruta">${esc(r.ruta)}</span><span class="rv-n">${r.n}</span></div>`
-      + `<div class="rv-buses">${buses}</div></div>`;
+    return grp + filas;
   }).join('');
-  $('rutas-body').innerHTML = `<div class="rv-grid">${cards}</div>`;
+  $('rutas-body').innerHTML = `<div class="rv-tablewrap"><table class="rv-tabla">`
+    + `<thead><tr><th>Móvil</th><th>Conductor</th><th>En ruta</th><th>Progreso</th><th>Última parada</th><th>Atraso</th><th>GPS</th></tr></thead>`
+    + `<tbody>${filasRuta}</tbody></table></div>`;
 }
 $('rutas-close')?.addEventListener('click', cerrarRutasVivo);
 $('rutas-refresh')?.addEventListener('click', () => cargarRutasVivo(false));
 $('rutas-search')?.addEventListener('input', renderRutasVivo);
 $('rutas-auto')?.addEventListener('change', _armarAutoRutas);
-// Tocar un bus abre su recorrido de paradas
+// Tocar una fila abre el recorrido completo de ese bus
 $('rutas-body')?.addEventListener('click', (e) => {
-  const el = e.target.closest('.rv-bus');
+  const el = e.target.closest('.rv-row');
   if (!el || !el.dataset.mid) return;
   abrirRecorridoBus(el.dataset.mid, +el.dataset.itid, el.dataset.movil, el.dataset.ruta, el.dataset.cond);
 });
