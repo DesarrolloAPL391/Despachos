@@ -439,6 +439,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
+  const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
   buildBottomNav();
 }
 
@@ -474,7 +475,7 @@ function buildBottomNav() {
   for (const name of slots) {
     const cfg = TABLES[name];
     const b = document.createElement('button');
-    b.className = 'bn-item' + (name === current && currentView !== 'mapa' ? ' active' : '');
+    b.className = 'bn-item' + (name === current && currentView === 'tabla' ? ' active' : '');
     b.innerHTML = `<span class="bn-ic">${cfg.icon || '•'}</span><span class="bn-lb">${esc(bnLabel(cfg.label))}</span>`;
     b.onclick = () => { selectTable(name); closeMenu(); };
     bn.appendChild(b);
@@ -531,6 +532,7 @@ function selectTable(name) {
   cerrarPanelesFlotantes();
   // Si el mapa está flotante, NO lo ocultamos: debe seguir visible mientras se despacha
   if (!mapaFlotante) { $('map-view').hidden = true; if (mapTimer) { clearInterval(mapTimer); mapTimer = null; } }
+  $('cump-view').hidden = true;
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
   current = name; page = 0; term = ''; filters = {}; $('search').value = '';
@@ -3422,10 +3424,24 @@ async function openCumplimiento() {
   $('cump-puesto').value = 'todas';
   $('cump-ruta').innerHTML = '<option value="">Todas</option>';
   $('cump-fecha').value = (typeof filters !== 'undefined' && filters['fecha']) || hoyServidor();
-  $('cump-modal').hidden = false;
+  // Vista a pantalla completa (como el Mapa), no un modal
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'cump';
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('cump-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-cump')?.classList.add('active');
+  buildBottomNav();
   await cargarCumplimiento(false);
 }
-function cerrarCumplimiento() { $('cump-modal').hidden = true; }
+function cerrarCumplimiento() {
+  $('cump-view').hidden = true;
+  selectTable(current); // vuelve a la tabla que estaba abierta
+}
 // Carga los estados reales de SONAR (por regId) en un Map(regId -> {estado, inicio})
 async function _cargarEstadosSonar(regids) {
   const realMap = new Map();
@@ -3571,7 +3587,7 @@ function renderCumplimiento(agg, fecha) {
     ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length}) <button id="cump-perd-dl" class="cump-dl" type="button">⬇️ Excel</button></h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
       perd.map((p) => `<tr><td>${esc(p.ruta)}</td><td>${esc(String(p.hora || '').slice(0, 5))}</td><td>${esc(String(p.movil || ''))}</td><td>${esc(p.motivo || '—')}</td></tr>`).join('')}</tbody></table></div></div>`
     : '<div class="cump-card ok-note">✅ Ningún viaje perdido.</div>';
-  $('cump-body').innerHTML = hero + desglose + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
+  $('cump-body').innerHTML = `<div class="cump-top">${hero}${desglose}</div>` + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
   $('cump-perd-dl')?.addEventListener('click', descargarPerdidos);
 }
 $('cump-close')?.addEventListener('click', cerrarCumplimiento);
@@ -5744,6 +5760,7 @@ async function showMapView() {
   currentView = 'mapa';
   document.getElementById('app').classList.add('view-map');
   cerrarPanelesFlotantes();
+  $('cump-view').hidden = true;
   $('table-view').hidden = true;
   $('map-view').hidden = false;
   closeVehSheet();

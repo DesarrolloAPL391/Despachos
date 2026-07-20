@@ -205,6 +205,21 @@
             <div id="rec-panel-list" class="rec-panel-list"></div>
           </div>
         </div>
+
+        <!-- Vista de Cumplimiento a pantalla completa (menú; solo auditor/admin) -->
+        <div id="cump-view" class="cump-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2 id="cump-title">📊 Cumplimiento</h2>
+            <span id="cump-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fecha-lbl">📅 <input type="date" id="cump-fecha" /></label>
+            <label class="cump-fl">Puesto <select id="cump-puesto"></select></label>
+            <label class="cump-fl">Ruta <select id="cump-ruta"><option value="">Todas</option></select></label>
+            <button id="cump-refresh" class="btn" title="Traer estados reales de SONAR">↻ Traer de SONAR</button>
+            <button id="cump-close" class="btn">← Volver</button>
+          </div>
+          <div id="cump-body" class="cump-body"></div>
+        </div>
       </main>
     </div>
 
@@ -267,28 +282,6 @@
         <button id="imp-cancel" class="btn">Cerrar</button>
         <button id="imp-run" class="btn btn-primary">Importar</button>
       </div>
-    </div>
-  </div>
-
-  <!-- Modal Tablero de Cumplimiento (solo auditor y admin) -->
-  <!-- Modal Cumplimiento (menú; solo auditor/admin) -->
-  <div id="cump-modal" class="modal" hidden>
-    <div class="modal-card cump-card-modal">
-      <div class="modal-head">
-        <div>
-          <h3 id="cump-title">📊 Cumplimiento</h3>
-          <div id="cump-sub" class="cump-subtitle"></div>
-        </div>
-        <span class="spacer"></span>
-        <button id="cump-close" class="icon-btn">✕</button>
-      </div>
-      <div class="cump-filtros">
-        <label class="cump-fecha-lbl">📅 <input type="date" id="cump-fecha" /></label>
-        <label class="cump-fl">Puesto <select id="cump-puesto"></select></label>
-        <label class="cump-fl">Ruta <select id="cump-ruta"><option value="">Todas</option></select></label>
-        <button id="cump-refresh" class="btn" title="Traer estados reales de SONAR">↻ Traer de SONAR</button>
-      </div>
-      <div id="cump-body" class="cump-body"></div>
     </div>
   </div>
 
