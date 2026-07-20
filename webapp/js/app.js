@@ -3394,6 +3394,13 @@ function agregarCumplimiento(rows, realMap, esPasado) {
 let _cumpTabla = 'todas';            // puesto seleccionado en el filtro ('todas' o una tabla despachable)
 let _cumpUltimo = null;              // { agg, fecha } del último render (para descargar perdidos)
 let _cumpRowsAll = [], _cumpRealMap = new Map(), _cumpFecha = ''; // caché para re-filtrar por ruta sin re-consultar
+let _cumpRowsVista = [];             // filas del filtro actual (para la lista de viajes por ruta)
+// Etiqueta de estado real del viaje (para la lista de despachos por ruta)
+function _cumpBadge(cls) {
+  const m = { comp: ['Completo', 'cb-comp'], inc: ['Incompleto', 'cb-inc'], perd: ['Cancelado', 'cb-perd'], curso: ['En curso', 'cb-curso'], sin: ['Sin despachar', 'cb-sin'] };
+  const x = m[cls] || ['—', 'cb-sin'];
+  return `<span class="cb ${x[1]}">${x[0]}</span>`;
+}
 const _cumpRefrescados = new Set(); // 'puesto|fecha' ya traídos de SONAR esta sesión (evita re-llamar)
 function cumpTablas() { return visibleTables().filter((k) => TABLES[k] && TABLES[k].dispatchable); }
 // Descarga los viajes perdidos del día a Excel (.xlsx via SheetJS)
@@ -3514,6 +3521,7 @@ function llenarRutasCump(rows) {
 function renderCumpFiltrado() {
   const ruta = $('cump-ruta').value;
   const rows = ruta ? _cumpRowsAll.filter((r) => ((r.ruta && r.ruta.nombre) || '') === ruta) : _cumpRowsAll;
+  _cumpRowsVista = rows;
   renderCumplimiento(agregarCumplimiento(rows, _cumpRealMap, _cumpFecha < hoyServidor()), _cumpFecha);
 }
 function renderCumplimiento(agg, fecha) {
@@ -3540,11 +3548,33 @@ function renderCumplimiento(agg, fecha) {
   const rutas = [...agg.porRuta.entries()].sort((a, b) => b[1].prog - a[1].prog);
   const barsRuta = rutas.map(([ruta, d]) => {
     const rz = d.comp + d.inc, p = _pctCump(rz, d.prog);
-    return `<div class="crow"><div class="crow-lbl" title="${esc(ruta)}">${esc(ruta)}</div>`
+    return `<div class="crow crow-clk" data-ruta="${esc(ruta)}" title="Ver los viajes de ${esc(ruta)}"><div class="crow-lbl">${esc(ruta)}</div>`
       + `<div class="crow-track"><div class="crow-fill" style="width:${p}%;background:${_colCump(p)}"></div></div>`
       + `<div class="crow-val"><b style="color:${_colCump(p)}">${p}%</b> <small>${rz}/${d.prog}</small></div></div>`;
   }).join('');
-  const chartRuta = `<div class="cump-card"><h4>Cumplimiento por ruta</h4>${barsRuta}</div>`;
+  const chartRuta = `<div class="cump-card"><h4>Cumplimiento por ruta <small>· toca una ruta para ver sus viajes</small></h4>${barsRuta}</div>`;
+  // Lista de viajes (despachos SONAR) de la ruta seleccionada, con estado real + recorrido al tocar
+  const rutaSel = ($('cump-ruta') && $('cump-ruta').value) || '';
+  let viajesHtml = '';
+  if (rutaSel) {
+    const esPasado = _cumpFecha < hoyServidor();
+    const vrows = (_cumpRowsVista || []).slice().sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
+    const filas = vrows.map((r) => {
+      const cls = _cumpClasif(r, _cumpRealMap, esPasado);
+      const rid = r.sonar_regid ? String(r.sonar_regid) : '';
+      const movil = (r.veh && r.veh.numero) || '';
+      const cond = (r.cond && r.cond.nombre) || r.conductor || '';
+      const puede = rid && movil;
+      return `<tr class="cv-row${puede ? ' cv-clk' : ''}"${puede ? ` data-regid="${esc(rid)}" data-movil="${esc(movil)}" data-cond="${esc(cond)}"` : ''}>`
+        + `<td>${esc(String(r.hora || '').slice(0, 5))}</td>`
+        + `<td><b>${esc(movil)}</b></td>`
+        + `<td class="cv-cond">${esc(_rvNombre(cond))}</td>`
+        + `<td>${_cumpBadge(cls)}</td>`
+        + `<td class="cv-go">${puede ? '🗺️' : ''}</td></tr>`;
+    }).join('');
+    viajesHtml = `<div class="cump-card"><h4>Viajes de la ruta ${esc(rutaSel)} <small>· ${vrows.length} · toca uno para ver su recorrido</small></h4>`
+      + `<div class="cump-tablewrap"><table class="cump-table cv-table"><thead><tr><th>Hora</th><th>Móvil</th><th>Conductor</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div></div>`;
+  }
   // Cobertura por hora (barras apiladas: completo / incompleto / en curso / perdido / sin despachar)
   const horas = [...agg.porHora.keys()].sort((a, b) => a - b);
   const maxH = Math.max(1, ...horas.map((h) => agg.porHora.get(h).prog));
@@ -3593,9 +3623,23 @@ function renderCumplimiento(agg, fecha) {
     ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length}) <button id="cump-perd-dl" class="cump-dl" type="button">⬇️ Excel</button></h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
       perd.map((p) => `<tr><td>${esc(p.ruta)}</td><td>${esc(String(p.hora || '').slice(0, 5))}</td><td>${esc(String(p.movil || ''))}</td><td>${esc(p.motivo || '—')}</td></tr>`).join('')}</tbody></table></div></div>`
     : '<div class="cump-card ok-note">✅ Ningún viaje perdido.</div>';
-  $('cump-body').innerHTML = `<div class="cump-top">${hero}${desglose}</div>` + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
+  $('cump-body').innerHTML = `<div class="cump-top">${hero}${desglose}</div>` + viajesHtml
+    + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
   $('cump-perd-dl')?.addEventListener('click', descargarPerdidos);
 }
+// Interacción del tablero: tocar una ruta la filtra; tocar un viaje abre su recorrido.
+$('cump-body')?.addEventListener('click', (e) => {
+  const ruta = e.target.closest('.crow-clk');
+  if (ruta && ruta.dataset.ruta) {
+    const sel = $('cump-ruta');
+    if (sel) { sel.value = ruta.dataset.ruta; renderCumpFiltrado(); }
+    return;
+  }
+  const v = e.target.closest('.cv-row');
+  if (v && v.dataset.regid) {
+    abrirRecorridoDespacho(v.dataset.movil, +v.dataset.regid, ($('cump-ruta').value || ''), _cumpFecha, v.dataset.cond);
+  }
+});
 $('cump-close')?.addEventListener('click', cerrarCumplimiento);
 $('cump-fecha')?.addEventListener('change', () => cargarCumplimiento(false));
 $('cump-puesto')?.addEventListener('change', () => cargarCumplimiento(false));
@@ -3720,20 +3764,32 @@ function _recEst(diff) {
   if (diff <= 15) return { cls: 'warn', short: `+${diff}m`,  long: `+${diff} min` };
   return { cls: 'bad', short: `+${diff}m`, long: `+${diff} min` };
 }
+// En vivo (Rutas en vivo): viaje en curso del móvil por su itinerario.
 async function abrirRecorridoBus(mid, itid, movil, ruta, cond) {
   if (!mid) { toast('Ese móvil no tiene Id GPS en SONAR.', 'err'); return; }
+  _ejecutarRecorrido({ p_mid: mid, p_itid: itid }, movil, ruta, cond, 'Este móvil no tiene un viaje activo en SONAR ahora mismo.');
+}
+// Auditoría (Cumplimiento): recorrido de un despacho concreto por su regId + fecha.
+async function abrirRecorridoDespacho(movil, regid, ruta, fecha, cond) {
+  const g = await gpsInfoFor(movil);
+  const mid = g && g.tracker_id;
+  if (!mid) { toast(`El móvil ${movil} no tiene Id GPS en SONAR.`, 'err'); return; }
+  _ejecutarRecorrido({ p_mid: mid, p_regid: regid, p_fecha: fecha, p_ruta: ruta }, movil, ruta, cond,
+    'No se encontró ese viaje en SONAR (¿se despachó por otra ruta?).');
+}
+async function _ejecutarRecorrido(params, movil, ruta, cond, vacio) {
   $('rec-vivo-title').textContent = `🚌 Móvil ${movil}`;
   $('rec-vivo-sub').textContent = `Ruta ${ruta} · consultando…`;
   $('rec-vivo-body').innerHTML = '<div class="cump-empty">Consultando recorrido en SONAR…</div>';
   $('rec-vivo').hidden = false; $('rec-vivo-scrim').hidden = false;
   requestAnimationFrame(() => $('rec-vivo').classList.add('open'));
   try {
-    const { data, error } = await sb.rpc('recorrido_bus', { p_mid: mid, p_itid: itid });
+    const { data, error } = await sb.rpc('recorrido_bus', params);
     if (error) throw error;
     if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
     if (!data.encontrado) {
       $('rec-vivo-sub').textContent = `Ruta ${ruta}`;
-      $('rec-vivo-body').innerHTML = '<div class="cump-empty">Este móvil no tiene un viaje activo en SONAR ahora mismo.</div>';
+      $('rec-vivo-body').innerHTML = `<div class="cump-empty">${esc(vacio || 'Sin viaje.')}</div>`;
       return;
     }
     renderRecorrido(data, movil, ruta, cond);
@@ -3751,24 +3807,32 @@ function renderRecorrido(d, movil, ruta, cond) {
   $('rec-vivo-sub').innerHTML = `Ruta ${esc(ruta)}${cond ? ' · ' + esc(_rvNombre(cond)) : ''} · `
     + `<b class="rd-${est.cls}">${d.atraso == null ? '—' : est.long}</b> · ${d.pasados}/${d.total} paradas`;
   const pasados = d.pasados || 0;
+  const hayPax = (d.ingresos || 0) + (d.salidas || 0) > 0;
+  // Resumen arriba: estado del viaje, puntualidad, atraso máx, pasajeros
+  const km = (n) => `<div class="rr-k"><div class="rr-kv">${n[0]}</div><div class="rr-kl">${n[1]}</div></div>`;
+  const resumen = `<div class="rr-cab">`
+    + km([`${d.inicio || '—'}${d.fin && !d.en_curso ? '–' + d.fin : ''}`, d.en_curso ? '🟢 En curso' : '⚪ Finalizado'])
+    + km([`${d.a_tiempo || 0}/${pasados || 0}`, 'A tiempo'])
+    + km([d.atraso_max == null ? '—' : (d.atraso_max <= 0 ? '0' : '+' + d.atraso_max), 'Atraso máx (min)'])
+    + (hayPax ? km([`${d.ingresos || 0}/${d.salidas || 0}`, 'Suben/Bajan']) : '')
+    + `</div>`;
   const items = (d.puntos || []).map((p, i) => {
     const pend = p.real == null;
     const e = _recEst(p.diff);
     const esBus = !pend && i === pasados - 1; // la última parada alcanzada = por donde va el bus
     const dif = pend ? '' : `<span class="rvt-diff rd-${e.cls}">${e.short}</span>`;
+    const pax = (!pend && ((p.ingresos || 0) + (p.salidas || 0) > 0))
+      ? ` · <span class="rvt-pax">↑${p.ingresos || 0} ↓${p.salidas || 0}</span>` : '';
     const times = pend
       ? `<span class="rvt-prog">prog ${esc(p.esperada || '—')}</span>`
-      : `llegó <b>${esc(p.real)}</b> · prog ${esc(p.esperada || '—')}`;
+      : `llegó <b>${esc(p.real)}</b> · prog ${esc(p.esperada || '—')}${pax}`;
     return `<div class="rvt-item rvt-${pend ? 'pend' : e.cls}${esBus ? ' rvt-here' : ''}">`
       + `<div class="rvt-dotcol"><span class="rvt-dot"></span></div>`
       + `<div class="rvt-main"><div class="rvt-name">${esBus ? '🚌 ' : ''}${esc(p.nombre)}</div>`
       + `<div class="rvt-times">${times}</div></div>`
       + dif + `</div>`;
   }).join('');
-  const cab = `<div class="rvt-cab">`
-    + `<span><b>${esc(d.inicio || '—')}</b> inicio</span>`
-    + `<span>${d.en_curso ? '🟢 En curso' : '⚪ Finalizado'}</span></div>`;
-  $('rec-vivo-body').innerHTML = cab + `<div class="rvt">${items}</div>`;
+  $('rec-vivo-body').innerHTML = resumen + `<div class="rvt">${items}</div>`;
 }
 $('rec-vivo-close')?.addEventListener('click', cerrarRecorridoBus);
 $('rec-vivo-scrim')?.addEventListener('click', cerrarRecorridoBus);

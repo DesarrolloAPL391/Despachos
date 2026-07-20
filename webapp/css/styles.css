@@ -582,6 +582,28 @@ tbody tr:hover { background: #faf8ff; }
 .rvt-here { background: #eff6ff; border-radius: 10px; }
 .rvt-here .rvt-name { font-weight: 800; }
 .rvt-here .rvt-dot { box-shadow: 0 0 0 4px #bfdbfe; }
+/* Resumen arriba del recorrido + pasajeros por parada */
+.rr-cab { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px;
+  padding: 2px 2px 14px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.rr-k { text-align: center; }
+.rr-kv { font-size: 15px; font-weight: 800; color: var(--text, #1c1c1c); }
+.rr-kl { font-size: 10px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .2px; margin-top: 2px; }
+.rvt-pax { color: #6d28d9; font-weight: 700; }
+
+/* Lista de viajes por ruta (auditoría en Cumplimiento) */
+.crow-clk { cursor: pointer; }
+.crow-clk:hover .crow-lbl { color: var(--primary-dark); text-decoration: underline; }
+.cb { display: inline-block; font-size: 11px; font-weight: 800; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.cb-comp  { background: #f0fdf4; color: #15803d; }
+.cb-inc   { background: #fffbeb; color: #b45309; }
+.cb-perd  { background: #fef2f2; color: #b91c1c; }
+.cb-curso { background: #eff6ff; color: #1d4ed8; }
+.cb-sin   { background: #f1f5f9; color: #64748b; }
+.cv-table td { vertical-align: middle; }
+.cv-cond { color: #475569; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.cv-clk { cursor: pointer; }
+.cv-clk:hover { background: #f6f8fc; }
+.cv-go { text-align: center; font-size: 15px; }
 
 /* Barra de filtros del mapa */
 .map-filters { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #f7f9fc; flex-wrap: wrap; }
