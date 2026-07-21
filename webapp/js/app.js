@@ -5793,19 +5793,42 @@ $('cancel-send').addEventListener('click', async () => {
   }
 });
 
-// ---------- Consultar despachos de SONAR (uno o VARIOS móviles) ----------
+// ---------- Consultar despachos de SONAR (por RUTA o por móvil) ----------
 let _dsVeh = [];              // vehículos cargados (número + placa)
 const _dsSel = new Set();     // números de móvil seleccionados
+let _dsRutas = [];            // nombres de ruta (de rutas_itinerario)
+const _dsRutasSel = new Set();// rutas seleccionadas (si hay, se consulta por ruta)
 async function openDsonar(preselect) {
   $('ds-error').hidden = true;
   $('ds-results').innerHTML = '';
   $('ds-fecha').value = hoyLocal();
   $('ds-search').value = '';
+  $('ds-rsearch').value = '';
   _dsSel.clear();
+  _dsRutasSel.clear();
   if (preselect) _dsSel.add(String(preselect));
   _dsVeh = await loadVehiculos();
+  // Rutas para el selector (nombres de itinerario). Si falla, se opera solo por móvil.
+  try {
+    const { data } = await sb.rpc('rutas_itinerario');
+    _dsRutas = (data && data.ok && Array.isArray(data.rutas)) ? data.rutas : [];
+  } catch { _dsRutas = []; }
+  renderDsRutas();
   renderDsLista();
   $('ds-modal').hidden = false;
+}
+// Lista de rutas con checkboxes, filtrada por la búsqueda
+function renderDsRutas() {
+  const q = ($('ds-rsearch').value || '').trim().toLowerCase();
+  const items = _dsRutas
+    .filter((r) => !q || String(r).toLowerCase().includes(q))
+    .map((r) => {
+      const on = _dsRutasSel.has(String(r));
+      return `<label class="ds-item${on ? ' on' : ''}"><input type="checkbox" data-ruta="${esc(String(r))}"${on ? ' checked' : ''}>`
+        + `<span>${esc(String(r))}</span></label>`;
+    }).join('');
+  $('ds-rlista').innerHTML = items || '<div class="empty">Sin rutas.</div>';
+  updateDsCount();
 }
 function closeDsonar() { $('ds-modal').hidden = true; }
 // Lista de móviles con checkboxes, filtrada por la búsqueda
@@ -5823,9 +5846,10 @@ function renderDsLista() {
   updateDsCount();
 }
 function updateDsCount() {
-  const n = _dsSel.size;
+  const n = _dsSel.size, nr = _dsRutasSel.size;
   $('ds-count').textContent = n ? `— ${n} seleccionado${n > 1 ? 's' : ''}` : '';
-  const btn = $('ds-run'); if (btn) btn.disabled = n === 0;
+  const rc = $('ds-rcount'); if (rc) rc.textContent = nr ? `— ${nr} seleccionada${nr > 1 ? 's' : ''}` : '';
+  const btn = $('ds-run'); if (btn) btn.disabled = (n === 0 && nr === 0);
 }
 $('dsonar-btn').addEventListener('click', () => openDsonar());
 $('ds-close').addEventListener('click', closeDsonar);
@@ -5835,6 +5859,14 @@ $('ds-lista')?.addEventListener('change', (e) => {
   const cb = e.target.closest('input[data-mov]'); if (!cb) return;
   const m = cb.dataset.mov;
   if (cb.checked) _dsSel.add(m); else _dsSel.delete(m);
+  cb.closest('.ds-item')?.classList.toggle('on', cb.checked);
+  updateDsCount();
+});
+$('ds-rsearch')?.addEventListener('input', renderDsRutas);
+$('ds-rlista')?.addEventListener('change', (e) => {
+  const cb = e.target.closest('input[data-ruta]'); if (!cb) return;
+  const r = cb.dataset.ruta;
+  if (cb.checked) _dsRutasSel.add(r); else _dsRutasSel.delete(r);
   cb.closest('.ds-item')?.classList.toggle('on', cb.checked);
   updateDsCount();
 });
@@ -6002,9 +6034,11 @@ $('con-reload').addEventListener('click', cargarConectados);
 $('ds-run').addEventListener('click', async () => {
   const err = $('ds-error'); err.hidden = true;
   const fecha = $('ds-fecha').value;
-  const moviles = [..._dsSel];
-  if (!moviles.length) { err.textContent = 'Selecciona al menos un móvil.'; err.hidden = false; return; }
   if (!fecha) { err.textContent = 'Selecciona una fecha.'; err.hidden = false; return; }
+  // Si hay rutas seleccionadas → consulta por ruta (trae todos los viajes). Si no → por móvil.
+  if (_dsRutasSel.size) { await _dsConsultarRutas(fecha); return; }
+  const moviles = [..._dsSel];
+  if (!moviles.length) { err.textContent = 'Selecciona al menos una ruta o un móvil.'; err.hidden = false; return; }
 
   const btn = $('ds-run'); btn.disabled = true; btn.textContent = 'Consultando…';
   const all = []; const fallos = [];
@@ -6031,6 +6065,33 @@ $('ds-run').addEventListener('click', async () => {
   }
   renderDsonar(all, fallos, moviles.length);
 });
+// Consulta por RUTA: una llamada por ruta (trae TODOS sus viajes del día).
+async function _dsConsultarRutas(fecha) {
+  const rutas = [..._dsRutasSel];
+  const btn = $('ds-run'); btn.disabled = true; btn.textContent = 'Consultando…';
+  const all = []; const fallos = []; const vistos = new Set();
+  showBusy(`Consultando SONAR… 0/${rutas.length}`);
+  try {
+    for (let i = 0; i < rutas.length; i++) {
+      const ruta = rutas[i];
+      showBusy(`Consultando SONAR… ${i + 1}/${rutas.length}  ·  ruta ${ruta}`);
+      try {
+        const { data, error } = await sb.rpc('despachos_sonar_ruta', { p_ruta: ruta, p_fecha: fecha });
+        if (error) { fallos.push(`${ruta}: ${error.message}`); continue; }
+        if (!data || !data.ok) { fallos.push(`${ruta}: ${data?.error || 'sin respuesta'}`); continue; }
+        (data.items || []).forEach((d) => {
+          const k = String(d.itlid || `${d.movil}-${d.hora}-${d.ruta}`);
+          if (vistos.has(k)) return; vistos.add(k); // evita duplicados si una ruta tiene varios itinerarios
+          all.push(d);
+        });
+      } catch (e) { fallos.push(`${ruta}: ${e.message || e}`); }
+    }
+  } finally {
+    hideBusy();
+    btn.disabled = false; btn.textContent = 'Consultar';
+  }
+  renderDsonar(all, fallos, `${rutas.length} ruta${rutas.length > 1 ? 's' : ''}`);
+}
 
 // Estado del viaje según las banderas de SONAR (misma regla que el tablero de cumplimiento)
 function dsEstado(d) {
@@ -6054,7 +6115,8 @@ function renderDsonar(items, fallos, nMov) {
       + `<td>${esc(d.conductor || '')}</td><td style="text-align:right">${d.minutos ?? ''}</td>`
       + `<td><span class="chip ${cls}">${txt}</span></td></tr>`;
   }).join('');
-  const resumen = `<div class="ds-sum">${nMov || _dsSel.size} móvil(es) · ${items.length} viaje(s)</div>`;
+  const cuenta = (typeof nMov === 'string') ? nMov : `${nMov || _dsSel.size} móvil(es)`;
+  const resumen = `<div class="ds-sum">${esc(cuenta)} · ${items.length} viaje(s)</div>`;
   cont.innerHTML = aviso + resumen + `<table class="ds-table"><thead><tr>
     <th>Móvil</th><th>Hora</th><th>Ruta</th><th>Conductor</th><th>Min</th><th>Estado</th>
     </tr></thead><tbody>${filas}</tbody></table>`;

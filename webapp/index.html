@@ -468,6 +468,12 @@
       <form id="ds-form" class="edit-form" onsubmit="return false">
         <label class="field"><span>Fecha</span><input type="date" id="ds-fecha" /></label>
         <div class="field full">
+          <span>Rutas <small id="ds-rcount" class="ds-count"></small></span>
+          <input type="search" id="ds-rsearch" placeholder="Buscar ruta…" autocomplete="off" />
+          <div id="ds-rlista" class="ds-lista"></div>
+          <p class="ds-hint">Elige una o varias rutas para traer <b>todos</b> sus viajes de una vez. Si no eliges ruta, puedes consultar por móvil abajo.</p>
+        </div>
+        <div class="field full">
           <span>Móviles <small id="ds-count" class="ds-count"></small></span>
           <input type="search" id="ds-search" placeholder="Buscar móvil o placa…" autocomplete="off" />
           <div id="ds-lista" class="ds-lista"></div>
