@@ -619,6 +619,25 @@
     </div>
   </div>
 
+  <!-- Control Laureles: confirmar llegada de un viaje escaneando el QR (placa) del bus -->
+  <div id="laur-scan" class="modal" hidden>
+    <div class="modal-card laur-scan-card">
+      <div class="modal-head">
+        <h3>🛂 Confirmar llegada</h3>
+        <button id="laur-scan-x" class="icon-btn">✕</button>
+      </div>
+      <div class="laur-scan-body">
+        <div id="laur-scan-info" class="laur-scan-info"></div>
+        <div id="laur-scan-result" class="laur-scan-result"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="laur-scan-cancel" class="btn">Cerrar</button>
+        <button id="laur-scan-go" class="btn btn-primary">📷 Escanear QR</button>
+      </div>
+    </div>
+  </div>
+
   <div id="qr-modal" class="modal" hidden>
     <div class="modal-card qr-card">
       <div class="modal-head">

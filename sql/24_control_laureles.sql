@@ -106,6 +106,7 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
       'ruta', t.ruta,
       'movil', (select vv.movil from public.vehiculosgps vv where vv.tracker_id::text = t.mid limit 1),
+      'placa', (select vv.placa from public.vehiculosgps vv where vv.tracker_id::text = t.mid limit 1),
       'hora', to_char(t.init_utc at time zone 'America/Bogota','HH24:MI'),
       'regid', t.regid, 'running', t.running, 'canceled', t.canceled,
       'ing', p.ing, 'sal', p.sal)

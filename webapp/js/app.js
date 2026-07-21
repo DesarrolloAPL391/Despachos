@@ -4100,9 +4100,10 @@ function renderLaureles() {
     + `<span class="lv-lg lv-lg-atras">Atrasado</span><span class="lv-lg lv-lg-prog">Programado (sin registro)</span></div>`;
   const filas = viajes.map((v) => {
     const cancel = (v.canceled === 'Y' || v.canceled === '1');
-    return `<tr class="${cancel ? 'mc-row-cancel' : ''}${v.running === 'Y' ? ' mc-row-live' : ''}">`
+    const conf = _laurConfirmados.has(v.regid);
+    return `<tr class="laur-row rv-clk ${cancel ? 'mc-row-cancel' : ''}${v.running === 'Y' ? ' mc-row-live' : ''}${conf ? ' laur-ok' : ''}" data-regid="${esc(String(v.regid || ''))}" title="Tocar para escanear el QR y confirmar la llegada">`
       + _laurCell(v.ing)
-      + `<td class="laur-mov">${esc(String(v.movil || '—').trim())}</td>`
+      + `<td class="laur-mov">${conf ? '✅ ' : ''}${esc(String(v.movil || '—').trim())}</td>`
       + `<td class="laur-ruta">${esc(v.ruta || '')}</td>`
       + _laurCell(v.sal)
       + `<td class="laur-desp">${esc(v.hora || '—')}</td></tr>`;
@@ -4151,6 +4152,86 @@ async function exportLaurExcel() {
     if (btn) { btn.disabled = false; btn.textContent = prev; }
   }
 }
+
+// --- Confirmar llegada por QR: cruza la placa del QR con la esperada del viaje ---
+let _laurScanViaje = null;
+const _laurConfirmados = new Set(); // regids confirmados en esta sesión (marca la fila)
+// Tocar una fila abre el modal de escaneo de ese viaje
+$('laur-body')?.addEventListener('click', (e) => {
+  const tr = e.target.closest('.laur-row'); if (!tr) return;
+  const v = (_laurUltimo?.viajes || []).find((x) => String(x.regid) === tr.dataset.regid);
+  if (v) openLaurScan(v);
+});
+function openLaurScan(v) {
+  _laurScanViaje = v;
+  $('laur-scan-info').innerHTML =
+      `<div class="ls-bus">🚌 Móvil <b>${esc(String(v.movil || '—').trim())}</b> · Ruta ${esc(v.ruta || '')}</div>`
+    + `<div class="ls-pla">Placa esperada: <b>${esc(v.placa || '—')}</b></div>`
+    + `<div class="ls-hr">Ingreso: ${esc((v.ing && v.ing.h) || '—')}</div>`;
+  const res = $('laur-scan-result');
+  res.className = 'laur-scan-result';
+  res.innerHTML = '<div class="ls-idle">Pulsa “Escanear QR” y apunta al código del bus. Se cruza la placa del QR con la esperada.</div>';
+  $('laur-scan').hidden = false;
+}
+function cerrarLaurScan() { $('laur-scan').hidden = true; _laurScanViaje = null; }
+// Candidatos de placa desde el texto del QR (placa directa, JSON o dentro de URL/texto)
+function _qrCandidatos(text) {
+  const bruto = String(text || '').trim();
+  let cands = [bruto];
+  try {
+    const j = JSON.parse(bruto);
+    if (j && typeof j === 'object') {
+      const c = [j.placa, j.plate, j.movil, j.numero, j.bus].filter((x) => x != null).map(String);
+      if (c.length) cands = c;
+    }
+  } catch { /* no era JSON */ }
+  return cands;
+}
+// Pitido: agudo = OK, grave/repetido = error
+function _beep(ok) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type = 'square'; g.gain.value = 0.12;
+    o.frequency.value = ok ? 880 : 200;
+    o.start();
+    if (!ok) { o.frequency.setValueAtTime(200, ac.currentTime + 0.18); o.frequency.setValueAtTime(160, ac.currentTime + 0.34); }
+    setTimeout(() => { try { o.stop(); ac.close(); } catch {} }, ok ? 180 : 520);
+  } catch { /* sin audio */ }
+}
+async function escanearLaur() {
+  const v = _laurScanViaje; if (!v) return;
+  const esperada = normPlaca(v.placa);
+  if (!esperada) { toast('Ese móvil no tiene placa registrada; no se puede cruzar.', 'err'); return; }
+  const th = document.querySelector('#qr-modal h3'); if (th) th.textContent = '📷 Escanear QR del bus';
+  const text = await openQrScanner('Apunta la cámara al QR del bus…');
+  if (!text) return; // cancelado o sin lectura
+  const cands = _qrCandidatos(text);
+  const leida = normPlaca(cands.map((c) => normPlaca(c)).find(Boolean) || text);
+  // coincide si algún candidato normaliza a la placa esperada (o la contiene, tolerante a URL)
+  const ok = cands.some((c) => { const p = normPlaca(c); return p && (p === esperada || (esperada.length >= 5 && p.includes(esperada))); });
+  const res = $('laur-scan-result');
+  if (ok) {
+    _beep(true);
+    _laurConfirmados.add(v.regid);
+    res.className = 'laur-scan-result ls-ok';
+    res.innerHTML = `<div class="ls-big">✅ PLACA CORRECTA</div>`
+      + `<div class="ls-sub">${esc(v.placa)} · Móvil ${esc(String(v.movil || '').trim())} · llegada confirmada</div>`;
+    renderLaureles(); // marca la fila como confirmada
+    toast(`Confirmado móvil ${String(v.movil || '').trim()} (${v.placa})`, 'ok');
+  } else {
+    _beep(false);
+    res.className = 'laur-scan-result ls-err';
+    res.innerHTML = `<div class="ls-big">⚠️ PLACA NO COINCIDE</div>`
+      + `<div class="ls-sub">Esperada: <b>${esc(v.placa || '—')}</b> (móvil ${esc(String(v.movil || '').trim())})<br>Leída: <b>${esc(leida || text)}</b></div>`
+      + `<div class="ls-alert">🚨 El carro que llegó no es el de este viaje. Avísale al despachador.</div>`;
+    toast(`⚠️ Placa no coincide: esperada ${v.placa || '?'}, leída ${leida || '?'}`, 'err');
+  }
+}
+$('laur-scan-x')?.addEventListener('click', cerrarLaurScan);
+$('laur-scan-cancel')?.addEventListener('click', cerrarLaurScan);
+$('laur-scan-go')?.addEventListener('click', escanearLaur);
 
 // ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
 // Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.
