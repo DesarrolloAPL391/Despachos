@@ -644,7 +644,9 @@ tbody tr:hover { background: #faf8ff; }
 .mc-adel  { background: #dbeafe; }
 .mc-atras { background: #fee2e2; color: #7f1d1d; }
 .mc-gray  { background: #eef0f5; color: #64748b; }
+.mc-prog  { background: #f8fafc; color: #94a3b8; font-style: italic; }
 .mc-none  { background: #fff; }
+.lv-lg-prog { color: #94a3b8; font-style: italic; }
 .mc-row-live .mc-hora { box-shadow: inset 3px 0 0 #2563eb; }
 .mc-row-cancel { opacity: .5; }
 .mc-row-cancel .mc-mov { text-decoration: line-through; }

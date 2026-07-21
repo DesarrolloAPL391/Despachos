@@ -3952,7 +3952,7 @@ function renderMalla() {
     + `<span class="lv-lg lv-lg-ok">A tiempo</span>`
     + `<span class="lv-lg lv-lg-adel">Adelantado</span>`
     + `<span class="lv-lg lv-lg-atras">Atrasado</span>`
-    + `<span class="lv-lg lv-lg-off">Sin dato</span></div>`;
+    + `<span class="lv-lg lv-lg-prog">Programado (sin registro)</span></div>`;
   const th = `<tr><th class="mc-h-hora">Hora</th><th class="mc-h-mov">Vehículo</th>`
     + puntos.map((p) => `<th class="mc-h-pt" title="${esc(p.nombre || '')}">${esc(p.nombre || ('#' + p.idx))}</th>`).join('') + `</tr>`;
   const filas = viajes.map((v) => {
@@ -3961,6 +3961,7 @@ function renderMalla() {
     const cells = puntos.map((p) => {
       const c = cel[p.idx];
       if (!c || !c.h) return `<td class="mc mc-none"></td>`;
+      if (c.e) return `<td class="mc mc-prog" title="Hora programada (el bus no registró el paso por este punto)">${esc(c.h)}<span class="mc-d">prog</span></td>`;
       const dd = c.d == null ? '' : ` (${Math.abs(c.d)}m)`;
       return `<td class="mc ${_mallaCls(c.d)}">${esc(c.h)}<span class="mc-d">${dd}</span></td>`;
     }).join('');
@@ -3976,6 +3977,44 @@ $('malla-refresh')?.addEventListener('click', cargarMalla);
 $('malla-ruta')?.addEventListener('change', cargarMalla);
 $('malla-fecha')?.addEventListener('change', cargarMalla);
 $('malla-search')?.addEventListener('input', renderMalla);
+$('malla-excel')?.addEventListener('click', exportMallaExcel);
+// Exporta la malla actual (horas + desviación por punto) a un .xlsx real (SheetJS).
+async function exportMallaExcel() {
+  const d = _mallaUltimo;
+  if (!d || !(d.viajes || []).length) { toast('No hay datos para exportar.', 'err'); return; }
+  const puntos = (d.puntos || []).slice().sort((a, b) => a.idx - b.idx);
+  const viajes = (d.viajes || []).slice().sort((a, b) => String(a.sort || '').localeCompare(String(b.sort || '')));
+  const head = ['Hora', 'Vehículo', ...puntos.map((p) => p.nombre || ('#' + p.idx))];
+  const filas = viajes.map((v) => {
+    const cel = v.celdas || {};
+    return [v.hora || '', String(v.movil || v.mid || '').trim(), ...puntos.map((p) => {
+      const c = cel[p.idx];
+      if (!c || !c.h) return '';
+      if (c.e) return `${c.h} (prog)`;
+      const dd = c.d == null ? '' : ` (${c.d > 0 ? '+' : ''}${c.d}m)`;
+      return `${c.h}${dd}`;
+    })];
+  });
+  const btn = $('malla-excel'); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet([head, ...filas]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cumplimiento');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `cumplimiento_${String(d.ruta)}_${d.fecha}.xlsx`.replace(/\s+/g, '_');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    toast('No se pudo generar el Excel (requiere internet).', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev; }
+  }
+}
 
 // ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
 // Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.
