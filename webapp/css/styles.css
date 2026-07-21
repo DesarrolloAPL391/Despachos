@@ -657,6 +657,10 @@ tbody tr:hover { background: #faf8ff; }
 .laur-mov { font-weight: 800; font-size: 15px; font-variant-numeric: tabular-nums; }
 .laur-ruta { font-weight: 700; color: #334155; }
 .laur-desp { color: var(--muted); font-variant-numeric: tabular-nums; }
+.laur-dur { color: #475569; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Leyenda dentro de la cámara: qué viaje se está escaneando */
+.qr-caption { margin-top: 8px; text-align: center; font-size: 13px; color: #0f2438;
+  background: #eef2ff; padding: 8px 12px; border-radius: 8px; }
 .laur-row.rv-clk { cursor: pointer; }
 .laur-row:hover td { filter: brightness(0.96); }
 .laur-row.laur-ok td { box-shadow: inset 0 0 0 9999px rgba(22,163,74,.10); }

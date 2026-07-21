@@ -4080,6 +4080,20 @@ function _laurMin(c) {
   const m = c && c.h && String(c.h).match(/(\d{1,2}):(\d{2})/);
   return m ? (+m[1] * 60 + +m[2]) : 999999;
 }
+// Minutos del día de una celda {h} o de una hora "HH:MM"; null si no hay
+function _hm(x) {
+  const s = (x && x.h) ? x.h : x;
+  const m = s && String(s).match(/(\d{1,2}):(\d{2})/);
+  return m ? (+m[1] * 60 + +m[2]) : null;
+}
+// Minutos entre dos horas (celda u "HH:MM"); tolera cruce de medianoche
+function _durMin(a, b) {
+  const ma = _hm(a), mb = _hm(b);
+  if (ma == null || mb == null) return null;
+  let d = mb - ma; if (d < 0) d += 1440;
+  return d;
+}
+function _durTxt(n) { return n == null ? '—' : (n + 'm'); }
 // Celda de hora coloreada (real) o gris (programada) — reutiliza estilos .mc-*
 function _laurCell(c) {
   if (!c || !c.h) return `<td class="mc mc-none">—</td>`;
@@ -4106,12 +4120,15 @@ function renderLaureles() {
       + `<td class="laur-mov">${conf ? '✅ ' : ''}${esc(String(v.movil || '—').trim())}</td>`
       + `<td class="laur-ruta">${esc(v.ruta || '')}</td>`
       + _laurCell(v.sal)
-      + `<td class="laur-desp">${esc(v.hora || '—')}</td></tr>`;
+      + `<td class="laur-desp">${esc(v.hora || '—')}</td>`
+      + `<td class="laur-dur">${_durTxt(_durMin(v.hora, v.ing))}</td>`
+      + `<td class="laur-dur">${_durTxt(_durMin(v.ing, v.sal))}</td></tr>`;
   }).join('');
   $('laur-body').innerHTML = leyenda
     + `<div class="mc-wrap"><table class="mc-tabla laur-tabla"><thead><tr>`
     + `<th>Ingreso · ${esc(d.punto_ingreso || 'IGLESIA SAN JOSE')}</th><th>Vehículo</th><th>Ruta</th>`
     + `<th>Salida · ${esc(d.punto_salida || 'Salida San José')}</th><th>Despacho</th>`
+    + `<th>Desp→Iglesia</th><th>Iglesia→Salida</th>`
     + `</tr></thead><tbody>${filas}</tbody></table></div>`;
 }
 $('laur-close')?.addEventListener('click', cerrarLaureles);
@@ -4130,8 +4147,9 @@ async function exportLaurExcel() {
     const dd = c.d == null ? '' : ` (${c.d > 0 ? '+' : ''}${c.d}m)`;
     return `${c.h}${dd}`;
   };
-  const head = [`Ingreso ${d.punto_ingreso || ''}`.trim(), 'Vehículo', 'Ruta', `Salida ${d.punto_salida || ''}`.trim(), 'Despacho'];
-  const filas = viajes.map((v) => [celTxt(v.ing), String(v.movil || '').trim(), v.ruta || '', celTxt(v.sal), v.hora || '']);
+  const head = [`Ingreso ${d.punto_ingreso || ''}`.trim(), 'Vehículo', 'Ruta', `Salida ${d.punto_salida || ''}`.trim(), 'Despacho', 'Desp→Iglesia (min)', 'Iglesia→Salida (min)'];
+  const num = (n) => (n == null ? '' : n);
+  const filas = viajes.map((v) => [celTxt(v.ing), String(v.movil || '').trim(), v.ruta || '', celTxt(v.sal), v.hora || '', num(_durMin(v.hora, v.ing)), num(_durMin(v.ing, v.sal))]);
   const btn = $('laur-excel'); const prev = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
   try {
@@ -4160,18 +4178,20 @@ const _laurConfirmados = new Set(); // regids confirmados en esta sesión (marca
 $('laur-body')?.addEventListener('click', (e) => {
   const tr = e.target.closest('.laur-row'); if (!tr) return;
   const v = (_laurUltimo?.viajes || []).find((x) => String(x.regid) === tr.dataset.regid);
-  if (v) openLaurScan(v);
+  if (v) escanearViaje(v);
 });
-function openLaurScan(v) {
+// Tocar el viaje abre DIRECTO la cámara, mostrando qué viaje se está escaneando.
+async function escanearViaje(v) {
   _laurScanViaje = v;
-  $('laur-scan-info').innerHTML =
-      `<div class="ls-bus">🚌 Móvil <b>${esc(String(v.movil || '—').trim())}</b> · Ruta ${esc(v.ruta || '')}</div>`
-    + `<div class="ls-pla">Placa esperada: <b>${esc(v.placa || '—')}</b></div>`
-    + `<div class="ls-hr">Ingreso: ${esc((v.ing && v.ing.h) || '—')}</div>`;
-  const res = $('laur-scan-result');
-  res.className = 'laur-scan-result';
-  res.innerHTML = '<div class="ls-idle">Pulsa “Escanear QR” y apunta al código del bus. Se cruza la placa del QR con la esperada.</div>';
-  $('laur-scan').hidden = false;
+  const esperada = normPlaca(v.placa);
+  if (!esperada) { toast('Ese móvil no tiene placa registrada; no se puede cruzar.', 'err'); return; }
+  const cap = $('qr-caption');
+  if (cap) { cap.hidden = false; cap.innerHTML = `Escaneando · <b>Móvil ${esc(String(v.movil || '').trim())}</b> · placa esperada <b>${esc(v.placa || '—')}</b> · Ruta ${esc(v.ruta || '')}`; }
+  const th = document.querySelector('#qr-modal h3'); if (th) th.textContent = '📷 Escanear QR del bus';
+  const text = await openQrScanner('Apunta la cámara al QR del bus…');
+  if (cap) cap.hidden = true;
+  if (!text) return; // cancelado o sin lectura
+  _mostrarResultadoLaur(v, text);
 }
 function cerrarLaurScan() { $('laur-scan').hidden = true; _laurScanViaje = null; }
 // Candidatos de placa desde el texto del QR (placa directa, JSON o dentro de URL/texto)
@@ -4200,17 +4220,16 @@ function _beep(ok) {
     setTimeout(() => { try { o.stop(); ac.close(); } catch {} }, ok ? 180 : 520);
   } catch { /* sin audio */ }
 }
-async function escanearLaur() {
-  const v = _laurScanViaje; if (!v) return;
+function _mostrarResultadoLaur(v, text) {
   const esperada = normPlaca(v.placa);
-  if (!esperada) { toast('Ese móvil no tiene placa registrada; no se puede cruzar.', 'err'); return; }
-  const th = document.querySelector('#qr-modal h3'); if (th) th.textContent = '📷 Escanear QR del bus';
-  const text = await openQrScanner('Apunta la cámara al QR del bus…');
-  if (!text) return; // cancelado o sin lectura
   const cands = _qrCandidatos(text);
   const leida = normPlaca(cands.map((c) => normPlaca(c)).find(Boolean) || text);
   // coincide si algún candidato normaliza a la placa esperada (o la contiene, tolerante a URL)
   const ok = cands.some((c) => { const p = normPlaca(c); return p && (p === esperada || (esperada.length >= 5 && p.includes(esperada))); });
+  $('laur-scan-info').innerHTML =
+      `<div class="ls-bus">🚌 Móvil <b>${esc(String(v.movil || '—').trim())}</b> · Ruta ${esc(v.ruta || '')}</div>`
+    + `<div class="ls-pla">Placa esperada: <b>${esc(v.placa || '—')}</b></div>`
+    + `<div class="ls-hr">Ingreso: ${esc((v.ing && v.ing.h) || '—')}</div>`;
   const res = $('laur-scan-result');
   if (ok) {
     _beep(true);
@@ -4228,10 +4247,11 @@ async function escanearLaur() {
       + `<div class="ls-alert">🚨 El carro que llegó no es el de este viaje. Avísale al despachador.</div>`;
     toast(`⚠️ Placa no coincide: esperada ${v.placa || '?'}, leída ${leida || '?'}`, 'err');
   }
+  $('laur-scan').hidden = false; // modal de resultado (con “Reescanear”)
 }
 $('laur-scan-x')?.addEventListener('click', cerrarLaurScan);
 $('laur-scan-cancel')?.addEventListener('click', cerrarLaurScan);
-$('laur-scan-go')?.addEventListener('click', escanearLaur);
+$('laur-scan-go')?.addEventListener('click', () => { $('laur-scan').hidden = true; if (_laurScanViaje) escanearViaje(_laurScanViaje); });
 
 // ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
 // Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.
