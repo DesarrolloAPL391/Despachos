@@ -9,9 +9,10 @@
 --
 -- Notas de campos ItLog: running/close/canceled = 'Y'/'N' (se exponen como
 -- booleanos para casar con dsEstado del cliente, que hace String(v)==='true');
--- inittime/endtime vienen en UTC → hora Colombia. El conductor no se puede
--- resolver (ItLog trae solo el DOCUMENTO del driver, no el nombre) → va vacío.
--- El móvil se resuelve por vehiculosgps.tracker_id = mId. Ventana = día Colombia→UTC.
+-- inittime/endtime vienen en UTC → hora Colombia. El conductor se resuelve por
+-- el campo ItLog <driver> (= dr_Id de SONAR) contra conductores_sonar.dr_id
+-- (sync GET_Drivers). El móvil se resuelve por vehiculosgps.tracker_id = mId.
+-- Ventana = día Colombia→UTC.
 -- ============================================================================
 
 create or replace function public.despachos_sonar_ruta(p_ruta text, p_fecha date)
@@ -62,7 +63,7 @@ begin
         (select vv.movil from public.vehiculosgps vv where vv.tracker_id::text = t.mid limit 1) as movil,
         (select vv.placa from public.vehiculosgps vv where vv.tracker_id::text = t.mid limit 1) as placa,
         p_ruta as ruta,
-        ''::text as conductor,
+        (select cs.nombre from public.conductores_sonar cs where cs.dr_id = t.driver limit 1) as conductor,
         to_char(public._utc_ts(t.inittime) at time zone 'America/Bogota','HH24:MI') as hora,
         to_char(public._utc_ts(t.inittime) at time zone 'America/Bogota','YYYY-MM-DD') as fecha,
         case
@@ -78,6 +79,7 @@ begin
         columns
           regid    text path 'n:regId',
           mid      text path 'n:mId',
+          driver   text path 'n:driver',
           running  text path 'n:running',
           close    text path 'n:close',
           canceled text path 'n:canceled',
