@@ -665,6 +665,14 @@ tbody tr:hover { background: #faf8ff; }
 .laur-row:hover td { filter: brightness(0.96); }
 .laur-row.laur-ok td { box-shadow: inset 0 0 0 9999px rgba(22,163,74,.10); }
 .laur-row.laur-ok .laur-mov { color: #15803d; }
+.laur-row.laur-bad td { box-shadow: inset 0 0 0 9999px rgba(220,38,38,.10); }
+.laur-row.laur-bad .laur-mov { color: #b91c1c; }
+/* Columna Estado (chequeo QR): pendiente / escaneado / no coincide */
+.laur-estado { font-weight: 800; white-space: nowrap; }
+.laur-estado .le-sub { display: block; font-weight: 600; font-size: 11px; color: #64748b; margin-top: 2px; }
+.le-pend { color: #94a3b8; }
+.le-ok { color: #15803d; }
+.le-err { color: #b91c1c; }
 /* Modal de confirmación por QR (Control Laureles) */
 .laur-scan-card { max-width: 460px; }
 .laur-scan-body { padding: 16px 18px 18px; }

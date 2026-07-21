@@ -4045,6 +4045,7 @@ async function openLaureles() {
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-laur')?.classList.add('active');
   buildBottomNav();
+  $('laur-fecha').max = hoyServidor();
   if (!$('laur-fecha').value) $('laur-fecha').value = hoyServidor();
   await cargarLaureles(false);
   _armarAutoLaur();
@@ -4107,29 +4108,44 @@ function renderLaureles() {
   let viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.ing) - _laurMin(b.ing));
   if (term) viajes = viajes.filter((v) => String(v.movil || '').toLowerCase().includes(term) || String(v.ruta || '').toLowerCase().includes(term));
   const sub = $('laur-sub');
-  if (sub) sub.textContent = `${(d.viajes || []).length} buses · ${d.punto_ingreso || 'ingreso'} → ${d.punto_salida || 'salida'} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}`;
+  const total = (d.viajes || []).length;
+  const escan = (d.viajes || []).filter((v) => v.chk).length;
+  const soloLectura = (d.fecha !== hoyServidor());
+  if (sub) sub.textContent = `${total} buses · ${escan} escaneados · ${d.punto_ingreso || 'ingreso'} → ${d.punto_salida || 'salida'} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}${soloLectura ? ' · solo lectura' : ''}`;
   if (!viajes.length) { $('laur-body').innerHTML = `<div class="cump-empty">Sin buses ese día${term ? ' (con ese filtro)' : ''}.</div>`; return; }
   const leyenda = `<div class="lv-leyenda mc-leyenda">`
     + `<span class="lv-lg lv-lg-ok">A tiempo</span><span class="lv-lg lv-lg-adel">Adelantado</span>`
     + `<span class="lv-lg lv-lg-atras">Atrasado</span><span class="lv-lg lv-lg-prog">Programado (sin registro)</span></div>`;
+  const esHoy = (d.fecha === hoyServidor());
   const filas = viajes.map((v) => {
     const cancel = (v.canceled === 'Y' || v.canceled === '1');
-    const conf = _laurConfirmados.has(v.regid);
-    return `<tr class="laur-row rv-clk ${cancel ? 'mc-row-cancel' : ''}${v.running === 'Y' ? ' mc-row-live' : ''}${conf ? ' laur-ok' : ''}" data-regid="${esc(String(v.regid || ''))}" title="Tocar para escanear el QR y confirmar la llegada">`
+    const c = v.chk;
+    const rowCls = c ? (c.ok ? ' laur-ok' : ' laur-bad') : '';
+    const tip = esHoy ? 'Tocar para escanear el QR y confirmar la llegada' : 'Solo lectura (fecha anterior)';
+    return `<tr class="laur-row ${esHoy ? 'rv-clk ' : ''}${cancel ? 'mc-row-cancel' : ''}${v.running === 'Y' ? ' mc-row-live' : ''}${rowCls}" data-regid="${esc(String(v.regid || ''))}" title="${tip}">`
       + _laurCell(v.ing)
-      + `<td class="laur-mov">${conf ? '✅ ' : ''}${esc(String(v.movil || '—').trim())}</td>`
+      + `<td class="laur-mov">${esc(String(v.movil || '—').trim())}</td>`
       + `<td class="laur-ruta">${esc(v.ruta || '')}</td>`
       + _laurCell(v.sal)
       + `<td class="laur-desp">${esc(v.hora || '—')}</td>`
       + `<td class="laur-dur">${_durTxt(_durMin(v.hora, v.ing))}</td>`
-      + `<td class="laur-dur">${_durTxt(_durMin(v.ing, v.sal))}</td></tr>`;
+      + `<td class="laur-dur">${_durTxt(_durMin(v.ing, v.sal))}</td>`
+      + _laurEstadoCell(v.chk) + `</tr>`;
   }).join('');
   $('laur-body').innerHTML = leyenda
     + `<div class="mc-wrap"><table class="mc-tabla laur-tabla"><thead><tr>`
     + `<th>Ingreso · ${esc(d.punto_ingreso || 'IGLESIA SAN JOSE')}</th><th>Vehículo</th><th>Ruta</th>`
     + `<th>Salida · ${esc(d.punto_salida || 'Salida San José')}</th><th>Despacho</th>`
-    + `<th>Desp→Iglesia</th><th>Iglesia→Salida</th>`
+    + `<th>Desp→Iglesia</th><th>Iglesia→Salida</th><th>Estado (QR)</th>`
     + `</tr></thead><tbody>${filas}</tbody></table></div>`;
+}
+// Celda de estado del chequeo QR: pendiente / escaneado (quién·hora) / no coincide
+function _laurEstadoCell(c) {
+  if (!c) return `<td class="laur-estado le-pend">⏳ Pendiente</td>`;
+  if (c.ok) return `<td class="laur-estado le-ok">✅ Escaneado`
+    + `<span class="le-sub">${esc(c.por || '')}${c.hora ? ' · ' + esc(c.hora) : ''}</span></td>`;
+  return `<td class="laur-estado le-err">🚨 No coincide`
+    + `<span class="le-sub">leída ${esc(c.leida || '?')}${c.por ? ' · ' + esc(c.por) : ''}${c.hora ? ' · ' + esc(c.hora) : ''}</span></td>`;
 }
 $('laur-close')?.addEventListener('click', cerrarLaureles);
 $('laur-refresh')?.addEventListener('click', () => cargarLaureles(false));
@@ -4147,9 +4163,11 @@ async function exportLaurExcel() {
     const dd = c.d == null ? '' : ` (${c.d > 0 ? '+' : ''}${c.d}m)`;
     return `${c.h}${dd}`;
   };
-  const head = [`Ingreso ${d.punto_ingreso || ''}`.trim(), 'Vehículo', 'Ruta', `Salida ${d.punto_salida || ''}`.trim(), 'Despacho', 'Desp→Iglesia (min)', 'Iglesia→Salida (min)'];
+  const head = [`Ingreso ${d.punto_ingreso || ''}`.trim(), 'Vehículo', 'Ruta', `Salida ${d.punto_salida || ''}`.trim(), 'Despacho', 'Desp→Iglesia (min)', 'Iglesia→Salida (min)', 'Estado QR', 'Escaneó', 'Hora chequeo', 'Placa leída'];
   const num = (n) => (n == null ? '' : n);
-  const filas = viajes.map((v) => [celTxt(v.ing), String(v.movil || '').trim(), v.ruta || '', celTxt(v.sal), v.hora || '', num(_durMin(v.hora, v.ing)), num(_durMin(v.ing, v.sal))]);
+  const estTxt = (c) => (!c ? 'Pendiente' : (c.ok ? 'Escaneado' : 'No coincide'));
+  const filas = viajes.map((v) => [celTxt(v.ing), String(v.movil || '').trim(), v.ruta || '', celTxt(v.sal), v.hora || '', num(_durMin(v.hora, v.ing)), num(_durMin(v.ing, v.sal)),
+    estTxt(v.chk), (v.chk && v.chk.por) || '', (v.chk && v.chk.hora) || '', (v.chk && !v.chk.ok && v.chk.leida) || '']);
   const btn = $('laur-excel'); const prev = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
   try {
@@ -4173,7 +4191,8 @@ async function exportLaurExcel() {
 
 // --- Confirmar llegada por QR: cruza la placa del QR con la esperada del viaje ---
 let _laurScanViaje = null;
-const _laurConfirmados = new Set(); // regids confirmados en esta sesión (marca la fila)
+// El estado del chequeo (escaneado/pendiente/no coincide) vive en la BD (v.chk),
+// registrado por registrar_checkin_laureles; lo lee control_laureles al recargar.
 // Tocar una fila abre el modal de escaneo de ese viaje
 $('laur-body')?.addEventListener('click', (e) => {
   const tr = e.target.closest('.laur-row'); if (!tr) return;
@@ -4182,6 +4201,11 @@ $('laur-body')?.addEventListener('click', (e) => {
 });
 // Tocar el viaje abre DIRECTO la cámara, mostrando qué viaje se está escaneando.
 async function escanearViaje(v) {
+  // Solo se puede chequear el día de HOY (las fechas anteriores son solo lectura).
+  if (($('laur-fecha').value || hoyServidor()) !== hoyServidor()) {
+    toast('Solo se puede chequear el día de hoy; las fechas anteriores son solo lectura.', 'err');
+    return;
+  }
   _laurScanViaje = v;
   const esperada = normPlaca(v.placa);
   if (!esperada) { toast('Ese móvil no tiene placa registrada; no se puede cruzar.', 'err'); return; }
@@ -4220,7 +4244,7 @@ function _beep(ok) {
     setTimeout(() => { try { o.stop(); ac.close(); } catch {} }, ok ? 180 : 520);
   } catch { /* sin audio */ }
 }
-function _mostrarResultadoLaur(v, text) {
+async function _mostrarResultadoLaur(v, text) {
   const esperada = normPlaca(v.placa);
   const cands = _qrCandidatos(text);
   const leida = normPlaca(cands.map((c) => normPlaca(c)).find(Boolean) || text);
@@ -4233,11 +4257,9 @@ function _mostrarResultadoLaur(v, text) {
   const res = $('laur-scan-result');
   if (ok) {
     _beep(true);
-    _laurConfirmados.add(v.regid);
     res.className = 'laur-scan-result ls-ok';
     res.innerHTML = `<div class="ls-big">✅ PLACA CORRECTA</div>`
       + `<div class="ls-sub">${esc(v.placa)} · Móvil ${esc(String(v.movil || '').trim())} · llegada confirmada</div>`;
-    renderLaureles(); // marca la fila como confirmada
     toast(`Confirmado móvil ${String(v.movil || '').trim()} (${v.placa})`, 'ok');
   } else {
     _beep(false);
@@ -4248,6 +4270,24 @@ function _mostrarResultadoLaur(v, text) {
     toast(`⚠️ Placa no coincide: esperada ${v.placa || '?'}, leída ${leida || '?'}`, 'err');
   }
   $('laur-scan').hidden = false; // modal de resultado (con “Reescanear”)
+  // Guardar el chequeo en la BD (quién, cuándo, si coincidió). Marca el estado del viaje.
+  const fecha = $('laur-fecha').value || hoyServidor();
+  try {
+    const { data, error } = await sb.rpc('registrar_checkin_laureles', {
+      p_regid: v.regid, p_fecha: fecha, p_ruta: v.ruta || '',
+      p_movil: String(v.movil || '').trim(), p_placa_esperada: v.placa || '',
+      p_placa_leida: leida || '', p_ok: ok,
+    });
+    if (error) throw error;
+    if (data && data.ok) {
+      v.chk = { ok, por: data.por || (CTX?.nombre || miCorreo()), hora: data.hora, leida };
+      renderLaureles(); // refleja el estado en la tabla (sin re-consultar SONAR)
+    } else if (data && data.error) {
+      toast(data.error, 'err');
+    }
+  } catch (e) {
+    toast('No se pudo guardar el chequeo (queda sin registrar).', 'err');
+  }
 }
 $('laur-scan-x')?.addEventListener('click', cerrarLaurScan);
 $('laur-scan-cancel')?.addEventListener('click', cerrarLaurScan);
