@@ -432,6 +432,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '🛂', 'Control Laureles', openLaureles, 'nav-laur');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -446,6 +447,7 @@ function buildSidebar() {
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
   const amll = $('nav-malla'); if (amll) amll.classList.toggle('active', currentView === 'malla');
+  const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles');
   buildBottomNav();
 }
 
@@ -542,6 +544,7 @@ function selectTable(name) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -3450,6 +3453,7 @@ async function openCumplimiento() {
   $('map-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -3680,6 +3684,7 @@ async function openRutasVivo(modo) {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -3893,6 +3898,7 @@ async function openMalla() {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
+  $('laureles-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4007,6 +4013,136 @@ async function exportMallaExcel() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `cumplimiento_${String(d.ruta)}_${d.fecha}.xlsx`.replace(/\s+/g, '_');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    toast('No se pudo generar el Excel (requiere internet).', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev; }
+  }
+}
+
+// ---------- Vista "Control Laureles": IGLESIA SAN JOSE / Salida San José ----------
+// Puesto de control físico: reúne, de todas las rutas que pasan por ahí, cada bus
+// con su hora de INGRESO y SALIDA (real o programada), ordenado por hora de ingreso,
+// para que quien lee el QR sepa qué carro le va a llegar y a qué hora.
+let _laurUltimo = null, _laurTimer = null;
+async function openLaureles() {
+  if (!(isAdmin() || isAuditor())) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'laureles';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('laureles-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-laur')?.classList.add('active');
+  buildBottomNav();
+  if (!$('laur-fecha').value) $('laur-fecha').value = hoyServidor();
+  await cargarLaureles(false);
+  _armarAutoLaur();
+}
+function cerrarLaureles() {
+  if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
+  $('laureles-view').hidden = true;
+  selectTable(current);
+}
+function _armarAutoLaur() {
+  if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
+  // auto-refresco solo si la fecha es HOY (control en vivo)
+  if ($('laur-auto')?.checked && $('laur-fecha').value === hoyServidor()) {
+    _laurTimer = setInterval(() => { if (currentView === 'laureles') cargarLaureles(true); }, 60000);
+  }
+}
+async function cargarLaureles(silencioso) {
+  const body = $('laur-body');
+  const fecha = $('laur-fecha').value || hoyServidor();
+  if (!silencioso) body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  try {
+    const { data, error } = await sb.rpc('control_laureles', { p_fecha: fecha });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
+    _laurUltimo = data;
+    renderLaureles();
+  } catch (e) {
+    if (!silencioso) body.innerHTML = `<div class="cump-empty">No se pudo consultar SONAR.<br><small>${esc(e.message || e)}</small></div>`;
+  }
+}
+// Minutos del día de una celda (para ordenar por hora de ingreso)
+function _laurMin(c) {
+  const m = c && c.h && String(c.h).match(/(\d{1,2}):(\d{2})/);
+  return m ? (+m[1] * 60 + +m[2]) : 999999;
+}
+// Celda de hora coloreada (real) o gris (programada) — reutiliza estilos .mc-*
+function _laurCell(c) {
+  if (!c || !c.h) return `<td class="mc mc-none">—</td>`;
+  if (c.e) return `<td class="mc mc-prog" title="Hora programada (el bus no registró el paso)">${esc(c.h)}<span class="mc-d">prog</span></td>`;
+  const dd = c.d == null ? '' : ` (${Math.abs(c.d)}m)`;
+  return `<td class="mc ${_mallaCls(c.d)}">${esc(c.h)}<span class="mc-d">${dd}</span></td>`;
+}
+function renderLaureles() {
+  const d = _laurUltimo; if (!d) return;
+  const term = ($('laur-search')?.value || '').trim().toLowerCase();
+  let viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.ing) - _laurMin(b.ing));
+  if (term) viajes = viajes.filter((v) => String(v.movil || '').toLowerCase().includes(term) || String(v.ruta || '').toLowerCase().includes(term));
+  const sub = $('laur-sub');
+  if (sub) sub.textContent = `${(d.viajes || []).length} buses · ${d.punto_ingreso || 'ingreso'} → ${d.punto_salida || 'salida'} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}`;
+  if (!viajes.length) { $('laur-body').innerHTML = `<div class="cump-empty">Sin buses ese día${term ? ' (con ese filtro)' : ''}.</div>`; return; }
+  const leyenda = `<div class="lv-leyenda mc-leyenda">`
+    + `<span class="lv-lg lv-lg-ok">A tiempo</span><span class="lv-lg lv-lg-adel">Adelantado</span>`
+    + `<span class="lv-lg lv-lg-atras">Atrasado</span><span class="lv-lg lv-lg-prog">Programado (sin registro)</span></div>`;
+  const filas = viajes.map((v) => {
+    const cancel = (v.canceled === 'Y' || v.canceled === '1');
+    return `<tr class="${cancel ? 'mc-row-cancel' : ''}${v.running === 'Y' ? ' mc-row-live' : ''}">`
+      + _laurCell(v.ing)
+      + `<td class="laur-mov">${esc(String(v.movil || '—').trim())}</td>`
+      + `<td class="laur-ruta">${esc(v.ruta || '')}</td>`
+      + _laurCell(v.sal)
+      + `<td class="laur-desp">${esc(v.hora || '—')}</td></tr>`;
+  }).join('');
+  $('laur-body').innerHTML = leyenda
+    + `<div class="mc-wrap"><table class="mc-tabla laur-tabla"><thead><tr>`
+    + `<th>Ingreso · ${esc(d.punto_ingreso || 'IGLESIA SAN JOSE')}</th><th>Vehículo</th><th>Ruta</th>`
+    + `<th>Salida · ${esc(d.punto_salida || 'Salida San José')}</th><th>Despacho</th>`
+    + `</tr></thead><tbody>${filas}</tbody></table></div>`;
+}
+$('laur-close')?.addEventListener('click', cerrarLaureles);
+$('laur-refresh')?.addEventListener('click', () => cargarLaureles(false));
+$('laur-fecha')?.addEventListener('change', () => { cargarLaureles(false); _armarAutoLaur(); });
+$('laur-search')?.addEventListener('input', renderLaureles);
+$('laur-auto')?.addEventListener('change', _armarAutoLaur);
+$('laur-excel')?.addEventListener('click', exportLaurExcel);
+async function exportLaurExcel() {
+  const d = _laurUltimo;
+  if (!d || !(d.viajes || []).length) { toast('No hay datos para exportar.', 'err'); return; }
+  const viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.ing) - _laurMin(b.ing));
+  const celTxt = (c) => {
+    if (!c || !c.h) return '';
+    if (c.e) return `${c.h} (prog)`;
+    const dd = c.d == null ? '' : ` (${c.d > 0 ? '+' : ''}${c.d}m)`;
+    return `${c.h}${dd}`;
+  };
+  const head = [`Ingreso ${d.punto_ingreso || ''}`.trim(), 'Vehículo', 'Ruta', `Salida ${d.punto_salida || ''}`.trim(), 'Despacho'];
+  const filas = viajes.map((v) => [celTxt(v.ing), String(v.movil || '').trim(), v.ruta || '', celTxt(v.sal), v.hora || '']);
+  const btn = $('laur-excel'); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet([head, ...filas]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Control Laureles');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `control_laureles_${d.fecha}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   } catch (e) {
@@ -6278,6 +6414,7 @@ async function showMapView() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;

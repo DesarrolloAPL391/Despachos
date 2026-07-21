@@ -650,6 +650,13 @@ tbody tr:hover { background: #faf8ff; }
 .mc-row-live .mc-hora { box-shadow: inset 3px 0 0 #2563eb; }
 .mc-row-cancel { opacity: .5; }
 .mc-row-cancel .mc-mov { text-decoration: line-through; }
+/* Control Laureles: tabla más grande y legible (una fila por bus) */
+.laur-tabla { font-size: 13px; }
+.laur-tabla td, .laur-tabla th { padding: 8px 12px; }
+.laur-tabla .mc { font-size: 13.5px; font-weight: 600; }
+.laur-mov { font-weight: 800; font-size: 15px; font-variant-numeric: tabular-nums; }
+.laur-ruta { font-weight: 700; color: #334155; }
+.laur-desp { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Panel deslizable: recorrido en vivo de un bus */
 .rec-vivo-scrim { position: fixed; inset: 0; background: rgba(15, 23, 42, .28); z-index: 3400; }
