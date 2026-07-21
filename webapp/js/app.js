@@ -56,6 +56,10 @@ function menuOrder() {
 // ---------- roles ----------
 function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
+function isDespachador() { return CTX?.rol === 'despachador'; }
+// Despachador asignado HOY al puesto de Laureles: única puerta a Control Laureles
+// además de auditor/admin (CTX.puesto viene del horario del día / puesto fijo).
+function esDespachadorLaureles() { return isDespachador() && /laurel/.test(normRuta(CTX?.puesto || '')); }
 function normRuta(s) { return String(s || '').toLowerCase().replace(/\s+/g, '').trim(); }
 // Vista previa "como despachador" (solo admin): simula el filtrado de un puesto sin cambiar de cuenta.
 // PREVIEW = { email, nombre, puesto, dia_tipo, rutas:Set(normRuta), rutasRaw:[], grupos:Set,
@@ -78,6 +82,21 @@ function actualizarPuestoBadge() {
   el.hidden = !p;
 }
 function allowedRutaSet() { return PREVIEW ? PREVIEW.rutas : new Set((CTX?.rutas || []).map(normRuta)); }
+// ¿La ruta (nombre SONAR/itDescription) está dentro del alcance del usuario?
+// Admin real ve todo; despachador/auditor (y preview) se limitan a SU set de rutas.
+// Tolera prefijo "RUTA " y sufijos de variante (CENTRO/MADRUGADA/…): "190 CENTRO" ↔ "190".
+function rutaEnAlcance(nombreRuta) {
+  if (!filtraComoDespachador()) return true; // admin real: todas
+  const set = allowedRutaSet();
+  if (!set || !set.size) return false;
+  const r = normRuta(nombreRuta);
+  if (set.has(r)) return true;
+  const canon = (s) => normRuta(s).replace(/^ruta/, '')
+    .replace(/(madrugada|centro|sabado|sábado|domingo|festivo|findesemana|finde)$/, '');
+  const rc = canon(nombreRuta); if (!rc) return false;
+  for (const x of set) { if (canon(x) === rc) return true; }
+  return false;
+}
 // Grupos del parque habilitados: admin = todos (null); despachador/preview = su set
 function allowedGrupoSet() { if (PREVIEW) return PREVIEW.grupos; return isAdmin() ? null : new Set(CTX?.grupos || []); }
 // Empareja el nombre de una ruta de la tabla con un itinerario de SONAR. Tolera el
@@ -429,10 +448,10 @@ function buildSidebar() {
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
   if (isAdmin() || isAuditor()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
+  if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
+  if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '🛂', 'Control Laureles', openLaureles, 'nav-laur');
+  if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', openLaureles, 'nav-laur');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -3674,7 +3693,7 @@ function _rvNombre(s) {
   return String(s || '').toLowerCase().replace(/(^|[\s.])([a-záéíóúñ])/g, (t, p, c) => p + c.toUpperCase());
 }
 async function openRutasVivo(modo) {
-  if (!(isAdmin() || isAuditor())) return;
+  if (!(isAdmin() || isAuditor() || isDespachador())) return;
   if (mapaFlotante) cerrarMapaFlotante();
   _rutasModo = (modo === 'linea') ? 'linea' : 'tabla';
   currentView = 'rutas';
@@ -3727,6 +3746,8 @@ async function cargarRutasVivo(silencioso) {
 function _rutasFiltradas(d, term) {
   let rutas = (d.rutas || []).slice()
     .sort((a, b) => String(a.ruta).localeCompare(String(b.ruta), 'es', { numeric: true }));
+  // Alcance por rol: despachador/auditor ven SOLO sus rutas; admin ve todo.
+  if (filtraComoDespachador()) rutas = rutas.filter((r) => rutaEnAlcance(r.ruta));
   if (term) {
     rutas = rutas.filter((r) => String(r.ruta).toLowerCase().includes(term)
       || (r.moviles || []).some((m) => String(m.movil).toLowerCase().includes(term)
@@ -3735,12 +3756,19 @@ function _rutasFiltradas(d, term) {
   }
   return rutas;
 }
-function _rutasSub(d) {
+function _rutasSub(d, rutas) {
   const sub = $('rutas-sub'); if (!sub) return;
   const edad = d.edad_seg || 0;
   const edadTxt = edad < 90 ? `hace ${edad}s` : `hace ${Math.round(edad / 60)} min`;
   const stale = edad > 180; // el cron refresca cada minuto; >3 min = algo falla
-  sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · ${stale ? '⚠️ ' : ''}actualizado ${d.hora || '—'} (${edadTxt})`;
+  if (filtraComoDespachador()) {
+    // Vista acotada: los totales de flota (libres/total) no aplican; se cuentan solo sus rutas.
+    const lista = rutas || _rutasFiltradas(d, '');
+    const enRuta = lista.reduce((s, r) => s + (r.n || (r.moviles || []).length), 0);
+    sub.textContent = `${enRuta} ${enRuta === 1 ? 'bus' : 'buses'} en ${lista.length} de tus rutas · ${stale ? '⚠️ ' : ''}actualizado ${d.hora || '—'} (${edadTxt})`;
+  } else {
+    sub.textContent = `${d.en_ruta} buses en ${(d.rutas || []).length} rutas · ${d.libres} libres · ${d.total} total · ${stale ? '⚠️ ' : ''}actualizado ${d.hora || '—'} (${edadTxt})`;
+  }
   sub.classList.toggle('rutas-stale', stale);
 }
 // Despachador: dibuja la tabla o la línea según el modo elegido.
@@ -3749,7 +3777,7 @@ function renderRutasVivo() {
   const d = _rutasUltimo; if (!d) return;
   const term = ($('rutas-search')?.value || '').trim().toLowerCase();
   const rutas = _rutasFiltradas(d, term);
-  _rutasSub(d);
+  _rutasSub(d, rutas);
   if (!rutas.length) {
     $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
     return;
@@ -3828,7 +3856,7 @@ function renderLineaVivo() {
   const d = _rutasUltimo; if (!d) return;
   const term = ($('rutas-search')?.value || '').trim().toLowerCase();
   const rutas = _rutasFiltradas(d, term);
-  _rutasSub(d);
+  _rutasSub(d, rutas);
   if (!rutas.length) {
     $('rutas-body').innerHTML = `<div class="cump-empty">Ninguna ruta con bus rodando ahora${term ? ' (con ese filtro)' : ''}.</div>`;
     return;
@@ -4028,7 +4056,7 @@ async function exportMallaExcel() {
 // para que quien lee el QR sepa qué carro le va a llegar y a qué hora.
 let _laurUltimo = null, _laurTimer = null;
 async function openLaureles() {
-  if (!(isAdmin() || isAuditor())) return;
+  if (!(isAdmin() || isAuditor() || esDespachadorLaureles())) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'laureles';
   cerrarRecorridoBus();
@@ -4045,6 +4073,8 @@ async function openLaureles() {
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-laur')?.classList.add('active');
   buildBottomNav();
+  // Descargar Excel: solo auditor/admin (el despachador de Laureles ve y escanea, no descarga).
+  const bx = $('laur-excel'); if (bx) bx.hidden = !(isAdmin() || isAuditor());
   $('laur-fecha').max = hoyServidor();
   if (!$('laur-fecha').value) $('laur-fecha').value = hoyServidor();
   await cargarLaureles(false);
@@ -4154,6 +4184,7 @@ $('laur-search')?.addEventListener('input', renderLaureles);
 $('laur-auto')?.addEventListener('change', _armarAutoLaur);
 $('laur-excel')?.addEventListener('click', exportLaurExcel);
 async function exportLaurExcel() {
+  if (!(isAdmin() || isAuditor())) { toast('No tienes permiso para descargar.', 'err'); return; }
   const d = _laurUltimo;
   if (!d || !(d.viajes || []).length) { toast('No hay datos para exportar.', 'err'); return; }
   const viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.ing) - _laurMin(b.ing));
