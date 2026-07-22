@@ -79,6 +79,8 @@ $$;
 
 -- heartbeat(): ahora devuelve el estado ('ok' | 'reemplazada' | 'fuera_horario').
 -- Refresca la actividad y sirve para el auto-cierre por sesión única y por horario.
+-- Se elimina la versión previa (devolvía boolean) para poder cambiar el tipo de retorno.
+drop function if exists public.heartbeat();
 create or replace function public.heartbeat()
 returns jsonb
 language plpgsql
