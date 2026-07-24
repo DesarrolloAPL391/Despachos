@@ -592,7 +592,10 @@ function selectTable(name) {
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('synccond-btn').hidden = name !== 'conductores_sonar' || !isAdmin(); // sincronizar conductores: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
-  $('export-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor()));   // Descargar Excel: admin/auditor en Resumen
+  // Descargar Excel: admin y auditor pueden exportar la tabla que estén viendo
+  // (Despachos, Auditoría SONAR, Resumen y sus tablas de puesto). La RLS limita las
+  // filas a lo que le pertenece a cada quien y se respetan los filtros activos.
+  $('export-btn').hidden = !((isAdmin() || isAuditor()) && TABLES[name] && (TABLES[name].columns || []).length > 0);
   $('recon-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor())); // Conciliar SONAR: auditor/admin en Resumen
   // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
