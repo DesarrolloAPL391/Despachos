@@ -121,14 +121,15 @@ function matchItinerario(its, rutaNombre) {
 function visibleTables() {
   // Vista previa (admin simulando): el menú se reduce como el del usuario simulado
   if (PREVIEW) {
-    if (PREVIEW.rol === 'auditor') return ['despachos', 'despachos_sonar', ...(PREVIEW.auditTables || [])];
+    if (PREVIEW.rol === 'auditor') return ['despachos', 'despachos_sonar', 'resumen', ...(PREVIEW.auditTables || [])];
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
   // Auditor: la pantalla Despachos + "Auditoría SONAR" (los viajes REALES que trae SONAR,
-  // donde revisa los incompletos) + las tablas de puesto donde tiene despachos de sus rutas
-  // (así audita TODO lo suyo, esté en la vista general o en cualquier tabla de puesto).
-  if (isAuditor()) return ['despachos', 'despachos_sonar', ...(CTX?.auditTables || [])];
+  // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
+  // de puesto donde tiene despachos de sus rutas (así audita TODO lo suyo, esté en la vista
+  // general o en cualquier tabla de puesto).
+  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', ...(CTX?.auditTables || [])];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -591,7 +592,7 @@ function selectTable(name) {
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('synccond-btn').hidden = name !== 'conductores_sonar' || !isAdmin(); // sincronizar conductores: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
-  $('export-btn').hidden = !(name === 'resumen' && isAdmin());   // Descargar Excel: admin en Resumen
+  $('export-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor()));   // Descargar Excel: admin/auditor en Resumen
   $('recon-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor())); // Conciliar SONAR: auditor/admin en Resumen
   // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
