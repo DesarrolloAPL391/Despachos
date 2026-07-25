@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v179';
+export const APP_VERSION = 'v180';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -178,14 +178,32 @@ export const TABLES = {
     pk: 'itl_id',
     pkEditable: false,
     noDelete: true,
+    // Una vez AUDITADO, la fila queda bloqueada: no se puede volver a auditar ni editar.
+    rowLocked: (row) => row.auditado === true,
+    lockedHint: 'Ya auditado — no se puede volver a auditar',
     eventosSonar: true, // 🔎 en cada fila: ver el recorrido y saber POR QUÉ quedó incompleto
     select: '*',
+    // La descarga del auditor sale COMPLETA: incluye quién auditó, cuándo y el comentario.
+    exportCols: [
+      { key: 'fecha', label: 'Fecha' },
+      { key: 'hora_inicio', label: 'Hora' },
+      { key: 'ruta', label: 'Ruta' },
+      { key: 'movil', label: 'Móvil' },
+      { key: 'placa', label: 'Placa' },
+      { key: 'conductor', label: 'Conductor' },
+      { key: 'estado', label: 'Estado' },
+      { key: 'comentario', label: 'Comentario SONAR' },
+      { key: 'auditado', label: 'Auditado' },
+      { key: 'auditor_email', label: 'Auditor' },
+      { key: 'auditado_en', label: 'Fecha auditoría' },
+      { key: 'observacion', label: 'Observación del auditor' },
+    ],
     searchCols: ['movil', 'placa', 'ruta', 'conductor'],
     defaultOrder: { col: 'fecha', asc: false, then: { col: 'hora_inicio', asc: true } },
     filters: [
       { col: 'fecha', label: 'Fecha', type: 'date' },
       { col: 'estado', label: 'Estado', options: ['Completo', 'Incompleto', 'Cancelado', 'En progreso'] },
-      { col: 'auditado', label: 'Auditado', options: [true, false] },
+      { col: 'auditado', label: 'Auditoría', options: [{ value: true, label: 'Auditados' }, { value: false, label: 'Pendientes por auditar' }] },
     ],
     columns: [
       { key: 'fecha', label: 'Fecha' },

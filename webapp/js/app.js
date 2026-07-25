@@ -652,8 +652,12 @@ function renderFilters() {
       continue;
     }
     const sel = document.createElement('select');
+    // Las opciones pueden ser un valor suelto (se muestra "Etiqueta: valor") o un
+    // objeto { value, label } cuando queremos un texto legible (ej. Auditados/Pendientes).
     sel.innerHTML = `<option value="">${f.label}: todos</option>` +
-      f.options.map((o) => `<option value="${o}">${f.label}: ${o}</option>`).join('');
+      f.options.map((o) => (o && typeof o === 'object')
+        ? `<option value="${o.value}">${esc(o.label)}</option>`
+        : `<option value="${o}">${f.label}: ${o}</option>`).join('');
     sel.value = filters[f.col] || '';
     sel.addEventListener('change', () => {
       if (sel.value) filters[f.col] = sel.value; else delete filters[f.col];
@@ -1555,6 +1559,35 @@ async function loadData() {
   // Estado GPS de los móviles (color junto al número), igual que en el mapa
   if (cfg.dispatchable) { try { await cargarEstadoMoviles(cfg); } catch { /* */ } }
   renderTable(cfg, rows, total, diaSel);
+  actualizarContadorAuditoria(); // barra de avance de auditoría (solo Auditoría SONAR)
+}
+
+// Contador de avance de auditoría (solo en Auditoría SONAR): cuántos viajes están
+// auditados vs. pendientes bajo los filtros de fecha/estado (ignora a propósito el
+// filtro de 'auditado' para medir el avance real). Respeta la RLS: cuenta solo lo
+// que el auditor puede ver (sus rutas). Consulta liviana (head: true, sin traer filas).
+async function actualizarContadorAuditoria() {
+  const el = $('audit-counter');
+  if (!el) return;
+  if (current !== 'despachos_sonar') { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '<span class="ac-lbl">Auditoría</span><span class="ac-tot">contando…</span>';
+  try {
+    const base = () => {
+      let q = sb.from('despachos_sonar').select('itl_id', { count: 'exact', head: true });
+      if (filters['fecha']) q = q.eq('fecha', filters['fecha']);
+      if (filters['estado']) q = q.eq('estado', filters['estado']);
+      return q;
+    };
+    const [tot, aud] = await Promise.all([base(), base().eq('auditado', true)]);
+    if (current !== 'despachos_sonar') return; // cambió de tabla mientras contaba
+    const t = tot.count || 0, a = aud.count || 0, p = Math.max(0, t - a);
+    const pct = t ? Math.round(a / t * 100) : 0;
+    el.innerHTML = `<span class="ac-lbl">Auditoría ${pct}%</span>`
+      + `<span class="ac-ok">✅ ${a} auditados</span>`
+      + `<span class="ac-pend">⏳ ${p} por auditar</span>`
+      + `<span class="ac-tot">${t} en total</span>`;
+  } catch { el.hidden = true; }
 }
 
 // Íconos SVG (se ven iguales en Android/escritorio, sin depender de emojis)
@@ -3137,6 +3170,12 @@ $('modal-save').addEventListener('click', async () => {
     if (CTX?.auditor_id != null) payload.auditor_id = CTX.auditor_id;
     payload.fecha_hora_auditoria = new Date().toISOString();
   }
+  // Auditoría SONAR: al marcar 'Auditado' queda sellado quién (correo) y cuándo. Como la
+  // fila se bloquea al quedar auditada (rowLocked), no se puede volver a auditar.
+  if (current === 'despachos_sonar' && (payload.auditado === true || payload.auditado === 'true')) {
+    payload.auditor_email = sessionUser?.email || CTX?.email || null;
+    payload.auditado_en = new Date().toISOString();
+  }
 
   // Control del despachador: si marcó una DECISIÓN del viaje (SI / NO realiza…), queda
   // registrado quién y cuándo, para que el auditor sepa quién lo reportó. (El botón ✈️
@@ -3333,7 +3372,9 @@ $('imp-cancel').addEventListener('click', closeImport);
 // ---------- Descargar la tabla actual en Excel (.xlsx real, no CSV) ----------
 async function exportarExcel() {
   const cfg = TABLES[current];
-  const cols = cfg.columns || [];
+  // Si la tabla define exportCols, la descarga sale COMPLETA con esas columnas
+  // (p. ej. Auditoría SONAR agrega auditor, fecha de auditoría y comentario).
+  const cols = cfg.exportCols || cfg.columns || [];
   if (!cols.length) { toast('Esta tabla no tiene columnas para exportar.', 'err'); return; }
   const btn = $('export-btn'); const prev = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Generando…';
