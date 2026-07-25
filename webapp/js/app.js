@@ -5032,6 +5032,22 @@ function sonarOK(sd) { return !!(sd && sd.ok && sd.regid && String(sd.regid).tri
 // Extrae el <description> del XML de SONAR para usarlo como motivo legible.
 function sonarDescripcion(resp) { const m = /<description>([^<]*)<\/description>/i.exec(String(resp || '')); return m ? m[1].trim() : null; }
 
+// ¿SONAR ya tiene el viaje de este móvil en este itinerario? Se usa para NO duplicar:
+// un timeout no significa que SONAR no lo recibió. Pregunta a GET_ItinerariesHistory_v2
+// (server) y, si el viaje existe (vivo, reciente, no cancelado), devuelve su regId real.
+// Nunca lanza: ante cualquier duda devuelve { encontrado:false } (se sigue el flujo normal).
+async function verificarViajeSonar({ mId, itid, drvId, fecha }) {
+  if (!mId || !itid) return { encontrado: false };
+  try {
+    const { data, error } = await sb.rpc('verificar_viaje_sonar', {
+      p_mid: String(mId), p_itinerary: String(itid),
+      p_drvid: String(drvId || ''), p_fecha: fecha || hoyServidor(),
+    });
+    if (error || !data?.ok || !data.encontrado || !data.regid) return { encontrado: false };
+    return { encontrado: true, regid: String(data.regid), data };
+  } catch { return { encontrado: false }; }
+}
+
 // SONAR falló (estando en línea): marca el despacho como PENDIENTE SONAR y avisa al webhook.
 // Nunca lanza: el aviso no debe romper el flujo. Devuelve siempre.
 async function reportarFalloSonar(tabla, id, motivo, extra) {
@@ -5107,21 +5123,27 @@ async function doDispatch(intent) {
     p_comments: intent.com || ('Despacho ' + intent.id),
   });
   const datosFallo = { movil: intent.movilNum ?? null, ruta: intent.itinNombre ?? null, conductor: intent.drvNombre ?? null, fecha: intent.fecha ?? null, hora: intent.hora ?? null };
-  if (se) {
-    if (isNetworkErr(se)) throw se; // error de RED: a la cola, se reintenta al reconectar
-    // SONAR/función falló estando en línea → queda PENDIENTE y se avisa al webhook
-    await reportarFalloSonar('despachos', intent.id, se.message, datosFallo);
-    return { ok: false, error: se.message };
-  }
+  if (se && isNetworkErr(se)) throw se; // error de RED: a la cola, se reintenta al reconectar
+
   if (sonarOK(sd)) {
     // SONAR confirmó con regId real → DESPACHADO pleno
     await sb.from('despachos').update({ sonar_regid: String(sd.regid) }).eq('id', intent.id);
-  } else {
-    // Respondió pero NO confirmó (ok=false, o regId "0" con <status>ERROR</status>) → PENDIENTE + webhook
-    const motivo = sd?.error || sonarDescripcion(sd?.response) || 'SONAR no confirmó el despacho';
-    await reportarFalloSonar('despachos', intent.id, motivo, Object.assign(datosFallo, { http_status: sd?.status ?? null, regid: sd?.regid ?? null, respuesta: (sd?.response || '').slice(0, 1000) }));
+    return sd;
   }
-  return sd;
+
+  // Falló o SONAR no confirmó (timeout, ok=false, regId "0"...). ANTES de marcar
+  // PENDIENTE + correo le preguntamos a SONAR si el viaje quedó creado igual: un
+  // timeout NO es "no lo recibió" (así se creaban dobles al reenviar).
+  const ver = await verificarViajeSonar(intent);
+  if (ver.encontrado) {
+    // SONAR SÍ lo tomó (respondió lento): adoptamos su regId real. Sin doble, sin correo.
+    await sb.from('despachos').update({ sonar_regid: ver.regid, estado_despacho: 'DESPACHADO' }).eq('id', intent.id);
+    return { ok: true, regid: ver.regid, status: 200, response: '', verificado: true };
+  }
+  // SONAR de verdad NO tiene el viaje → PENDIENTE + webhook (y se muestra el error)
+  const motivo = se ? se.message : (sd?.error || sonarDescripcion(sd?.response) || 'SONAR no confirmó el despacho');
+  await reportarFalloSonar('despachos', intent.id, motivo, Object.assign(datosFallo, { http_status: sd?.status ?? null, regid: sd?.regid ?? null, respuesta: (sd?.response || '').slice(0, 1000) }));
+  return se ? { ok: false, error: se.message } : sd;
 }
 
 $('nd-save').addEventListener('click', async () => {
@@ -5201,11 +5223,13 @@ $('nd-save').addEventListener('click', async () => {
     const res = $('nd-result'); res.hidden = false;
     if (sonarOK(sd)) {
       res.className = 'sonar-result ok';
-      res.textContent = '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')'
+      res.textContent = (sd.verificado
+          ? '✅ Despacho creado. SONAR respondió lento pero el viaje SÍ quedó (verificado, sin duplicar).'
+          : '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')')
         + '\nregId: ' + sd.regid
         + '\n📍 Ubicación registrada: ' + intent.ubicacion
         + '\n\n' + (sd.response || '').slice(0, 800);
-      toast('Despacho creado y despachado', 'ok');
+      toast(sd.verificado ? 'Despacho confirmado (verificado en SONAR)' : 'Despacho creado y despachado', 'ok');
     } else {
       res.className = 'sonar-result err';
       res.textContent = '✅ Despacho creado, pero ⚠️ SONAR no lo confirmó: ' + (sd?.error || sonarDescripcion(sd?.response) || ('HTTP ' + (sd?.status ?? '?')))
@@ -5571,19 +5595,32 @@ $('sonar-send').addEventListener('click', async () => {
     return;
   }
 
-  btn.textContent = 'Enviando…';
-  showBusy('Despachando en SONAR…'); // capa que bloquea la pantalla mientras responde SONAR
-  let data, error;
-  try {
-    ({ data, error } = await sb.rpc('despachar_sonar', {
-      p_mid: String(mId), p_itinerary: itin, p_drvid: drv,
-      // hora seleccionada por el despachador (Colombia); si la dejó vacía, la del viaje; si no hay, ahora
-      p_utc: sonarFechaHora(sonarRow?.fecha || hoyServidor(), horaSel || sonarRow?.hora),
-      p_comments: com,
-    }));
-  } finally {
+  let data, error, viaVerificacion = false;
+
+  // Reenvío seguro: si la fila YA estaba PENDIENTE, un intento previo pudo haber creado
+  // el viaje en SONAR aunque diera timeout. Preguntamos ANTES de re-despachar para no
+  // duplicar. Si ya existe, lo adoptamos y NO volvemos a llamar a SET_ItAssign.
+  if (String(sonarRow?.estado_despacho || '').toUpperCase() === 'PENDIENTE SONAR') {
+    showBusy('Verificando en SONAR…');
+    const ver = await verificarViajeSonar({ mId, itid: itin, drvId: drv, fecha: sonarRow?.fecha || hoyServidor() });
     hideBusy();
-    btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Despachar';
+    if (ver.encontrado) { data = { ok: true, status: 200, regid: ver.regid, response: '', verificado: true }; viaVerificacion = true; }
+  }
+
+  if (!data) {
+    btn.textContent = 'Enviando…';
+    showBusy('Despachando en SONAR…'); // capa que bloquea la pantalla mientras responde SONAR
+    try {
+      ({ data, error } = await sb.rpc('despachar_sonar', {
+        p_mid: String(mId), p_itinerary: itin, p_drvid: drv,
+        // hora seleccionada por el despachador (Colombia); si la dejó vacía, la del viaje; si no hay, ahora
+        p_utc: sonarFechaHora(sonarRow?.fecha || hoyServidor(), horaSel || sonarRow?.hora),
+        p_comments: com,
+      }));
+    } finally {
+      hideBusy();
+      btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Despachar';
+    }
   }
 
   const infoFallo = {
@@ -5596,6 +5633,12 @@ $('sonar-send').addEventListener('click', async () => {
     res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message;
     if (!isNetworkErr(error)) await reportarFalloSonar(sonarTable, sonarRow?.id, error.message, infoFallo);
     return;
+  }
+  // SONAR no confirmó de una (timeout / ok:false / regId 0): preguntamos si el viaje
+  // quedó creado igual ANTES de darlo por fallido. Un timeout NO es "no lo recibió".
+  if (!sonarOK(data) && !viaVerificacion) {
+    const ver = await verificarViajeSonar({ mId, itid: itin, drvId: drv, fecha: sonarRow?.fecha || hoyServidor() });
+    if (ver.encontrado) data = { ok: true, status: 200, regid: ver.regid, response: (data?.response || ''), verificado: true };
   }
   if (sonarOK(data)) {
     // Marcar como DESPACHADO y registrar el móvil REAL despachado.
@@ -5637,11 +5680,13 @@ $('sonar-send').addEventListener('click', async () => {
       if (current === sonarTable) loadData();
     }
     res.className = 'sonar-result ok';
-    res.textContent = '✅ Despachado (HTTP ' + (data.status ?? '') + ')'
+    res.textContent = (data.verificado
+        ? '✅ Confirmado: SONAR ya tenía el viaje (verificado, sin duplicar).'
+        : '✅ Despachado (HTTP ' + (data.status ?? '') + ')')
       + (data.regid ? '\nregId: ' + data.regid : '')
       + '\n📍 Ubicación registrada: ' + ubicGps
       + '\n\n' + (data.response || '').slice(0, 1200);
-    toast('Despachado en SONAR', 'ok');
+    toast(data.verificado ? 'Confirmado en SONAR (verificado)' : 'Despachado en SONAR', 'ok');
     // Ya quedó despachado: no permitir despachar de nuevo en este modal
     sonarRow = null;
     btn.disabled = true; btn.textContent = 'Despachado ✓';
