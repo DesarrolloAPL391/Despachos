@@ -519,6 +519,18 @@ tbody tr:hover { background: #faf8ff; }
   .cump-top { grid-template-columns: 1fr; }
 }
 
+/* ===== Dashboard Control Laureles ===== */
+.laur-heros { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.laur-dash-h { margin: 18px 0 8px; font-size: 12px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .4px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+.laur-dash-h::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.laur-perm { text-align: center; }
+.laur-perm .laur-big { font-size: 40px; font-weight: 800; color: var(--primary-dark); line-height: 1; }
+.laur-perm .laur-big span { display: block; font-size: 12px; font-weight: 700; color: var(--muted);
+  margin-top: 4px; text-transform: uppercase; letter-spacing: .3px; }
+.laur-perm .laur-perm-sub { font-size: 12px; color: var(--muted); font-weight: 600; margin-top: 8px; }
+.laur-al-leida { color: #b91c1c; font-weight: 800; }
+
 /* ===== Rutas en vivo (semáforo por ruta) ===== */
 .rutas-toolbar { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
 .rutas-toolbar input[type="search"] { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; min-width: 180px; }

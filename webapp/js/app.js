@@ -4163,6 +4163,106 @@ function _laurCell(c) {
   const dd = c.d == null ? '' : ` (${Math.abs(c.d)}m)`;
   return `<td class="mc ${_mallaCls(c.d)}">${esc(c.h)}<span class="mc-d">${dd}</span></td>`;
 }
+
+// Gracia (min) para considerar "a tiempo" el ingreso al control.
+const LAUR_GRACIA = 3;
+// Agrega los viajes del día en métricas del control (puro, fácil de razonar). Los
+// CANCELADOS no cuentan como "esperados" (el bus no salió) → base = activos.
+function _laurAgg(viajes) {
+  const A = {
+    total: 0, activos: 0, cancelados: 0, enCurso: 0,
+    qrOk: 0, qrNo: 0, qrPend: 0, conReal: 0, soloProg: 0,
+    adel: 0, aTiempo: 0, atras: 0, puntN: 0, desvSum: 0,
+    permSum: 0, permN: 0, permMin: null, permMax: null,
+    porRuta: new Map(), porHora: new Map(), alertas: [],
+  };
+  (viajes || []).forEach((v) => {
+    A.total++;
+    if (v.canceled === 'Y' || v.canceled === '1') { A.cancelados++; return; }
+    A.activos++;
+    if (v.running === 'Y') A.enCurso++;
+    const ruta = String(v.ruta || '—');
+    const r = A.porRuta.get(ruta) || { activos: 0, qrOk: 0, conReal: 0, aTiempo: 0, puntN: 0 };
+    r.activos++;
+    const c = v.chk;
+    if (c && c.ok) { A.qrOk++; r.qrOk++; }
+    else if (c && !c.ok) { A.qrNo++; A.alertas.push({ movil: String(v.movil || '').trim(), ruta, esperada: v.placa || '', leida: c.leida || '', por: c.por || '', hora: c.hora || '' }); }
+    else A.qrPend++;
+    const ingReal = !!(v.ing && !v.ing.e && v.ing.h);
+    if (ingReal) { A.conReal++; r.conReal++; } else A.soloProg++;
+    if (ingReal && v.ing.d != null) {
+      const dv = v.ing.d; A.puntN++; A.desvSum += dv; r.puntN++;
+      if (dv < -LAUR_GRACIA) A.adel++;
+      else if (dv > LAUR_GRACIA) A.atras++;
+      else { A.aTiempo++; r.aTiempo++; }
+    }
+    const perm = _durMin(v.ing, v.sal);
+    if (perm != null) {
+      A.permSum += perm; A.permN++;
+      A.permMin = A.permMin == null ? perm : Math.min(A.permMin, perm);
+      A.permMax = A.permMax == null ? perm : Math.max(A.permMax, perm);
+    }
+    const hm = _hm(v.ing) != null ? _hm(v.ing) : _hm(v.hora);
+    if (hm != null) { const h = Math.floor(hm / 60); A.porHora.set(h, (A.porHora.get(h) || 0) + 1); }
+    A.porRuta.set(ruta, r);
+  });
+  A.desvProm = A.puntN ? Math.round(A.desvSum / A.puntN) : null;
+  A.permProm = A.permN ? Math.round(A.permSum / A.permN) : null;
+  return A;
+}
+// Tablero del día (KPIs + desglose + cartas). Reusa los estilos de Cumplimiento.
+function _laurDashHtml(d, a) {
+  if (!a.total) return '';
+  const pQR = _pctCump(a.qrOk, a.activos), pPunt = _pctCump(a.aTiempo, a.puntN), pPaso = _pctCump(a.conReal, a.activos);
+  const hero = `<div class="cump-heros laur-heros">
+    <div class="cump-hero" style="--acc:${_colCump(pQR)}"><div class="ch-val">${pQR}%</div><div class="ch-lbl">Control QR</div><div class="ch-sub">${a.qrOk}/${a.activos} escaneados</div></div>
+    <div class="cump-hero" style="--acc:${a.puntN ? _colCump(pPunt) : '#94a3b8'}"><div class="ch-val">${a.puntN ? pPunt + '%' : '—'}</div><div class="ch-lbl">Puntualidad ingreso</div><div class="ch-sub">${a.puntN ? a.aTiempo + '/' + a.puntN + ' a tiempo' : 'sin registro'}</div></div>
+    <div class="cump-hero" style="--acc:${_colCump(pPaso)}"><div class="ch-val">${pPaso}%</div><div class="ch-lbl">Paso registrado</div><div class="ch-sub">${a.conReal}/${a.activos} con GPS</div></div>
+  </div>`;
+  const stat = (dot, lbl, n) => `<div class="cump-stat"><span class="cs-dot ${dot}"></span><span class="cs-lbl">${lbl}</span><b class="cs-n">${n}</b><span class="cs-pct">${_pctCump(n, a.total)}%</span></div>`;
+  const desglose = `<div class="cump-stats"><div class="cump-stats-head"><b>${a.total}</b> buses del día${a.cancelados ? ` · ${a.activos} activos` : ''}</div>`
+    + stat('desp', 'Escaneados ✅', a.qrOk) + stat('perd', 'No coincide 🚨', a.qrNo)
+    + stat('sin', 'Pendientes ⏳', a.qrPend) + stat('curso', 'En curso', a.enCurso)
+    + stat('inc', 'Cancelados', a.cancelados) + '</div>';
+  // Control por ruta (barra de % escaneado + puntualidad al lado)
+  const rutas = [...a.porRuta.entries()].sort((x, y) => y[1].activos - x[1].activos);
+  const barsRuta = rutas.map(([ruta, r]) => {
+    const p = _pctCump(r.qrOk, r.activos), pp = r.puntN ? _pctCump(r.aTiempo, r.puntN) : null;
+    return `<div class="crow"><div class="crow-lbl">${esc(ruta)}</div>`
+      + `<div class="crow-track"><div class="crow-fill" style="width:${p}%;background:${_colCump(p)}"></div></div>`
+      + `<div class="crow-val"><b style="color:${_colCump(p)}">${p}%</b> <small>${r.qrOk}/${r.activos}${pp != null ? ' · punt ' + pp + '%' : ''}</small></div></div>`;
+  }).join('');
+  const cardRuta = `<div class="cump-card"><h4>Control por ruta <small>· % escaneado</small></h4>${barsRuta || '<div class="cump-empty">Sin datos.</div>'}</div>`;
+  // Puntualidad en el ingreso (distribución)
+  const puntRow = (lbl, n, col) => `<div class="crow"><div class="crow-lbl">${lbl}</div>`
+    + `<div class="crow-track"><div class="crow-fill" style="width:${_pctCump(n, a.puntN)}%;background:${col}"></div></div>`
+    + `<div class="crow-val"><b>${n}</b> <small>${_pctCump(n, a.puntN)}%</small></div></div>`;
+  const cardPunt = `<div class="cump-card"><h4>Puntualidad en el ingreso ${a.desvProm != null ? `<small>· desvío prom. ${a.desvProm > 0 ? '+' : ''}${a.desvProm}m</small>` : ''}</h4>`
+    + (a.puntN ? puntRow('⏩ Adelantado', a.adel, '#3b82f6') + puntRow(`✓ A tiempo (±${LAUR_GRACIA}m)`, a.aTiempo, '#16a34a') + puntRow('⏳ Atrasado', a.atras, '#dc2626')
+       : '<div class="cump-empty">Ningún bus registró hora real de ingreso todavía.</div>') + '</div>';
+  // Flujo por hora (ingresos al control) — resalta la hora pico
+  const horas = [...a.porHora.keys()].sort((x, y) => x - y);
+  const maxH = Math.max(1, ...horas.map((h) => a.porHora.get(h)));
+  const pico = horas.length ? horas.reduce((m, h) => (a.porHora.get(h) > a.porHora.get(m) ? h : m), horas[0]) : null;
+  const barsHora = horas.map((h) => {
+    const n = a.porHora.get(h);
+    return `<div class="cbar-col"><div class="cbar-n">${n}</div>`
+      + `<div class="cbar"><div class="cbar-seg ${h === pico ? 'perd peak' : 'curso'}" style="height:${(n / maxH * 100).toFixed(1)}%" title="${n} buses"></div></div>`
+      + `<div class="cbar-x">${String(h).padStart(2, '0')}h</div></div>`;
+  }).join('');
+  const cardHora = horas.length ? `<div class="cump-card"><h4>Flujo por hora <small>${pico != null ? `· pico ${String(pico).padStart(2, '0')}h (${maxH})` : ''}</small></h4><div class="cbar-wrap">${barsHora}</div></div>` : '';
+  // Permanencia Iglesia → Salida (tiempo en el tramo de control)
+  const cardPerm = a.permN ? `<div class="cump-card laur-perm"><h4>Permanencia Iglesia → Salida</h4>`
+    + `<div class="laur-big">${a.permProm}<span>min promedio</span></div>`
+    + `<div class="laur-perm-sub">rango ${a.permMin}–${a.permMax} min · ${a.permN} buses</div></div>` : '';
+  // Alertas: placas que no coincidieron al escanear el QR
+  const cardAlert = a.alertas.length ? `<div class="cump-card"><h4>🚨 Placas que no coinciden (${a.alertas.length})</h4>`
+    + `<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Móvil</th><th>Ruta</th><th>Esperada</th><th>Leída</th><th>Reportó</th></tr></thead><tbody>`
+    + a.alertas.map((x) => `<tr><td><b>${esc(x.movil)}</b></td><td>${esc(x.ruta)}</td><td>${esc(x.esperada)}</td><td class="laur-al-leida">${esc(x.leida || '—')}</td><td>${esc(x.por || '')}${x.hora ? ' · ' + esc(x.hora) : ''}</td></tr>`).join('')
+    + '</tbody></table></div></div>' : '';
+  return `<div class="cump-top">${hero}${desglose}</div><div class="cump-grid">${cardRuta}${cardPunt}</div>${cardHora}${cardPerm}${cardAlert}`
+    + `<div class="laur-dash-h">🚌 Detalle por bus</div>`;
+}
 function renderLaureles() {
   const d = _laurUltimo; if (!d) return;
   const term = ($('laur-search')?.value || '').trim().toLowerCase();
@@ -4193,7 +4293,8 @@ function renderLaureles() {
       + `<td class="laur-dur">${_durTxt(_durMin(v.ing, v.sal))}</td>`
       + _laurEstadoCell(v.chk) + `</tr>`;
   }).join('');
-  $('laur-body').innerHTML = leyenda
+  const dash = _laurDashHtml(d, _laurAgg(d.viajes || [])); // KPIs del día completo (no del filtro)
+  $('laur-body').innerHTML = dash + leyenda
     + `<div class="mc-wrap"><table class="mc-tabla laur-tabla"><thead><tr>`
     + `<th>Ingreso · ${esc(d.punto_ingreso || 'IGLESIA SAN JOSE')}</th><th>Vehículo</th><th>Ruta</th>`
     + `<th>Salida · ${esc(d.punto_salida || 'Salida San José')}</th><th>Despacho</th>`
@@ -4234,8 +4335,40 @@ async function exportLaurExcel() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
   try {
     const XLSX = await import('https://esm.sh/xlsx@0.18.5');
-    const ws = XLSX.utils.aoa_to_sheet([head, ...filas]);
     const wb = XLSX.utils.book_new();
+    // Hoja "Resumen": los KPIs del tablero, para que las medidas también se descarguen.
+    const a = _laurAgg(d.viajes || []);
+    const pQR = _pctCump(a.qrOk, a.activos), pPunt = _pctCump(a.aTiempo, a.puntN), pPaso = _pctCump(a.conReal, a.activos);
+    const resAoa = [
+      ['Control Laureles — Resumen', d.fecha],
+      [],
+      ['Buses del día', a.total],
+      ['Activos (no cancelados)', a.activos],
+      ['Cancelados', a.cancelados],
+      ['En curso', a.enCurso],
+      [],
+      ['Control QR (% escaneado)', pQR + '%', a.qrOk + '/' + a.activos],
+      ['  Escaneados OK', a.qrOk],
+      ['  No coincide', a.qrNo],
+      ['  Pendientes', a.qrPend],
+      [],
+      ['Paso registrado GPS (%)', pPaso + '%', a.conReal + '/' + a.activos],
+      [],
+      ['Puntualidad ingreso (%)', a.puntN ? pPunt + '%' : '—', a.aTiempo + '/' + a.puntN],
+      ['  Adelantado', a.adel],
+      ['  A tiempo (±' + LAUR_GRACIA + 'm)', a.aTiempo],
+      ['  Atrasado', a.atras],
+      ['  Desvío promedio (min)', a.desvProm == null ? '' : a.desvProm],
+      [],
+      ['Permanencia Iglesia-Salida (min)', a.permProm == null ? '' : a.permProm, a.permN ? ('rango ' + a.permMin + '-' + a.permMax) : ''],
+      [],
+      ['Por ruta'],
+      ['Ruta', 'Activos', 'Escaneados', '% QR', 'A tiempo', '% Punt'],
+      ...[...a.porRuta.entries()].sort((x, y) => y[1].activos - x[1].activos).map(([ruta, r]) =>
+        [ruta, r.activos, r.qrOk, _pctCump(r.qrOk, r.activos) + '%', r.aTiempo, r.puntN ? _pctCump(r.aTiempo, r.puntN) + '%' : '-']),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resAoa), 'Resumen');
+    const ws = XLSX.utils.aoa_to_sheet([head, ...filas]);
     XLSX.utils.book_append_sheet(wb, ws, 'Control Laureles');
     const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
     const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
