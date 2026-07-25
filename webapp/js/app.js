@@ -296,9 +296,14 @@ async function cerrarSesionCon(msg) {
 // Devuelve true si la sesión sigue viva; false si se cerró (para usarla como guardia).
 // El servidor es la autoridad: solo cierra si dice 'reemplazada'/'fuera_horario', así que
 // se puede llamar de forma reactiva (p.ej. al recibir datos vacíos) sin riesgo de falsos cierres.
+let _lastLatencia = null; // ms del último heartbeat (round-trip a Supabase); se reporta en el siguiente
 async function verificarSesionVigente() {
   if (!sessionUser) return false;
-  const { data, error } = await sb.rpc('heartbeat');
+  const t0 = Date.now();
+  // Reporta la latencia medida en el heartbeat anterior + la versión de app en uso
+  // (para que el admin vea en "Conectados" quién va lento o quedó en versión vieja).
+  const { data, error } = await sb.rpc('heartbeat', { p_latencia_ms: _lastLatencia, p_version: APP_VERSION });
+  _lastLatencia = Date.now() - t0;
   if (error) return true;         // error de red: no expulsar (se reintenta luego)
   const estado = (typeof data === 'boolean') ? (data ? 'ok' : 'reemplazada') : (data?.estado || 'ok');
   if (estado === 'reemplazada') { await cerrarSesionCon('Tu sesión se cerró: tu cuenta se abrió en otro dispositivo.'); return false; }
@@ -5994,6 +5999,19 @@ function closeConectados() {
   $('con-modal').hidden = true;
   if (conTimer) { clearInterval(conTimer); conTimer = null; }
 }
+// Badge de latencia (round-trip a Supabase): verde <0.6s · ámbar <1.8s · rojo peor
+function _latBadge(ms, enLinea) {
+  if (ms == null) return '<span class="con-lat lat-na">⚡ s/d</span>';
+  const cls = ms < 600 ? 'lat-ok' : ms < 1800 ? 'lat-warn' : 'lat-bad';
+  const suf = enLinea ? '' : ' (últ.)';
+  return `<span class="con-lat ${cls}" title="Latencia ida y vuelta a Supabase${enLinea ? '' : ' — último dato conocido'}">⚡ ${ms} ms${suf}</span>`;
+}
+// Badge de versión de app: gris si está al día, rojo si quedó en una versión vieja
+function _verBadge(v) {
+  if (!v) return '';
+  const old = v !== APP_VERSION;
+  return `<span class="con-ver ${old ? 'con-ver-old' : 'con-ver-ok'}" title="Versión de la app${old ? ' — desactualizada; pídele Ctrl+F5' : ' (al día)'}">${esc(v)}</span>`;
+}
 async function cargarConectados() {
   $('con-error').hidden = true;
   $('con-results').innerHTML = '<div class="loading">Cargando…</div>';
@@ -6018,12 +6036,14 @@ async function cargarConectados() {
     if (r.ruta) info.push(`📍 ${esc(r.ruta)}`);
     if (r.hora_inicio) info.push(`🕒 ${esc(r.hora_inicio)}${r.hora_fin ? '–' + esc(r.hora_fin) : ''}`);
     const infoLine = info.length ? `<div class="con-info">${info.join(' · ')}</div>` : '';
+    const perfLine = `<div class="con-perf">${_latBadge(r.latencia_ms, r.en_linea)}${_verBadge(r.app_version)}</div>`;
     return `<div class="con-card ${r.en_linea ? '' : 'off'}">
       <div class="con-av" style="background:${avatarColor(nombre)}">${inicial}</div>
       <div class="con-main">
         <div class="con-name">${esc(nombre)}<span class="con-chip ${rolChipCls(r.rol)}">${esc(r.rol || '—')}</span></div>
         <div class="con-mail">${esc(r.email || '')}</div>
         ${infoLine}
+        ${perfLine}
       </div>
       <div class="con-meta">
         ${meta}
@@ -6031,9 +6051,13 @@ async function cargarConectados() {
       </div>
     </div>`;
   };
+  // Cuántos en línea van lentos (latencia alta) o en versión vieja (posible causa de fallos)
+  const lentos = online.filter((r) => (r.latencia_ms != null && r.latencia_ms >= 1800)
+    || (r.app_version && r.app_version !== APP_VERSION)).length;
   let html = `<div class="con-head">
       <div class="con-stat on"><div class="n">${online.length}</div><div class="l">🟢 En línea ahora</div></div>
       <div class="con-stat total"><div class="n">${rows.length}</div><div class="l">Con sesión abierta</div></div>
+      <div class="con-stat ${lentos ? 'warn' : ''}"><div class="n">${lentos}</div><div class="l">⚡ Lentos / desactualizados</div></div>
     </div>`;
   if (online.length) html += `<div class="con-sec">En línea (${online.length})</div><div class="con-list">${online.map(card).join('')}</div>`;
   if (offline.length) html += `<div class="con-sec">Inactivos (${offline.length})</div><div class="con-list">${offline.map(card).join('')}</div>`;
