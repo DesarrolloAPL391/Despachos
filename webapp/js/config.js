@@ -5,7 +5,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v172';
+export const APP_VERSION = 'v173';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -352,7 +352,7 @@ export const TABLES = {
     ],
     fields: [
       { key: 'nombre', label: 'Nombre del puesto', type: 'text', required: true },
-      { key: 'rutas', label: 'Rutas que cubre (separadas por coma)', type: 'textarea', hint: 'Ej.: 133-133D, 132i, 132ii  — deben coincidir con la tabla Rutas' },
+      { key: 'rutas', label: 'Rutas que cubre', type: 'multisel', csv: true, optionsFrom: { table: 'rutas', col: 'nombre' }, hint: 'Marca las rutas de este puesto (usa el buscador). Se guardan separadas por coma.' },
       { key: 'activo', label: '¿Activo?', type: 'boolean', default: true },
     ],
   },

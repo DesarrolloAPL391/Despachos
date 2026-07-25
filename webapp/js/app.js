@@ -2946,20 +2946,41 @@ async function _openEditorInterno(row) {
           input.appendChild(op);
         }
       } else if (f.type === 'multisel') {
-        // Multi-selección de valores de texto (ej. grupos de ruta) → se guarda como arreglo
+        // Multi-selección de valores de texto (ej. grupos de ruta). Por defecto se guarda
+        // como arreglo; con f.csv=true se lee/guarda como texto separado por comas
+        // (ej. puestos.rutas: "193, 193ii"). Incluye buscador para listas largas.
         input = document.createElement('div');
         input.className = 'multisel';
+        if (f.csv) input.dataset.csv = '1';
         const opts = await loadTextOptions(f.optionsFrom);
-        const cur = new Set(Array.isArray(val) ? val.map(String) : (val != null && val !== '' ? [String(val)] : []));
-        for (const o of opts) {
+        const normMs = (s) => String(s).trim().toLowerCase();
+        const curList = Array.isArray(val) ? val.map(String)
+          : (val != null && String(val) !== '' ? String(val).split(',').map((s) => s.trim()).filter(Boolean) : []);
+        const curNorm = new Set(curList.map(normMs));
+        // Opciones = valores reales + cualquier valor guardado que no esté en la lista (no perderlo)
+        const optsAll = [...opts];
+        for (const c of curList) { if (!opts.some((o) => normMs(o) === normMs(c))) optsAll.push(c); }
+        const buscador = document.createElement('input');
+        buscador.type = 'search'; buscador.className = 'multisel-search';
+        buscador.placeholder = 'Buscar…'; buscador.autocomplete = 'off';
+        const chipsBox = document.createElement('div'); chipsBox.className = 'multisel-chips';
+        for (const o of optsAll) {
+          const on = curNorm.has(normMs(o));
           const chip = document.createElement('label');
-          chip.className = 'multisel-chip' + (cur.has(String(o)) ? ' on' : '');
+          chip.className = 'multisel-chip' + (on ? ' on' : '');
           const cb = document.createElement('input');
-          cb.type = 'checkbox'; cb.value = o; cb.checked = cur.has(String(o));
+          cb.type = 'checkbox'; cb.value = o; cb.checked = on;
           cb.addEventListener('change', () => chip.classList.toggle('on', cb.checked));
           chip.append(cb, document.createTextNode(' ' + o));
-          input.appendChild(chip);
+          chipsBox.appendChild(chip);
         }
+        buscador.addEventListener('input', () => {
+          const q = buscador.value.trim().toLowerCase();
+          chipsBox.querySelectorAll('.multisel-chip').forEach((ch) => {
+            ch.style.display = (!q || ch.textContent.toLowerCase().includes(q)) ? '' : 'none';
+          });
+        });
+        input.append(buscador, chipsBox);
       } else if (f.type === 'enum') {
         input = document.createElement('select');
         if (!f.required) input.innerHTML = '<option value="">— ninguno —</option>';
@@ -3063,8 +3084,9 @@ $('modal-save').addEventListener('click', async () => {
     if (wrap && wrap.classList.contains('hidden-field')) { payload[key] = null; continue; } // campo oculto -> vacío
     if (type === 'boolean') { payload[key] = el.checked; continue; }
     if (type === 'multisel') {
-      const arr = [...el.querySelectorAll('input:checked')].map((i) => i.value);
-      payload[key] = arr.length ? arr : null; continue;
+      const arr = [...el.querySelectorAll('input[type="checkbox"]:checked')].map((i) => i.value);
+      // f.csv → guarda como texto "a, b, c" (col de texto); si no, como arreglo
+      payload[key] = arr.length ? (el.dataset.csv === '1' ? arr.join(', ') : arr) : null; continue;
     }
     let v = el.value;
     if (typeof v === 'string') v = v.trim();
