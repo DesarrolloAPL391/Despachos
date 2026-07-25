@@ -3150,17 +3150,17 @@ $('modal-save').addEventListener('click', async () => {
     }
   }
 
-  // Estado: 'Abierto' al crear; al editar, si están todos los campos requeridos → 'Cerrado' (bloqueado)
+  // Estado: se CIERRA (y se bloquea) en cuanto están TODOS los campos requeridos
+  // —viajes incluido—, ya sea al CREAR o al editar. Si falta algo, queda 'Abierto'
+  // y editable. (Antes solo cerraba al editar, y confundía ver registros con viajes
+  // que seguían "Abierto".)
   let cerrado = false;
   if (cfg.stateField) {
-    if (!editing) {
-      payload[cfg.stateField] = 'Abierto';
-    } else {
-      const req = [...(cfg.closeRequired || [])];
-      if (cfg.closeRequiredDoble && payload.doble_turno) req.push(...cfg.closeRequiredDoble);
-      const completo = req.every((k) => payload[k] !== null && payload[k] !== undefined && payload[k] !== '');
-      if (completo) { payload[cfg.stateField] = 'Cerrado'; cerrado = true; }
-    }
+    const req = [...(cfg.closeRequired || [])];
+    if (cfg.closeRequiredDoble && payload.doble_turno) req.push(...cfg.closeRequiredDoble);
+    const completo = req.length > 0 && req.every((k) => payload[k] !== null && payload[k] !== undefined && payload[k] !== '');
+    payload[cfg.stateField] = completo ? 'Cerrado' : 'Abierto';
+    cerrado = completo;
   }
 
   // Confirmación antes de guardar una modificación importante
