@@ -457,7 +457,8 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
-  if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', openLaureles, 'nav-laur');
+  if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -472,7 +473,8 @@ function buildSidebar() {
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
   const amll = $('nav-malla'); if (amll) amll.classList.toggle('active', currentView === 'malla');
-  const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles');
+  const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
+  const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   buildBottomNav();
 }
 
@@ -4085,9 +4087,14 @@ async function exportMallaExcel() {
 // Puesto de control físico: reúne, de todas las rutas que pasan por ahí, cada bus
 // con su hora de INGRESO y SALIDA (real o programada), ordenado por hora de ingreso,
 // para que quien lee el QR sepa qué carro le va a llegar y a qué hora.
-let _laurUltimo = null, _laurTimer = null;
-async function openLaureles() {
-  if (!(isAdmin() || isAuditor() || esDespachadorLaureles())) return;
+let _laurUltimo = null, _laurTimer = null, _laurModo = 'control';
+// Misma vista, dos usos (como Rutas/Lineal con _rutasModo):
+//   'control'      → tabla escaneable (despachador de Laureles + auditor/admin)
+//   'cumplimiento' → dashboard de medidas (solo auditor/admin)
+async function openLaureles(modo) {
+  _laurModo = (modo === 'cumplimiento') ? 'cumplimiento' : 'control';
+  const esCump = (_laurModo === 'cumplimiento');
+  if (!(esCump ? (isAdmin() || isAuditor()) : (isAdmin() || isAuditor() || esDespachadorLaureles()))) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'laureles';
   cerrarRecorridoBus();
@@ -4101,8 +4108,10 @@ async function openLaureles() {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('laureles-view').hidden = false;
+  const h2 = document.querySelector('#laureles-view h2'); if (h2) h2.textContent = esCump ? '📊 Cumplimiento Laureles' : '🛂 Control Laureles';
+  $('laur-search').hidden = esCump; // la búsqueda filtra la tabla; en cumplimiento no hay tabla
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
-  $('nav-laur')?.classList.add('active');
+  $(esCump ? 'nav-laurcump' : 'nav-laur')?.classList.add('active');
   buildBottomNav();
   // Descargar Excel: solo auditor/admin (el despachador de Laureles ve y escanea, no descarga).
   const bx = $('laur-excel'); if (bx) bx.hidden = !(isAdmin() || isAuditor());
@@ -4174,7 +4183,7 @@ function _laurAgg(viajes) {
     qrOk: 0, qrNo: 0, qrPend: 0, conReal: 0, soloProg: 0,
     adel: 0, aTiempo: 0, atras: 0, puntN: 0, desvSum: 0,
     permSum: 0, permN: 0, permMin: null, permMax: null,
-    porRuta: new Map(), porHora: new Map(), alertas: [],
+    porRuta: new Map(), porHora: new Map(), permPorHora: new Map(), busesPerm: [], alertas: [],
   };
   (viajes || []).forEach((v) => {
     A.total++;
@@ -4196,11 +4205,16 @@ function _laurAgg(viajes) {
       else if (dv > LAUR_GRACIA) A.atras++;
       else { A.aTiempo++; r.aTiempo++; }
     }
-    const perm = _durMin(v.ing, v.sal);
+    // Permanencia SOLO con horas reales de GPS (no las programadas, que serían un
+    // offset constante y falsearían el promedio y el ranking).
+    const perm = (v.ing && !v.ing.e && v.sal && !v.sal.e) ? _durMin(v.ing, v.sal) : null;
     if (perm != null) {
       A.permSum += perm; A.permN++;
       A.permMin = A.permMin == null ? perm : Math.min(A.permMin, perm);
       A.permMax = A.permMax == null ? perm : Math.max(A.permMax, perm);
+      const ph = _hm(v.ing); // permanencia promedio agrupada por hora de ingreso
+      if (ph != null) { const hh = Math.floor(ph / 60); const e = A.permPorHora.get(hh) || { sum: 0, n: 0 }; e.sum += perm; e.n++; A.permPorHora.set(hh, e); }
+      A.busesPerm.push({ movil: String(v.movil || '').trim(), ruta, ing: (v.ing && v.ing.h) || '', sal: (v.sal && v.sal.h) || '', perm });
     }
     const hm = _hm(v.ing) != null ? _hm(v.ing) : _hm(v.hora);
     if (hm != null) { const h = Math.floor(hm / 60); A.porHora.set(h, (A.porHora.get(h) || 0) + 1); }
@@ -4260,19 +4274,52 @@ function _laurDashHtml(d, a) {
     + `<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Móvil</th><th>Ruta</th><th>Esperada</th><th>Leída</th><th>Reportó</th></tr></thead><tbody>`
     + a.alertas.map((x) => `<tr><td><b>${esc(x.movil)}</b></td><td>${esc(x.ruta)}</td><td>${esc(x.esperada)}</td><td class="laur-al-leida">${esc(x.leida || '—')}</td><td>${esc(x.por || '')}${x.hora ? ' · ' + esc(x.hora) : ''}</td></tr>`).join('')
     + '</tbody></table></div></div>' : '';
-  return `<div class="cump-top">${hero}${desglose}</div><div class="cump-grid">${cardRuta}${cardPunt}</div>${cardHora}${cardPerm}${cardAlert}`
-    + `<div class="laur-dash-h">🚌 Detalle por bus</div>`;
+  return `<div class="cump-top">${hero}${desglose}</div><div class="cump-grid">${cardRuta}${cardPunt}</div>${cardHora}${cardPerm}${cardAlert}`;
+}
+// Color de una permanencia según qué tan cerca del máximo esté (verde→ámbar→rojo).
+function _colDur(v, max) { const r = max ? v / max : 0; return r >= 0.8 ? '#dc2626' : r >= 0.5 ? '#f59e0b' : '#16a34a'; }
+// Medidas extra del modo CUMPLIMIENTO: permanencia promedio por hora + ranking de
+// los buses que más se demoran en el control (tramo Iglesia → Salida).
+function _laurExtraHtml(a) {
+  // Permanencia PROMEDIO por hora de ingreso
+  const horas = [...a.permPorHora.keys()].sort((x, y) => x - y);
+  const avgs = horas.map((h) => { const e = a.permPorHora.get(h); return { h, avg: Math.round(e.sum / e.n), n: e.n }; });
+  const maxAvg = Math.max(1, ...avgs.map((x) => x.avg));
+  const pico = avgs.length ? avgs.reduce((m, x) => (x.avg > m.avg ? x : m), avgs[0]) : null;
+  const bars = avgs.map((x) => `<div class="cbar-col"><div class="cbar-n">${x.avg}m</div>`
+    + `<div class="cbar"><div class="cbar-seg ${pico && x.h === pico.h ? 'perd peak' : 'inc'}" style="height:${(x.avg / maxAvg * 100).toFixed(1)}%" title="${x.avg} min prom · ${x.n} buses"></div></div>`
+    + `<div class="cbar-x">${String(x.h).padStart(2, '0')}h</div></div>`).join('');
+  const cardPH = avgs.length ? `<div class="cump-card"><h4>Permanencia promedio por hora <small>${pico ? `· más lento ${String(pico.h).padStart(2, '0')}h (${pico.avg}m)` : ''}</small></h4><div class="cbar-wrap">${bars}</div></div>` : '';
+  // Ranking: buses que MÁS se demoran (top 15)
+  const top = a.busesPerm.slice().sort((x, y) => y.perm - x.perm).slice(0, 15);
+  const maxP = top.length ? top[0].perm : 1;
+  const filas = top.map((b, i) => `<tr><td>${i + 1}</td><td><b>${esc(b.movil || '—')}</b></td><td>${esc(b.ruta)}</td>`
+    + `<td>${esc(String(b.ing).slice(0, 5) || '—')}</td><td>${esc(String(b.sal).slice(0, 5) || '—')}</td>`
+    + `<td class="laur-perm-min" style="color:${_colDur(b.perm, maxP)}">${b.perm}m</td></tr>`).join('');
+  const cardTop = top.length ? `<div class="cump-card"><h4>🐢 Buses que más se demoran en el control <small>· top ${top.length}</small></h4>`
+    + `<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>#</th><th>Móvil</th><th>Ruta</th><th>Ingreso</th><th>Salida</th><th>Permanencia</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : '';
+  if (!cardPH && !cardTop) return '<div class="cump-card ok-note">Aún no hay buses con ingreso y salida registrados para medir permanencia.</div>';
+  return cardPH + cardTop;
 }
 function renderLaureles() {
   const d = _laurUltimo; if (!d) return;
-  const term = ($('laur-search')?.value || '').trim().toLowerCase();
-  let viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.ing) - _laurMin(b.ing));
-  if (term) viajes = viajes.filter((v) => String(v.movil || '').toLowerCase().includes(term) || String(v.ruta || '').toLowerCase().includes(term));
   const sub = $('laur-sub');
   const total = (d.viajes || []).length;
   const escan = (d.viajes || []).filter((v) => v.chk).length;
   const soloLectura = (d.fecha !== hoyServidor());
   if (sub) sub.textContent = `${total} buses · ${escan} escaneados · ${d.punto_ingreso || 'ingreso'} → ${d.punto_salida || 'salida'} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}${soloLectura ? ' · solo lectura' : ''}`;
+
+  // Modo CUMPLIMIENTO (auditor/admin): dashboard de medidas, sin tabla escaneable.
+  if (_laurModo === 'cumplimiento') {
+    const agg = _laurAgg(d.viajes || []);
+    $('laur-body').innerHTML = total ? (_laurDashHtml(d, agg) + _laurExtraHtml(agg)) : '<div class="cump-empty">Sin buses ese día.</div>';
+    return;
+  }
+
+  // Modo CONTROL (despachador de Laureles): tabla para escanear el QR.
+  const term = ($('laur-search')?.value || '').trim().toLowerCase();
+  let viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.ing) - _laurMin(b.ing));
+  if (term) viajes = viajes.filter((v) => String(v.movil || '').toLowerCase().includes(term) || String(v.ruta || '').toLowerCase().includes(term));
   if (!viajes.length) { $('laur-body').innerHTML = `<div class="cump-empty">Sin buses ese día${term ? ' (con ese filtro)' : ''}.</div>`; return; }
   const leyenda = `<div class="lv-leyenda mc-leyenda">`
     + `<span class="lv-lg lv-lg-ok">A tiempo</span><span class="lv-lg lv-lg-adel">Adelantado</span>`
@@ -4293,8 +4340,7 @@ function renderLaureles() {
       + `<td class="laur-dur">${_durTxt(_durMin(v.ing, v.sal))}</td>`
       + _laurEstadoCell(v.chk) + `</tr>`;
   }).join('');
-  const dash = _laurDashHtml(d, _laurAgg(d.viajes || [])); // KPIs del día completo (no del filtro)
-  $('laur-body').innerHTML = dash + leyenda
+  $('laur-body').innerHTML = leyenda
     + `<div class="mc-wrap"><table class="mc-tabla laur-tabla"><thead><tr>`
     + `<th>Ingreso · ${esc(d.punto_ingreso || 'IGLESIA SAN JOSE')}</th><th>Vehículo</th><th>Ruta</th>`
     + `<th>Salida · ${esc(d.punto_salida || 'Salida San José')}</th><th>Despacho</th>`
@@ -4370,11 +4416,22 @@ async function exportLaurExcel() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resAoa), 'Resumen');
     const ws = XLSX.utils.aoa_to_sheet([head, ...filas]);
     XLSX.utils.book_append_sheet(wb, ws, 'Control Laureles');
+    // Medidas de cumplimiento: permanencia promedio por hora y ranking de demora.
+    const phAoa = [['Hora', 'Permanencia prom. (min)', 'Buses']];
+    [...agg.permPorHora.keys()].sort((x, y) => x - y).forEach((h) => {
+      const e = agg.permPorHora.get(h); phAoa.push([String(h).padStart(2, '0') + 'h', Math.round(e.sum / e.n), e.n]);
+    });
+    if (phAoa.length > 1) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(phAoa), 'Permanencia x hora');
+    const rkAoa = [['#', 'Movil', 'Ruta', 'Ingreso', 'Salida', 'Permanencia (min)']];
+    agg.busesPerm.slice().sort((x, y) => y.perm - x.perm).forEach((b, i) => {
+      rkAoa.push([i + 1, b.movil, b.ruta, String(b.ing).slice(0, 5), String(b.sal).slice(0, 5), b.perm]);
+    });
+    if (rkAoa.length > 1) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rkAoa), 'Ranking demora');
     const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
     const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `control_laureles_${d.fecha}.xlsx`;
+    a.download = (_laurModo === 'cumplimiento' ? 'cumplimiento_laureles_' : 'control_laureles_') + d.fecha + '.xlsx';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   } catch (e) {
