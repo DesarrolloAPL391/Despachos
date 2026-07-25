@@ -4337,34 +4337,34 @@ async function exportLaurExcel() {
     const XLSX = await import('https://esm.sh/xlsx@0.18.5');
     const wb = XLSX.utils.book_new();
     // Hoja "Resumen": los KPIs del tablero, para que las medidas también se descarguen.
-    const a = _laurAgg(d.viajes || []);
-    const pQR = _pctCump(a.qrOk, a.activos), pPunt = _pctCump(a.aTiempo, a.puntN), pPaso = _pctCump(a.conReal, a.activos);
+    const agg = _laurAgg(d.viajes || []);
+    const pQR = _pctCump(agg.qrOk, agg.activos), pPunt = _pctCump(agg.aTiempo, agg.puntN), pPaso = _pctCump(agg.conReal, agg.activos);
     const resAoa = [
       ['Control Laureles — Resumen', d.fecha],
       [],
-      ['Buses del día', a.total],
-      ['Activos (no cancelados)', a.activos],
-      ['Cancelados', a.cancelados],
-      ['En curso', a.enCurso],
+      ['Buses del día', agg.total],
+      ['Activos (no cancelados)', agg.activos],
+      ['Cancelados', agg.cancelados],
+      ['En curso', agg.enCurso],
       [],
-      ['Control QR (% escaneado)', pQR + '%', a.qrOk + '/' + a.activos],
-      ['  Escaneados OK', a.qrOk],
-      ['  No coincide', a.qrNo],
-      ['  Pendientes', a.qrPend],
+      ['Control QR (% escaneado)', pQR + '%', agg.qrOk + '/' + agg.activos],
+      ['  Escaneados OK', agg.qrOk],
+      ['  No coincide', agg.qrNo],
+      ['  Pendientes', agg.qrPend],
       [],
-      ['Paso registrado GPS (%)', pPaso + '%', a.conReal + '/' + a.activos],
+      ['Paso registrado GPS (%)', pPaso + '%', agg.conReal + '/' + agg.activos],
       [],
-      ['Puntualidad ingreso (%)', a.puntN ? pPunt + '%' : '—', a.aTiempo + '/' + a.puntN],
-      ['  Adelantado', a.adel],
-      ['  A tiempo (±' + LAUR_GRACIA + 'm)', a.aTiempo],
-      ['  Atrasado', a.atras],
-      ['  Desvío promedio (min)', a.desvProm == null ? '' : a.desvProm],
+      ['Puntualidad ingreso (%)', agg.puntN ? pPunt + '%' : '—', agg.aTiempo + '/' + agg.puntN],
+      ['  Adelantado', agg.adel],
+      ['  A tiempo (±' + LAUR_GRACIA + 'm)', agg.aTiempo],
+      ['  Atrasado', agg.atras],
+      ['  Desvío promedio (min)', agg.desvProm == null ? '' : agg.desvProm],
       [],
-      ['Permanencia Iglesia-Salida (min)', a.permProm == null ? '' : a.permProm, a.permN ? ('rango ' + a.permMin + '-' + a.permMax) : ''],
+      ['Permanencia Iglesia-Salida (min)', agg.permProm == null ? '' : agg.permProm, agg.permN ? ('rango ' + agg.permMin + '-' + agg.permMax) : ''],
       [],
       ['Por ruta'],
       ['Ruta', 'Activos', 'Escaneados', '% QR', 'A tiempo', '% Punt'],
-      ...[...a.porRuta.entries()].sort((x, y) => y[1].activos - x[1].activos).map(([ruta, r]) =>
+      ...[...agg.porRuta.entries()].sort((x, y) => y[1].activos - x[1].activos).map(([ruta, r]) =>
         [ruta, r.activos, r.qrOk, _pctCump(r.qrOk, r.activos) + '%', r.aTiempo, r.puntN ? _pctCump(r.aTiempo, r.puntN) + '%' : '-']),
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resAoa), 'Resumen');
