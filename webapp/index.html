@@ -10,6 +10,9 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Adelanta la conexión al servidor de mapas base y de tráfico → primeros tiles más rápidos -->
+  <link rel="preconnect" href="https://api.tomtom.com" crossorigin />
+  <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
   <!-- iOS: modo app a pantalla completa al instalar -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -181,6 +184,54 @@
             </div>
           </div>
           <div id="map" class="map"></div>
+          <!-- Botones flotantes del mapa -->
+          <button id="traffic-fab" class="traffic-fab" type="button" title="Mostrar/ocultar tráfico" aria-pressed="false">🚦</button>
+          <!-- Seguimiento + ETA (admin/auditor) -->
+          <button id="eta-fab" class="map-fab-btn eta-fab" type="button" title="Seguimiento y tiempo de llegada (Laureles)" hidden>🛰️</button>
+          <!-- Editor de geocercas (admin) -->
+          <button id="geo-fab" class="map-fab-btn geo-fab" type="button" title="Geocercas (origen/destino/control)" hidden>📍</button>
+
+          <!-- Panel: seguimiento y ETA de los buses despachados de Laureles -->
+          <div id="eta-panel" class="side-panel eta-panel" hidden>
+            <div class="side-panel-head">
+              <strong>🛰️ Seguimiento Laureles</strong>
+              <span id="eta-count" class="sp-count"></span>
+              <span class="spacer"></span>
+              <button id="eta-refresh" class="icon-btn" title="Actualizar">↻</button>
+              <button id="eta-close" class="icon-btn" aria-label="Cerrar">✕</button>
+            </div>
+            <div id="eta-hint" class="sp-hint" hidden></div>
+            <div id="eta-list" class="sp-list"></div>
+          </div>
+
+          <!-- Panel: editor de geocercas -->
+          <div id="geo-panel" class="side-panel geo-panel" hidden>
+            <div class="side-panel-head">
+              <strong>📍 Geocercas</strong>
+              <span class="spacer"></span>
+              <button id="geo-close" class="icon-btn" aria-label="Cerrar">✕</button>
+            </div>
+            <div class="geo-add-box">
+              <button id="geo-add-btn" class="btn">➕ Nueva geocerca (toca el mapa)</button>
+              <div id="geo-form" class="geo-form" hidden>
+                <input id="geo-nombre" placeholder="Nombre (ej. Aeropuerto)" />
+                <select id="geo-tipo">
+                  <option value="destino">🔴 Destino</option>
+                  <option value="origen">🟢 Origen</option>
+                  <option value="control">🔵 Control</option>
+                </select>
+                <label class="geo-radio-lbl">Radio (m)
+                  <input id="geo-radio" type="number" value="200" min="20" max="5000" />
+                </label>
+                <div id="geo-coords" class="geo-form-coords"></div>
+                <div class="geo-form-actions">
+                  <button id="geo-save" class="btn primary">Guardar</button>
+                  <button id="geo-cancel" class="btn">Cancelar</button>
+                </div>
+              </div>
+            </div>
+            <div id="geo-list" class="sp-list"></div>
+          </div>
           <!-- Panel inferior deslizable con la info del móvil -->
           <div id="veh-sheet" class="veh-sheet" hidden>
             <div id="veh-sheet-head" class="veh-sheet-head">

@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, configTablaPuesto } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -2509,13 +2509,13 @@ const DOC_TIPOS = [
   { key: 'tecnomecanica', label: 'Tecnomecánica', col: 'vence_tecnomecanica', num: 'num_tecnomecanica' },
   { key: 'tarjeta_operacion', label: 'Tarjeta de operación', col: 'vence_tarjeta_operacion', num: 'num_tarjeta_operacion' },
 ];
-// Franja/semáforo según los días que faltan: vencido / ≤10 / ≤15 / ≤30 (mes) / vigente
+// Franja/semáforo según los días que faltan: vencido / ≤5 / ≤15 / ≤30 (mes) / vigente
 function docBand(fecha) {
   if (!fecha) return { cls: 'doc-sin', txt: '—', nivel: 9, dias: null };
   const f = String(fecha).slice(0, 10);
   const dias = Math.round((new Date(f + 'T00:00:00') - new Date(hoyServidor() + 'T00:00:00')) / 86400000);
   if (dias < 0) return { cls: 'doc-venc', txt: fechaLegible(f), nivel: 0, dias };
-  if (dias <= 10) return { cls: 'doc-p10', txt: fechaLegible(f), nivel: 1, dias };
+  if (dias <= 5) return { cls: 'doc-p5', txt: fechaLegible(f), nivel: 1, dias };
   if (dias <= 15) return { cls: 'doc-p15', txt: fechaLegible(f), nivel: 2, dias };
   if (dias <= 30) return { cls: 'doc-p30', txt: fechaLegible(f), nivel: 3, dias };
   return { cls: 'doc-ok', txt: fechaLegible(f), nivel: 4, dias };
@@ -2778,10 +2778,18 @@ async function avisarDocsMovil(numero, boxId = 's-docwarn') {
   const items = [];
   for (const t of DOC_TIPOS) { const b = docBand(v[t.col]); if (nivelEsAlerta(b.nivel)) items.push({ label: t.label, b }); }
   if (!items.length) return;
-  const peor = Math.min(...items.map((i) => i.b.nivel));
-  box.className = 'sonar-info ' + (peor === 0 ? 'docwarn-venc' : 'docwarn-prox');
-  box.innerHTML = (peor === 0 ? '⛔ <b>Documentos vencidos</b> de este móvil: ' : '⚠️ <b>Documentos por vencer</b> de este móvil: ')
-    + items.map((it) => `${esc(it.label)} (${it.b.dias < 0 ? 'vencido' : 'en ' + it.b.dias + ' días'})`).join(' · ');
+  items.sort((a, b) => a.b.nivel - b.b.nivel); // el más urgente primero
+  const peor = items[0].b.nivel;
+  // Escalado 30/15/5: vencido y ≤5 días en rojo (crítico), 15/30 en ámbar. Se muestra
+  // cada vez que se abre el modal / se elige el móvil (recordatorio diario hasta que venza).
+  const cls = peor === 0 ? 'docwarn-venc' : (peor === 1 ? 'docwarn-crit' : 'docwarn-prox');
+  const emo = (n) => (n === 0 ? '⛔' : n === 1 ? '🔴' : n === 2 ? '🟠' : '🟡');
+  const cab = peor === 0 ? '⛔ <b>¡DOCUMENTO VENCIDO!</b>' : (peor === 1 ? '🔴 <b>Documento por vencer (crítico)</b>' : '⚠️ <b>Documento por vencer</b>');
+  box.className = 'sonar-info ' + cls;
+  box.innerHTML = cab + ' · móvil ' + esc(String(numero).trim()) + '<br>'
+    + items.map((it) => `${emo(it.b.nivel)} ${esc(it.label)}: `
+        + (it.b.dias < 0 ? `<b>VENCIDO</b> hace ${Math.abs(it.b.dias)} día(s)` : `vence en <b>${it.b.dias} día(s)</b>`)
+        + ` (${esc(it.b.txt)})`).join('<br>');
   box.hidden = false;
 }
 
@@ -6963,7 +6971,260 @@ function ensureFlotaMap() {
   }).addTo(flotaMap);
   flotaLayer = L.layerGroup().addTo(flotaMap);
   flotaMap.on('click', closeVehSheet); // tocar el mapa cierra el panel
+  flotaMap.on('click', onMapClickGeo); // en modo "agregar geocerca", el clic la coloca
+  loadGeocercas(); // dibuja origen/destino/controles (piloto Laureles)
 }
+// Capa de TRÁFICO en vivo (TomTom) SOBRE el mapa base OSM. Solo el tráfico viene de TomTom
+// (el mapa base sigue en OSM), así se consume poco la clave de evaluación y carga completo.
+let trafficLayer = null, traficoOn = false;
+function toggleTrafico() {
+  if (!flotaMap) return;
+  if (!TOMTOM_KEY) { toast('Falta la clave de tráfico (config.js → TOMTOM_KEY)', 'err'); return; }
+  if (!trafficLayer) {
+    // "relative0": vías coloreadas según qué tan lento va el tráfico vs. lo normal.
+    // Tiles estándar de 256px (la rejilla que entiende Leaflet por defecto).
+    trafficLayer = L.tileLayer(
+      'https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=' + TOMTOM_KEY,
+      {
+        maxZoom: 19, opacity: 0.9, attribution: '© TomTom',
+        updateWhenIdle: true,      // pide tiles al SOLTAR el mapa, no durante el arrastre → menos peticiones
+        updateWhenZooming: false,  // no recarga a media animación de zoom
+        keepBuffer: 3,             // conserva tiles alrededor: al volver a esa zona ya están (sin recargar)
+        crossOrigin: true,
+      });
+    // Aviso si TomTom rechaza los tiles (clave, cuota, red): así no queda "en silencio".
+    let _avisoTraf = false;
+    trafficLayer.on('tileerror', () => {
+      if (_avisoTraf) return; _avisoTraf = true;
+      toast('No se pudo cargar el tráfico (TomTom): revisa la clave o la cuota', 'err');
+    });
+    trafficLayer.on('load', () => { console.log('[traffic] tiles TomTom cargados'); });
+  }
+  traficoOn = !traficoOn;
+  const fab = $('traffic-fab');
+  if (traficoOn) {
+    trafficLayer.addTo(flotaMap);
+    setTimeout(() => flotaMap.invalidateSize(), 60); // recalcula el tamaño → no deja franjas sin tiles
+    fab && fab.classList.add('on'); fab && fab.setAttribute('aria-pressed', 'true');
+    toast('Tráfico activado', 'ok');
+  } else {
+    if (flotaMap.hasLayer(trafficLayer)) flotaMap.removeLayer(trafficLayer);
+    fab && fab.classList.remove('on'); fab && fab.setAttribute('aria-pressed', 'false');
+    toast('Tráfico oculto', 'ok');
+  }
+}
+$('traffic-fab')?.addEventListener('click', (e) => { e.preventDefault(); toggleTrafico(); });
+
+// ===== GEOCERCAS + ETA (piloto Laureles) =====
+// Usa SOLO el GPS que ya trae SONAR (tabla 'ubicaciones', refresco cada minuto).
+// No consume ninguna API de mapas: distancia y tiempo se calculan con la velocidad real del bus.
+let geocercasLayer = null, geoList = [], geoAddMode = false, geoPickLatLng = null, etaTimer = null, etaLoading = false;
+const GEO_GRUPO = 'Laureles';
+
+function _geoColor(t) { return t === 'origen' ? '#16a34a' : t === 'destino' ? '#dc2626' : '#2563eb'; }
+function _geoTipoLbl(t) { return t === 'origen' ? 'Origen' : t === 'destino' ? 'Destino' : 'Control'; }
+
+// Muestra/oculta los botones flotantes según el rol (ver: admin/auditor; editar geocercas: solo admin)
+function syncMapFabs() {
+  const verEta = efIsAdmin() || efIsAuditor();
+  const editarGeo = efIsAdmin();
+  const ef = $('eta-fab'), gf = $('geo-fab');
+  if (ef) ef.hidden = !verEta;
+  if (gf) gf.hidden = !editarGeo;
+  if (!verEta && $('eta-panel')) { $('eta-panel').hidden = true; if (etaTimer) { clearInterval(etaTimer); etaTimer = null; } }
+  if (!editarGeo && $('geo-panel')) { $('geo-panel').hidden = true; cancelGeoAdd(); }
+}
+
+async function loadGeocercas() {
+  if (!flotaMap) return;
+  if (!geocercasLayer) geocercasLayer = L.layerGroup().addTo(flotaMap);
+  const { data, error } = await sb.from('geocercas').select('*').order('id');
+  if (error) return; // silencioso: no romper el mapa por esto
+  geoList = data || [];
+  drawGeocercas();
+  if ($('geo-panel') && !$('geo-panel').hidden) renderGeoList();
+}
+
+function drawGeocercas() {
+  if (!geocercasLayer) return;
+  geocercasLayer.clearLayers();
+  const editable = efIsAdmin();
+  for (const g of geoList) {
+    if (!g.activo) continue;
+    const col = _geoColor(g.tipo);
+    L.circle([g.lat, g.lon], { radius: g.radio_m, color: col, weight: 2, fillColor: col, fillOpacity: 0.12, interactive: false })
+      .addTo(geocercasLayer);
+    const mk = L.marker([g.lat, g.lon], {
+      draggable: editable, title: g.nombre,
+      icon: L.divIcon({ className: 'geo-pin', iconSize: [0, 0], html: `<span style="border-color:${col};color:${col}">${esc(g.nombre)}</span>` }),
+    }).addTo(geocercasLayer);
+    if (editable) {
+      mk.on('dragend', async (e) => {
+        const ll = e.target.getLatLng();
+        const { error } = await sb.from('geocercas').update({ lat: ll.lat, lon: ll.lng }).eq('id', g.id);
+        if (error) { toast('No se pudo mover: ' + error.message, 'err'); loadGeocercas(); return; }
+        g.lat = ll.lat; g.lon = ll.lng; drawGeocercas(); refreshEtaPanel(); toast('Geocerca movida', 'ok');
+      });
+    }
+  }
+}
+
+// ---- Editor de geocercas (admin) ----
+function toggleGeoPanel() {
+  const p = $('geo-panel'); if (!p) return;
+  const show = p.hidden; p.hidden = !show;
+  $('geo-fab')?.classList.toggle('on', show);
+  if (show) {
+    if ($('eta-panel') && !$('eta-panel').hidden) toggleEtaPanel(); // no solapar
+    renderGeoList();
+  } else { cancelGeoAdd(); }
+}
+function startGeoAdd() {
+  geoAddMode = true; geoPickLatLng = null;
+  $('geo-form').hidden = true;
+  const m = $('map'); if (m) m.style.cursor = 'crosshair';
+  toast('Toca en el mapa el punto de la geocerca', 'ok');
+}
+function cancelGeoAdd() {
+  geoAddMode = false; geoPickLatLng = null;
+  const m = $('map'); if (m) m.style.cursor = '';
+  if ($('geo-form')) $('geo-form').hidden = true;
+}
+function onMapClickGeo(e) {
+  if (!geoAddMode) return;
+  geoPickLatLng = e.latlng;
+  $('geo-coords').textContent = `Lat ${e.latlng.lat.toFixed(6)}, Lon ${e.latlng.lng.toFixed(6)}`;
+  $('geo-form').hidden = false;
+  $('geo-nombre').focus();
+}
+async function saveGeoNew() {
+  if (!geoPickLatLng) { toast('Toca primero el punto en el mapa', 'err'); return; }
+  const nombre = ($('geo-nombre').value || '').trim();
+  if (!nombre) { toast('Ponle un nombre a la geocerca', 'err'); return; }
+  const tipo = $('geo-tipo').value;
+  const radio = Math.max(20, Math.min(5000, parseInt($('geo-radio').value, 10) || 200));
+  const { error } = await sb.from('geocercas').insert({
+    nombre, tipo, grupo: GEO_GRUPO, lat: geoPickLatLng.lat, lon: geoPickLatLng.lng, radio_m: radio,
+  });
+  if (error) { toast('No se pudo guardar: ' + error.message, 'err'); return; }
+  toast('Geocerca creada', 'ok');
+  $('geo-nombre').value = '';
+  cancelGeoAdd();
+  await loadGeocercas();
+  refreshEtaPanel();
+}
+async function deleteGeo(id) {
+  if (!confirm('¿Eliminar esta geocerca?')) return;
+  const { error } = await sb.from('geocercas').delete().eq('id', id);
+  if (error) { toast('No se pudo eliminar: ' + error.message, 'err'); return; }
+  await loadGeocercas(); refreshEtaPanel(); toast('Geocerca eliminada', 'ok');
+}
+function renderGeoList() {
+  const box = $('geo-list'); if (!box) return;
+  if (!geoList.length) { box.innerHTML = '<div class="sp-empty">Aún no hay geocercas. Crea el <b>destino</b> con ➕ para calcular el ETA.</div>'; return; }
+  box.innerHTML = geoList.map((g) => `<div class="geo-item">
+      <span class="geo-dot" style="background:${_geoColor(g.tipo)}"></span>
+      <div class="geo-item-txt"><strong>${esc(g.nombre)}</strong><small>${_geoTipoLbl(g.tipo)} · ${g.radio_m} m</small></div>
+      <button class="icon-btn" data-geo-center="${g.id}" title="Centrar en el mapa">🎯</button>
+      <button class="icon-btn" data-geo-del="${g.id}" title="Eliminar">🗑️</button>
+    </div>`).join('');
+}
+
+// ---- Panel de seguimiento + ETA ----
+function toggleEtaPanel() {
+  const p = $('eta-panel'); if (!p) return;
+  const show = p.hidden; p.hidden = !show;
+  $('eta-fab')?.classList.toggle('on', show);
+  if (show) {
+    if ($('geo-panel') && !$('geo-panel').hidden) toggleGeoPanel(); // no solapar
+    refreshEtaPanel();
+    if (etaTimer) clearInterval(etaTimer);
+    etaTimer = setInterval(refreshEtaPanel, 60000); // se refresca al ritmo del GPS
+  } else if (etaTimer) { clearInterval(etaTimer); etaTimer = null; }
+}
+async function refreshEtaPanel() {
+  const panel = $('eta-panel');
+  if (!panel || panel.hidden || etaLoading) return; // no encimar consultas
+  const list = $('eta-list');
+  if (!list.children.length || list.querySelector('.sp-empty')) {
+    list.innerHTML = '<div class="sp-empty">⏳ Consultando SONAR…</div>';
+  }
+  etaLoading = true;
+  try {
+    // Bajo demanda: pide a SONAR el próximo punto + hora de llegada (con caché ~2 min)
+    const { data, error } = await sb.rpc('refrescar_eta_laureles', {});
+    if (error) { list.innerHTML = `<div class="sp-empty">Error: ${esc(error.message)}</div>`; return; }
+    renderEta(data || []);
+  } finally { etaLoading = false; }
+}
+function _etaChip(est) {
+  return est === 'en_ruta' ? '🟢 En ruta' : est === 'detenido' ? '🔴 Detenido'
+    : est === 'sin_eta' ? '⚪ Sin ruta activa' : est;
+}
+// "2026-07-25 19:51:00" (UTC) → hora local de Colombia "14:51"
+function _horaLocal(utcStr) {
+  if (!utcStr) return '';
+  const d = new Date(String(utcStr).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' });
+}
+function renderEta(rows) {
+  $('eta-count').textContent = rows.length ? `${rows.length} bus(es)` : '';
+  const hint = $('eta-hint');
+  if (!rows.length) {
+    $('eta-list').innerHTML = '<div class="sp-empty">No hay buses despachados con posición en este momento.</div>';
+    hint.hidden = true; return;
+  }
+  const hayEta = rows.some((r) => r.eta_sonar_min != null);
+  if (!hayEta) {
+    hint.hidden = false;
+    hint.innerHTML = 'ℹ️ SONAR no está reportando el próximo punto de estos buses en este momento.';
+  } else hint.hidden = true;
+  $('eta-list').innerHTML = rows.map((r) => {
+    let eta;
+    if (r.eta_sonar_min == null) eta = '<span class="eta-min muted">— sin ETA</span>';
+    else if (r.eta_sonar_min <= 0) eta = '<span class="eta-min ok">🟢 llegando</span>';
+    else eta = `<span class="eta-min">⏱ ${r.eta_sonar_min} min</span>`;
+    const hLlega = _horaLocal(r.arrival_utc);
+    const prox = r.next_point
+      ? `→ ${esc(r.next_point)}${hLlega ? ' · llega ' + hLlega : ''}`
+      : (r.estado === 'sin_eta' ? 'sin ruta activa en SONAR' : '');
+    const rutaB = r.next_it || r.ruta || '';
+    const vel = r.speed != null ? r.speed + ' km/h' : '';
+    return `<div class="eta-item" data-eta-lat="${r.lat}" data-eta-lon="${r.lon}">
+      <div class="eta-item-top"><strong>${esc(String(r.movil))}</strong> <small>${esc(r.placa || '')}</small>
+        ${rutaB ? `<span class="eta-ruta">${esc(String(rutaB))}</span>` : ''}
+        <span class="spacer"></span><span class="eta-chip est-${r.estado}">${_etaChip(r.estado)}</span></div>
+      ${prox ? `<div class="eta-next">${prox}</div>` : ''}
+      <div class="eta-item-bot">${eta} <small>${esc(vel)}</small></div>
+    </div>`;
+  }).join('');
+}
+
+// ---- Cableado de eventos (una sola vez) ----
+$('eta-fab')?.addEventListener('click', (e) => { e.preventDefault(); toggleEtaPanel(); });
+$('eta-close')?.addEventListener('click', () => toggleEtaPanel());
+$('eta-refresh')?.addEventListener('click', () => refreshEtaPanel());
+$('eta-list')?.addEventListener('click', (e) => {
+  const it = e.target.closest('[data-eta-lat]'); if (!it) return;
+  const lat = parseFloat(it.dataset.etaLat), lon = parseFloat(it.dataset.etaLon);
+  if (flotaMap && !isNaN(lat)) flotaMap.flyTo([lat, lon], Math.max(flotaMap.getZoom(), 16), { duration: 0.6 });
+});
+$('geo-fab')?.addEventListener('click', (e) => { e.preventDefault(); toggleGeoPanel(); });
+$('geo-close')?.addEventListener('click', () => toggleGeoPanel());
+$('geo-add-btn')?.addEventListener('click', () => startGeoAdd());
+$('geo-save')?.addEventListener('click', () => saveGeoNew());
+$('geo-cancel')?.addEventListener('click', () => cancelGeoAdd());
+$('geo-list')?.addEventListener('click', (e) => {
+  const del = e.target.closest('[data-geo-del]');
+  if (del) { deleteGeo(Number(del.dataset.geoDel)); return; }
+  const cen = e.target.closest('[data-geo-center]');
+  if (cen) {
+    const g = geoList.find((x) => x.id === Number(cen.dataset.geoCenter));
+    if (g && flotaMap) flotaMap.flyTo([g.lat, g.lon], 15, { duration: 0.6 });
+  }
+});
+
 async function showMapView() {
   if (typeof L === 'undefined') { toast('No se pudo cargar el mapa (revisa tu conexión a internet)', 'err'); return; }
   if (mapaFlotante) cerrarMapaFlotante(); // si estaba flotante, devolver el mapa a su lugar
@@ -6985,6 +7246,7 @@ async function showMapView() {
   $('nav-mapa')?.classList.add('active');
   buildBottomNav(); // quita el resaltado de la barra inferior (el mapa no está allí)
   ensureFlotaMap();
+  syncMapFabs(); // muestra 🛰️/📍 según el rol (admin/auditor)
   setTimeout(() => flotaMap.invalidateSize(), 120); // el contenedor estaba oculto
   await refreshMapa(true);
   if (mapTimer) clearInterval(mapTimer);
@@ -7003,6 +7265,7 @@ async function abrirMapaFlotante() {
   $('map-fab').classList.add('activo');
   mapaFlotante = true;
   ensureFlotaMap();
+  syncMapFabs(); // muestra 🛰️/📍 según el rol también en modo flotante
   setTimeout(() => flotaMap.invalidateSize(), 150);
   await refreshMapa(true);
   if (floatTimer) clearInterval(floatTimer);

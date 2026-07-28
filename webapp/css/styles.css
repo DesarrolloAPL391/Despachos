@@ -1205,7 +1205,7 @@ tbody tr:hover { background: #faf8ff; }
 .doc-chip { display: inline-block; padding: 2px 9px; border-radius: 14px; font-size: 12.5px; font-weight: 700;
   white-space: nowrap; }
 .doc-venc { background: #fdeaea; color: #c0392b; box-shadow: inset 0 0 0 1px #f3b4ad; }
-.doc-p10  { background: #ffe1d6; color: #b5360a; box-shadow: inset 0 0 0 1px #ffc3ac; }
+.doc-p5   { background: #ffe1d6; color: #b5360a; box-shadow: inset 0 0 0 1px #ffc3ac; }
 .doc-p15  { background: #ffeccc; color: #a25a00; box-shadow: inset 0 0 0 1px #f3d18c; }
 .doc-p30  { background: #fff6cc; color: #8a6d00; box-shadow: inset 0 0 0 1px #ecdc93; }
 .doc-ok   { background: #e6f7ec; color: #137a2b; }
@@ -1293,9 +1293,10 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .docp-h .btn-sm { margin-left: auto; }
 .docp-chips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
 
-/* Aviso al despachar */
-#s-docwarn.docwarn-venc { background: #fdeaea; color: #c0392b; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; box-shadow: inset 0 0 0 1px #f3b4ad; }
-#s-docwarn.docwarn-prox { background: #fff6cc; color: #8a6d00; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; box-shadow: inset 0 0 0 1px #ecdc93; }
+/* Aviso de documentos al despachar (en AMBOS modales: Nuevo despacho y SONAR) */
+#s-docwarn.docwarn-venc, #nd-docwarn.docwarn-venc { background: #fdeaea; color: #c0392b; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; box-shadow: inset 0 0 0 1px #f3b4ad; line-height: 1.55; }
+#s-docwarn.docwarn-crit, #nd-docwarn.docwarn-crit { background: #ffe1d6; color: #b5360a; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 700; box-shadow: inset 0 0 0 1px #ffb59a; line-height: 1.55; }
+#s-docwarn.docwarn-prox, #nd-docwarn.docwarn-prox { background: #fff6cc; color: #8a6d00; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; box-shadow: inset 0 0 0 1px #ecdc93; line-height: 1.55; }
 
 /* ----- Lector QR del carnet (Resumen) ----- */
 .drv-row { display: flex; gap: 8px; align-items: stretch; }
@@ -1387,4 +1388,84 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
   .con-mail { max-width: 42vw; }
   .con-when { display: none; }
   .con-card.off .con-when { display: block; }
+}
+
+/* Botón flotante de tráfico sobre el mapa */
+.traffic-fab {
+  position: absolute; top: 12px; right: 12px; z-index: 1000;
+  width: 46px; height: 46px; border-radius: 50%;
+  border: none; background: #fff; color: #222; font-size: 22px; line-height: 1;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.traffic-fab:hover { background: #f3f3f3; }
+.traffic-fab.on { background: #ED1C24; box-shadow: 0 0 0 3px rgba(237,28,36,.35), 0 2px 8px rgba(0,0,0,.35); }
+
+/* ===== Geocercas + ETA (piloto Laureles) ===== */
+/* Botones flotantes apilados debajo del de tráfico */
+.map-fab-btn {
+  position: absolute; right: 12px; z-index: 1000;
+  width: 46px; height: 46px; border-radius: 50%;
+  border: none; background: #fff; color: #222; font-size: 22px; line-height: 1;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.map-fab-btn:hover { background: #f3f3f3; }
+.map-fab-btn.on { background: #2563eb; color: #fff; box-shadow: 0 0 0 3px rgba(37,99,235,.35), 0 2px 8px rgba(0,0,0,.35); }
+.eta-fab { top: 66px; }
+.geo-fab { top: 120px; }
+.geo-fab.on { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.35), 0 2px 8px rgba(0,0,0,.35); }
+
+/* Paneles laterales (ETA y geocercas) */
+.side-panel {
+  position: absolute; top: 12px; right: 66px; z-index: 1001;
+  width: 300px; max-width: calc(100% - 80px); max-height: calc(100% - 24px);
+  background: #fff; color: #222; border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.3);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.side-panel-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+.side-panel-head .spacer { flex: 1; }
+.sp-count { font-size: 12px; color: #666; }
+.sp-hint { padding: 8px 12px; font-size: 12.5px; background: #fff8e1; color: #7a5b00; border-bottom: 1px solid #f0e2b0; }
+.sp-list { overflow-y: auto; padding: 6px; }
+.sp-empty { padding: 14px; font-size: 13px; color: #666; text-align: center; }
+
+/* Ítems del ETA */
+.eta-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.eta-item:hover { background: #f5f7ff; }
+.eta-item + .eta-item { border-top: 1px solid #f0f0f0; }
+.eta-item-top { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.eta-item-top .spacer { flex: 1; }
+.eta-item-bot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.eta-min { font-weight: 700; font-size: 15px; color: #111; }
+.eta-chip { font-size: 11px; padding: 2px 7px; border-radius: 20px; background: #eee; white-space: nowrap; }
+.eta-chip.est-en_ruta { background: #dcfce7; color: #166534; }
+.eta-chip.est-detenido { background: #fee2e2; color: #991b1b; }
+.eta-chip.est-sin_eta { background: #eee; color: #666; }
+.eta-chip.est-en_origen { background: #e0e7ff; color: #3730a3; }
+.eta-chip.est-llego { background: #dbeafe; color: #1e40af; }
+.eta-ruta { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: #eef2ff; color: #3730a3; }
+.eta-next { font-size: 12px; color: #555; margin-top: 2px; }
+.eta-min.muted { color: #999; font-weight: 500; font-size: 13px; }
+.eta-min.ok { color: #16a34a; }
+
+/* Editor de geocercas */
+.geo-add-box { padding: 8px 10px; border-bottom: 1px solid #eee; }
+.geo-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.geo-form input, .geo-form select { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+.geo-radio-lbl { font-size: 12px; color: #555; display: flex; align-items: center; gap: 6px; }
+.geo-radio-lbl input { width: 80px; }
+.geo-form-coords { font-size: 11.5px; color: #777; }
+.geo-form-actions { display: flex; gap: 6px; }
+.geo-item { display: flex; align-items: center; gap: 8px; padding: 8px 6px; }
+.geo-item + .geo-item { border-top: 1px solid #f0f0f0; }
+.geo-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.geo-item-txt { flex: 1; display: flex; flex-direction: column; line-height: 1.2; }
+.geo-item-txt small { color: #777; font-size: 11px; }
+
+/* Etiqueta de la geocerca sobre el mapa */
+.geo-pin span {
+  display: inline-block; background: #fff; border: 2px solid #2563eb; border-radius: 6px;
+  padding: 1px 6px; font-size: 11px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0,0,0,.3); transform: translate(-50%, -150%);
 }

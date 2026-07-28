@@ -2,10 +2,15 @@
 export const SUPABASE_URL = 'https://ggbyeftqatnahlpunqek.supabase.co';
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdnYnllZnRxYXRuYWhscHVucWVrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MzU5NzksImV4cCI6MjA5NzIxMTk3OX0.VnJ24ahyhBeWqh38uZoeWFLxQkp_s8Ji9I8HQsYRW60';
 
+// Clave de TomTom para la CAPA DE TRÁFICO del mapa (gratuita: developer.tomtom.com).
+// Es una clave pública de cliente, como la anon de Supabase. Déjala vacía para desactivar
+// el tráfico. En producción conviene restringirla por dominio en el panel de TomTom.
+export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
+
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v180';
+export const APP_VERSION = 'v183';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
