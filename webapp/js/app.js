@@ -5287,6 +5287,37 @@ async function verificarViajeSonar({ mId, itid, drvId, fecha }) {
   } catch { return { encontrado: false }; }
 }
 
+// AUTO-SANACIÓN del mId: un despacho puede fallar porque a ese móvil le cambiaron el
+// GPS -> SONAR le dio un mId NUEVO y la app aún tiene el viejo. Refrescamos el mId real
+// del móvil desde SONAR (refrescar_mid_movil); si CAMBIÓ, reintentamos el despacho UNA
+// vez con el nuevo. Es SEGURO reintentar: se llama solo después de que verificarViajeSonar
+// confirmó que el viaje NO se creó (no hay doble). Si el mId no cambió, no reintenta (el
+// fallo no era por mId) -> sigue el flujo normal (PENDIENTE + correo). Nunca lanza.
+// Espera un intent con { movilNum, mId, itid, drvId, fecha, hora, com, id }. Devuelve el
+// resultado SONAR (con sanado:true, midNuevo) si logró despachar, o null.
+async function sanarMidYReintentar(intent) {
+  try {
+    if (!navigator.onLine || !intent || !intent.movilNum || !intent.itid) return null;
+    const { data: rf, error } = await sb.rpc('refrescar_mid_movil', { p_movil: String(intent.movilNum) });
+    if (error || !rf || !rf.ok || !rf.mid) return null;
+    const nuevoMid = String(rf.mid);
+    if (nuevoMid === String(intent.mId || '')) return null; // no cambió -> no era problema de mId
+    gpsMap = null; // el cliente re-leerá el mapeo corregido en la próxima consulta
+    intent.mId = nuevoMid;
+    const { data: sd2, error: se2 } = await sb.rpc('despachar_sonar', {
+      p_mid: nuevoMid, p_itinerary: intent.itid, p_drvid: intent.drvId,
+      p_utc: sonarFechaHora(intent.fecha, intent.hora),
+      p_comments: intent.com || (intent.id ? 'Despacho ' + intent.id : 'Despacho'),
+    });
+    if (se2) return null; // error de red en el reintento: que siga el flujo normal
+    if (sonarOK(sd2)) return Object.assign({}, sd2, { sanado: true, midNuevo: nuevoMid });
+    // el reintento tampoco confirmó de una: ¿quedó creado igual? (timeout)
+    const ver2 = await verificarViajeSonar(intent);
+    if (ver2.encontrado) return { ok: true, status: 200, regid: ver2.regid, response: '', verificado: true, sanado: true, midNuevo: nuevoMid };
+    return null;
+  } catch { return null; }
+}
+
 // SONAR falló (estando en línea): marca el despacho como PENDIENTE SONAR y avisa al webhook.
 // Nunca lanza: el aviso no debe romper el flujo. Devuelve siempre.
 async function reportarFalloSonar(tabla, id, motivo, extra) {
@@ -5379,6 +5410,13 @@ async function doDispatch(intent) {
     await sb.from('despachos').update({ sonar_regid: ver.regid, estado_despacho: 'DESPACHADO' }).eq('id', intent.id);
     return { ok: true, regid: ver.regid, status: 200, response: '', verificado: true };
   }
+  // ¿Falló porque le cambiaron el GPS al móvil (mId viejo)? Refrescamos el mId real y
+  // reintentamos UNA vez. Solo aquí, tras confirmar que el viaje NO se creó (sin doble).
+  const san = await sanarMidYReintentar(intent);
+  if (san) {
+    await sb.from('despachos').update({ sonar_regid: String(san.regid), estado_despacho: 'DESPACHADO' }).eq('id', intent.id);
+    return san;
+  }
   // SONAR de verdad NO tiene el viaje → PENDIENTE + webhook (y se muestra el error)
   const motivo = se ? se.message : (sd?.error || sonarDescripcion(sd?.response) || 'SONAR no confirmó el despacho');
   await reportarFalloSonar('despachos', intent.id, motivo, Object.assign(datosFallo, { http_status: sd?.status ?? null, regid: sd?.regid ?? null, respuesta: (sd?.response || '').slice(0, 1000) }));
@@ -5462,13 +5500,16 @@ $('nd-save').addEventListener('click', async () => {
     const res = $('nd-result'); res.hidden = false;
     if (sonarOK(sd)) {
       res.className = 'sonar-result ok';
-      res.textContent = (sd.verificado
+      const cab = sd.sanado
+        ? '✅ Despacho creado. Al móvil le habían cambiado el GPS: se actualizó su Id (mId ' + sd.midNuevo + ') y se despachó bien.'
+        : (sd.verificado
           ? '✅ Despacho creado. SONAR respondió lento pero el viaje SÍ quedó (verificado, sin duplicar).'
-          : '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')')
+          : '✅ Despacho creado y enviado a SONAR (HTTP ' + (sd.status ?? '') + ')');
+      res.textContent = cab
         + '\nregId: ' + sd.regid
         + '\n📍 Ubicación registrada: ' + intent.ubicacion
         + '\n\n' + (sd.response || '').slice(0, 800);
-      toast(sd.verificado ? 'Despacho confirmado (verificado en SONAR)' : 'Despacho creado y despachado', 'ok');
+      toast(sd.sanado ? 'GPS actualizado y despacho enviado' : (sd.verificado ? 'Despacho confirmado (verificado en SONAR)' : 'Despacho creado y despachado'), 'ok');
     } else {
       res.className = 'sonar-result err';
       res.textContent = '✅ Despacho creado, pero ⚠️ SONAR no lo confirmó: ' + (sd?.error || sonarDescripcion(sd?.response) || ('HTTP ' + (sd?.status ?? '?')))
@@ -5879,6 +5920,12 @@ $('sonar-send').addEventListener('click', async () => {
     const ver = await verificarViajeSonar({ mId, itid: itin, drvId: drv, fecha: sonarRow?.fecha || hoyServidor() });
     if (ver.encontrado) data = { ok: true, status: 200, regid: ver.regid, response: (data?.response || ''), verificado: true };
   }
+  // ¿Falló porque le cambiaron el GPS al móvil? Refrescamos el mId real y reintentamos
+  // UNA vez (solo tras confirmar que el viaje no existe: sin doble).
+  if (!sonarOK(data) && !viaVerificacion) {
+    const san = await sanarMidYReintentar({ movilNum: vr.numero, mId, itid: itin, drvId: drv, fecha: sonarRow?.fecha || hoyServidor(), hora: horaSel || sonarRow?.hora, com });
+    if (san && sonarOK(san)) data = Object.assign({}, san, { response: (data?.response || '') });
+  }
   if (sonarOK(data)) {
     // Marcar como DESPACHADO y registrar el móvil REAL despachado.
     // El vehículo PROGRAMADO (el de la importación) se conserva siempre.
@@ -5919,13 +5966,15 @@ $('sonar-send').addEventListener('click', async () => {
       if (current === sonarTable) loadData();
     }
     res.className = 'sonar-result ok';
-    res.textContent = (data.verificado
-        ? '✅ Confirmado: SONAR ya tenía el viaje (verificado, sin duplicar).'
-        : '✅ Despachado (HTTP ' + (data.status ?? '') + ')')
+    res.textContent = (data.sanado
+        ? '✅ Despachado. Al móvil le habían cambiado el GPS: se actualizó su Id (mId ' + data.midNuevo + ') y se despachó bien.'
+        : (data.verificado
+          ? '✅ Confirmado: SONAR ya tenía el viaje (verificado, sin duplicar).'
+          : '✅ Despachado (HTTP ' + (data.status ?? '') + ')'))
       + (data.regid ? '\nregId: ' + data.regid : '')
       + '\n📍 Ubicación registrada: ' + ubicGps
       + '\n\n' + (data.response || '').slice(0, 1200);
-    toast(data.verificado ? 'Confirmado en SONAR (verificado)' : 'Despachado en SONAR', 'ok');
+    toast(data.sanado ? 'GPS actualizado y despachado' : (data.verificado ? 'Confirmado en SONAR (verificado)' : 'Despachado en SONAR'), 'ok');
     // Ya quedó despachado: no permitir despachar de nuevo en este modal
     sonarRow = null;
     btn.disabled = true; btn.textContent = 'Despachado ✓';
