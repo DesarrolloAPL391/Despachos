@@ -6866,6 +6866,58 @@ $('veh-sheet-close')?.addEventListener('click', closeVehSheet);
 })();
 
 let lastUbic = [], mapFilter = 'todos', routeFilter = '', vehSearch = [];
+// Filtro por PUESTO(s) del mapa (solo admin): puestoSel = nombres elegidos; puestoFilterSet =
+// conjunto normalizado de rutas+grupos de esos puestos (con qué se compara ubicaciones.ruta).
+let puestoSel = new Set(), puestoFilterSet = null, _puestosCache = null, _puestosChecklistBuilt = false;
+async function loadPuestos() {
+  if (_puestosCache) return _puestosCache;
+  const { data } = await sb.from('puestos').select('nombre,rutas').eq('activo', true).order('nombre');
+  _puestosCache = data || [];
+  return _puestosCache;
+}
+// Traduce los puestos elegidos a su conjunto de rutas + grupos (vía ruta_grupos), normalizado,
+// para comparar contra ubicaciones.ruta (que a veces trae el número de ruta y a veces el grupo).
+async function computePuestoFilterSet() {
+  if (!puestoSel.size) { puestoFilterSet = null; return; }
+  const [puestos, gmap] = await Promise.all([loadPuestos(), loadRutaGrupos()]);
+  const set = new Set();
+  for (const p of puestos) {
+    if (!puestoSel.has(p.nombre)) continue;
+    for (const rn of String(p.rutas || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+      set.add(normRuta(rn));
+      const g = _grupoDeRuta(gmap, rn); if (g) set.add(normRuta(g));
+    }
+  }
+  puestoFilterSet = set;
+}
+function updatePuestosBtn() {
+  const btn = $('map-puestos-btn'); if (!btn) return;
+  const n = puestoSel.size;
+  btn.textContent = n ? `🏢 Puestos (${n})` : '🏢 Puestos';
+  btn.classList.toggle('btn-primary', n > 0);
+  const c = $('mp-count'); if (c) c.textContent = n ? `${n} puesto(s) seleccionados` : 'Ninguno seleccionado';
+}
+async function buildPuestosChecklist() {
+  const box = $('mp-items'); if (!box) return;
+  const puestos = await loadPuestos();
+  box.innerHTML = puestos.map((p) => {
+    const rutas = String(p.rutas || '').trim();
+    return `<label class="mp-item"><input type="checkbox" value="${esc(p.nombre)}"${puestoSel.has(p.nombre) ? ' checked' : ''}>`
+      + `<span class="mp-nom">${esc(p.nombre)}</span>`
+      + (rutas ? `<span class="mp-rutas">${esc(rutas)}</span>` : `<span class="mp-rutas mp-sin">sin rutas</span>`)
+      + `</label>`;
+  }).join('');
+  _puestosChecklistBuilt = true;
+}
+// Muestra el filtro de puestos SOLO al admin; lo oculta y limpia para el resto.
+function syncPuestosFiltro() {
+  const wrap = $('map-puestos-wrap'); if (!wrap) return;
+  const show = efIsAdmin();
+  wrap.hidden = !show;
+  if (!show) { puestoSel.clear(); puestoFilterSet = null; const pnl = $('map-puestos-panel'); if (pnl) pnl.hidden = true; }
+  else if (!_puestosChecklistBuilt) buildPuestosChecklist();
+  updatePuestosBtn();
+}
 // Marcadores reutilizables: movil -> { marker, pos, icon }. Evita reconstruir toda la
 // flota en cada refresco/filtro; solo mueve los que cambiaron de sitio y reconstruye el
 // ícono si cambió su estado. Así el mapa va fluido aunque haya cientos de móviles.
@@ -7010,6 +7062,12 @@ async function refreshMapa(fit) {
       const nr = normRuta(r.ruta);
       return allowR.has(nr) || allowG.has(nr);
     });
+  }
+  // Admin: filtro OPCIONAL por puesto(s) elegidos (rutas del puesto + sus grupos). Al aplicarlo,
+  // el desplegable de rutas de abajo se reduce solo a las rutas de esos puestos (fillRutaSelect
+  // se arma desde lastUbic), cumpliendo el "señalar las rutas del puesto".
+  if (efIsAdmin() && puestoFilterSet && puestoFilterSet.size) {
+    rows = rows.filter((r) => puestoFilterSet.has(normRuta(r.ruta)));
   }
   lastUbic = rows;
   fillRutaSelect();
@@ -7302,6 +7360,7 @@ async function showMapView() {
   buildBottomNav(); // quita el resaltado de la barra inferior (el mapa no está allí)
   ensureFlotaMap();
   syncMapFabs(); // muestra 🛰️/📍 según el rol (admin/auditor)
+  syncPuestosFiltro(); // filtro por puesto(s): solo admin
   setTimeout(() => flotaMap.invalidateSize(), 120); // el contenedor estaba oculto
   await refreshMapa(true);
   if (mapTimer) clearInterval(mapTimer);
@@ -7394,6 +7453,29 @@ document.querySelectorAll('#map-filters .mf').forEach((b) => {
   });
 });
 $('map-ruta').addEventListener('change', (e) => { routeFilter = e.target.value; renderMarkers(true); });
+// ----- Filtro por puesto(s) del mapa (solo admin) -----
+$('map-puestos-btn')?.addEventListener('click', () => { const p = $('map-puestos-panel'); if (p) p.hidden = !p.hidden; });
+$('mp-close')?.addEventListener('click', () => { const p = $('map-puestos-panel'); if (p) p.hidden = true; });
+$('mp-items')?.addEventListener('change', async (e) => {
+  const cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
+  if (cb.checked) puestoSel.add(cb.value); else puestoSel.delete(cb.value);
+  updatePuestosBtn();
+  await computePuestoFilterSet();
+  refreshMapa(true);
+});
+$('mp-clear')?.addEventListener('click', async () => {
+  puestoSel.clear();
+  document.querySelectorAll('#mp-items input[type=checkbox]').forEach((c) => { c.checked = false; });
+  updatePuestosBtn();
+  await computePuestoFilterSet();
+  refreshMapa(true);
+});
+$('mp-search')?.addEventListener('input', (e) => {
+  const q = (e.target.value || '').toLowerCase();
+  document.querySelectorAll('#mp-items .mp-item').forEach((it) => {
+    it.style.display = it.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
 // Buscador del mapa con "debounce": no redibuja en cada tecla, sino ~200 ms después de
 // dejar de escribir. Con cientos de móviles esto quita el tironeo al teclear.
 let _searchTimer = null;

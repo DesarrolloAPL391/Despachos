@@ -160,6 +160,22 @@
             <button class="mf" data-f="idle">🟡 Detenidos</button>
             <button class="mf" data-f="off">⚪ Apagados</button>
             <select id="map-ruta" class="map-ruta"><option value="">Todas las rutas</option></select>
+            <!-- Filtro por PUESTO(s) (solo admin): elige uno o varios y el mapa muestra los móviles de sus rutas+grupos -->
+            <div id="map-puestos-wrap" class="map-puestos-wrap" hidden>
+              <button id="map-puestos-btn" class="btn" title="Filtrar por puesto(s)">🏢 Puestos</button>
+              <div id="map-puestos-panel" class="map-puestos-panel" hidden>
+                <div class="mp-head">
+                  <input type="search" id="mp-search" class="mp-search" placeholder="🔎 Buscar puesto…" />
+                  <button id="mp-close" class="icon-btn" aria-label="Cerrar">✕</button>
+                </div>
+                <div id="mp-items" class="mp-items"></div>
+                <div class="mp-foot">
+                  <span id="mp-count" class="mp-count">Ninguno seleccionado</span>
+                  <span class="spacer"></span>
+                  <button id="mp-clear" class="btn">Limpiar</button>
+                </div>
+              </div>
+            </div>
             <input type="search" id="map-search" class="map-search" placeholder="Buscar móvil(es) o placa…" />
             <button id="map-lista-btn" class="btn" title="Elegir móviles de una lista">📋 Lista</button>
             <span class="spacer"></span>

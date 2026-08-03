@@ -791,6 +791,26 @@ tbody tr:hover { background: #faf8ff; }
 .map-filters .mf { border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .map-filters .mf.active { background: var(--grad); color: #fff; border: 0; }
 .map-ruta { border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; background: #fff; max-width: 200px; }
+/* Filtro por puesto(s) del mapa (solo admin) */
+.map-puestos-wrap { position: relative; }
+.map-puestos-wrap[hidden] { display: none; }
+.map-puestos-panel { position: absolute; z-index: 950; top: calc(100% + 6px); left: 0;
+  width: 340px; max-width: 86vw; max-height: 60vh; display: flex; flex-direction: column;
+  background: #fff; border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.22); overflow: hidden; }
+.map-puestos-panel[hidden] { display: none; }
+.mp-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: #f7f9fc; }
+.mp-search { flex: 1; border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; font-size: 14px; }
+.mp-items { flex: 1; overflow-y: auto; min-height: 60px; }
+.mp-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #eef0f5; cursor: pointer; }
+.mp-item:hover { background: #f6f4fd; }
+.mp-item input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #7c3aed; cursor: pointer; }
+.mp-nom { font-weight: 800; font-size: 13.5px; flex: 0 0 auto; }
+.mp-rutas { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-rutas.mp-sin { color: #b45309; font-style: italic; }
+.mp-foot { display: flex; align-items: center; gap: 8px; padding: 8px; border-top: 1px solid var(--border); background: #f7f9fc; }
+.mp-count { font-size: 12px; color: var(--muted); }
+.map-filters .btn.btn-primary { background: var(--grad); color: #fff; border: 0; }
 
 /* Consulta de despachos SONAR */
 .ds-card { max-width: 880px; }
@@ -1139,6 +1159,8 @@ tbody tr:hover { background: #faf8ff; }
 .map-float-body .map-filters .btn { padding: 4px 9px; font-size: 12px; flex: 0 0 auto; white-space: nowrap; }
 .map-float-body .map-ruta { padding: 4px 8px; font-size: 12px; max-width: 118px; flex: 0 0 auto; }
 .map-float-body .map-search { max-width: 120px; flex: 0 0 auto; font-size: 12px; padding: 5px 9px; }
+/* El panel de puestos se recortaría por el overflow de la barra flotante: se usa en el mapa completo */
+.map-float-body .map-puestos-wrap { display: none; }
 .map-float-body #map-count { flex: 0 0 auto; white-space: nowrap; align-self: center; }
 /* Barra de seguidos también compacta y deslizable dentro del flotante */
 .map-float-body #map-seguidos { flex-wrap: nowrap; overflow-x: auto; padding: 6px 8px; gap: 6px; }
