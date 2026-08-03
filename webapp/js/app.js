@@ -6998,11 +6998,17 @@ async function refreshMapa(fit) {
   // "0 móviles" para puestos como Laureles. La RLS ya limita; esto ajusta la vista.
   if (!efIsAdmin()) {
     const allowR = allowedRutaSet();
-    const grupos = allowedGrupoSet();
-    const allowG = grupos ? new Set([...grupos].map(normRuta)) : null;
+    // En día hábil CTX.grupos (allowedGrupoSet) suele venir vacío; derivamos los grupos de las
+    // rutas del despachador (igual que en el despacho, vía ruta_grupos) para no perder los
+    // móviles que 'ubicaciones' etiqueta con el nombre del GRUPO (ej. "133-133D", "Laureles")
+    // en vez del número de ruta. Sin esto, un puesto como 133-133D solo mostraba el carro
+    // etiquetado "133" y no los 6 etiquetados "133-133D".
+    const gmap = await loadRutaGrupos();
+    const grupos = new Set([...(allowedGrupoSet() || []), ...gruposDeMisRutas(gmap)]);
+    const allowG = new Set([...grupos].map(normRuta));
     rows = rows.filter((r) => {
       const nr = normRuta(r.ruta);
-      return allowR.has(nr) || (allowG && allowG.has(nr));
+      return allowR.has(nr) || allowG.has(nr);
     });
   }
   lastUbic = rows;
