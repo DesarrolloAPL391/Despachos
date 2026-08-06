@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v186';
+export const APP_VERSION = 'v187';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -347,7 +347,7 @@ export const TABLES = {
       { key: 'hora_inicio', label: 'Inicio', m: true },
       { key: 'hora_fin', label: 'Fin', m: true },
       { key: 'grupos', label: 'Grupos', m: true },
-      { key: 'observacion', label: 'Puesto / Observación' },
+      { key: 'observacion', label: 'Puesto(s)' },
     ],
     fields: [
       { key: 'fecha', label: 'Fecha', type: 'date', required: true },
@@ -355,8 +355,8 @@ export const TABLES = {
       { key: 'nombre', label: 'Nombre', type: 'textsel', optionsFrom: { table: 'perfiles', col: 'nombre', where: ['activo', true] } },
       { key: 'hora_inicio', label: 'Hora de inicio', type: 'time' },
       { key: 'hora_fin', label: 'Hora finalización labor', type: 'time' },
-      { key: 'grupos', label: 'Grupos de ruta', type: 'multisel', optionsFrom: { table: 'parque_automotor', col: 'ruta' } },
-      { key: 'observacion', label: 'Puesto / Observación', type: 'textsel', optionsFrom: { table: 'puestos', col: 'nombre', where: ['activo', true] } },
+      { key: 'grupos', label: 'Grupos de ruta (opcional)', type: 'multisel', optionsFrom: { table: 'parque_automotor', col: 'ruta' }, hint: 'Opcional: agrega grupos extra además de los del puesto.' },
+      { key: 'observacion', label: 'Puesto(s)', type: 'multisel', csv: true, optionsFrom: { table: 'puestos', col: 'nombre', where: ['activo', true] }, hint: 'Marca uno o varios puestos. El despachador verá y despachará las rutas de todos.' },
     ],
   },
 
