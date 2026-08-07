@@ -176,6 +176,22 @@
                 </div>
               </div>
             </div>
+            <!-- Panel de RUTAS: dibuja los recorridos oficiales (KMZ). Marca una o varias -->
+            <div id="map-rutas-wrap" class="map-puestos-wrap">
+              <button id="map-rutas-btn" class="btn" title="Ver el recorrido de una o varias rutas">🛣️ Rutas</button>
+              <div id="map-rutas-panel" class="map-puestos-panel" hidden>
+                <div class="mp-head">
+                  <input type="search" id="mr-search" class="mp-search" placeholder="🔎 Buscar ruta…" />
+                  <button id="mr-close" class="icon-btn" aria-label="Cerrar">✕</button>
+                </div>
+                <div id="mr-items" class="mp-items"></div>
+                <div class="mp-foot">
+                  <span id="mr-count" class="mp-count">Ninguna seleccionada</span>
+                  <span class="spacer"></span>
+                  <button id="mr-clear" class="btn">Limpiar</button>
+                </div>
+              </div>
+            </div>
             <input type="search" id="map-search" class="map-search" placeholder="Buscar móvil(es) o placa…" />
             <button id="map-lista-btn" class="btn" title="Elegir móviles de una lista">📋 Lista</button>
             <span class="spacer"></span>

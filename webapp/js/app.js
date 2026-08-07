@@ -234,6 +234,36 @@ function fmtFechaHora(v) {
   const p = (n) => String(n).padStart(2, '0');
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+// Nº de serie de Excel (sistema 1900: días desde 1899-12-30). Se calcula con los
+// COMPONENTES de fecha vía Date.UTC en ambos extremos → la zona horaria se cancela
+// y nunca hay corrimiento de día. La parte de hora es la fracción del día.
+function excelSerialFecha(y, mo, d, h = 0, mi = 0) {
+  const dias = Math.round((Date.UTC(y, mo - 1, d) - Date.UTC(1899, 11, 30)) / 86400000);
+  return dias + (h * 60 + mi) / 1440;
+}
+// Para las DESCARGAS de Excel: si el valor es una fecha, devuelve una celda de FECHA
+// REAL de Excel (número + formato colombiano) → se ve "dd/mm/aaaa" Y Excel la ordena
+// y filtra como fecha. Si no es fecha, devuelve null (la celda se deja tal cual).
+//  - "2026-08-07"             -> fecha  dd/mm/aaaa
+//  - timestamp (con/sin zona) -> fecha+hora en HORA DE COLOMBIA  dd/mm/aaaa hh:mm
+function celdaFechaXlsx(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  const md = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s); // fecha sola
+  if (md) return { t: 'n', v: excelSerialFecha(+md[1], +md[2], +md[3]), z: 'dd/mm/yyyy' };
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) { // marca de tiempo
+    const d = toDate(s);
+    if (!isNaN(d)) {
+      const q = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(d).reduce((o, x) => (o[x.type] = x.value, o), {});
+      const hh = q.hour === '24' ? 0 : +q.hour; // Intl a veces da "24" para medianoche
+      return { t: 'n', v: excelSerialFecha(+q.year, +q.month, +q.day, hh, +q.minute), z: 'dd/mm/yyyy hh:mm' };
+    }
+  }
+  return null;
+}
 function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
   if (s === 'TABLA') return 'chip chip-indigo';
@@ -3410,6 +3440,12 @@ async function exportarExcel() {
     // .xlsx real con SheetJS (se baja de esm.sh; requiere internet, igual que la importación)
     const XLSX = await import('https://esm.sh/xlsx@0.18.5');
     const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Fechas → fecha REAL de Excel (dd/mm/aaaa, hora de Colombia): se ve en formato
+    // colombiano y Excel la ordena/filtra como fecha (no como texto).
+    filas.forEach((r, ri) => cols.forEach((c, ci) => {
+      const fx = celdaFechaXlsx(c.path ? getPath(r, c.path) : r[c.key]);
+      if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c: ci })] = fx;
+    }));
     ws['!cols'] = cab.map((h) => ({ wch: Math.min(40, Math.max(12, String(h).length + 2)) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, String(cfg.label || 'Datos').slice(0, 31));
@@ -6708,7 +6744,7 @@ async function verRecorrido() {
     if (!data || !data.ok) { msg.textContent = 'No se pudo: ' + (data?.error || '?'); return; }
     const pts = (data.puntos || []).filter((p) => p.lat != null && p.lon != null);
     if (!pts.length) { msg.textContent = 'El despacho no tiene reportes GPS en ese rango.'; return; }
-    dibujarRecorrido(pts, _recVeh.movil);
+    dibujarRecorrido(pts, _recVeh.movil, d.ruta || _recVeh.ruta);
     $('rec-modal').hidden = true;
     closeVehSheet();
     toast(`Recorrido de ${_recVeh.movil}: ${pts.length} puntos · ${_hora12(pts[0].t)}–${_hora12(pts[pts.length - 1].t)}`, 'ok');
@@ -6725,13 +6761,15 @@ function limpiarRecorrido() {
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
 }
-function dibujarRecorrido(pts, movil) {
+function dibujarRecorrido(pts, movil, rutaName) {
   if (!flotaMap) return;
   limpiarRecorrido();
   // oculta la flota para ver mejor el recorrido (se restaura al quitarlo)
   if (flotaLayer && flotaMap.hasLayer(flotaLayer)) flotaMap.removeLayer(flotaLayer);
   _recPts = pts;
   recLayer = L.layerGroup().addTo(flotaMap);
+  // Superpone la ruta AUTORIZADA del KMZ (azul punteado) para comparar contra lo real.
+  overlayRutaKmzEnRecorrido(rutaName);
   const latlngs = pts.map((p) => [p.lat, p.lon]);
   L.polyline(latlngs, { color: '#ED1C24', weight: 4, opacity: 0.85 }).addTo(recLayer);
   // puntos pequeños del trayecto (inicio verde, fin azul); sin popups (el detalle va en el panel)
@@ -6745,6 +6783,27 @@ function dibujarRecorrido(pts, movil) {
   flotaMap.fitBounds(latlngs, { padding: [40, 40] });
   const b = $('rec-clear'); if (b) b.hidden = false;
   renderRecPanel(pts, movil);
+}
+// Nombre de ruta ("133", "134 CENTRO", "133-133D") -> codigos con recorrido KMZ.
+function _codigosDeRuta(label, recMap) {
+  const out = [];
+  for (const t of String(label || '').split(/[^0-9a-zA-Z]+/).map(normRuta).filter(Boolean)) {
+    if (recMap.has(t) && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+// Dibuja la ruta AUTORIZADA (KMZ) del carro sobre su recorrido real, para comparar.
+async function overlayRutaKmzEnRecorrido(rutaName) {
+  if (!recLayer || !flotaMap) return;
+  const recMap = await loadRecorridos();
+  if (!recLayer) return; // por si limpiaron el recorrido mientras cargaba
+  for (const c of _codigosDeRuta(rutaName, recMap)) {
+    const rec = recMap.get(c);
+    if (rec && Array.isArray(rec.puntos) && rec.puntos.length) {
+      L.polyline(rec.puntos, { color: '#2563eb', weight: 3, opacity: 0.7, dashArray: '6,6' })
+        .bindTooltip('Ruta autorizada ' + (rec.codigo || c), { sticky: true }).addTo(recLayer);
+    }
+  }
 }
 // Mueve el cursor al punto i: marcador + mapa + info + slider + lista (todo sincronizado)
 function recGoto(i) {
@@ -6972,6 +7031,82 @@ function fillRutaSelect() {
   sel.innerHTML = `<option value="">Todas las rutas (${rutas.length})</option>`
     + rutas.map((rt) => `<option value="${esc(rt)}">${esc(rt)}</option>`).join('');
   if (rutas.includes(prev)) sel.value = prev; else routeFilter = '';
+}
+// ===== Recorridos AUTORIZADOS de las rutas (tabla rutas_recorrido, KMZ oficiales) =====
+// Panel propio "🛣️ Rutas": el usuario marca UNA o VARIAS rutas y se dibuja su trazo
+// oficial en el mapa (cada una con su color), exista o no un móvil de esa ruta ahora.
+// Independiente del filtro de móviles. Distinto del recorrido REAL de SONAR (rojo, recLayer).
+let rutaGeoLayer = null;        // capa Leaflet con los trazos dibujados
+let _recorridos = null;         // Map normRuta(codigo) -> { codigo, puntos:[[lat,lng],...] }
+let _rutasVerSet = new Set();   // codigos (normalizados) elegidos para ver
+let _rutasChecklistBuilt = false;
+const _recColorDe = new Map();  // normRuta(codigo) -> color (estable por ruta)
+const REC_COLORES = ['#e6194B', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#0891b2',
+  '#db2777', '#65a30d', '#9A6324', '#7c3aed', '#0d9488', '#b45309'];
+async function loadRecorridos() {
+  if (_recorridos) return _recorridos;
+  const { data, error } = await sb.from('rutas_recorrido').select('codigo,puntos');
+  _recorridos = new Map();
+  if (!error) for (const r of (data || [])) _recorridos.set(normRuta(r.codigo), r);
+  return _recorridos;
+}
+// Dibuja los recorridos de las rutas marcadas en _rutasVerSet (limpia y redibuja todo).
+function dibujarRecorridosSeleccionados(fit) {
+  if (!flotaMap) return;
+  if (rutaGeoLayer) { flotaMap.removeLayer(rutaGeoLayer); rutaGeoLayer = null; }
+  if (!_rutasVerSet.size || !_recorridos) return;
+  rutaGeoLayer = L.layerGroup();
+  const todos = [];
+  for (const c of _rutasVerSet) {
+    const rec = _recorridos.get(c);
+    if (!rec || !Array.isArray(rec.puntos) || !rec.puntos.length) continue;
+    const col = _recColorDe.get(c) || '#2563eb';
+    L.polyline(rec.puntos, { color: col, weight: 4, opacity: 0.85 })
+      .bindTooltip('Ruta ' + (rec.codigo || c), { sticky: true }).addTo(rutaGeoLayer);
+    todos.push(...rec.puntos);
+  }
+  rutaGeoLayer.addTo(flotaMap);
+  if (fit && todos.length) flotaMap.fitBounds(todos, { padding: [30, 30] });
+}
+function updateRutasBtn() {
+  const btn = $('map-rutas-btn'); if (!btn) return;
+  const n = _rutasVerSet.size;
+  btn.textContent = n ? `🛣️ Rutas (${n})` : '🛣️ Rutas';
+  btn.classList.toggle('btn-primary', n > 0);
+  const c = $('mr-count'); if (c) c.textContent = n ? `${n} ruta(s) en el mapa` : 'Ninguna seleccionada';
+}
+// Arma el checklist con las rutas que tienen recorrido cargado; asigna un color por ruta.
+// Es una GUÍA para el despachador: a él le muestra SOLO sus rutas (por nombre o por su
+// grupo); el admin y el auditor ven todas.
+async function buildRutasChecklist() {
+  const box = $('mr-items'); if (!box) return;
+  const recMap = await loadRecorridos();
+  let codigos = [...recMap.values()].map((r) => r.codigo)
+    .sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+  if (!(efIsAdmin() || efIsAuditor())) {
+    const gmap = await loadRutaGrupos();
+    const allowR = allowedRutaSet();
+    const allowG = new Set([...(allowedGrupoSet() || []), ...gruposDeMisRutas(gmap)].map(normRuta));
+    codigos = codigos.filter((cod) => {
+      if (allowR.has(normRuta(cod))) return true;           // coincide por nombre de ruta
+      const g = _grupoDeRuta(gmap, cod);                    // o por el grupo al que pertenece
+      return !!(g && allowG.has(normRuta(g)));
+    });
+  }
+  _recColorDe.clear();
+  codigos.forEach((cod, i) => _recColorDe.set(normRuta(cod), REC_COLORES[i % REC_COLORES.length]));
+  box.innerHTML = codigos.length ? codigos.map((cod) => {
+    const k = normRuta(cod);
+    return `<label class="mp-item"><input type="checkbox" value="${esc(cod)}"${_rutasVerSet.has(k) ? ' checked' : ''}>`
+      + `<span class="rec-sw" style="background:${_recColorDe.get(k)}"></span>`
+      + `<span class="mp-nom">Ruta ${esc(cod)}</span></label>`;
+  }).join('') : '<div class="mp-item" style="justify-content:center;color:var(--muted)">No hay recorrido para tus rutas.</div>';
+  _rutasChecklistBuilt = true;
+}
+// Inicializa el panel de rutas al abrir el mapa (una sola vez).
+async function syncRutasPanel() {
+  if (!_rutasChecklistBuilt) await buildRutasChecklist();
+  updateRutasBtn();
 }
 function _buildBusIcon(r, cls, seg) {
   const ruta = r.ruta ? ` <small>${esc(r.ruta)}</small>` : '';
@@ -7361,6 +7496,7 @@ async function showMapView() {
   ensureFlotaMap();
   syncMapFabs(); // muestra 🛰️/📍 según el rol (admin/auditor)
   syncPuestosFiltro(); // filtro por puesto(s): solo admin
+  syncRutasPanel(); // panel "🛣️ Rutas": dibuja los recorridos KMZ elegidos
   setTimeout(() => flotaMap.invalidateSize(), 120); // el contenedor estaba oculto
   await refreshMapa(true);
   if (mapTimer) clearInterval(mapTimer);
@@ -7473,6 +7609,28 @@ $('mp-clear')?.addEventListener('click', async () => {
 $('mp-search')?.addEventListener('input', (e) => {
   const q = (e.target.value || '').toLowerCase();
   document.querySelectorAll('#mp-items .mp-item').forEach((it) => {
+    it.style.display = it.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+// ----- Panel "🛣️ Rutas": ver los recorridos KMZ de una o varias rutas -----
+$('map-rutas-btn')?.addEventListener('click', () => { const p = $('map-rutas-panel'); if (p) p.hidden = !p.hidden; });
+$('mr-close')?.addEventListener('click', () => { const p = $('map-rutas-panel'); if (p) p.hidden = true; });
+$('mr-items')?.addEventListener('change', (e) => {
+  const cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
+  const k = normRuta(cb.value);
+  if (cb.checked) _rutasVerSet.add(k); else _rutasVerSet.delete(k);
+  updateRutasBtn();
+  dibujarRecorridosSeleccionados(true); // dibuja y encuadra a lo seleccionado
+});
+$('mr-clear')?.addEventListener('click', () => {
+  _rutasVerSet.clear();
+  document.querySelectorAll('#mr-items input[type=checkbox]').forEach((c) => { c.checked = false; });
+  updateRutasBtn();
+  dibujarRecorridosSeleccionados(false);
+});
+$('mr-search')?.addEventListener('input', (e) => {
+  const q = (e.target.value || '').toLowerCase();
+  document.querySelectorAll('#mr-items .mp-item').forEach((it) => {
     it.style.display = it.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
