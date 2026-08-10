@@ -3492,6 +3492,8 @@ function _cumpClasif(r, realMap, esPasado) {
 }
 function _horaNum(h) { const m = String(h || '').match(/^(\d{1,2}):/); return m ? +m[1] : null; }
 function _minDia(h) { const m = String(h || '').match(/^(\d{1,2}):(\d{2})/); return m ? +m[1] * 60 + +m[2] : null; }
+function _min2hhmm(min) { const t = ((min % 1440) + 1440) % 1440; return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); }
+function _durLegible(min) { const h = Math.floor(min / 60), m = min % 60; return h ? (h + 'h' + (m ? ' ' + m + 'm' : '')) : (m + ' min'); }
 function _pctCump(a, b) { return b ? Math.round((a / b) * 100) : 0; }
 function _colCump(p) { return p >= 90 ? '#16a34a' : p >= 70 ? '#f59e0b' : '#dc2626'; }
 // Agrega las filas (tabla+día) en métricas de cumplimiento REALES de SONAR. Pura → testeable.
@@ -3535,7 +3537,51 @@ function agregarCumplimiento(rows, realMap, esPasado) {
     for (const [h, cell] of rh) if (cell.prog > 0 && cell.cubierto === 0) gaps.push({ ruta, h, prog: cell.prog });
   }
   gaps.sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || a.h - b.h);
-  return { tot, punt, porRuta, porHora, perdidos, gaps };
+
+  // ===== HUECOS DE COBERTURA POR RUTA =====
+  // Corridas de turnos PROGRAMADOS consecutivos SIN servicio (perd/sin), medidas en minutos.
+  // El umbral se ADAPTA a la frecuencia de cada ruta (mediana del espacio entre turnos):
+  // un hueco cuenta si su duración supera 1.5x esa frecuencia (o sea, se saltó al menos un turno).
+  const turnosRuta = new Map(); // ruta -> [{min, cov}]
+  for (const r of rows) {
+    const min = _minDia(r.hora); if (min == null) continue;
+    const ruta = (r.ruta && r.ruta.nombre) || '(sin ruta)';
+    const cls = _cumpClasif(r, realMap, esPasado);
+    const cov = (cls === 'comp' || cls === 'inc' || cls === 'curso'); // hubo servicio
+    const arr = turnosRuta.get(ruta) || []; arr.push({ min, cov }); turnosRuta.set(ruta, arr);
+  }
+  const huecos = []; // { ruta, freq, nHuecos, totalMin, maxMin, lista:[{ini,fin,min,turnos}] }
+  for (const [ruta, arr] of turnosRuta) {
+    if (arr.length < 3) continue; // muy pocos turnos para hablar de frecuencia
+    arr.sort((a, b) => a.min - b.min);
+    const difs = [];
+    for (let i = 1; i < arr.length; i++) { const d = arr[i].min - arr[i - 1].min; if (d > 0) difs.push(d); }
+    if (!difs.length) continue;
+    difs.sort((a, b) => a - b);
+    const freq = difs[Math.floor(difs.length / 2)]; // mediana = frecuencia de la ruta
+    const umbral = freq * 1.5;
+    const lista = [];
+    let i = 0;
+    while (i < arr.length) {
+      if (arr[i].cov) { i++; continue; }
+      let j = i; while (j < arr.length && !arr[j].cov) j++; // corrida [i, j-1] sin servicio
+      const prevCov = i > 0 ? arr[i - 1] : null;   // último con servicio antes
+      const nextCov = j < arr.length ? arr[j] : null; // primer con servicio después
+      const desde = prevCov ? prevCov.min : arr[i].min;
+      const hasta = nextCov ? nextCov.min : (arr[j - 1].min + freq);
+      const dur = hasta - desde;
+      if (dur > umbral) lista.push({ ini: _min2hhmm(desde), fin: _min2hhmm(hasta), min: dur, turnos: j - i });
+      i = j;
+    }
+    if (lista.length) {
+      huecos.push({ ruta, freq, nHuecos: lista.length,
+        totalMin: lista.reduce((s, h) => s + h.min, 0),
+        maxMin: Math.max(...lista.map((h) => h.min)), lista });
+    }
+  }
+  huecos.sort((a, b) => b.totalMin - a.totalMin || a.ruta.localeCompare(b.ruta, 'es', { numeric: true }));
+
+  return { tot, punt, porRuta, porHora, perdidos, gaps, huecos };
 }
 let _cumpTabla = 'todas';            // puesto seleccionado en el filtro ('todas' o una tabla despachable)
 let _cumpUltimo = null;              // { agg, fecha } del último render (para descargar perdidos)
@@ -3569,6 +3615,37 @@ async function descargarPerdidos() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`Excel generado: ${perd.length} viaje(s) perdido(s).`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
+  }
+}
+// Descarga los huecos de cobertura por ruta a Excel (2 hojas: Resumen + Detalle)
+async function descargarHuecos() {
+  if (!_cumpUltimo || !_cumpUltimo.agg.huecos.length) { toast('No hay huecos para descargar.', 'ok'); return; }
+  const { agg, fecha } = _cumpUltimo;
+  // Hoja 1: resumen por ruta
+  const resAoa = [['Ruta', 'Frecuencia (min)', 'N° huecos', 'Total sin despacho (min)', 'Mayor hueco (min)'],
+    ...agg.huecos.map((h) => [h.ruta, h.freq, h.nHuecos, h.totalMin, h.maxMin])];
+  // Hoja 2: detalle de cada intervalo
+  const detAoa = [['Ruta', 'Inicio', 'Fin', 'Duración (min)', 'Turnos no despachados']];
+  agg.huecos.forEach((h) => h.lista.forEach((x) => detAoa.push([h.ruta, x.ini, x.fin, x.min, x.turnos])));
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const wb = XLSX.utils.book_new();
+    const wsR = XLSX.utils.aoa_to_sheet(resAoa);
+    wsR['!cols'] = [{ wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 24 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(wb, wsR, 'Resumen');
+    const wsD = XLSX.utils.aoa_to_sheet(detAoa);
+    wsD['!cols'] = [{ wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsD, 'Detalle');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `huecos_por_ruta_${String(TABLES[_cumpTabla]?.label || _cumpTabla).replace(/\s+/g, '_')}_${fecha}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${agg.huecos.length} ruta(s) con huecos.`, 'ok');
   } catch (e) {
     toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
   }
@@ -3772,9 +3849,19 @@ function renderCumplimiento(agg, fecha) {
     ? `<div class="cump-card"><h4>Viajes perdidos (${perd.length}) <button id="cump-perd-dl" class="cump-dl" type="button">⬇️ Excel</button></h4><div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Hora</th><th>Móvil</th><th>Motivo</th></tr></thead><tbody>${
       perd.map((p) => `<tr><td>${esc(p.ruta)}</td><td>${esc(String(p.hora || '').slice(0, 5))}</td><td>${esc(String(p.movil || ''))}</td><td>${esc(p.motivo || '—')}</td></tr>`).join('')}</tbody></table></div></div>`
     : '<div class="cump-card ok-note">✅ Ningún viaje perdido.</div>';
+  // Huecos de cobertura por ruta (turnos programados sin despacho, contra la frecuencia de cada ruta)
+  const huecosHtml = agg.huecos.length
+    ? `<div class="cump-card"><h4>🕳️ Huecos por ruta (${agg.huecos.length}) <button id="cump-huecos-dl" class="cump-dl" type="button">⬇️ Excel</button></h4>`
+      + `<div style="font-size:12px;color:var(--muted);margin:-4px 0 8px">Tiempo que una ruta se quedó sin despacho (turnos programados no despachados seguidos), medido contra la frecuencia normal de cada ruta.</div>`
+      + `<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Ruta</th><th>Frec.</th><th>Huecos</th><th>Total sin despacho</th><th>Mayor</th><th>Intervalos</th></tr></thead><tbody>${
+        agg.huecos.map((hg) => `<tr><td><b>${esc(hg.ruta)}</b></td><td>${hg.freq}m</td><td>${hg.nHuecos}</td>`
+          + `<td><b>${_durLegible(hg.totalMin)}</b></td><td>${_durLegible(hg.maxMin)}</td>`
+          + `<td class="cump-huecos-det">${hg.lista.map((x) => `<span class="cump-gap">${x.ini}–${x.fin} · ${x.min}m${x.turnos > 1 ? ' (' + x.turnos + ' turnos)' : ''}</span>`).join(' ')}</td></tr>`).join('')}</tbody></table></div></div>`
+    : '<div class="cump-card ok-note">✅ Ninguna ruta se quedó sin despacho por encima de su frecuencia.</div>';
   $('cump-body').innerHTML = `<div class="cump-top">${hero}${desglose}</div>` + viajesHtml
-    + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + perdHtml;
+    + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + huecosHtml + perdHtml;
   $('cump-perd-dl')?.addEventListener('click', descargarPerdidos);
+  $('cump-huecos-dl')?.addEventListener('click', descargarHuecos);
 }
 // Interacción del tablero: tocar una ruta la filtra; tocar un viaje abre su recorrido.
 $('cump-body')?.addEventListener('click', (e) => {
