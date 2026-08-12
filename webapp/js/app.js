@@ -498,7 +498,9 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
   if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
+  if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
+  const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
@@ -602,6 +604,7 @@ function selectTable(name) {
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -2101,7 +2104,7 @@ async function setupVehByGroup(form, conf) {
   const vehSel = form.querySelector(`[data-key="${conf.veh}"]`);
   if (!routeSel || !vehSel) return;
   const allOpts = [...vehSel.options].map((o) => ({ value: o.value, text: o.textContent }));
-  const [gmap, rmap, veh] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadVehiculos()]);
+  const [gmap, rmap, veh, extra] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadVehiculos(), loadIntegradasExtra()]);
   const numById = new Map(veh.map((v) => [String(v.id), String(v.numero).trim()]));
   const esDesp = filtraComoDespachador();
   const misGrupos = esDesp ? gruposDeMisRutas(gmap) : null; // null = admin (sin restricción)
@@ -2124,8 +2127,7 @@ async function setupVehByGroup(form, conf) {
       let n = 0;
       for (const o of allOpts) {
         if (filtra && objetivo) {
-          const pg = rmap.get(numById.get(String(o.value)));
-          const dentro = o.value && objetivo.has(pg);
+          const dentro = o.value && _movilEnObjetivo(numById.get(String(o.value)), objetivo, rmap, extra);
           if (!dentro && o.value !== keep) continue; // conserva el móvil ya guardado
         }
         vehSel.appendChild(Object.assign(document.createElement('option'), { value: o.value, textContent: o.text }));
@@ -3506,6 +3508,7 @@ function agregarCumplimiento(rows, realMap, esPasado) {
   const porHora = new Map();   // h -> {prog,comp,inc,perd,curso,sin}
   const rutaHora = new Map();  // ruta -> Map(h -> {prog,cubierto})
   const perdidos = [];
+  const fallosTabla = [];      // turnos de TABLA no cumplidos (el móvil del fijo no salió)
   for (const r of rows) {
     const cls = _cumpClasif(r, realMap, esPasado);
     const ruta = (r.ruta && r.ruta.nombre) || '(sin ruta)';
@@ -3531,7 +3534,19 @@ function agregarCumplimiento(rows, realMap, esPasado) {
       const motivo = (real && real.estado === 'Cancelado') ? 'Cancelado (SONAR)' : (r.estado || 'No realizó');
       perdidos.push({ ruta, hora: r.hora, motivo, movil: (r.veh && r.veh.numero) || '' });
     }
+    // Turno de TABLA no cumplido: el fijo (móvil programado) no salió (perd o sin), y no es LIBRE.
+    if (String(r.tipo || '').toUpperCase() !== 'LIBRE' && (cls === 'perd' || cls === 'sin')) {
+      fallosTabla.push({ h, hora: r.hora, ruta,
+        movilProg: (r.vehp && r.vehp.numero) || '',
+        movilReal: (r.veh && r.veh.numero) || '',
+        estado: (real && real.estado === 'Cancelado') ? 'Cancelado (SONAR)'
+          : (String(r.estado_despacho || '').trim() || 'Sin despacho'),
+        novedad: String(r.estado || '').trim(),
+      });
+    }
   }
+  fallosTabla.sort((a, b) => (a.h ?? 99) - (b.h ?? 99)
+    || a.ruta.localeCompare(b.ruta, 'es', { numeric: true }) || String(a.hora).localeCompare(String(b.hora)));
   const gaps = []; // franjas ruta+hora con viajes programados pero 0 realizados (ni en curso)
   for (const [ruta, rh] of rutaHora) {
     for (const [h, cell] of rh) if (cell.prog > 0 && cell.cubierto === 0) gaps.push({ ruta, h, prog: cell.prog });
@@ -3581,7 +3596,7 @@ function agregarCumplimiento(rows, realMap, esPasado) {
   }
   huecos.sort((a, b) => b.totalMin - a.totalMin || a.ruta.localeCompare(b.ruta, 'es', { numeric: true }));
 
-  return { tot, punt, porRuta, porHora, perdidos, gaps, huecos };
+  return { tot, punt, porRuta, porHora, perdidos, gaps, huecos, fallosTabla };
 }
 let _cumpTabla = 'todas';            // puesto seleccionado en el filtro ('todas' o una tabla despachable)
 let _cumpUltimo = null;              // { agg, fecha } del último render (para descargar perdidos)
@@ -3650,6 +3665,30 @@ async function descargarHuecos() {
     toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
   }
 }
+// Descarga los turnos de tabla no cumplidos (con el móvil del fijo) a Excel
+async function descargarFallosTabla() {
+  if (!_cumpUltimo || !_cumpUltimo.agg.fallosTabla.length) { toast('No hay turnos sin cumplir para descargar.', 'ok'); return; }
+  const { agg, fecha } = _cumpUltimo;
+  const aoa = [['Hora', 'Ruta', 'Móvil programado (fijo)', 'Móvil real', 'Estado', 'Novedad'],
+    ...agg.fallosTabla.map((x) => [String(x.hora || '').slice(0, 5), x.ruta, x.movilProg || '', x.movilReal || '', x.estado || '', x.novedad || ''])];
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 22 }, { wch: 12 }, { wch: 18 }, { wch: 22 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Turnos no cumplidos');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `turnos_tabla_no_cumplidos_${String(TABLES[_cumpTabla]?.label || _cumpTabla).replace(/\s+/g, '_')}_${fecha}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${agg.fallosTabla.length} turno(s).`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
+  }
+}
 async function openCumplimiento() {
   if (!(isAdmin() || isAuditor())) return;
   const tablas = cumpTablas();
@@ -3668,6 +3707,7 @@ async function openCumplimiento() {
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -3697,7 +3737,7 @@ async function cargarCumplimiento(forzarSonar) {
   $('cump-body').innerHTML = '<div class="loading">Calculando…</div>';
   // 1) Filas: una tabla de puesto, o TODAS las despachables (disjuntas → sin doble conteo)
   const tablas = puesto === 'todas' ? cumpTablas() : [puesto];
-  const sel = 'hora, estado_despacho, estado, sonar_regid, ruta:ruta_id(nombre), veh:vehiculo_id(numero)';
+  const sel = 'tipo, hora, estado_despacho, estado, sonar_regid, ruta:ruta_id(nombre), veh:vehiculo_id(numero), vehp:vehiculo_programado_id(numero)';
   let rows = [];
   for (const t of tablas) {
     const { data, error } = await sb.from(t).select(sel).eq('fecha', fecha).limit(6000);
@@ -3858,10 +3898,31 @@ function renderCumplimiento(agg, fecha) {
           + `<td><b>${_durLegible(hg.totalMin)}</b></td><td>${_durLegible(hg.maxMin)}</td>`
           + `<td class="cump-huecos-det">${hg.lista.map((x) => `<span class="cump-gap">${x.ini}–${x.fin} · ${x.min}m${x.turnos > 1 ? ' (' + x.turnos + ' turnos)' : ''}</span>`).join(' ')}</td></tr>`).join('')}</tbody></table></div></div>`
     : '<div class="cump-card ok-note">✅ Ninguna ruta se quedó sin despacho por encima de su frecuencia.</div>';
-  $('cump-body').innerHTML = `<div class="cump-top">${hero}${desglose}</div>` + viajesHtml
+  // 🚨 Turnos de TABLA no cumplidos: alerta por hora (semáforo) + detalle con el móvil del fijo (programado)
+  const ft = agg.fallosTabla || [];
+  const horasOp = [...agg.porHora.keys()].sort((a, b) => a - b);
+  const fallosPorH = new Map();
+  ft.forEach((x) => { if (x.h != null) fallosPorH.set(x.h, (fallosPorH.get(x.h) || 0) + 1); });
+  const semaforo = horasOp.map((h) => {
+    const n = fallosPorH.get(h) || 0;
+    return `<div class="ch-pill ${n ? 'ch-bad' : 'ch-ok'}" title="${String(h).padStart(2, '0')}:00 · ${n} turno(s) de tabla sin cumplir">`
+      + `<span class="ch-h">${String(h).padStart(2, '0')}h</span><span class="ch-n">${n || '✓'}</span></div>`;
+  }).join('');
+  const fallosHtml = `<div class="cump-card"><h4>🚨 Turnos de tabla no cumplidos (${ft.length}) <button id="cump-fallos-dl" class="cump-dl" type="button">⬇️ Excel</button></h4>`
+    + `<div style="font-size:12px;color:var(--muted);margin:-4px 0 8px">Alerta por hora sobre tus rutas. Rojo = hubo turnos de tabla que el móvil programado (fijo) no cumplió.</div>`
+    + (horasOp.length ? `<div class="ch-strip">${semaforo}</div>` : '')
+    + (ft.length
+      ? `<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Hora</th><th>Ruta</th><th>Móvil programado (fijo)</th><th>Estado</th></tr></thead><tbody>${
+        ft.map((x) => `<tr><td>${esc(String(x.hora || '').slice(0, 5))}</td><td>${esc(x.ruta)}</td>`
+          + `<td><b>${esc(x.movilProg || '—')}</b>${x.movilReal && x.movilReal !== x.movilProg ? ` <small>(real: ${esc(x.movilReal)})</small>` : ''}</td>`
+          + `<td>${esc(x.estado)}${x.novedad ? ' · ' + esc(x.novedad) : ''}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div style="font-size:13px;color:#16a34a;font-weight:700;padding:6px 0">✅ Todos los turnos de tabla se cumplieron.</div>`)
+    + `</div>`;
+  $('cump-body').innerHTML = `<div class="cump-top">${hero}${desglose}</div>` + fallosHtml + viajesHtml
     + `<div class="cump-grid">${chartRuta}${chartHora}</div>` + chartPerdHora + motHtml + gapsHtml + huecosHtml + perdHtml;
   $('cump-perd-dl')?.addEventListener('click', descargarPerdidos);
   $('cump-huecos-dl')?.addEventListener('click', descargarHuecos);
+  $('cump-fallos-dl')?.addEventListener('click', descargarFallosTabla);
 }
 // Interacción del tablero: tocar una ruta la filtra; tocar un viaje abre su recorrido.
 $('cump-body')?.addEventListener('click', (e) => {
@@ -3909,6 +3970,7 @@ async function openRutasVivo(modo) {
   $('cump-view').hidden = true;
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -4132,6 +4194,7 @@ async function openMalla() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4295,6 +4358,7 @@ async function openLaureles(modo) {
 function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
   $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
   selectTable(current);
 }
 function _armarAutoLaur() {
@@ -5132,6 +5196,137 @@ function _grupoDeRuta(map, itinNombre) { return map.get(String(itinNombre || '')
 // seguido de I/II (ej. 130I, 132II, 136IA, 136IIA, 193I-193II).
 const GRUPO_INTEGRADAS = 'Integradas';
 function esGrupoIntegrada(g) { return /\d\s*i/i.test(String(g || '')); }
+// Pool "Integradas" EXTRA: carros que el admin habilitó a mano (tabla integradas_pool).
+// Se suman al pool fijo (parque.ruta='Integradas') SOLO cuando la ruta objetivo es integrada.
+let _integExtra = null; // Set<numero_interno>
+async function loadIntegradasExtra() {
+  if (_integExtra) return _integExtra; // Set vacío también se cachea (no hay "vacío inválido" aquí)
+  const { data } = await sb.from('integradas_pool').select('numero_interno').limit(2000);
+  _integExtra = new Set((data || []).map((r) => String(r.numero_interno).trim()));
+  return _integExtra;
+}
+// ¿El móvil (número) entra en el objetivo de grupos? Incluye el pool integradas-extra
+// cuando el objetivo activó GRUPO_INTEGRADAS (ruta con I/II). rmap: numero->grupo del parque.
+function _movilEnObjetivo(numero, objetivo, rmap, extra) {
+  const n = String(numero).trim();
+  if (objetivo.has(rmap.get(n))) return true;
+  if (extra && extra.has(n) && objetivo.has(GRUPO_INTEGRADAS)) return true;
+  return false;
+}
+
+// ===== Vista "⭐ Integradas" (solo admin): habilitar carros extra al pool de integradas =====
+async function openIntegradas() {
+  if (!isAdmin()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'integradas';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('integradas-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-integradas')?.classList.add('active');
+  buildBottomNav();
+  await cargarIntegradas();
+}
+function cerrarIntegradas() { $('integradas-view').hidden = true; selectTable(current); }
+// Tarjeta de un móvil integrado. quitable=true → botón Quitar; false → chip "fijo".
+function _integCard(r, quitable) {
+  const num = esc(r.numero_interno);
+  const placa = r.placa ? `<span class="ic-plate">${esc(r.placa)}</span>` : '';
+  const grupo = r.grupo ? `<span class="ic-badge">${esc(r.grupo)}</span>` : '';
+  const est = r.estado ? `<span class="ic-estado ${r.estado === 'Activo' ? 'ok' : 'off'}">${esc(r.estado)}</span>` : '';
+  const marca = [r.marca, r.modelo].filter(Boolean).join(' ');
+  const by = quitable && r.habilitado_por
+    ? `<div class="ic-by">por ${esc(String(r.habilitado_por).split('@')[0])}${r.creado ? ' · ' + esc(fechaLegible(String(r.creado).slice(0, 10))) : ''}</div>` : '';
+  const accion = quitable
+    ? `<button class="btn danger ic-del" data-num="${num}">Quitar</button>`
+    : `<span class="ic-fijo" title="Grupo fijo en el parque">🔒 fijo</span>`;
+  return `<div class="integ-card${r.estado && r.estado !== 'Activo' ? ' is-off' : ''}">
+    <div class="ic-head"><span class="ic-num">${num}</span>${placa}</div>
+    <div class="ic-meta">${grupo}${est}</div>
+    ${marca ? `<div class="ic-marca">${esc(marca)}</div>` : ''}
+    ${by}
+    <div class="ic-foot">${accion}</div>
+  </div>`;
+}
+async function cargarIntegradas() {
+  const body = $('integ-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  const [rExtra, rFijos, veh] = await Promise.all([
+    sb.rpc('integradas_pool_listar'),
+    sb.from('parque_automotor').select('numero_interno,placa,estado,marca,modelo')
+      .eq('ruta', GRUPO_INTEGRADAS).neq('estado', 'Desvinculado').order('numero_interno'),
+    loadVehiculos(),
+  ]);
+  if (rExtra.error) { body.innerHTML = '<div class="cump-empty">Error: ' + esc(rExtra.error.message) + '</div>'; return; }
+  const extra = rExtra.data || [];
+  const fijos = (rFijos.data || []).map((f) => ({ ...f, grupo: GRUPO_INTEGRADAS }));
+  // Buscador: lista de móviles del parque (número · placa)
+  $('integ-datalist').innerHTML = veh.map((v) => `<option value="${esc(v.numero)}">${esc(v.numero)}${v.placa ? ' · ' + esc(v.placa) : ''}</option>`).join('');
+  $('integ-sub').textContent = `${extra.length} habilitado(s) por el admin · ${fijos.length} fijo(s) del parque · ${extra.length + fijos.length} integrados en total`;
+  const seccion = (titulo, hint, cards) =>
+    `<div class="integ-sec"><h3>${titulo}</h3><p class="integ-hint">${hint}</p>` +
+    (cards || '<div class="integ-vacio">— ninguno —</div>') + '</div>';
+  const cardsExtra = extra.map((r) => _integCard(r, true)).join('');
+  const cardsFijos = fijos.map((r) => _integCard(r, false)).join('');
+  body.innerHTML =
+    `<div class="integ-info">Los carros de aquí se ofrecen como móvil en <b>toda ruta integrada (con I o II)</b>, además de su grupo normal. El cambio es inmediato para los despachadores.</div>` +
+    `<div class="integ-grid">` +
+    seccion(`⭐ Habilitados por el admin <span class="integ-n">${extra.length}</span>`,
+      'Carros extra que tú habilitaste. Conservan su grupo original; puedes quitarlos cuando quieras.',
+      `<div class="integ-cards">${cardsExtra}</div>`) +
+    seccion(`🔒 Fijos del parque <span class="integ-n">${fijos.length}</span>`,
+      'Vienen marcados como grupo «Integradas» en el parque automotor. No se quitan desde aquí.',
+      `<div class="integ-cards">${cardsFijos}</div>`) +
+    `</div>`;
+}
+async function integradasAgregar() {
+  const inp = $('integ-add');
+  let val = (inp.value || '').trim();
+  if (!val) { toast('Escribe un móvil o placa a habilitar.', 'err'); return; }
+  val = val.split('·')[0].trim(); // por si viene "5542 · TSI747" del datalist
+  const veh = await loadVehiculos();
+  let numero = val;
+  const byPlaca = veh.find((v) => String(v.placa || '').trim().toUpperCase() === val.toUpperCase());
+  if (byPlaca) numero = String(byPlaca.numero).trim();
+  const btn = $('integ-add-btn'); btn.disabled = true;
+  try {
+    const { error } = await sb.rpc('integradas_pool_agregar', { p_numero: numero, p_nota: null });
+    if (error) throw error;
+    _integExtra = null; // invalida el caché que usa el selector de móvil
+    inp.value = '';
+    toast(`⭐ ${numero} habilitado como integrada`, 'ok');
+    await cargarIntegradas();
+  } catch (e) { toast('No se pudo habilitar: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; }
+}
+async function integradasQuitar(numero) {
+  const ok = await confirmAction({
+    title: '¿Quitar de integradas?',
+    lead: `El móvil ${numero} dejará de ofrecerse en las rutas integradas.`,
+    message: 'Conserva su grupo normal, así que seguirá disponible en su ruta habitual.',
+    okLabel: 'Quitar', danger: true,
+  });
+  if (!ok) return;
+  const { error } = await sb.rpc('integradas_pool_quitar', { p_numero: String(numero) });
+  if (error) { toast('No se pudo quitar: ' + error.message, 'err'); return; }
+  _integExtra = null;
+  toast(`${numero} quitado de integradas`, 'ok');
+  cargarIntegradas();
+}
+$('integ-close')?.addEventListener('click', cerrarIntegradas);
+$('integ-refresh')?.addEventListener('click', cargarIntegradas);
+$('integ-add-btn')?.addEventListener('click', integradasAgregar);
+$('integ-add')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); integradasAgregar(); } });
+$('integ-body')?.addEventListener('click', (e) => { const b = e.target.closest('.ic-del'); if (b) integradasQuitar(b.dataset.num); });
 
 // ----- Vista previa "como despachador" (solo admin): simula el filtrado de un puesto -----
 let previewMode = 'despachador'; // 'despachador' | 'auditor' — qué se está simulando
@@ -5285,7 +5480,7 @@ async function filtrarMovilesPorRuta() {
   const puestoChk = $('nd-puesto-todos'), puestoWrap = $('nd-puesto-wrap');
   let lista = veh; let placeholder = '— selecciona móvil —';
   if (itin) {
-    const [gmap, rmap] = await Promise.all([loadRutaGrupos(), loadParqueRutas()]);
+    const [gmap, rmap, extra] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadIntegradasExtra()]);
     // El despachador solo ve móviles de SUS grupos (admin = todos)
     const allowG = allowedGrupoSet();
     // Casilla "todos los móviles de mi puesto": solo para despachador/vista previa con grupos.
@@ -5327,7 +5522,7 @@ async function filtrarMovilesPorRuta() {
     }
     // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool "Integradas"
     if ([...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
-    const match = veh.filter((v) => objetivo.has(rmap.get(String(v.numero).trim())));
+    const match = veh.filter((v) => _movilEnObjetivo(v.numero, objetivo, rmap, extra));
     if (match.length) {
       lista = match;
       placeholder = usarPuesto
@@ -5796,7 +5991,7 @@ async function _openSonarInterno(row) {
   // los ve todos. Misma lógica que setupVehByGroup: ruta elegida > todos sus grupos.
   let vehMov = veh;
   if (filtraComoDespachador()) {
-    const [gmap, rmap] = await Promise.all([loadRutaGrupos(), loadParqueRutas()]);
+    const [gmap, rmap, extra] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadIntegradasExtra()]);
     const rname = (row?.ruta?.nombre || row?.rutap?.nombre || '').trim();
     const grupoRuta = _grupoDeRuta(gmap, rname);
     const misGrupos = gruposDeMisRutas(gmap);
@@ -5806,7 +6001,7 @@ async function _openSonarInterno(row) {
     if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     if (objetivo && objetivo.size) {
       const progNum = String(row?.veh?.numero || row?.vehp?.numero || '').trim(); // conservar el móvil programado
-      const f = veh.filter((v) => objetivo.has(rmap.get(String(v.numero).trim())) || String(v.numero).trim() === progNum);
+      const f = veh.filter((v) => _movilEnObjetivo(v.numero, objetivo, rmap, extra) || String(v.numero).trim() === progNum);
       if (f.length) vehMov = f; // salvaguarda: si el filtro quedara vacío, deja todos
     }
   }
@@ -7571,6 +7766,7 @@ async function showMapView() {
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;

@@ -350,6 +350,21 @@
           </div>
           <div id="laur-body" class="malla-body"></div>
         </div>
+
+        <!-- Vista "Integradas": el admin habilita carros EXTRA que se ofrecen en toda ruta I/II -->
+        <div id="integradas-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>⭐ Integradas</h2>
+            <span id="integ-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <input type="search" id="integ-add" list="integ-datalist" placeholder="Móvil o placa a habilitar…" autocomplete="off" />
+            <datalist id="integ-datalist"></datalist>
+            <button id="integ-add-btn" class="btn primary">⭐ Habilitar</button>
+            <button id="integ-refresh" class="btn">↻ Actualizar</button>
+            <button id="integ-close" class="btn">← Volver</button>
+          </div>
+          <div id="integ-body" class="integ-body"></div>
+        </div>
       </main>
     </div>
 
