@@ -147,6 +147,22 @@ function tablasDeDespachador(tablas, verDespachos) {
   }
   return TABLE_ORDER.filter((n) => TABLES[n].despachador); // sin tablas propias → despachos por ruta + generales
 }
+// ¿El despachador debe ver la pestaña general "Despachos"? Sí cuando tiene rutas que NO
+// tienen tabla de puesto propia (esas se despachan en la vista general, p. ej. 136/136A/136D
+// en el puesto Nutibara). Es DETERMINÍSTICO desde el contexto: no depende del conteo con RLS,
+// que puede resolver 0 por sesión/horario/timing y ocultar la pestaña indebidamente. Como
+// respaldo, si todas sus rutas tienen tabla, mira si hay despachos visibles de sus rutas.
+async function calcVerDespachos(rutas, tablas, ids) {
+  const labels = new Set((tablas || []).map((t) => normRuta(t.label || '')));
+  if ((rutas || []).some((r) => !labels.has(normRuta(r)))) return true; // hay rutas sin tabla propia
+  if ((ids || []).length) {
+    try {
+      const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true }).in('ruta_id', ids);
+      return (count || 0) > 0;
+    } catch { /* si el conteo falla, no forzamos la pestaña */ }
+  }
+  return false;
+}
 
 // ---------- utilidades ----------
 function toast(msg, kind = '') {
@@ -365,8 +381,8 @@ async function refreshContext() {
   for (const t of (CTX.tablas || [])) { if (t.tabla && !TABLES[t.tabla]) TABLES[t.tabla] = configTablaPuesto(t.label); }
   await registerPuestoTables();
   CTX.verDespachos = false;
-  if ((CTX.tablas || []).length && (CTX.ids || []).length) {
-    try { const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true }); CTX.verDespachos = (count || 0) > 0; } catch { /* */ }
+  if ((CTX.tablas || []).length) {
+    CTX.verDespachos = await calcVerDespachos(CTX.rutas, CTX.tablas, CTX.ids);
   }
   $('user-email').textContent = etiquetaUsuario(sessionUser);
   buildSidebar();
@@ -413,11 +429,8 @@ async function showApp(user) {
   // ¿El despachador (con tablas propias) además tiene rutas que se despachan en "Despachos"?
   // Se muestra el tab "Despachos" solo si hay filas visibles para sus rutas (evita tabs vacíos).
   CTX && (CTX.verDespachos = false);
-  if (CTX?.rol === 'despachador' && (CTX.tablas || []).length && (CTX.ids || []).length) {
-    try {
-      const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true });
-      CTX.verDespachos = (count || 0) > 0;
-    } catch { /* si falla, no se muestra */ }
+  if (CTX?.rol === 'despachador' && (CTX.tablas || []).length) {
+    CTX.verDespachos = await calcVerDespachos(CTX.rutas, CTX.tablas, CTX.ids);
   }
   // Mostrar nombre + rol/puesto del usuario
   $('user-email').textContent = etiquetaUsuario(user);
@@ -5388,12 +5401,10 @@ async function activarPreview(email) {
     ids: (ctx.ids || []).map(Number).filter((n) => !isNaN(n)),
     tablas: ctx.tablas || [], verDespachos: false,
   };
-  // ¿Mostrar la pestaña general "Despachos"? solo si hay filas para sus rutas (evita tab vacío)
-  if (PREVIEW.tablas.length && PREVIEW.ids.length) {
-    try {
-      const { count } = await sb.from('despachos').select('id', { count: 'exact', head: true }).in('ruta_id', PREVIEW.ids);
-      PREVIEW.verDespachos = (count || 0) > 0;
-    } catch { /* si falla, no se muestra */ }
+  // ¿Mostrar la pestaña general "Despachos"? Igual que el despachador real: si tiene rutas sin
+  // tabla propia (o hay despachos visibles de sus rutas).
+  if (PREVIEW.tablas.length) {
+    PREVIEW.verDespachos = await calcVerDespachos(PREVIEW.rutasRaw, PREVIEW.tablas, PREVIEW.ids);
   }
   $('preview-modal').hidden = true;
   const nr = PREVIEW.rutasRaw.length, ng = PREVIEW.grupos.size, nt = PREVIEW.tablas.length;
