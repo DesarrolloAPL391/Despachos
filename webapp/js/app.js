@@ -57,6 +57,20 @@ function menuOrder() {
 function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
 function isDespachador() { return CTX?.rol === 'despachador'; }
+// Candado por fila (rowLocked): si la tabla marca `adminBypassLock`, NO aplica al admin
+// (p.ej. Resumen "Cerrado": el admin sí puede editar/borrar esas filas). Para el resto queda igual.
+function filaBloqueada(cfg, row) {
+  if (!cfg || !cfg.rowLocked || !cfg.rowLocked(row)) return false;
+  return !(cfg.adminBypassLock && isAdmin());
+}
+// Domingo o festivo: en esos días se puede despachar CUALQUIER móvil por CUALQUIER ruta
+// (se levanta el filtro por grupo del parque). Usa el tipo de día del contexto (mi_contexto);
+// respaldo por la fecha del servidor para domingo por si dia_tipo no vino.
+function esDiaLibreDespacho() {
+  const t = PREVIEW ? PREVIEW.dia_tipo : (CTX?.dia_tipo || '');
+  if (t === 'domingo' || t === 'festivo') return true;
+  try { return new Date(hoyServidor() + 'T12:00:00').getDay() === 0; } catch (e) { return false; }
+}
 // Despachador asignado HOY al puesto de Laureles: única puerta a Control Laureles
 // además de auditor/admin (CTX.puesto viene del horario del día / puesto fijo).
 function esDespachadorLaureles() { return isDespachador() && /laurel/.test(normRuta(CTX?.puesto || '')); }
@@ -512,8 +526,10 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
+  if (isAdmin()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
+  const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
@@ -618,6 +634,7 @@ function selectTable(name) {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -1805,7 +1822,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
       const act = document.createElement('td');
       act.className = 'row-actions';
       act.dataset.label = 'Acciones';
-      const locked = cfg.rowLocked && cfg.rowLocked(row);
+      const locked = filaBloqueada(cfg, row);
       // La fecha es clave: solo se opera el día actual. No se despacha/cancela/edita un viaje
       // de un día anterior (pasada) NI de un día futuro (adelantada).
       const frow = row.fecha ? String(row.fecha).slice(0, 10) : '';
@@ -2127,14 +2144,17 @@ async function setupVehByGroup(form, conf) {
     const grupoRuta = _grupoDeRuta(gmap, rname);
     // Objetivo de grupos: ruta elegida > (si no) todos los grupos del despachador > (admin) sin filtro
     let objetivo = null; // null = no filtrar
-    if (grupoRuta) {
-      objetivo = new Set([grupoRuta]);
-      if (misGrupos && misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g)));
-    } else if (misGrupos && misGrupos.size) {
-      objetivo = new Set(misGrupos); // sin ruta: los carros de TODOS sus grupos
+    // Domingo/festivo: cualquier móvil por cualquier ruta -> objetivo queda null (no filtra)
+    if (!esDiaLibreDespacho()) {
+      if (grupoRuta) {
+        objetivo = new Set([grupoRuta]);
+        if (misGrupos && misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g)));
+      } else if (misGrupos && misGrupos.size) {
+        objetivo = new Set(misGrupos); // sin ruta: los carros de TODOS sus grupos
+      }
+      // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool
+      if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     }
-    // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool
-    if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     const construir = (filtra) => {
       vehSel.innerHTML = '';
       let n = 0;
@@ -2924,7 +2944,7 @@ async function openEditor(row) {
 }
 async function _openEditorInterno(row) {
   const cfg = TABLES[current];
-  if (row && cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
+  if (row && filaBloqueada(cfg, row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
   // La fecha es clave: solo se opera el día actual.
   if (row && cfg.dispatchable && row.fecha) {
     const f = String(row.fecha).slice(0, 10);
@@ -3306,7 +3326,7 @@ $('modal-save').addEventListener('click', async () => {
 async function deleteRow(row) {
   const cfg = TABLES[current];
   if (cfg.noDelete) { toast('Esta tabla no permite eliminar registros', 'err'); return; }
-  if (cfg.rowLocked && cfg.rowLocked(row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
+  if (filaBloqueada(cfg, row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
   const ok = await confirmAction({
     title: '¿Eliminar registro?',
     lead: `Se eliminará este registro de ${cfg.label}.`,
@@ -3721,6 +3741,7 @@ async function openCumplimiento() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -3984,6 +4005,7 @@ async function openRutasVivo(modo) {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -4208,6 +4230,7 @@ async function openMalla() {
   $('rutas-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4372,6 +4395,7 @@ function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true;
   selectTable(current);
 }
 function _armarAutoLaur() {
@@ -5341,6 +5365,261 @@ $('integ-add-btn')?.addEventListener('click', integradasAgregar);
 $('integ-add')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); integradasAgregar(); } });
 $('integ-body')?.addEventListener('click', (e) => { const b = e.target.closest('.ic-del'); if (b) integradasQuitar(b.dataset.num); });
 
+// ===== Vista "🧑‍🤝‍🧑 Pasajeros" (solo admin): conteo de pasajeros por móvil y día desde SONAR =====
+async function openPasajeros() {
+  if (!isAdmin()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'pasajeros';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('pasajeros-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-pasajeros')?.classList.add('active');
+  buildBottomNav();
+  $('pax-fecha').value = $('pax-fecha').value || hoyServidor();
+  const veh = await loadVehiculos();
+  // Combo buscador de móviles (ordenado por número, muestra placa)
+  _paxVeh = (veh || []).slice().sort((a, b) => String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true }));
+  $('pax-movil').value = '';
+  paxComboFiltrar('');
+  $('pax-sub').textContent = '';
+  if (paxMap) { paxMap.remove(); paxMap = null; }
+  $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen de SONAR los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
+}
+function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; selectTable(current); }
+async function consultarPasajeros() {
+  let movil = ($('pax-movil').value || '').split('·')[0].trim();
+  const fecha = $('pax-fecha').value;
+  if (!movil) { toast('Escribe un móvil.', 'err'); return; }
+  if (!fecha) { toast('Elige una fecha.', 'err'); return; }
+  const veh = await loadVehiculos();
+  const byPlaca = veh.find((v) => String(v.placa || '').trim().toUpperCase() === movil.toUpperCase());
+  if (byPlaca) movil = String(byPlaca.numero).trim();
+  const body = $('pax-body'); body.innerHTML = '<div class="loading">Consultando SONAR…</div>';
+  const btn = $('pax-consultar'); btn.disabled = true;
+  try {
+    // Pasajeros + viajes del día en paralelo (RPCs separados, cada uno con su presupuesto de 8 s)
+    const [paxR, viaR] = await Promise.all([
+      sb.rpc('pasajeros_movil', { p_movil: movil, p_fecha: fecha }),
+      sb.rpc('viajes_movil', { p_movil: movil, p_fecha: fecha }),
+    ]);
+    const { data, error } = paxR;
+    if (error) throw error;
+    if (!data || !data.ok) { body.innerHTML = `<div class="cump-empty">${esc((data && data.error) || 'Sin datos')}</div>`; $('pax-sub').textContent = ''; return; }
+    renderPasajeros(data);
+    renderViajes(viaR && viaR.data); // rellena #pax-viajes (si falló, queda vacío)
+  } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
+  finally { btn.disabled = false; }
+}
+// Sección "Viajes del día" (desde SONAR): cada viaje con sus pasajeros (cruce por hora).
+function renderViajes(v) {
+  const cont = document.getElementById('pax-viajes'); if (!cont) return;
+  if (!v || !v.ok) { cont.innerHTML = ''; return; }
+  const viajes = v.viajes || [];
+  if (!viajes.length) {
+    cont.innerHTML = `<div class="pax-sec"><h3>🚌 Viajes del día</h3><div class="integ-vacio">— ${esc(v.nota || 'SONAR no reportó viajes de este móvil ese día')} —</div></div>`;
+    return;
+  }
+  const badge = (e) => {
+    const k = e === 'Completo' ? 'ok' : e === 'En curso' ? 'run' : e === 'Cancelado' ? 'can' : 'inc';
+    return `<span class="pax-badge ${k}">${esc(e || '—')}</span>`;
+  };
+  const filas = viajes.map((t) => `<tr>
+    <td class="pax-th">${esc(t.ini || '—')}${t.fin ? '<span class="pax-vsep">–</span>' + esc(t.fin) : '<span class="pax-vsep">–</span><span class="pax-run">en curso</span>'}</td>
+    <td>${esc(t.ruta || '')}</td>
+    <td>${badge(t.estado)}</td>
+    <td class="pax-tnum up">${t.subidas || 0}</td>
+    <td class="pax-tnum down">${t.bajadas || 0}</td>
+  </tr>`).join('');
+  const sinV = (v.sin_viaje_subidas || 0) + (v.sin_viaje_bajadas || 0) > 0
+    ? `<div class="pax-sinv">Fuera de viaje (sin itinerario activo): <b>${v.sin_viaje_subidas || 0}</b> ↑ · <b>${v.sin_viaje_bajadas || 0}</b> ↓</div>` : '';
+  cont.innerHTML = `<div class="pax-sec">
+    <h3>🚌 Viajes del día <span class="pax-hint">(${viajes.length} viajes · pasajeros de cada uno, cruzados por hora)</span></h3>
+    <div class="pax-tablewrap"><table class="pax-table">
+      <thead><tr><th>Horario</th><th>Ruta</th><th>Estado</th><th>↑ Sub</th><th>↓ Baj</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table></div>${sinV}</div>`;
+}
+function renderPasajeros(d) {
+  const nfmt = (n) => (n || 0).toLocaleString('es-CO');
+  $('pax-sub').textContent = `Móvil ${d.movil} · ${fechaLegible(String(d.fecha))}`;
+  const hero = `<div class="pax-hero">
+    <div class="pax-card up"><div class="pax-num">${nfmt(d.subidas)}</div><div class="pax-lbl">↑ Subieron</div></div>
+    <div class="pax-card down"><div class="pax-num">${nfmt(d.bajadas)}</div><div class="pax-lbl">↓ Bajaron</div></div>
+    <div class="pax-card blk"><div class="pax-num">${nfmt(d.bloqueos)}</div><div class="pax-lbl">⛔ Bloqueos</div></div>
+  </div>`;
+  const horas = d.por_hora || [];
+  const maxH = Math.max(1, ...horas.map((h) => h.subidas || 0));
+  const barras = horas.length
+    ? horas.map((h) => {
+        const pct = Math.round((h.subidas || 0) / maxH * 100);
+        return `<div class="pax-row"><span class="pax-h">${String(h.hora).padStart(2, '0')}:00</span>`
+          + `<span class="pax-bar"><span class="pax-fill" style="width:${pct}%"></span></span>`
+          + `<span class="pax-v">${h.subidas || 0}<span class="pax-v2"> / ${h.bajadas || 0}</span></span></div>`;
+      }).join('')
+    : '<div class="integ-vacio">— sin registros de pasajeros ese día —</div>';
+  const puertas = d.por_puerta && Object.keys(d.por_puerta).length
+    ? `<div class="pax-puertas">Por puerta (subidas): ${Object.entries(d.por_puerta).map(([p, n]) => `Puerta ${esc(p)}: <b>${n}</b>`).join(' · ')}</div>` : '';
+  // Paradas: "¿dónde se monta la gente?" — ranking + mapa
+  const paradas = (d.paradas || []).filter((p) => (p.subidas || 0) > 0);
+  const lista = paradas.length
+    ? paradas.map((p, i) => `<div class="pax-parada" data-i="${i}">`
+        + `<span class="pax-pr">${i + 1}</span>`
+        + `<span class="pax-pdir">${esc(_dirCorta(p.parada))}</span>`
+        + `<span class="pax-pv">${p.subidas || 0}<span class="pax-v2"> / ${p.bajadas || 0}</span></span></div>`).join('')
+    : '<div class="integ-vacio">— SONAR no reportó direcciones ese día —</div>';
+  const mapa = paradas.length
+    ? `<div class="pax-mapwrap"><div id="pax-map" class="pax-map"></div><div id="pax-map-msg" class="pax-map-msg"></div></div>` : '';
+  $('pax-body').innerHTML = hero
+    + '<div id="pax-viajes"></div>'
+    + `<div class="pax-sec"><h3>Pasajeros por hora <span class="pax-hint">(subidas / bajadas)</span></h3>${barras}</div>`
+    + puertas
+    + `<div class="pax-sec"><h3>¿Dónde se monta la gente? <span class="pax-hint">(círculo = nº de subidas · 📍 ubicación GPS real del bus)</span></h3>`
+    + mapa
+    + `<div class="pax-paradas">${lista}</div></div>`;
+  if (paradas.length) pintarPaxMapa(paradas);
+}
+// Acorta la dirección de SONAR ("Carrera 46 48,La Candelaria,Medellin,Antioquia") a calle · barrio
+function _dirCorta(label) {
+  const parts = String(label || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return '—';
+  return parts.slice(0, 2).join(' · ');
+}
+let paxMap = null;          // mapa Leaflet de la vista de pasajeros
+let paxMarkers = null;      // capa de marcadores
+const _geoMem = new Map();  // caché en memoria dirección -> {lat, lon}
+// Geocodifica una dirección con TomTom (la app ya usa TOMTOM_KEY). Devuelve {lat, lon} o null.
+async function geocodeTomTom(dir) {
+  if (!TOMTOM_KEY || !dir) return null;
+  if (_geoMem.has(dir)) return _geoMem.get(dir);
+  try {
+    const q = encodeURIComponent(String(dir).replace(/,/g, ', ') + ', Colombia');
+    const url = `https://api.tomtom.com/search/2/geocode/${q}.json?key=${TOMTOM_KEY}&countrySet=CO&limit=1`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const p = j?.results?.[0]?.position;
+    const out = (p && p.lat != null && p.lon != null) ? { lat: p.lat, lon: p.lon } : null;
+    _geoMem.set(dir, out);
+    return out;
+  } catch (e) { return null; }
+}
+function _paxRadio(subidas, maxSub) { return Math.max(7, Math.min(28, 7 + Math.sqrt(subidas / Math.max(1, maxSub)) * 21)); }
+function _paxMarker(p, maxSub) {
+  const r = _paxRadio(p.subidas || 0, maxSub);
+  const real = p.real === true;
+  // Verde = ubicación GPS real del bus; ámbar = aproximada por dirección (geocodificada)
+  const m = L.circleMarker([p.lat, p.lon], {
+    radius: r, weight: 2,
+    color: real ? '#137a2b' : '#b45309',
+    fillColor: real ? '#22c55e' : '#f59e0b', fillOpacity: 0.6,
+  });
+  const fuente = real ? '📍 ubicación GPS real' : '≈ aprox. por dirección';
+  m.bindPopup(`<b>${esc(_dirCorta(p.parada))}</b><br>↑ ${p.subidas || 0} subieron · ↓ ${p.bajadas || 0} bajaron<br><small>${fuente}</small>`);
+  m.bindTooltip(String(p.subidas || 0), { permanent: true, direction: 'center', className: 'pax-mtip' });
+  return m;
+}
+async function pintarPaxMapa(paradas) {
+  const el = document.getElementById('pax-map'); if (!el || typeof L === 'undefined') return;
+  if (paxMap) { paxMap.remove(); paxMap = null; }
+  paxMap = L.map(el, { scrollWheelZoom: true, attributionControl: true }).setView([6.244, -75.575], 12); // Medellín
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(paxMap);
+  paxMarkers = L.layerGroup().addTo(paxMap);
+  setTimeout(() => paxMap && paxMap.invalidateSize(), 150); // el div acaba de insertarse
+  const maxSub = Math.max(1, ...paradas.map((p) => p.subidas || 0));
+  const msg = document.getElementById('pax-map-msg');
+  const pts = [];
+  // 1) Pinta de una las que ya tienen coordenadas (caché del servidor)
+  for (const p of paradas) {
+    if (p.lat != null && p.lon != null) { _paxMarker(p, maxSub).addTo(paxMarkers); pts.push([p.lat, p.lon]); }
+  }
+  if (pts.length) paxMap.fitBounds(pts, { padding: [30, 30] });
+  // 2) Geocodifica las que faltan (TomTom), pinta y guarda en caché del servidor
+  const faltan = paradas.filter((p) => p.lat == null || p.lon == null);
+  if (faltan.length && !TOMTOM_KEY) { if (msg) msg.textContent = 'Faltan coordenadas y no hay clave TomTom para geocodificar.'; return; }
+  let hechas = 0;
+  for (const p of faltan) {
+    if (getCurrentView() !== 'pasajeros' || !paxMap) return; // el usuario salió
+    if (msg) msg.textContent = `Ubicando paradas… ${hechas}/${faltan.length}`;
+    const g = await geocodeTomTom(p.parada);
+    hechas++;
+    if (g) {
+      p.lat = g.lat; p.lon = g.lon;
+      _paxMarker(p, maxSub).addTo(paxMarkers); pts.push([g.lat, g.lon]);
+      if (pts.length) paxMap.fitBounds(pts, { padding: [30, 30] });
+      sb.rpc('geo_cache_set', { p_dir: p.parada, p_lat: g.lat, p_lon: g.lon }).catch(() => {});
+    }
+    await new Promise((res) => setTimeout(res, 220)); // cortesía con la API
+  }
+  if (msg) msg.textContent = pts.length ? '' : 'No se pudieron ubicar las paradas en el mapa.';
+}
+function getCurrentView() { return currentView; }
+// ---- Combo buscador de móviles (lista bonita, filtrable) ----
+let _paxVeh = [];        // vehículos cargados {numero, placa}
+let _paxHi = -1;         // índice resaltado en el desplegable
+let _paxVis = [];        // subconjunto visible tras filtrar
+function paxComboAbrir() { const d = $('pax-drop'); if (d) { d.hidden = false; $('pax-movil')?.setAttribute('aria-expanded', 'true'); } }
+function paxComboCerrar() { const d = $('pax-drop'); if (d) { d.hidden = true; $('pax-movil')?.setAttribute('aria-expanded', 'false'); } _paxHi = -1; }
+function paxComboFiltrar(q) {
+  const t = String(q || '').trim().toLowerCase();
+  _paxVis = !t ? _paxVeh.slice(0, 200)
+    : _paxVeh.filter((v) => String(v.numero).toLowerCase().includes(t) || String(v.placa || '').toLowerCase().includes(t)).slice(0, 200);
+  _paxHi = -1;
+  const d = $('pax-drop'); if (!d) return;
+  if (!_paxVis.length) { d.innerHTML = '<div class="pax-opt pax-opt-none">— sin resultados —</div>'; return; }
+  d.innerHTML = _paxVis.map((v, i) =>
+    `<div class="pax-opt" role="option" data-idx="${i}" data-num="${esc(v.numero)}">`
+    + `<span class="pax-opt-n">${esc(v.numero)}</span>`
+    + (v.placa ? `<span class="pax-opt-p">${esc(v.placa)}</span>` : '')
+    + '</div>').join('');
+}
+function paxComboElegir(v) {
+  if (!v) return;
+  $('pax-movil').value = String(v.numero);
+  paxComboCerrar();
+  consultarPasajeros();
+}
+function paxComboResaltar(delta) {
+  if ($('pax-drop').hidden) { paxComboAbrir(); paxComboFiltrar($('pax-movil').value); }
+  if (!_paxVis.length) return;
+  _paxHi = (_paxHi + delta + _paxVis.length) % _paxVis.length;
+  const opts = $('pax-drop').querySelectorAll('.pax-opt');
+  opts.forEach((o, i) => o.classList.toggle('is-hi', i === _paxHi));
+  opts[_paxHi]?.scrollIntoView({ block: 'nearest' });
+}
+$('pax-movil')?.addEventListener('focus', () => { paxComboFiltrar($('pax-movil').value); paxComboAbrir(); });
+$('pax-movil')?.addEventListener('input', () => { paxComboFiltrar($('pax-movil').value); paxComboAbrir(); });
+$('pax-movil')?.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); paxComboResaltar(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); paxComboResaltar(-1); }
+  else if (e.key === 'Escape') { paxComboCerrar(); }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (!$('pax-drop').hidden && _paxHi >= 0 && _paxVis[_paxHi]) paxComboElegir(_paxVis[_paxHi]);
+    else { paxComboCerrar(); consultarPasajeros(); }
+  }
+});
+$('pax-drop')?.addEventListener('mousedown', (e) => {
+  const opt = e.target.closest('.pax-opt'); if (!opt || opt.classList.contains('pax-opt-none')) return;
+  e.preventDefault();
+  const idx = Number(opt.dataset.idx);
+  paxComboElegir(_paxVis[idx]);
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#pax-combo')) paxComboCerrar(); });
+$('pax-close')?.addEventListener('click', cerrarPasajeros);
+$('pax-consultar')?.addEventListener('click', consultarPasajeros);
+$('pax-fecha')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); consultarPasajeros(); } });
+
 // ----- Vista previa "como despachador" (solo admin): simula el filtrado de un puesto -----
 let previewMode = 'despachador'; // 'despachador' | 'auditor' — qué se está simulando
 async function openPreviewDespachador() {
@@ -5490,7 +5769,12 @@ async function filtrarMovilesPorRuta() {
   const estChk = $('nd-estacion'), estWrap = $('nd-estacion-wrap');
   const puestoChk = $('nd-puesto-todos'), puestoWrap = $('nd-puesto-wrap');
   let lista = veh; let placeholder = '— selecciona móvil —';
-  if (itin) {
+  if (itin && esDiaLibreDespacho()) {
+    // Domingo/festivo: cualquier móvil por cualquier ruta (sin filtro de grupo). lista queda = veh (todos)
+    if (estWrap) { estWrap.hidden = true; if (estChk) estChk.checked = false; }
+    if (puestoWrap) puestoWrap.hidden = true;
+    placeholder = '— domingo/festivo: cualquier móvil —';
+  } else if (itin) {
     const [gmap, rmap, extra] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadIntegradasExtra()]);
     // El despachador solo ve móviles de SUS grupos (admin = todos)
     const allowG = allowedGrupoSet();
@@ -6001,7 +6285,8 @@ async function _openSonarInterno(row) {
   // formulario de editar), para no despachar carros de otro puesto. El admin (sin vista previa)
   // los ve todos. Misma lógica que setupVehByGroup: ruta elegida > todos sus grupos.
   let vehMov = veh;
-  if (filtraComoDespachador()) {
+  // Domingo/festivo: cualquier móvil por cualquier ruta (no se filtra por grupo)
+  if (filtraComoDespachador() && !esDiaLibreDespacho()) {
     const [gmap, rmap, extra] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadIntegradasExtra()]);
     const rname = (row?.ruta?.nombre || row?.rutap?.nombre || '').trim();
     const grupoRuta = _grupoDeRuta(gmap, rname);
@@ -7778,6 +8063,7 @@ async function showMapView() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;

@@ -1547,3 +1547,93 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .ic-fijo { font-size: 12px; color: var(--muted); }
 .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 .btn.danger:hover { background: var(--primary-dark); }
+
+/* ---------- Vista 🧑‍🤝‍🧑 Pasajeros ---------- */
+.pax-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+@media (max-width: 620px) { .pax-hero { grid-template-columns: 1fr; } }
+.pax-card {
+  border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px;
+  background: var(--surface); box-shadow: var(--shadow-sm); text-align: center;
+}
+.pax-card .pax-num { font-size: 40px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.pax-card .pax-lbl { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.pax-card.up  .pax-num { color: #16a34a; }
+.pax-card.down .pax-num { color: #2563eb; }
+.pax-card.blk .pax-num { color: #b45309; }
+.pax-sec {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px 16px; box-shadow: var(--shadow-sm);
+}
+.pax-sec h3 { margin: 0 0 12px; font-size: 16px; }
+.pax-hint { font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.pax-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
+.pax-h { width: 48px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pax-bar { flex: 1; height: 16px; background: #f1f5f9; border-radius: 999px; overflow: hidden; }
+.pax-fill { display: block; height: 100%; background: linear-gradient(90deg, #34d399, #16a34a); border-radius: 999px; min-width: 2px; }
+.pax-v { width: 78px; text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pax-v .pax-v2 { color: var(--muted); font-weight: 400; }
+.pax-puertas { margin-top: 12px; font-size: 13px; color: var(--muted); }
+
+/* Combo buscador de móvil (lista bonita, filtrable) */
+.pax-combo { position: relative; display: inline-block; }
+.pax-combo > input[type="search"] {
+  width: 150px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+  font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; background: var(--surface); color: var(--text);
+}
+.pax-combo > input[type="search"]:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(237,28,36,.12); }
+.pax-drop {
+  position: absolute; z-index: 60; top: calc(100% + 5px); left: 0; min-width: 210px; max-height: 280px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.16); padding: 5px;
+}
+.pax-opt {
+  display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; user-select: none;
+}
+.pax-opt:hover, .pax-opt.is-hi { background: rgba(237,28,36,.09); }
+.pax-opt-n { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text); min-width: 46px; }
+.pax-opt-p { margin-left: auto; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+.pax-opt-none { color: var(--muted); cursor: default; justify-content: center; }
+.pax-opt-none:hover { background: transparent; }
+
+/* Mapa de paradas ("dónde se monta la gente") */
+.pax-mapwrap { position: relative; margin-bottom: 14px; }
+.pax-map { height: 420px; width: 100%; border-radius: 12px; border: 1px solid var(--border); z-index: 0; }
+.pax-map-msg {
+  position: absolute; left: 10px; bottom: 10px; z-index: 500; background: rgba(255,255,255,.92);
+  border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; font-size: 12.5px; color: var(--muted);
+  font-weight: 600; pointer-events: none;
+}
+.pax-map-msg:empty { display: none; }
+.leaflet-tooltip.pax-mtip {
+  background: transparent; border: none; box-shadow: none; color: #063; font-weight: 800;
+  font-size: 12px; text-shadow: 0 1px 2px rgba(255,255,255,.9);
+}
+.pax-paradas { display: flex; flex-direction: column; gap: 2px; }
+.pax-parada { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; font-size: 13px; }
+.pax-parada:nth-child(odd) { background: rgba(0,0,0,.025); }
+.pax-pr {
+  width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  background: #22c55e; color: #fff; border-radius: 50%; font-size: 11px; font-weight: 800;
+}
+.pax-pdir { flex: 1; font-weight: 600; }
+.pax-pv { width: 78px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Viajes del día (tabla) */
+.pax-tablewrap { overflow-x: auto; }
+.pax-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pax-table th, .pax-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.pax-table th { font-size: 12px; color: var(--muted); font-weight: 700; }
+.pax-table tbody tr:hover { background: rgba(0,0,0,.02); }
+.pax-th { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pax-vsep { color: var(--muted); margin: 0 3px; }
+.pax-run { color: #16a34a; font-weight: 700; font-size: 12px; }
+.pax-tnum { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pax-tnum.up { color: #16a34a; }
+.pax-tnum.down { color: #2563eb; }
+.pax-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+.pax-badge.ok  { background: #dcfce7; color: #166534; }
+.pax-badge.run { background: #dbeafe; color: #1e40af; }
+.pax-badge.can { background: #fee2e2; color: #991b1b; }
+.pax-badge.inc { background: #fef3c7; color: #92400e; }
+.pax-sinv { margin-top: 10px; font-size: 12.5px; color: var(--muted); }

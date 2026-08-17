@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v192';
+export const APP_VERSION = 'v199';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -244,6 +244,7 @@ export const TABLES = {
     // Si el vehículo ya está "Cerrado", la fila queda bloqueada (no se edita ni elimina)
     rowLocked: (row) => String(row.estado || '').trim().toUpperCase() === 'CERRADO',
     lockedHint: 'Cerrado: no editable',
+    adminBypassLock: true, // el ADMIN sí puede editar/borrar filas "Cerrado" (el candado solo aplica a no-admin)
     // El KEY se genera solo (no se escribe a mano)
     genKey: () => 'R' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
     confirmSave: true, // pide confirmación antes de guardar/cerrar

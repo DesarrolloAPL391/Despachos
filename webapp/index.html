@@ -365,6 +365,25 @@
           </div>
           <div id="integ-body" class="integ-body"></div>
         </div>
+
+        <!-- Vista "Pasajeros": conteo de pasajeros por móvil y día, en vivo desde SONAR (admin) -->
+        <div id="pasajeros-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🧑‍🤝‍🧑 Pasajeros</h2>
+            <span id="pax-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Móvil
+              <span class="pax-combo" id="pax-combo">
+                <input type="search" id="pax-movil" placeholder="N° o placa…" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" />
+                <div id="pax-drop" class="pax-drop" role="listbox" hidden></div>
+              </span>
+            </label>
+            <label class="cump-fecha-lbl">📅 <input type="date" id="pax-fecha" /></label>
+            <button id="pax-consultar" class="btn primary">Consultar</button>
+            <button id="pax-close" class="btn">← Volver</button>
+          </div>
+          <div id="pax-body" class="integ-body"></div>
+        </div>
       </main>
     </div>
 
