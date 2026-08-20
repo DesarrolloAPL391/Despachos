@@ -57,6 +57,10 @@ function menuOrder() {
 function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
 function isDespachador() { return CTX?.rol === 'despachador'; }
+// Afiliado (dueño de vehículos): solo ve el MAPA y PASAJEROS, y únicamente de SUS móviles.
+function isAfiliado() { return CTX?.rol === 'afiliado'; }
+// Móviles (números) del afiliado logueado (los trae mi_contexto en CTX.moviles)
+function movilesAfiliado() { return new Set((CTX?.moviles || []).map((m) => String(m).trim())); }
 // Candado por fila (rowLocked): si la tabla marca `adminBypassLock`, NO aplica al admin
 // (p.ej. Resumen "Cerrado": el admin sí puede editar/borrar esas filas). Para el resto queda igual.
 function filaBloqueada(cfg, row) {
@@ -139,6 +143,8 @@ function visibleTables() {
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
+  // Afiliado: sin tablas. Solo mapa + pasajeros (se agregan como acciones, no como tablas).
+  if (isAfiliado()) return [];
   // Auditor: la pantalla Despachos + "Auditoría SONAR" (los viajes REALES que trae SONAR,
   // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
   // de puesto donde tiene despachos de sus rutas (así audita TODO lo suyo, esté en la vista
@@ -456,7 +462,9 @@ async function showApp(user) {
   sessTimer = setInterval(() => { verificarSesionVigente(); refreshContext(); checkAsistenciaPendiente(); }, 12000);
   buildSidebar();
   current = null;
-  selectTable(visibleTables()[0] || 'despachos');
+  // Afiliado no tiene tablas: aterriza directo en el MAPA (su vista principal).
+  if (isAfiliado()) showMapView();
+  else selectTable(visibleTables()[0] || 'despachos');
   updateNet();
   processQueue();
   checkAsistenciaPendiente(); // avisar si falta marcar el ingreso de hoy
@@ -526,10 +534,12 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
-  if (isAdmin()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+  if (isAdmin() || isAfiliado()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+  if (isAdmin()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
+  const au = $('nav-usuarios'); if (au) au.classList.toggle('active', currentView === 'usuarios');
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
@@ -634,7 +644,7 @@ function selectTable(name) {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
-  $('pasajeros-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -3741,7 +3751,7 @@ async function openCumplimiento() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
-  $('pasajeros-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4005,7 +4015,7 @@ async function openRutasVivo(modo) {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
-  $('pasajeros-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -4230,7 +4240,7 @@ async function openMalla() {
   $('rutas-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
-  $('pasajeros-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4395,7 +4405,7 @@ function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
-  $('pasajeros-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   selectTable(current);
 }
 function _armarAutoLaur() {
@@ -5088,6 +5098,7 @@ function etiquetaUsuario(user) {
   const nombre = CTX?.nombre || user?.email || '';
   if (CTX?.rol === 'admin') return `👤 ${nombre} · Administrador`;
   if (CTX?.rol === 'auditor') return `👤 ${nombre} · 🔎 Auditor`;
+  if (CTX?.rol === 'afiliado') return `👤 ${nombre} · 🚗 Afiliado · ${(CTX.moviles || []).length} vehículo(s)`;
   if (CTX?.rol === 'despachador') {
     const hor = (CTX.hora_inicio || CTX.hora_fin) ? ` · 🕒 ${CTX.hora_inicio || '—'}${CTX.hora_fin ? '–' + CTX.hora_fin : ''}` : '';
     return `👤 ${nombre} · 📌 ${CTX.puesto || 'sin turno hoy'}${hor}`;
@@ -5367,7 +5378,7 @@ $('integ-body')?.addEventListener('click', (e) => { const b = e.target.closest('
 
 // ===== Vista "🧑‍🤝‍🧑 Pasajeros" (solo admin): conteo de pasajeros por móvil y día desde SONAR =====
 async function openPasajeros() {
-  if (!isAdmin()) return;
+  if (!isAdmin() && !isAfiliado()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'pasajeros';
   cerrarRecorridoBus();
@@ -5388,15 +5399,22 @@ async function openPasajeros() {
   buildBottomNav();
   $('pax-fecha').value = $('pax-fecha').value || hoyServidor();
   const veh = await loadVehiculos();
+  // Afiliado: el combo solo lista SUS móviles (CTX.moviles); admin ve todos.
+  let vlist = veh || [];
+  if (isAfiliado()) {
+    const mset = movilesAfiliado();
+    const byNum = new Map((veh || []).map((v) => [String(v.numero).trim(), v]));
+    vlist = [...mset].map((n) => byNum.get(n) || { numero: n, placa: '' });
+  }
   // Combo buscador de móviles (ordenado por número, muestra placa)
-  _paxVeh = (veh || []).slice().sort((a, b) => String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true }));
+  _paxVeh = vlist.slice().sort((a, b) => String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true }));
   $('pax-movil').value = '';
   paxComboFiltrar('');
   $('pax-sub').textContent = '';
   if (paxMap) { paxMap.remove(); paxMap = null; }
-  $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen de SONAR los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
+  $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen del <b>ERP APL</b> los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
 }
-function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; selectTable(current); }
+function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; selectTable(current); }
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
   const fecha = $('pax-fecha').value;
@@ -5405,7 +5423,7 @@ async function consultarPasajeros() {
   const veh = await loadVehiculos();
   const byPlaca = veh.find((v) => String(v.placa || '').trim().toUpperCase() === movil.toUpperCase());
   if (byPlaca) movil = String(byPlaca.numero).trim();
-  const body = $('pax-body'); body.innerHTML = '<div class="loading">Consultando SONAR…</div>';
+  const body = $('pax-body'); body.innerHTML = '<div class="loading">Consultando ERP APL…</div>';
   const btn = $('pax-consultar'); btn.disabled = true;
   try {
     // Pasajeros + viajes del día en paralelo (RPCs separados, cada uno con su presupuesto de 8 s)
@@ -5421,38 +5439,86 @@ async function consultarPasajeros() {
   } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
   finally { btn.disabled = false; }
 }
-// Sección "Viajes del día" (desde SONAR): cada viaje con sus pasajeros (cruce por hora).
+// Sección "Viajes del día" (desde el ERP APL): cada viaje con sus pasajeros (cruce por hora).
+// Cada fila es CLICABLE: se despliega un detalle con la duración y el desglose de pasajeros
+// del viaje en franjas de 15 min. Acordeón: solo un detalle abierto a la vez.
 function renderViajes(v) {
   const cont = document.getElementById('pax-viajes'); if (!cont) return;
   if (!v || !v.ok) { cont.innerHTML = ''; return; }
   const viajes = v.viajes || [];
   if (!viajes.length) {
-    cont.innerHTML = `<div class="pax-sec"><h3>🚌 Viajes del día</h3><div class="integ-vacio">— ${esc(v.nota || 'SONAR no reportó viajes de este móvil ese día')} —</div></div>`;
+    cont.innerHTML = `<div class="pax-sec"><h3>🚌 Viajes del día</h3><div class="integ-vacio">— ${esc(v.nota || 'El ERP APL no reportó viajes de este móvil ese día')} —</div></div>`;
     return;
   }
-  const badge = (e) => {
-    const k = e === 'Completo' ? 'ok' : e === 'En curso' ? 'run' : e === 'Cancelado' ? 'can' : 'inc';
-    return `<span class="pax-badge ${k}">${esc(e || '—')}</span>`;
+  const kBadge = (e) => (e === 'Completo' ? 'ok' : e === 'En curso' ? 'run' : e === 'Cancelado' ? 'can' : 'inc');
+  const badge = (e) => `<span class="pax-badge ${kBadge(e)}">${esc(e || '—')}</span>`;
+  // Panel de detalle de un viaje (duración + pasajeros cada 15 min)
+  const detalle = (t) => {
+    const fr = t.franjas || [];
+    const maxS = Math.max(1, ...fr.map((f) => f.s || 0));
+    const barras = fr.length
+      ? fr.map((f) => `<div class="pax-frrow"><span class="pax-frt">${esc(f.t)}</span>`
+          + `<span class="pax-frbar"><span class="pax-frfill" style="width:${Math.round((f.s || 0) / maxS * 100)}%"></span></span>`
+          + `<span class="pax-frv">${f.s || 0}<span class="pax-v2"> / ${f.b || 0}</span></span></div>`).join('')
+      : '<div class="pax-frempty">— sin registros de pasajeros en este viaje —</div>';
+    const dur = t.dur_min != null ? `${t.dur_min} min` : '—';
+    return `<div class="pax-vd">
+      <div class="pax-vd-stats">
+        <div class="pax-vd-pill up"><b>${t.subidas || 0}</b><span>↑ subieron</span></div>
+        <div class="pax-vd-pill down"><b>${t.bajadas || 0}</b><span>↓ bajaron</span></div>
+        <div class="pax-vd-pill dur"><b>${esc(dur)}</b><span>⏱ duración</span></div>
+      </div>
+      <div class="pax-vd-frtitle">Pasajeros durante el viaje <span class="pax-hint">(cada 15 min · sub / baj)</span></div>
+      <div class="pax-vd-fr">${barras}</div>
+      <div class="pax-vd-reg">ID de viaje (ERP APL): <b>${esc(t.reg || '—')}</b></div>
+    </div>`;
   };
-  const filas = viajes.map((t) => `<tr>
-    <td class="pax-th">${esc(t.ini || '—')}${t.fin ? '<span class="pax-vsep">–</span>' + esc(t.fin) : '<span class="pax-vsep">–</span><span class="pax-run">en curso</span>'}</td>
+  const filas = viajes.map((t, i) => `<tr class="pax-vrow" data-i="${i}" tabindex="0">
+    <td class="pax-th"><span class="pax-chev">▸</span>${esc(t.ini || '—')}${t.fin ? '<span class="pax-vsep">–</span>' + esc(t.fin) : '<span class="pax-vsep">–</span><span class="pax-run">en curso</span>'}</td>
     <td>${esc(t.ruta || '')}</td>
     <td>${badge(t.estado)}</td>
     <td class="pax-tnum up">${t.subidas || 0}</td>
     <td class="pax-tnum down">${t.bajadas || 0}</td>
-  </tr>`).join('');
+  </tr>
+  <tr class="pax-vdetail" data-i="${i}"><td colspan="5">${detalle(t)}</td></tr>`).join('');
   const sinV = (v.sin_viaje_subidas || 0) + (v.sin_viaje_bajadas || 0) > 0
     ? `<div class="pax-sinv">Fuera de viaje (sin itinerario activo): <b>${v.sin_viaje_subidas || 0}</b> ↑ · <b>${v.sin_viaje_bajadas || 0}</b> ↓</div>` : '';
+  // Resumen por estado (cuántos completos / incompletos / cancelados de los N viajes del día)
+  const chip = (n, k, txt) => (n > 0 ? `<span class="pax-badge ${k}">${n} ${txt}</span>` : '');
+  const resumen = [
+    chip(v.n_completos, 'ok', 'completos'),
+    chip(v.n_incompletos, 'inc', 'incompletos'),
+    chip(v.n_cancelados, 'can', 'cancelados'),
+    chip(v.n_encurso, 'run', 'en curso'),
+  ].filter(Boolean).join(' ');
+  const resumenHtml = resumen ? `<div class="pax-resumen">${resumen}</div>` : '';
   cont.innerHTML = `<div class="pax-sec">
-    <h3>🚌 Viajes del día <span class="pax-hint">(${viajes.length} viajes · pasajeros de cada uno, cruzados por hora)</span></h3>
-    <div class="pax-tablewrap"><table class="pax-table">
+    <h3>🚌 Viajes del día <span class="pax-hint">(${viajes.length} viajes · toca uno para ver el detalle)</span></h3>
+    ${resumenHtml}
+    <div class="pax-tablewrap"><table class="pax-table pax-table-click">
       <thead><tr><th>Horario</th><th>Ruta</th><th>Estado</th><th>↑ Sub</th><th>↓ Baj</th></tr></thead>
       <tbody>${filas}</tbody>
     </table></div>${sinV}</div>`;
+  // Acordeón: al tocar una fila, abre/cierra su detalle (y cierra los demás)
+  const toggle = (tr) => {
+    const i = tr.getAttribute('data-i');
+    const det = cont.querySelector(`.pax-vdetail[data-i="${i}"]`);
+    const abierto = det && det.classList.contains('open');
+    cont.querySelectorAll('.pax-vdetail.open').forEach((d) => d.classList.remove('open'));
+    cont.querySelectorAll('.pax-vrow.sel').forEach((r) => r.classList.remove('sel'));
+    if (!abierto && det) { det.classList.add('open'); tr.classList.add('sel'); }
+  };
+  cont.querySelectorAll('.pax-vrow').forEach((tr) => {
+    tr.addEventListener('click', () => toggle(tr));
+    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(tr); } });
+  });
 }
 function renderPasajeros(d) {
   const nfmt = (n) => (n || 0).toLocaleString('es-CO');
   $('pax-sub').textContent = `Móvil ${d.movil} · ${fechaLegible(String(d.fecha))}`;
+  // Reinicia el mapa de una consulta anterior (se reconstruye al abrir la pestaña Mapa)
+  if (paxMap) { paxMap.remove(); paxMap = null; }
+  _paxMapaBuilt = false; _paxMarkerByI = new Map();
   const hero = `<div class="pax-hero">
     <div class="pax-card up"><div class="pax-num">${nfmt(d.subidas)}</div><div class="pax-lbl">↑ Subieron</div></div>
     <div class="pax-card down"><div class="pax-num">${nfmt(d.bajadas)}</div><div class="pax-lbl">↓ Bajaron</div></div>
@@ -5472,22 +5538,90 @@ function renderPasajeros(d) {
     ? `<div class="pax-puertas">Por puerta (subidas): ${Object.entries(d.por_puerta).map(([p, n]) => `Puerta ${esc(p)}: <b>${n}</b>`).join(' · ')}</div>` : '';
   // Paradas: "¿dónde se monta la gente?" — ranking + mapa
   const paradas = (d.paradas || []).filter((p) => (p.subidas || 0) > 0);
+  _paxParadas = paradas;
   const lista = paradas.length
-    ? paradas.map((p, i) => `<div class="pax-parada" data-i="${i}">`
-        + `<span class="pax-pr">${i + 1}</span>`
+    ? paradas.map((p, i) => `<div class="pax-parada" data-i="${i}" tabindex="0">`
+        + `<span class="pax-pr${i === 0 ? ' top' : ''}">${i + 1}</span>`
         + `<span class="pax-pdir">${esc(_dirCorta(p.parada))}</span>`
         + `<span class="pax-pv">${p.subidas || 0}<span class="pax-v2"> / ${p.bajadas || 0}</span></span></div>`).join('')
-    : '<div class="integ-vacio">— SONAR no reportó direcciones ese día —</div>';
-  const mapa = paradas.length
-    ? `<div class="pax-mapwrap"><div id="pax-map" class="pax-map"></div><div id="pax-map-msg" class="pax-map-msg"></div></div>` : '';
+    : '<div class="integ-vacio">— El ERP APL no reportó direcciones ese día —</div>';
+  const mapaTools = paradas.length
+    ? `<div class="pax-maptools">
+        <input id="pax-map-search" type="search" class="pax-map-search" placeholder="🔎 Buscar dirección o barrio…" autocomplete="off">
+        <button id="pax-map-top" type="button" class="pax-top-btn">🎯 Punto con más subidas</button>
+      </div>` : '';
+  const mapaPanel = paradas.length
+    ? mapaTools
+      + `<div class="pax-mapwrap"><div id="pax-map" class="pax-map"></div><div id="pax-map-msg" class="pax-map-msg"></div></div>`
+      + `<div class="pax-paradas" id="pax-paradas-list">${lista}</div>`
+    : '<div class="integ-vacio">— El ERP APL no reportó direcciones ese día —</div>';
+  // Barra de pestañas + 3 paneles (el resumen "hero" queda siempre visible arriba)
   $('pax-body').innerHTML = hero
-    + '<div id="pax-viajes"></div>'
-    + `<div class="pax-sec"><h3>Pasajeros por hora <span class="pax-hint">(subidas / bajadas)</span></h3>${barras}</div>`
-    + puertas
-    + `<div class="pax-sec"><h3>¿Dónde se monta la gente? <span class="pax-hint">(círculo = nº de subidas · 📍 ubicación GPS real del bus)</span></h3>`
-    + mapa
-    + `<div class="pax-paradas">${lista}</div></div>`;
-  if (paradas.length) pintarPaxMapa(paradas);
+    + `<div class="pax-tabs" role="tablist">
+        <button class="pax-tab active" data-tab="viajes" role="tab">🚌 Viajes</button>
+        <button class="pax-tab" data-tab="mapa" role="tab">🗺️ Mapa</button>
+        <button class="pax-tab" data-tab="hora" role="tab">📊 Por hora</button>
+      </div>`
+    + `<div class="pax-tabpanel" data-tab="viajes"><div id="pax-viajes"></div></div>`
+    + `<div class="pax-tabpanel" data-tab="mapa" hidden><div class="pax-sec">`
+    +   `<h3>¿Dónde se monta la gente? <span class="pax-hint">(círculo = nº de subidas · 📍 ubicación GPS real del bus)</span></h3>`
+    +   mapaPanel + `</div></div>`
+    + `<div class="pax-tabpanel" data-tab="hora" hidden>`
+    +   `<div class="pax-sec"><h3>Pasajeros por hora <span class="pax-hint">(subidas / bajadas)</span></h3>${barras}</div>${puertas}</div>`;
+  // Cablear pestañas
+  $('pax-body').querySelectorAll('.pax-tab').forEach((b) => b.addEventListener('click', () => paxTab(b.dataset.tab)));
+  // Mapa: buscador, botón "punto con más subidas" y clic en el ranking → volar al punto
+  const inp = document.getElementById('pax-map-search');
+  if (inp) inp.addEventListener('input', () => paxMapSearch(inp.value));
+  const topBtn = document.getElementById('pax-map-top');
+  if (topBtn) topBtn.addEventListener('click', () => paxFlyTo(paxTopIndex()));
+  const listEl = document.getElementById('pax-paradas-list');
+  if (listEl) {
+    const irAParada = (el) => { const i = el.getAttribute('data-i'); if (i != null) paxFlyTo(Number(i)); };
+    listEl.querySelectorAll('.pax-parada').forEach((el) => {
+      el.addEventListener('click', () => irAParada(el));
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); irAParada(el); } });
+    });
+  }
+}
+// Cambia de pestaña dentro de Pasajeros; al entrar a "mapa" construye/redimensiona el mapa
+function paxTab(name) {
+  const body = $('pax-body'); if (!body) return;
+  body.querySelectorAll('.pax-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  body.querySelectorAll('.pax-tabpanel').forEach((p) => { p.hidden = p.dataset.tab !== name; });
+  if (name === 'mapa') ensurePaxMapa();
+}
+// Índice de la parada con más subidas (para el botón 🎯)
+function paxTopIndex() {
+  let idx = 0, mx = -1;
+  (_paxParadas || []).forEach((p, i) => { if ((p.subidas || 0) > mx) { mx = p.subidas || 0; idx = i; } });
+  return idx;
+}
+// Construye el mapa la primera vez que se abre la pestaña; después solo lo redimensiona
+function ensurePaxMapa() {
+  if (!(_paxParadas || []).length) return;
+  if (!_paxMapaBuilt) { _paxMapaBuilt = true; pintarPaxMapa(_paxParadas); }
+  else if (paxMap) { setTimeout(() => { if (paxMap) { paxMap.invalidateSize(); paxRefit(); } }, 60); }
+}
+// Reencuadra el mapa a todos los puntos ya ubicados
+function paxRefit() {
+  if (!paxMap || !_paxMarkerByI.size) return;
+  const pts = [...(_paxMarkerByI.values())].map((m) => m.getLatLng());
+  if (pts.length) paxMap.fitBounds(pts, { padding: [30, 30] });
+}
+// Vuela a una parada (por índice) y abre su globo. Reintenta si aún se está geocodificando.
+function paxFlyTo(i, tries = 0) {
+  paxTab('mapa');
+  const m = _paxMarkerByI.get(Number(i));
+  if (m && paxMap) { paxMap.setView(m.getLatLng(), 16, { animate: true }); m.openPopup(); return; }
+  if (tries < 10) setTimeout(() => paxFlyTo(i, tries + 1), 400);
+}
+// Filtra el ranking de paradas por texto (dirección / barrio)
+function paxMapSearch(q) {
+  const t = String(q || '').trim().toLowerCase();
+  document.querySelectorAll('#pax-paradas-list .pax-parada').forEach((el) => {
+    el.style.display = (!t || el.textContent.toLowerCase().includes(t)) ? '' : 'none';
+  });
 }
 // Acorta la dirección de SONAR ("Carrera 46 48,La Candelaria,Medellin,Antioquia") a calle · barrio
 function _dirCorta(label) {
@@ -5497,6 +5631,9 @@ function _dirCorta(label) {
 }
 let paxMap = null;          // mapa Leaflet de la vista de pasajeros
 let paxMarkers = null;      // capa de marcadores
+let _paxParadas = [];       // paradas de la consulta actual (para pestaña/buscador/volar)
+let _paxMapaBuilt = false;  // el mapa se construye al abrir la pestaña Mapa (Leaflet necesita el div visible)
+let _paxMarkerByI = new Map(); // índice de parada -> marcador Leaflet (para volar a un punto)
 const _geoMem = new Map();  // caché en memoria dirección -> {lat, lon}
 // Geocodifica una dirección con TomTom (la app ya usa TOMTOM_KEY). Devuelve {lat, lon} o null.
 async function geocodeTomTom(dir) {
@@ -5515,18 +5652,20 @@ async function geocodeTomTom(dir) {
   } catch (e) { return null; }
 }
 function _paxRadio(subidas, maxSub) { return Math.max(7, Math.min(28, 7 + Math.sqrt(subidas / Math.max(1, maxSub)) * 21)); }
-function _paxMarker(p, maxSub) {
+function _paxMarker(p, maxSub, isTop) {
   const r = _paxRadio(p.subidas || 0, maxSub);
   const real = p.real === true;
-  // Verde = ubicación GPS real del bus; ámbar = aproximada por dirección (geocodificada)
+  // Verde = ubicación GPS real del bus; ámbar = aproximada por dirección (geocodificada).
+  // El punto con MÁS subidas se resalta con borde rojo grueso (destaca en el mapa).
   const m = L.circleMarker([p.lat, p.lon], {
-    radius: r, weight: 2,
-    color: real ? '#137a2b' : '#b45309',
+    radius: isTop ? r + 3 : r, weight: isTop ? 4 : 2,
+    color: isTop ? '#dc2626' : (real ? '#137a2b' : '#b45309'),
     fillColor: real ? '#22c55e' : '#f59e0b', fillOpacity: 0.6,
   });
   const fuente = real ? '📍 ubicación GPS real' : '≈ aprox. por dirección';
-  m.bindPopup(`<b>${esc(_dirCorta(p.parada))}</b><br>↑ ${p.subidas || 0} subieron · ↓ ${p.bajadas || 0} bajaron<br><small>${fuente}</small>`);
-  m.bindTooltip(String(p.subidas || 0), { permanent: true, direction: 'center', className: 'pax-mtip' });
+  const corona = isTop ? '⭐ <b>Punto con más subidas</b><br>' : '';
+  m.bindPopup(`${corona}<b>${esc(_dirCorta(p.parada))}</b><br>↑ ${p.subidas || 0} subieron · ↓ ${p.bajadas || 0} bajaron<br><small>${fuente}</small>`);
+  m.bindTooltip(String(p.subidas || 0), { permanent: true, direction: 'center', className: 'pax-mtip' + (isTop ? ' top' : '') });
   return m;
 }
 async function pintarPaxMapa(paradas) {
@@ -5535,27 +5674,31 @@ async function pintarPaxMapa(paradas) {
   paxMap = L.map(el, { scrollWheelZoom: true, attributionControl: true }).setView([6.244, -75.575], 12); // Medellín
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(paxMap);
   paxMarkers = L.layerGroup().addTo(paxMap);
+  _paxMarkerByI = new Map();
   setTimeout(() => paxMap && paxMap.invalidateSize(), 150); // el div acaba de insertarse
   const maxSub = Math.max(1, ...paradas.map((p) => p.subidas || 0));
+  const topI = paxTopIndex();
   const msg = document.getElementById('pax-map-msg');
   const pts = [];
+  const pintar = (p, i) => {
+    const m = _paxMarker(p, maxSub, i === topI);
+    m.addTo(paxMarkers); _paxMarkerByI.set(i, m); pts.push([p.lat, p.lon]);
+  };
   // 1) Pinta de una las que ya tienen coordenadas (caché del servidor)
-  for (const p of paradas) {
-    if (p.lat != null && p.lon != null) { _paxMarker(p, maxSub).addTo(paxMarkers); pts.push([p.lat, p.lon]); }
-  }
+  paradas.forEach((p, i) => { if (p.lat != null && p.lon != null) pintar(p, i); });
   if (pts.length) paxMap.fitBounds(pts, { padding: [30, 30] });
   // 2) Geocodifica las que faltan (TomTom), pinta y guarda en caché del servidor
-  const faltan = paradas.filter((p) => p.lat == null || p.lon == null);
+  const faltan = paradas.map((p, i) => ({ p, i })).filter((x) => x.p.lat == null || x.p.lon == null);
   if (faltan.length && !TOMTOM_KEY) { if (msg) msg.textContent = 'Faltan coordenadas y no hay clave TomTom para geocodificar.'; return; }
   let hechas = 0;
-  for (const p of faltan) {
+  for (const { p, i } of faltan) {
     if (getCurrentView() !== 'pasajeros' || !paxMap) return; // el usuario salió
     if (msg) msg.textContent = `Ubicando paradas… ${hechas}/${faltan.length}`;
     const g = await geocodeTomTom(p.parada);
     hechas++;
     if (g) {
       p.lat = g.lat; p.lon = g.lon;
-      _paxMarker(p, maxSub).addTo(paxMarkers); pts.push([g.lat, g.lon]);
+      pintar(p, i);
       if (pts.length) paxMap.fitBounds(pts, { padding: [30, 30] });
       sb.rpc('geo_cache_set', { p_dir: p.parada, p_lat: g.lat, p_lon: g.lon }).catch(() => {});
     }
@@ -5619,6 +5762,198 @@ document.addEventListener('click', (e) => { if (!e.target.closest('#pax-combo'))
 $('pax-close')?.addEventListener('click', cerrarPasajeros);
 $('pax-consultar')?.addEventListener('click', consultarPasajeros);
 $('pax-fecha')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); consultarPasajeros(); } });
+
+// ===== Pantalla "Usuarios" (solo admin): crear accesos (todos los roles) + vehículos de afiliados =====
+let _usrVeh = null;        // caché de vehículos para el selector
+let _usrEditEmail = null;  // si no es null: modo "editar vehículos de este afiliado"
+async function openUsuarios() {
+  if (!isAdmin()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'usuarios';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('usuarios-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-usuarios')?.classList.add('active');
+  buildBottomNav();
+  _usrEditEmail = null;
+  await renderUsuarios();
+}
+function cerrarUsuarios() { $('usuarios-view').hidden = true; selectTable(current || visibleTables()[0] || 'despachos'); }
+
+async function renderUsuarios() {
+  const body = $('usr-body');
+  body.innerHTML = `
+    <div class="usr-card">
+      <h3 id="usr-form-title">Crear acceso</h3>
+      <div class="usr-grid">
+        <label>Rol <select id="usr-rol">
+          <option value="despachador">Despachador</option>
+          <option value="auditor">Auditor / Control</option>
+          <option value="afiliado">Afiliado (dueño)</option>
+          <option value="admin">Administrador</option>
+        </select></label>
+        <label>Nombre <b class="usr-req">*</b> <input id="usr-nombre" type="text" placeholder="Nombre y apellido" autocomplete="off" required /></label>
+        <label>Correo <b class="usr-req">*</b> <input id="usr-email" type="email" placeholder="correo@dominio.com" autocomplete="off" required /></label>
+        <label id="usr-pass-lbl">Contraseña <b class="usr-req">*</b> <input id="usr-pass" type="text" value="AplAcceso2026*" autocomplete="off" required /></label>
+      </div>
+      <div id="usr-veh-block" hidden>
+        <h4>Vehículos del afiliado <span class="pax-hint">(marca los móviles que podrá ver)</span></h4>
+        <input id="usr-veh-search" class="usr-search" type="search" placeholder="Buscar móvil o placa…" autocomplete="off" />
+        <div id="usr-veh-list" class="usr-veh-list"></div>
+        <div id="usr-veh-count" class="usr-count"></div>
+      </div>
+      <div class="usr-actions">
+        <button id="usr-crear" class="btn primary">Crear acceso</button>
+        <button id="usr-cancelar" class="btn" hidden>Cancelar</button>
+      </div>
+    </div>
+    <div class="usr-card">
+      <h3>Usuarios</h3>
+      <div id="usr-lista" class="usr-afil-list"><div class="loading">Cargando…</div></div>
+    </div>`;
+  $('usr-rol').addEventListener('change', async () => {
+    const isAfi = $('usr-rol').value === 'afiliado';
+    $('usr-veh-block').hidden = !isAfi;
+    if (isAfi && !$('usr-veh-list').children.length) await pintarVehPicker(new Set());
+  });
+  $('usr-veh-search').addEventListener('input', filtrarVehPicker);
+  $('usr-crear').addEventListener('click', usrAccionPrincipal);
+  $('usr-cancelar').addEventListener('click', () => { _usrEditEmail = null; renderUsuarios(); });
+  usrSetModo();
+  await cargarUsuarios();
+}
+
+// Selector de vehículos (checkboxes con búsqueda). selectedIds = Set de ids (number).
+async function pintarVehPicker(selectedIds) {
+  if (!_usrVeh) _usrVeh = await loadVehiculos();
+  const cont = $('usr-veh-list'); if (!cont) return;
+  cont.innerHTML = (_usrVeh || []).map((v) =>
+    `<label class="usr-veh"><input type="checkbox" value="${v.id}"${selectedIds.has(v.id) ? ' checked' : ''}/>`
+    + `<span class="usr-veh-n">${esc(v.numero)}</span>${v.placa ? `<span class="usr-veh-p">${esc(v.placa)}</span>` : ''}</label>`).join('');
+  cont.onchange = actualizarVehCount;
+  actualizarVehCount();
+}
+function vehPickerSeleccion() { return [...document.querySelectorAll('#usr-veh-list input:checked')].map((c) => Number(c.value)); }
+function actualizarVehCount() { const el = $('usr-veh-count'); if (el) el.textContent = `${vehPickerSeleccion().length} vehículo(s) seleccionado(s)`; }
+function filtrarVehPicker() {
+  const q = ($('usr-veh-search').value || '').trim().toLowerCase();
+  document.querySelectorAll('#usr-veh-list .usr-veh').forEach((l) => { l.style.display = (!q || l.textContent.toLowerCase().includes(q)) ? '' : 'none'; });
+}
+function usrSetModo() {
+  const editing = !!_usrEditEmail;
+  $('usr-rol').disabled = editing;
+  $('usr-email').readOnly = editing;
+  $('usr-nombre').readOnly = editing;
+  $('usr-pass-lbl').style.display = editing ? 'none' : '';
+  $('usr-form-title').textContent = editing ? `Editar vehículos de ${_usrEditEmail}` : 'Crear acceso';
+  $('usr-crear').textContent = editing ? 'Guardar vehículos' : 'Crear acceso';
+  $('usr-cancelar').hidden = !editing;
+}
+async function usrAccionPrincipal() {
+  if (_usrEditEmail) return guardarVehiculosAfiliado(_usrEditEmail);
+  return crearUsuarioForm();
+}
+async function crearUsuarioForm() {
+  const rol = $('usr-rol').value;
+  const email = ($('usr-email').value || '').trim().toLowerCase();
+  const nombre = ($('usr-nombre').value || '').trim();
+  const pass = ($('usr-pass').value || '').trim();
+  if (!nombre) { toast('El nombre es obligatorio.', 'err'); return; }
+  if (!email) { toast('El correo es obligatorio.', 'err'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('El correo no es válido.', 'err'); return; }
+  if (pass.length < 6) { toast('La contraseña es obligatoria (mín. 6 caracteres).', 'err'); return; }
+  const btn = $('usr-crear'); btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('admin_crear_usuario', { p_email: email, p_nombre: nombre, p_pass: pass, p_rol: rol });
+    if (error) throw error;
+    if (!data?.ok) { toast('No se pudo: ' + (data?.error || '?'), 'err'); return; }
+    if (rol === 'afiliado') {
+      const ids = vehPickerSeleccion();
+      const r2 = await sb.rpc('afiliado_asignar_vehiculos', { p_email: email, p_vehiculo_ids: ids });
+      if (r2.error) toast('Usuario creado, pero falló asignar vehículos: ' + r2.error.message, 'err');
+    }
+    toast(`✓ Acceso de ${rol} creado para ${email} (clave: ${pass})`, 'ok');
+    $('usr-email').value = ''; $('usr-nombre').value = '';
+    if ($('usr-veh-list')) $('usr-veh-list').querySelectorAll('input:checked').forEach((c) => (c.checked = false));
+    actualizarVehCount();
+    await cargarUsuarios();
+  } catch (e) { toast('Error: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; }
+}
+const _ROL_BADGE = { admin: ['Admin', 'run'], auditor: ['Auditor', 'ok'], afiliado: ['Afiliado', 'inc'], despachador: ['Despachador', 'can'] };
+async function cargarUsuarios() {
+  const cont = $('usr-lista'); if (!cont) return;
+  const { data, error } = await sb.rpc('usuarios_listar');
+  if (error) { cont.innerHTML = `<div class="cump-empty">Error: ${esc(error.message)}</div>`; return; }
+  const list = data || [];
+  if (!list.length) { cont.innerHTML = '<div class="integ-vacio">— aún no hay usuarios —</div>'; return; }
+  const propio = (CTX?.email || '').toLowerCase();
+  cont.innerHTML = list.map((u) => {
+    const [txt, cls] = _ROL_BADGE[u.rol] || [u.rol, 'inc'];
+    const esAfi = u.rol === 'afiliado';
+    const esYo = (u.email || '').toLowerCase() === propio;
+    return `<div class="usr-afil">`
+      + `<span class="pax-badge ${cls}">${esc(txt)}</span>`
+      + `<span class="usr-afil-n">${esc(u.nombre || u.email)}</span>`
+      + `<span class="usr-afil-e">${esc(u.email)}</span>`
+      + (esAfi ? `<span class="usr-afil-v">🚗 ${u.vehiculos || 0}</span>` : '<span class="usr-afil-v"></span>')
+      + (esAfi ? `<button class="btn usr-afil-edit" data-email="${esc(u.email)}" data-nombre="${esc(u.nombre || '')}">Editar vehículos</button>` : '')
+      + (esYo ? '' : `<button class="btn danger usr-afil-del" data-email="${esc(u.email)}" data-nombre="${esc(u.nombre || u.email)}">Eliminar</button>`)
+      + `</div>`;
+  }).join('');
+  cont.querySelectorAll('.usr-afil-edit').forEach((b) => b.addEventListener('click', () => abrirEdicionAfiliado(b.dataset.email, b.dataset.nombre)));
+  cont.querySelectorAll('.usr-afil-del').forEach((b) => b.addEventListener('click', () => eliminarUsuario(b.dataset.email, b.dataset.nombre)));
+}
+async function eliminarUsuario(email, nombre) {
+  const ok = await confirmAction({
+    title: '¿Eliminar usuario?',
+    lead: `Se eliminará el acceso de ${nombre || email}.`,
+    message: `Correo: ${email}\n\nSe cierra su sesión y se borra su login por completo.\nEsta acción no se puede deshacer.`,
+    okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
+  const { data, error } = await sb.rpc('admin_eliminar_usuario', { p_email: email });
+  if (error) { toast('Error: ' + error.message, 'err'); return; }
+  if (!data?.ok) { toast('No se pudo: ' + (data?.error || '?'), 'err'); return; }
+  toast(`Usuario ${email} eliminado`, 'ok');
+  await cargarUsuarios();
+}
+async function abrirEdicionAfiliado(email, nombre) {
+  _usrEditEmail = email;
+  const { data } = await sb.rpc('afiliado_vehiculos_de', { p_email: email });
+  const sel = new Set((data || []).map((v) => v.id));
+  $('usr-rol').value = 'afiliado';
+  $('usr-email').value = email; $('usr-nombre').value = nombre || '';
+  $('usr-veh-block').hidden = false;
+  await pintarVehPicker(sel);
+  usrSetModo();
+  $('usr-veh-block').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+async function guardarVehiculosAfiliado(email) {
+  const ids = vehPickerSeleccion();
+  const btn = $('usr-crear'); btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('afiliado_asignar_vehiculos', { p_email: email, p_vehiculo_ids: ids });
+    if (error) throw error;
+    toast(`✓ Vehículos de ${email}: ${data?.vehiculos ?? ids.length}`, 'ok');
+    _usrEditEmail = null;
+    await renderUsuarios();
+  } catch (e) { toast('Error: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; }
+}
+$('usr-close')?.addEventListener('click', cerrarUsuarios);
 
 // ----- Vista previa "como despachador" (solo admin): simula el filtrado de un puesto -----
 let previewMode = 'despachador'; // 'despachador' | 'auditor' — qué se está simulando
@@ -7761,7 +8096,7 @@ async function refreshMapa(fit) {
   // muchos vehículos vienen etiquetados con el nombre del GRUPO (ej. "Laureles"),
   // no con el número de ruta (190, 191…). Sin incluir el grupo, el mapa salía en
   // "0 móviles" para puestos como Laureles. La RLS ya limita; esto ajusta la vista.
-  if (!efIsAdmin()) {
+  if (!efIsAdmin() && !isAfiliado()) {
     const allowR = allowedRutaSet();
     // En día hábil CTX.grupos (allowedGrupoSet) suele venir vacío; derivamos los grupos de las
     // rutas del despachador (igual que en el despacho, vía ruta_grupos) para no perder los
@@ -8063,7 +8398,7 @@ async function showMapView() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
-  $('pasajeros-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;

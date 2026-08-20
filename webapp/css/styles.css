@@ -1637,3 +1637,96 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .pax-badge.can { background: #fee2e2; color: #991b1b; }
 .pax-badge.inc { background: #fef3c7; color: #92400e; }
 .pax-sinv { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.pax-resumen { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; }
+
+/* Viajes clicables + detalle desplegable */
+.pax-table-click tbody tr.pax-vrow { cursor: pointer; transition: background .12s; }
+.pax-table-click tbody tr.pax-vrow:hover { background: rgba(237,28,36,.05); }
+.pax-table-click tbody tr.pax-vrow.sel { background: rgba(237,28,36,.08); }
+.pax-table-click tbody tr.pax-vrow.sel td { border-bottom-color: transparent; }
+.pax-table-click tbody tr.pax-vrow:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.pax-chev { display: inline-block; width: 12px; margin-right: 6px; color: var(--muted); font-size: 10px; transition: transform .15s ease; }
+.pax-vrow.sel .pax-chev { transform: rotate(90deg); color: var(--primary); }
+.pax-vdetail { display: none; }
+.pax-vdetail.open { display: table-row; }
+.pax-vdetail > td { padding: 0 !important; border-bottom: 1px solid var(--border); white-space: normal; }
+.pax-vd { padding: 14px 16px; background: rgba(0,0,0,.02); border-left: 3px solid var(--primary); animation: paxFade .18s ease; }
+@keyframes paxFade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.pax-vd-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.pax-vd-pill {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 92px; padding: 10px 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.pax-vd-pill b { font-size: 22px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.pax-vd-pill span { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.pax-vd-pill.up b { color: #16a34a; }
+.pax-vd-pill.down b { color: #2563eb; }
+.pax-vd-pill.dur b { color: var(--text); font-size: 18px; }
+.pax-vd-frtitle { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.pax-vd-fr { display: flex; flex-direction: column; gap: 4px; }
+.pax-frrow { display: flex; align-items: center; gap: 10px; }
+.pax-frt { width: 46px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pax-frbar { flex: 1; height: 14px; background: #eef2f7; border-radius: 999px; overflow: hidden; }
+.pax-frfill { display: block; height: 100%; background: linear-gradient(90deg, #34d399, #16a34a); border-radius: 999px; min-width: 2px; }
+.pax-frv { width: 74px; text-align: right; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pax-frempty { font-size: 12.5px; color: var(--muted); padding: 4px 0; }
+.pax-vd-reg { margin-top: 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Pestañas de la vista Pasajeros (Viajes · Mapa · Por hora) */
+.pax-tabs { display: flex; gap: 6px; margin: 6px 0 14px; flex-wrap: wrap; }
+.pax-tab {
+  appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  padding: 8px 16px; border-radius: 999px; font-size: 13.5px; font-weight: 700; cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.pax-tab:hover { border-color: var(--primary); }
+.pax-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.pax-tabpanel[hidden] { display: none; }
+.pax-tabpanel { animation: paxFade .18s ease; }
+
+/* Herramientas del mapa: buscador + botón "punto con más subidas" */
+.pax-maptools { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.pax-map-search {
+  flex: 1; min-width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13px; background: var(--surface); color: var(--text);
+}
+.pax-map-search:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(237,28,36,.12); }
+.pax-top-btn {
+  appearance: none; border: 1px solid #dc2626; background: #fee2e2; color: #991b1b;
+  padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.pax-top-btn:hover { background: #fecaca; }
+
+/* Ranking de paradas clicable (vuela al punto en el mapa) */
+.pax-parada { cursor: pointer; transition: background .12s; }
+.pax-parada:hover { background: rgba(237,28,36,.06); }
+.pax-parada:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.pax-pr.top { background: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.2); }
+.leaflet-tooltip.pax-mtip.top { color: #b91c1c; font-size: 13px; }
+
+/* Pantalla Usuarios (crear accesos + vehículos de afiliados) */
+.usr-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; margin-bottom: 16px; }
+.usr-card h3 { margin: 0 0 12px; font-size: 16px; }
+.usr-card h4 { margin: 14px 0 8px; font-size: 14px; }
+.usr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.usr-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.usr-grid input, .usr-grid select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-weight: 600; background: var(--surface); color: var(--text); }
+.usr-grid input:focus, .usr-grid select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(237,28,36,.12); }
+.usr-search { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; margin-bottom: 8px; box-sizing: border-box; }
+.usr-veh-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 4px; }
+.usr-veh { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.usr-veh:hover { background: rgba(237,28,36,.06); }
+.usr-veh input { width: 16px; height: 16px; accent-color: var(--primary); }
+.usr-veh-n { font-weight: 800; font-variant-numeric: tabular-nums; min-width: 46px; }
+.usr-veh-p { color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+.usr-count { margin-top: 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.usr-actions { margin-top: 14px; display: flex; gap: 10px; }
+.usr-afil-list { display: flex; flex-direction: column; gap: 6px; }
+.usr-afil { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap; }
+.usr-afil-n { font-weight: 700; }
+.usr-afil-e { color: var(--muted); font-size: 12.5px; }
+.usr-afil-v { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.usr-afil-edit { padding: 5px 12px; font-size: 12.5px; }
+.usr-afil-del { padding: 5px 12px; font-size: 12.5px; }
+.usr-req { color: var(--primary); font-weight: 800; }

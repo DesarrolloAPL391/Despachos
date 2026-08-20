@@ -20,6 +20,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <!-- Captura temprana del evento de instalación (antes de que el navegador lo descarte) -->
   <script>
+    
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault(); window.__bip = e; window.dispatchEvent(new Event('bip-ready'));
     });
@@ -217,7 +218,7 @@
           </div>
           <div id="map" class="map"></div>
           <!-- Botones flotantes del mapa -->
-          <button id="traffic-fab" class="traffic-fab" type="button" title="Mostrar/ocultar tráfico" aria-pressed="false">🚦</button>
+          <button id="traffic-fab" class="traffic-fab" type="button" title="Mostrar/ocultar tráfico" aria-pressed="false" hidden>🚦</button>
           <!-- Seguimiento + ETA (admin/auditor) -->
           <button id="eta-fab" class="map-fab-btn eta-fab" type="button" title="Seguimiento y tiempo de llegada (Laureles)" hidden>🛰️</button>
           <!-- Editor de geocercas (admin) -->
@@ -383,6 +384,16 @@
             <button id="pax-close" class="btn">← Volver</button>
           </div>
           <div id="pax-body" class="integ-body"></div>
+        </div>
+
+        <!-- Vista "Usuarios": crear accesos (todos los roles) y asignar vehículos a afiliados (admin) -->
+        <div id="usuarios-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>👤 Usuarios</h2>
+            <span class="spacer"></span>
+            <button id="usr-close" class="btn">← Volver</button>
+          </div>
+          <div id="usr-body" class="integ-body"></div>
         </div>
       </main>
     </div>

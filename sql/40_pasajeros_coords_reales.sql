@@ -18,7 +18,8 @@ declare
   v_status text; v_sub int; v_baj int; v_blq int; v_n int; v_ntrk int := 0;
   v_porhora jsonb; v_porpuerta jsonb; v_paradas jsonb;
 begin
-  if not public.es_admin() then raise exception 'Solo un administrador puede consultar pasajeros.'; end if;
+  if not (public.es_admin() or (public.es_afiliado() and trim(p_movil) = any(public.mis_moviles_afiliado()))) then
+    raise exception 'No autorizado para consultar este móvil.'; end if;
   if nullif(trim(p_movil),'') is null then return jsonb_build_object('ok', false, 'error', 'Móvil vacío.'); end if;
   if p_fecha is null then return jsonb_build_object('ok', false, 'error', 'Fecha vacía.'); end if;
 

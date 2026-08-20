@@ -18,7 +18,8 @@ declare
   v_viajes jsonb; v_tot_sub int := 0; v_tot_baj int := 0; v_asig_sub int := 0; v_asig_baj int := 0;
   v_cands bigint[]; v_c bigint; v_t0 timestamptz;
 begin
-  if not public.es_admin() then raise exception 'Solo un administrador puede consultar viajes.'; end if;
+  if not (public.es_admin() or (public.es_afiliado() and trim(p_movil) = any(public.mis_moviles_afiliado()))) then
+    raise exception 'No autorizado para consultar este móvil.'; end if;
   if nullif(trim(p_movil),'') is null then return jsonb_build_object('ok', false, 'error', 'Móvil vacío.'); end if;
   if p_fecha is null then return jsonb_build_object('ok', false, 'error', 'Fecha vacía.'); end if;
 
@@ -121,6 +122,10 @@ begin
   end loop;
 
   -- 3) Cruce: subidas/bajadas dentro de la ventana [inicio, fin] de cada viaje.
+  --    Estado segun la regla OFICIAL de SONAR (memoria despachos-regla-estados): lo que separa
+  --    "Cancelado" de "Incompleto" es si el viaje CERRO. Un viaje cerrado y ademas marcado como
+  --    cancelado SI corrio y SI movilizo pasajeros -> es "Incompleto" (no "Cancelado"). Solo los
+  --    "Cancelado" (marcado y sin cerrar) llevan 0 pasajeros.
   select jsonb_agg(x order by (x->>'ini_ord'))
     into v_viajes
     from (
@@ -130,12 +135,38 @@ begin
         'ini', to_char(t.ini_ts at time zone 'America/Bogota','HH24:MI'),
         'fin', case when t.fin_ts is not null then to_char(t.fin_ts at time zone 'America/Bogota','HH24:MI') else null end,
         'ini_ord', to_char(t.ini_ts,'YYYY-MM-DD HH24:MI:SS'),
-        'estado', case when t.cancelado then 'Cancelado' when t.corriendo then 'En curso'
-                       when t.cerrado then 'Completo' else 'Incompleto' end,
-        'subidas', coalesce((select sum(d.din) from _dd d where d.ts_utc >= t.ini_ts and d.ts_utc <= coalesce(t.fin_ts, now())),0),
-        'bajadas', coalesce((select sum(d.dout) from _dd d where d.ts_utc >= t.ini_ts and d.ts_utc <= coalesce(t.fin_ts, now())),0)
+        'dur_min', case when t.fin_ts is not null and t.fin_ts > t.ini_ts
+                        then round(extract(epoch from (t.fin_ts - t.ini_ts))/60.0)::int else null end,
+        'estado', est.estado,
+        'subidas', case when est.estado = 'Cancelado' then 0 else coalesce(pax.s,0) end,
+        'bajadas', case when est.estado = 'Cancelado' then 0 else coalesce(pax.b,0) end,
+        -- Desglose de pasajeros del viaje en franjas de 15 min (para el detalle al hacer clic)
+        'franjas', case when est.estado = 'Cancelado' then '[]'::jsonb else coalesce(fr.j,'[]'::jsonb) end
       ) x
       from _trips t
+      cross join lateral (select case
+          when t.corriendo            then 'En curso'
+          when t.cerrado and t.cancelado then 'Incompleto'
+          when t.cerrado              then 'Completo'
+          when t.cancelado            then 'Cancelado'
+          else 'Incompleto' end as estado) est
+      cross join lateral (
+        select coalesce(sum(d.din),0) s, coalesce(sum(d.dout),0) b
+        from _dd d where d.ts_utc >= t.ini_ts and d.ts_utc <= coalesce(t.fin_ts, now())
+      ) pax
+      cross join lateral (
+        select jsonb_agg(jsonb_build_object(
+                 't', to_char(g.bucket at time zone 'America/Bogota','HH24:MI'),
+                 's', g.s, 'b', g.b) order by g.bucket) j
+        from (
+          select date_trunc('hour', d.ts_utc)
+                   + floor(extract(minute from d.ts_utc)/15) * interval '15 min' as bucket,
+                 sum(d.din) s, sum(d.dout) b
+          from _dd d
+          where d.ts_utc >= t.ini_ts and d.ts_utc <= coalesce(t.fin_ts, now())
+          group by 1
+        ) g
+      ) fr
     ) q;
 
   select coalesce(sum((x->>'subidas')::int),0), coalesce(sum((x->>'bajadas')::int),0)
@@ -145,6 +176,11 @@ begin
   return jsonb_build_object(
     'ok', true, 'movil', trim(p_movil), 'fecha', p_fecha, 'ruta', v_ruta, 'itid', v_itid,
     'viajes', coalesce(v_viajes,'[]'::jsonb),
+    'n_viajes',      coalesce(jsonb_array_length(v_viajes), 0),
+    'n_completos',   (select count(*) from jsonb_array_elements(coalesce(v_viajes,'[]'::jsonb)) x where x->>'estado' = 'Completo'),
+    'n_incompletos', (select count(*) from jsonb_array_elements(coalesce(v_viajes,'[]'::jsonb)) x where x->>'estado' = 'Incompleto'),
+    'n_cancelados',  (select count(*) from jsonb_array_elements(coalesce(v_viajes,'[]'::jsonb)) x where x->>'estado' = 'Cancelado'),
+    'n_encurso',     (select count(*) from jsonb_array_elements(coalesce(v_viajes,'[]'::jsonb)) x where x->>'estado' = 'En curso'),
     'total_subidas', v_tot_sub, 'total_bajadas', v_tot_baj,
     'sin_viaje_subidas', greatest(v_tot_sub - v_asig_sub, 0),
     'sin_viaje_bajadas', greatest(v_tot_baj - v_asig_baj, 0)
