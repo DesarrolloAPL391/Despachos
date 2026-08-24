@@ -57,8 +57,11 @@ function menuOrder() {
 function isAdmin() { return CTX?.rol === 'admin'; }
 function isAuditor() { return CTX?.rol === 'auditor'; }
 function isDespachador() { return CTX?.rol === 'despachador'; }
-// Afiliado (dueño de vehículos): solo ve el MAPA y PASAJEROS, y únicamente de SUS móviles.
+// Afiliado (dueño de vehículos): ve el MAPA, PASAJEROS y las TABLAS de despacho donde están
+// SUS carros — todo en SOLO LECTURA y filtrado (por RLS) únicamente a sus móviles.
 function isAfiliado() { return CTX?.rol === 'afiliado'; }
+// El afiliado nunca crea/edita/despacha: sus tablas se muestran en solo lectura.
+function afiliadoSoloLectura() { return isAfiliado() || (PREVIEW && PREVIEW.rol === 'afiliado'); }
 // Móviles (números) del afiliado logueado (los trae mi_contexto en CTX.moviles)
 function movilesAfiliado() { return new Set((CTX?.moviles || []).map((m) => String(m).trim())); }
 // Candado por fila (rowLocked): si la tabla marca `adminBypassLock`, NO aplica al admin
@@ -143,8 +146,14 @@ function visibleTables() {
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
-  // Afiliado: sin tablas. Solo mapa + pasajeros (se agregan como acciones, no como tablas).
-  if (isAfiliado()) return [];
+  // Afiliado: las tablas de despacho donde están SUS carros (solo lectura, filtradas por RLS).
+  // 'ver_despachos' = alguno de sus carros aparece en la vista general "Despachos". Mapa y
+  // Pasajeros se agregan aparte como acciones del menú.
+  if (isAfiliado()) {
+    const mine = (CTX?.tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
+    if (CTX?.ver_despachos && !mine.includes('despachos')) mine.unshift('despachos');
+    return mine;
+  }
   // Auditor: la pantalla Despachos + "Auditoría SONAR" (los viajes REALES que trae SONAR,
   // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
   // de puesto donde tiene despachos de sus rutas (así audita TODO lo suyo, esté en la vista
@@ -660,9 +669,9 @@ function selectTable(name) {
   // "Despachar" de la barra: oculto en todas partes. El despacho se hace con el botón
   // verde de cada fila, o con "+ Nuevo" (despacho manual) en Despachos.
   $('dispatch-btn').hidden = true;
-  $('count-btn').hidden = !TABLES[name].dispatchable;                  // Contador: en tablas de despacho
+  $('count-btn').hidden = !TABLES[name].dispatchable || afiliadoSoloLectura();  // Contador: en tablas de despacho (no al afiliado)
   soloPendientes = false;                                              // al cambiar de tabla, ver todas
-  $('pend-btn').hidden = !TABLES[name].dispatchable;                   // "Solo pendientes": en tablas de despacho
+  $('pend-btn').hidden = !TABLES[name].dispatchable || afiliadoSoloLectura();   // "Solo pendientes": en tablas de despacho (no al afiliado)
   $('pend-btn').classList.remove('on'); $('pend-btn').textContent = '⏳ Solo pendientes';
   // Asistencia: los botones de marcación los maneja la tarjeta dinámica (abajo), no la barra
   $('marcar-in-btn').hidden = true;
@@ -683,7 +692,7 @@ function selectTable(name) {
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
   // sin "+ Nuevo" donde no aplica (el auditor no crea; tampoco en la vista previa "como auditor")
-  $('new-btn').hidden = !!TABLES[name].readonly || !!TABLES[name].noCreate || isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor');
+  $('new-btn').hidden = !!TABLES[name].readonly || afiliadoSoloLectura() || !!TABLES[name].noCreate || isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor');
   buildSidebar();
   renderFilters();
   loadData();
@@ -1749,7 +1758,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
     if (hasMobile && !c.m) th.className = 'col-hide';
     head.appendChild(th);
   });
-  if (!cfg.readonly || cfg.asistenciaMarcar) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
+  if ((!cfg.readonly || cfg.asistenciaMarcar) && !afiliadoSoloLectura()) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;
@@ -1828,7 +1837,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       tr.appendChild(td);
     }
-    if (!cfg.readonly) {
+    if (!cfg.readonly && !afiliadoSoloLectura()) {
       const act = document.createElement('td');
       act.className = 'row-actions';
       act.dataset.label = 'Acciones';

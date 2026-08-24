@@ -37,15 +37,36 @@ begin
       'rutas',coalesce(to_jsonb(v_names),'[]'::jsonb),'ids',coalesce(to_jsonb(v_ids),'[]'::jsonb),
       'despachador_id',v_desp_id,'auditor_id',v_aud_id);
   end if;
-  -- AFILIADO: rol de solo lectura (mapa + pasajeros) limitado a SUS móviles. Sin puesto/rutas/tablas.
+  -- AFILIADO: rol de solo lectura. Ve el mapa + pasajeros y las TABLAS de despacho donde
+  -- están SUS carros (por vehiculo real o programado, en los últimos 90 días). La RLS
+  -- (pp_sel_afil, sql/46) limita las filas a sus vehículos; aquí solo decidimos qué pestañas
+  -- mostrarle. 'ver_despachos' = si alguno de sus carros aparece en la vista general Despachos.
   if v_rol = 'afiliado' then
-    return jsonb_build_object('email',v_email,'rol','afiliado','nombre',v_nombre,
-      'tablas','[]'::jsonb,'rutas','[]'::jsonb,'ids','[]'::jsonb,'grupos','[]'::jsonb,
-      'moviles', coalesce((select to_jsonb(array_agg(distinct trim(v.numero)))
-                           from public.afiliado_vehiculos av
-                           join public.vehiculos v on v.id = av.vehiculo_id
-                           where lower(trim(av.afiliado_email)) = lower(trim(v_email))), '[]'::jsonb),
-      'despachador_id',null,'auditor_id',null);
+    select coalesce(array_agg(distinct av.vehiculo_id), array[]::bigint[]) into v_ids
+      from public.afiliado_vehiculos av where lower(trim(av.afiliado_email)) = lower(trim(v_email));
+    declare
+      rec record; hit int; v_ver_desp boolean := false;
+    begin
+      v_tablas := '[]'::jsonb;
+      if array_length(v_ids, 1) is not null then
+        for rec in select tabla, label from public.tablas_despacho where activo order by label loop
+          execute format('select 1 from public.%I where (vehiculo_id = any($1) or vehiculo_programado_id = any($1)) and fecha >= (current_date - 90) limit 1', rec.tabla)
+            using v_ids into hit;
+          if hit is not null then v_tablas := v_tablas || jsonb_build_object('tabla', rec.tabla, 'label', rec.label); end if;
+        end loop;
+        execute 'select 1 from public.despachos where (vehiculo_id = any($1) or vehiculo_programado_id = any($1)) and fecha >= (current_date - 90) limit 1'
+          using v_ids into hit;
+        v_ver_desp := hit is not null;
+      end if;
+      return jsonb_build_object('email',v_email,'rol','afiliado','nombre',v_nombre,
+        'tablas', coalesce(v_tablas,'[]'::jsonb), 'ver_despachos', v_ver_desp,
+        'rutas','[]'::jsonb,'ids','[]'::jsonb,'grupos','[]'::jsonb,
+        'moviles', coalesce((select to_jsonb(array_agg(distinct trim(v.numero)))
+                             from public.afiliado_vehiculos av
+                             join public.vehiculos v on v.id = av.vehiculo_id
+                             where lower(trim(av.afiliado_email)) = lower(trim(v_email))), '[]'::jsonb),
+        'despachador_id',null,'auditor_id',null);
+    end;
   end if;
   v_tipo := public.tipo_dia(v_hoy);
   select trim(observacion), to_char(hora_inicio,'HH24:MI'), to_char(hora_fin,'HH24:MI'), grupos
