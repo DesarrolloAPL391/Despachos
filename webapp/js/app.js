@@ -535,7 +535,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
-  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
   if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
@@ -4402,7 +4402,7 @@ let _laurUltimo = null, _laurTimer = null, _laurModo = 'control';
 async function openLaureles(modo) {
   _laurModo = (modo === 'cumplimiento') ? 'cumplimiento' : 'control';
   const esCump = (_laurModo === 'cumplimiento');
-  if (!(esCump ? (isAdmin() || isAuditor() || isAfiliado()) : (isAdmin() || isAuditor() || esDespachadorLaureles()))) return;
+  if (!(esCump ? (isAdmin() || isAuditor()) : (isAdmin() || isAuditor() || esDespachadorLaureles()))) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'laureles';
   cerrarRecorridoBus();
