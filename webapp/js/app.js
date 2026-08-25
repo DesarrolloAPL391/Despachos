@@ -995,7 +995,8 @@ function applyQueryFilters(qy, opts = {}) {
     }
   }
   // Despachador y auditor: solo despachos de SUS rutas (refuerzo en UI; RLS lo garantiza en BD).
-  if (current === 'despachos' && !isAdmin()) {
+  // El afiliado NO se filtra por ruta: se scopea por VEHÍCULO vía RLS (pp_sel_afil), sus rutas son [].
+  if (current === 'despachos' && !isAdmin() && !isAfiliado()) {
     const ids = CTX?.ids || [];
     qy = qy.in('ruta_id', ids.length ? ids : [-1]);
   }
