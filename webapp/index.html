@@ -395,6 +395,64 @@
           </div>
           <div id="usr-body" class="integ-body"></div>
         </div>
+
+        <!-- Vista "Frecuencia": oferta programada por ruta y franja de 20 min (admin/auditor) -->
+        <div id="frecuencia-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>⏱️ Frecuencia por franja</h2>
+            <span id="frec-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Ruta <select id="frec-ruta"><option value="">—</option></select></label>
+            <label class="cump-fl">Día
+              <select id="frec-dia">
+                <option value="habil">Hábil (L–V)</option>
+                <option value="sabado">Sábado</option>
+                <option value="domingo">Domingo/Festivo</option>
+              </select>
+            </label>
+            <label class="cump-fecha-lbl">Desde <input type="date" id="frec-desde" /></label>
+            <label class="cump-fecha-lbl">Hasta <input type="date" id="frec-hasta" /></label>
+            <button id="frec-consultar" class="btn primary">Consultar</button>
+            <button id="frec-close" class="btn">← Volver</button>
+          </div>
+          <div id="frec-body" class="integ-body"></div>
+        </div>
+
+        <!-- Vista "Productividad": viajes programados vs. realizados por carro y por qué faltaron (admin/auditor) -->
+        <div id="productividad-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🚐 Productividad por carro</h2>
+            <span id="prod-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Ruta <select id="prod-ruta"><option value="">Toda la flota</option></select></label>
+            <label class="cump-fl">Día
+              <select id="prod-dia">
+                <option value="habil">Hábil (L–V)</option>
+                <option value="sabado">Sábado</option>
+                <option value="domingo">Domingo/Festivo</option>
+              </select>
+            </label>
+            <label class="cump-fecha-lbl">Desde <input type="date" id="prod-desde" /></label>
+            <label class="cump-fecha-lbl">Hasta <input type="date" id="prod-hasta" /></label>
+            <button id="prod-consultar" class="btn primary">Consultar</button>
+            <button id="prod-close" class="btn">← Volver</button>
+          </div>
+          <div id="prod-body" class="integ-body"></div>
+        </div>
+
+        <!-- Vista "Jornada del carro": línea de tiempo del día de un móvil (viaje/apagado/varado/muerto) desde GPS SONAR -->
+        <div id="jornada-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🕰️ Jornada del carro</h2>
+            <span id="jor-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Móvil <input id="jor-movil" type="text" inputmode="numeric" placeholder="5537" style="width:90px" /></label>
+            <label class="cump-fecha-lbl">Fecha <input type="date" id="jor-fecha" /></label>
+            <button id="jor-consultar" class="btn primary">Ver jornada</button>
+            <button id="jor-close" class="btn">← Volver</button>
+          </div>
+          <div id="jor-body" class="integ-body"></div>
+        </div>
       </main>
     </div>
 

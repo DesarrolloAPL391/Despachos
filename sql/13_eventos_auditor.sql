@@ -29,9 +29,16 @@ declare
   v_status text;
   v_items jsonb;
 begin
-  -- Puerta: esta información es de auditoría (velocidad, puertas, geocercas).
-  if not (public.es_auditor() or public.es_admin()) then
-    return jsonb_build_object('ok', false, 'error', 'Solo los auditores pueden consultar los eventos del bus.');
+  -- Puerta: auditoría (velocidad, puertas, geocercas). Admin/auditor ven cualquier móvil;
+  -- el afiliado SOLO puede consultar un mid que corresponda a uno de SUS vehículos.
+  if not (public.es_auditor() or public.es_admin() or (
+        public.es_afiliado() and exists (
+          select 1 from public.ubicaciones u
+          join public.vehiculos v on v.numero = u.movil
+          where u.mid = p_mid and v.id = any(public.mis_vehiculo_ids_afiliado())))) then
+    return jsonb_build_object('ok', false, 'error',
+      case when public.es_afiliado() then 'Ese móvil no es uno de tus vehículos.'
+           else 'Solo los auditores pueden consultar los eventos del bus.' end);
   end if;
   if coalesce(p_mid, '') = '' then
     return jsonb_build_object('ok', false, 'error', 'Ese móvil no tiene Id GPS en SONAR.');

@@ -531,6 +531,9 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
+  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
+  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
+  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
@@ -553,6 +556,9 @@ function buildSidebar() {
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
   const al = $('nav-lineal'); if (al) al.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'linea');
   const amll = $('nav-malla'); if (amll) amll.classList.toggle('active', currentView === 'malla');
+  const afr = $('nav-frec'); if (afr) afr.classList.toggle('active', currentView === 'frecuencia');
+  const apr = $('nav-prod'); if (apr) apr.classList.toggle('active', currentView === 'productividad');
+  const ajo = $('nav-jor'); if (ajo) ajo.classList.toggle('active', currentView === 'jornada');
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   buildBottomNav();
@@ -653,6 +659,9 @@ function selectTable(name) {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
@@ -3760,6 +3769,9 @@ async function openCumplimiento() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -4024,6 +4036,9 @@ async function openRutasVivo(modo) {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4249,6 +4264,9 @@ async function openMalla() {
   $('rutas-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -4414,6 +4432,9 @@ function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   selectTable(current);
 }
@@ -5399,6 +5420,9 @@ async function openPasajeros() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -5424,6 +5448,455 @@ async function openPasajeros() {
   $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen del <b>ERP APL</b> los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
 }
 function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; selectTable(current); }
+
+// ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
+let _frecRutas = null;
+async function loadRutasSel() {
+  if (_frecRutas) return _frecRutas;
+  try { const { data } = await sb.from('rutas').select('id,nombre').order('nombre'); _frecRutas = data || []; } catch { _frecRutas = []; }
+  return _frecRutas;
+}
+async function openFrecuencia() {
+  if (!isAdmin() && !isAuditor() && !isAfiliado()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'frecuencia';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('frecuencia-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-frec')?.classList.add('active');
+  buildBottomNav();
+  const rutas = await loadRutasSel();
+  const sel = $('frec-ruta');
+  if (sel && sel.options.length <= 1) {
+    sel.innerHTML = '<option value="">—</option>' + rutas.map((r) => `<option value="${r.id}">${esc(r.nombre)}</option>`).join('');
+  }
+  // Rango por defecto: últimos 30 días hasta hoy
+  if (!$('frec-hasta').value) $('frec-hasta').value = hoyServidor();
+  if (!$('frec-desde').value) { try { const dd = new Date(hoyServidor() + 'T12:00:00'); dd.setDate(dd.getDate() - 30); $('frec-desde').value = dd.toISOString().slice(0, 10); } catch (e) { /* */ } }
+  if (!$('frec-body').innerHTML.trim()) $('frec-body').innerHTML = '<div class="integ-info">Elige una <b>ruta</b>, el <b>día-tipo</b> y el <b>rango de fechas</b>, y pulsa <b>Consultar</b>. Verás <b>cada cuántos minutos sale un carro</b> por franja de 20 min (promedio de los días de ese tipo), y dónde está el pico y el valle.</div>';
+}
+function cerrarFrecuencia() { $('frecuencia-view').hidden = true; selectTable(current); }
+async function consultarFrecuencia() {
+  const ruta = $('frec-ruta').value;
+  const dia = $('frec-dia').value || 'habil';
+  const desde = $('frec-desde').value, hasta = $('frec-hasta').value;
+  if (!ruta) { toast('Elige una ruta.', 'err'); return; }
+  if (!desde || !hasta) { toast('Elige el rango de fechas.', 'err'); return; }
+  const body = $('frec-body'); body.innerHTML = '<div class="loading">Calculando frecuencia…</div>';
+  const btn = $('frec-consultar'); btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('frecuencia_ruta_franja', { p_ruta_id: Number(ruta), p_desde: desde, p_hasta: hasta, p_dia_tipo: dia });
+    if (error) throw error;
+    renderFrecuencia(data);
+  } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
+  finally { btn.disabled = false; }
+}
+function renderFrecuencia(d) {
+  const body = $('frec-body'); if (!body) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('frec-sub').textContent = ''; return; }
+  const fr = d.franjas || [];
+  if (!fr.length || !d.dias) { body.innerHTML = `<div class="cump-empty">${esc(d.nota || 'Sin despachos programados para ese filtro')}</div>`; $('frec-sub').textContent = ''; return; }
+  const maxP = Math.max(0.001, ...fr.map((f) => f.despachos_prom || 0));
+  const clas = (p) => (p >= 0.8 * maxP ? 'pico' : (p <= 0.4 * maxP ? 'valle' : 'medio'));
+  const rutaNom = (_frecRutas || []).find((r) => String(r.id) === String(d.ruta_id));
+  const rows = fr.map((f, i) => {
+    const p = f.despachos_prom || 0; const w = Math.round(p / maxP * 100); const k = clas(p);
+    const head = f.headway_min != null ? `cada ${f.headway_min} min` : '—';
+    const cs = f.carros || [];
+    const chips = cs.map((c) => {
+      const fallo = (c.realiz || 0) < (c.veces || 0);
+      return `<span class="frec-cchip${fallo ? ' fallo' : ''}" title="${esc(c.movil)}: se despachó ${c.veces} ${c.veces === 1 ? 'vez' : 'veces'} en esta franja, realizó ${c.realiz}">${esc(c.movil)} <span class="frec-cx">${c.realiz}/${c.veces}</span></span>`;
+    }).join('');
+    const det = cs.length ? `<div class="frec-det" id="frec-det-${i}" hidden><div class="frec-cnote">móvil · <b>realizó / despachado</b> en esta franja, sobre los <b>${d.dias} días con datos</b> (ámbar = no cumplió todos)</div><div class="frec-cwrap">${chips}</div></div>` : '';
+    return `<div class="frec-row" data-i="${i}"><span class="frec-h">${esc(f.franja)}</span>`
+      + `<span class="frec-bar"><span class="frec-fill ${k}" style="width:${w}%"></span></span>`
+      + `<span class="frec-head ${k}">${head}</span>`
+      + `<span class="frec-n">${p.toFixed(1)}<span class="pax-v2"> /día</span></span>`
+      + `<span class="frec-caret">${cs.length ? '▸' : ''}</span></div>${det}`;
+  }).join('');
+  const picos = fr.filter((f) => clas(f.despachos_prom || 0) === 'pico');
+  const valles = fr.filter((f) => clas(f.despachos_prom || 0) === 'valle');
+  const rango = (arr) => (arr.length ? `${arr[0].franja}–${arr[arr.length - 1].franja}` : '—');
+  const diaLbl = { habil: 'Hábil (L–V)', sabado: 'Sábado', domingo: 'Domingo/Festivo' }[d.dia_tipo] || d.dia_tipo;
+  body.innerHTML = `<div class="pax-hero">
+      <div class="pax-card"><div class="pax-num">${d.dias}</div><div class="pax-lbl">días <b>con datos</b> (${esc(diaLbl)})</div></div>
+      <div class="pax-card up"><div class="pax-num">${d.despachos_prom_dia}</div><div class="pax-lbl">despachos / día (promedio)</div></div>
+      <div class="pax-card blk"><div class="pax-num">20'</div><div class="pax-lbl">por franja</div></div>
+    </div>
+    <div class="frec-legend">
+      <span class="frec-chip pico">🔴 Pico ${esc(rango(picos))}</span>
+      <span class="frec-chip valle">🟢 Valle ${esc(rango(valles))}</span>
+    </div>
+    <div class="pax-sec"><h3>Despachos por franja de 20 min <span class="pax-hint">(barra = despachos/día · “cada X min” = cada cuánto sale un carro · clic en la franja para ver los carros)</span></h3>${rows}</div>`;
+  $('frec-sub').textContent = `${rutaNom ? rutaNom.nombre + ' · ' : ''}${d.dias} días · ${d.desde} → ${d.hasta}`;
+  body.querySelectorAll('.frec-row').forEach((row) => row.addEventListener('click', () => {
+    const i = row.getAttribute('data-i'); const det = $('frec-det-' + i); if (!det) return;
+    det.hidden = !det.hidden;
+    const car = row.querySelector('.frec-caret'); if (car && car.textContent) car.textContent = det.hidden ? '▸' : '▾';
+  }));
+}
+$('frec-consultar')?.addEventListener('click', consultarFrecuencia);
+$('frec-close')?.addEventListener('click', cerrarFrecuencia);
+$('frec-ruta')?.addEventListener('change', () => { if ($('frec-ruta').value) consultarFrecuencia(); });
+$('frec-dia')?.addEventListener('change', () => { if ($('frec-ruta').value) consultarFrecuencia(); });
+
+// ── Productividad y fugas de capacidad por carro (admin/auditor) ──
+const PROD_CAT = {
+  cumplio:     { cls: 'cumplio', ico: '🟢', lbl: 'Salió' },
+  justificado: { cls: 'justif',  ico: '🔧', lbl: 'Fuera justificado (taller/salud)' },
+  reasignado:  { cls: 'reasig',  ico: '🔁', lbl: 'Reasignado a otra tabla/ruta' },
+  externo:     { cls: 'externo', ico: '🌧️', lbl: 'Externo (congestión)' },
+  no_laboro:   { cls: 'nolab',   ico: '🔴', lbl: 'No laboró (no salió ese día)' },
+  no_enturno:  { cls: 'noent',   ico: '🟠', lbl: 'No se enturnó (saltó el turno)' },
+};
+const PROD_EST = {
+  cumplio:    { ico: '🟢', lbl: 'Cumplió',       cls: 'cumplio' },
+  no_enturno: { ico: '🟠', lbl: 'No se enturnó', cls: 'noent' },
+  no_laboro:  { ico: '🔴', lbl: 'No laboró',     cls: 'nolab' },
+  fuera:      { ico: '🔧', lbl: 'Fuera justif.', cls: 'fuera' },
+};
+async function openProductividad() {
+  if (!isAdmin() && !isAuditor() && !isAfiliado()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'productividad';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('productividad-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-prod')?.classList.add('active');
+  buildBottomNav();
+  const rutas = await loadRutasSel();
+  const sel = $('prod-ruta');
+  if (sel && sel.options.length <= 1) {
+    sel.innerHTML = '<option value="">Toda la flota</option>' + rutas.map((r) => `<option value="${r.id}">${esc(r.nombre)}</option>`).join('');
+  }
+  if (!$('prod-hasta').value) $('prod-hasta').value = hoyServidor();
+  if (!$('prod-desde').value) { try { const dd = new Date(hoyServidor() + 'T12:00:00'); dd.setDate(dd.getDate() - 30); $('prod-desde').value = dd.toISOString().slice(0, 10); } catch (e) { /* */ } }
+  if (!$('prod-body').innerHTML.trim()) $('prod-body').innerHTML = '<div class="integ-info">Elige la <b>ruta</b> (o deja «Toda la flota»), el <b>día-tipo</b> y el <b>rango</b>, y pulsa <b>Consultar</b>. Verás el <b>ranking de carros</b> del que menos viajes hizo al que más, con <b>programados vs. realizados</b> y <b>por qué</b> faltó cada viaje. Da clic en un carro para ver el detalle.</div>';
+}
+function cerrarProductividad() { $('productividad-view').hidden = true; selectTable(current); }
+async function consultarProductividad() {
+  const ruta = $('prod-ruta').value;               // '' = toda la flota
+  const dia = $('prod-dia').value || 'habil';
+  const desde = $('prod-desde').value, hasta = $('prod-hasta').value;
+  if (!desde || !hasta) { toast('Elige el rango de fechas.', 'err'); return; }
+  const body = $('prod-body'); body.innerHTML = '<div class="loading">Calculando productividad…</div>';
+  const btn = $('prod-consultar'); btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('productividad_carro', { p_ruta_id: ruta ? Number(ruta) : null, p_desde: desde, p_hasta: hasta, p_dia_tipo: dia });
+    if (error) throw error;
+    renderProductividad(data);
+  } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
+  finally { btn.disabled = false; }
+}
+function renderProductividad(d) {
+  const body = $('prod-body'); if (!body) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('prod-sub').textContent = ''; return; }
+  const cs = d.carros || []; const r = d.resumen || {};
+  if (!cs.length) { body.innerHTML = '<div class="cump-empty">Sin despachos programados para ese filtro</div>'; $('prod-sub').textContent = ''; return; }
+  const pctG = r.viajes_prog ? Math.round(100 * r.viajes_realiz / r.viajes_prog) : 0;
+  const rutaNom = (_frecRutas || []).find((x) => String(x.id) === String(d.ruta_id));
+  const diaLbl = { habil: 'Hábil (L–V)', sabado: 'Sábado', domingo: 'Domingo/Festivo' }[d.dia_tipo] || d.dia_tipo;
+  const seg = (n, k) => (n > 0 ? `<span class="prod-seg ${PROD_CAT[k].cls}" style="flex:${n}" title="${PROD_CAT[k].lbl}: ${n}"></span>` : '');
+  // Tira "perfil del día": una columna por franja de 20 min, apilada realizó/justif/no se enturnó/no laboró
+  const strip = (fr, big) => {
+    if (!fr || !fr.length) return '';
+    const cols = fr.map((f) => {
+      const prog = f.prog || 0;
+      const just = (f.justif != null) ? f.justif : Math.max(0, prog - (f.realiz || 0) - (f.no_laboro || 0) - (f.no_enturno || 0));
+      const sc = (n, k) => (n > 0 ? `<span class="prod-sc ${k}" style="flex:${n}"></span>` : '');
+      if (prog === 0) {
+        const lb = (f.libre != null && f.libre > 0) ? ` · 🔵 ${f.libre} refuerzos libres` : '';
+        return `<span class="prod-scol vacia" title="${esc(f.franja)} · sin turno de tabla${lb}"></span>`;
+      }
+      const t = `${f.franja} · salió ${f.realiz || 0}/${prog}` + (f.no_enturno ? ` · 🟠 ${f.no_enturno} no se enturnó` : '') + (f.no_laboro ? ` · 🔴 ${f.no_laboro} no laboró` : '') + (just ? ` · 🔧 ${just} justif.` : '');
+      return `<span class="prod-scol" title="${esc(t)}">${sc(f.no_laboro, 'nolab')}${sc(f.no_enturno, 'noent')}${sc(just, 'justif')}${sc(f.realiz, 'cumplio')}</span>`;
+    }).join('');
+    const axis = fr.map((f) => `<span class="prod-ax">${(f.ini_min % 60 === 0) ? String(Math.floor(f.ini_min / 60)).padStart(2, '0') : ''}</span>`).join('');
+    return `<div class="prod-strip-wrap${big ? ' big' : ''}"><div class="prod-strip">${cols}</div><div class="prod-axis">${axis}</div></div>`;
+  };
+  const rows = cs.map((c, i) => {
+    const est = PROD_EST[c.estado] || PROD_EST.cumplio;
+    const bar = `<span class="prod-bar">${seg(c.realizados, 'cumplio')}${seg(c.justificado, 'justificado')}${seg(c.reasignado, 'reasignado')}${seg(c.externo, 'externo')}${seg(c.no_enturno, 'no_enturno')}${seg(c.no_laboro, 'no_laboro')}</span>`;
+    const notas = [];
+    if (c.no_enturno > 0) notas.push(`🟠 ${c.no_enturno} turno${c.no_enturno > 1 ? 's' : ''} sin enturnar`);
+    if (c.no_laboro > 0) notas.push(`🔴 no laboró ${c.dias_no_laboro} día${c.dias_no_laboro > 1 ? 's' : ''} (${c.no_laboro} viajes de tabla)`);
+    if (c.justificado > 0) notas.push(`🔧 ${c.justificado} justif.`);
+    if (c.reasignado > 0) notas.push(`🔁 ${c.reasignado} reasig.`);
+    if (c.refuerzos > 0) notas.push(`🔵 +${c.refuerzos} refuerzos libres`);
+    const falt = c.faltantes || [];
+    const detLista = falt.length ? `<div class="prod-flist">${falt.map((f) => {
+      const cc = PROD_CAT[f.categoria] || PROD_CAT.no_laboro;
+      return `<div class="prod-fitem ${cc.cls}"><span class="prod-fi-ico">${cc.ico}</span><span class="prod-fi-h">${esc(f.fecha)} · ${esc(f.hora)}</span><span class="prod-fi-n">${esc(f.novedad || 'Sin novedad reportada')}</span></div>`;
+    }).join('')}</div>` : '';
+    const det = `<div class="prod-det" id="prod-det-${i}" hidden>`
+      + (notas.length ? `<div class="prod-notas">${notas.join(' · ')}</div>` : '')
+      + `<div class="prod-strip-lbl">Perfil del día por franja de 20 min <span class="pax-hint">(rojo = franja donde no salió · pasa el mouse por cada columna)</span></div>`
+      + strip(c.franjas)
+      + (detLista ? `<div class="prod-strip-lbl">Viajes que faltaron</div>${detLista}` : '')
+      + `</div>`;
+    const total = (c.realizados || 0) + (c.refuerzos || 0);
+    return `<div class="prod-row est-${est.cls}" data-i="${i}">`
+      + `<span class="prod-mov">${esc(c.movil)}</span>`
+      + `<span class="prod-tag ${est.cls}">${est.ico} ${est.lbl}</span>`
+      + `${bar}`
+      + `<span class="prod-stat"><b>${total}</b><span class="pax-v2"> viajes</span>`
+      + `<span class="prod-sub2">${c.realizados}t + ${c.refuerzos || 0}l · tabla ${c.pct == null ? '—' : c.pct + '%'}</span></span>`
+      + `<span class="prod-caret">▸</span></div>${det}`;
+  }).join('');
+  // Peores franjas de la ruta (donde más se cae la operación)
+  const frR = d.franjas_ruta || [];
+  const peores = frR.map((f) => ({ f, caidos: (f.no_laboro || 0) + (f.no_enturno || 0) }))
+    .filter((x) => x.caidos > 0).sort((a, b) => b.caidos - a.caidos).slice(0, 4);
+  const peoresChips = peores.length
+    ? peores.map((x) => `<span class="frec-chip nolab">${esc(x.f.franja)} · ${x.caidos} caídos</span>`).join('')
+    : '<span class="pax-hint">Sin caídos en el rango 🎉</span>';
+  // Perfil UNIFICADO: una columna por franja, altura = total despachos (tabla + libre); color = tabla vs libre
+  const maxTot = Math.max(1, ...frR.map((f) => (f.prog || 0) + (f.libre || 0)));
+  const uniStrip = frR.length ? `<div class="prod-strip-wrap big"><div class="prod-strip vol">${frR.map((f) => {
+    const prog = f.prog || 0, realiz = f.realiz || 0, nolab = f.no_laboro || 0, noent = f.no_enturno || 0, libre = f.libre || 0;
+    const just = Math.max(0, prog - realiz - nolab - noent);
+    const tot = prog + libre; const hPct = Math.max(tot > 0 ? 4 : 0, Math.round(tot / maxTot * 100));
+    const sc = (n, k) => (n > 0 ? `<span class="prod-sc ${k}" style="flex:${n}"></span>` : '');
+    const t = `${f.franja} · ${tot} despacho${tot === 1 ? '' : 's'}`
+      + (prog ? ` · TABLA ${prog} (🟢${realiz}${noent ? ` 🟠${noent}` : ''}${nolab ? ` 🔴${nolab}` : ''}${just ? ` 🔧${just}` : ''})` : ' · sin tabla')
+      + (libre ? ` · 🔵 ${libre} libre` : '');
+    return `<span class="prod-scol" title="${esc(t)}"><span class="prod-scfill" style="height:${hPct}%">${sc(libre, 'libre')}${sc(nolab, 'nolab')}${sc(noent, 'noent')}${sc(just, 'justif')}${sc(realiz, 'cumplio')}</span></span>`;
+  }).join('')}</div><div class="prod-axis">${frR.map((f) => `<span class="prod-ax">${(f.ini_min % 60 === 0) ? String(Math.floor(f.ini_min / 60)).padStart(2, '0') : ''}</span>`).join('')}</div></div>` : '';
+  const trabajoTotal = (r.viajes_realiz || 0) + (r.viajes_libre || 0);
+  body.innerHTML = `<div class="pax-hero">
+      <div class="pax-card up"><div class="pax-num">${pctG}<span class="pax-v2">%</span></div><div class="pax-lbl">cumplimiento tabla (${r.viajes_realiz}/${r.viajes_prog})</div></div>
+      <div class="pax-card blk"><div class="pax-num">${trabajoTotal}</div><div class="pax-lbl">viajes hechos · ${r.viajes_realiz} tabla + ${r.viajes_libre || 0} libre</div></div>
+      <div class="pax-card dn"><div class="pax-num">${r.viajes_no_laboro}</div><div class="pax-lbl">🔴 no laboró · ${r.carros_no_laboro} carros</div></div>
+    </div>
+    <div class="frec-legend">
+      <span class="frec-chip cumplio">🟢 Salió</span>
+      <span class="frec-chip justif">🔧 Justificado ${r.viajes_justif || 0}</span>
+      <span class="frec-chip noent">🟠 No se enturnó ${r.viajes_no_enturno || 0}</span>
+      <span class="frec-chip nolab">🔴 No laboró ${r.viajes_no_laboro || 0}</span>
+      <span class="frec-chip libre">🔵 Refuerzos ${r.viajes_libre || 0}</span>
+    </div>
+    <div class="pax-sec"><h3>Perfil del día de la ruta <span class="pax-hint">(todo lo despachado por franja de 20 min · <b>altura = nº de despachos</b> · 🟢🟠🔴🔧 = TABLA · <b>🔵 = LIBRE</b> refuerzo)</span></h3>
+      ${uniStrip}
+      <div class="prod-peores"><b>Franjas más críticas:</b> ${peoresChips}</div>
+    </div>
+    <div class="pax-sec"><h3>Carros — del que menos viajes hizo al que más <span class="pax-hint">(barra = viajes programados por categoría · da clic para ver el perfil del día y el detalle)</span></h3>${rows}</div>`;
+  $('prod-sub').textContent = `${rutaNom ? rutaNom.nombre : 'Toda la flota'} · ${esc(diaLbl)} · ${d.desde} → ${d.hasta}`;
+  body.querySelectorAll('.prod-row').forEach((row) => row.addEventListener('click', () => {
+    const i = row.getAttribute('data-i'); const det = $('prod-det-' + i); if (!det) return;
+    det.hidden = !det.hidden;
+    const car = row.querySelector('.prod-caret'); if (car && car.textContent) car.textContent = det.hidden ? '▸' : '▾';
+  }));
+}
+$('prod-consultar')?.addEventListener('click', consultarProductividad);
+$('prod-close')?.addEventListener('click', cerrarProductividad);
+$('prod-ruta')?.addEventListener('change', consultarProductividad);
+$('prod-dia')?.addEventListener('change', consultarProductividad);
+
+// ── Jornada del carro: línea de tiempo del día (viaje/apagado/varado/muerto/taller) desde GPS SONAR ──
+const JOR_EST = {
+  viaje:   { cls: 'viaje',   ico: '🟢', lbl: 'En viaje' },
+  apagado: { cls: 'apagado', ico: '⚫', lbl: 'Apagado' },
+  varado:  { cls: 'varado',  ico: '🔴', lbl: 'Varado / parado en ruta (motor encendido)' },
+  muerto:  { cls: 'muerto',  ico: '🟡', lbl: 'Tiempo muerto (encendido, esperando)' },
+  taller:  { cls: 'taller',  ico: '🔧', lbl: 'Taller / lavadero' },
+};
+// 'HH:MM' o 'YYYY-MM-DD HH:MM:SS' → minutos desde medianoche
+function _minHora(h) { h = String(h || ''); const p = h.includes(' ') ? h.split(' ')[1] : h; const a = p.split(':'); return (+a[0]) * 60 + (+a[1]); }
+async function openJornada() {
+  if (!isAdmin() && !isAuditor() && !isAfiliado()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'jornada';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('jornada-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-jor')?.classList.add('active');
+  buildBottomNav();
+  if (!$('jor-fecha').value) $('jor-fecha').value = hoyServidor();
+  if (!$('jor-body').innerHTML.trim()) $('jor-body').innerHTML = '<div class="integ-info">Escribe un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Ver jornada</b>. Se arma la <b>línea de tiempo del día</b> con los viajes reales y el tiempo por fuera: ⚫ apagado, 🔴 varado (parado en ruta con motor encendido), 🟡 tiempo muerto y 🔧 taller. Sale del GPS de SONAR (puede tardar unos segundos).</div>';
+}
+function cerrarJornada() { $('jornada-view').hidden = true; selectTable(current); }
+// móvil → mid (Id GPS) desde ubicaciones
+async function _midDeMovil(movil) {
+  try { const { data } = await sb.from('ubicaciones').select('mid').eq('movil', String(movil)).limit(1); return (data && data[0] && data[0].mid) ? data[0].mid : null; }
+  catch { return null; }
+}
+// Despachos del día de ese móvil (nuestra base): lo que tenía asignado vs. lo que hizo
+async function _despachosDia(movil, fecha) {
+  try {
+    const veh = await loadVehiculos();
+    const v = veh.find((x) => String(x.numero).trim() === String(movil).trim());
+    if (!v) return [];
+    const rutas = await loadRutasSel(); const rmap = {}; (rutas || []).forEach((r) => { rmap[r.id] = r.nombre; });
+    const { data } = await sb.from('despachos')
+      .select('hora,ruta_id,tipo,estado_despacho,estado,sonar_regid,vehiculo_programado_id')
+      .eq('fecha', fecha).or(`vehiculo_programado_id.eq.${v.id},vehiculo_id.eq.${v.id}`).order('hora');
+    return (data || []).map((d) => ({
+      hora: (d.hora || '').slice(0, 5), ruta: rmap[d.ruta_id] || '', tipo: d.tipo || '',
+      novedad: d.estado || '', realizado: (['DESPACHADO', 'SI'].includes(d.estado_despacho) || d.sonar_regid != null),
+      prog: d.vehiculo_programado_id === v.id,
+    })).filter((d) => d.hora);
+  } catch { return []; }
+}
+async function consultarJornada() {
+  const movil = ($('jor-movil').value || '').trim();
+  const fecha = $('jor-fecha').value;
+  if (!movil) { toast('Escribe un móvil.', 'err'); return; }
+  if (!fecha) { toast('Elige una fecha.', 'err'); return; }
+  const body = $('jor-body'); body.innerHTML = '<div class="loading">Consultando GPS de SONAR… (puede tardar unos segundos)</div>';
+  const btn = $('jor-consultar'); btn.disabled = true;
+  try {
+    const mid = await _midDeMovil(movil);
+    if (!mid) { body.innerHTML = '<div class="cump-empty">Ese móvil no tiene Id GPS en SONAR (revisa el número).</div>'; $('jor-sub').textContent = ''; return; }
+    const [evR, desp] = await Promise.all([
+      sb.rpc('sonar_eventos_auditor', { p_mid: mid, p_desde: `${fecha} 04:00`, p_hasta: `${fecha} 23:59` }),
+      _despachosDia(movil, fecha),
+    ]);
+    if (evR.error) throw evR.error;
+    const data = evR.data;
+    if (!data || !data.ok) { body.innerHTML = `<div class="cump-empty">${esc((data && data.error) || 'SONAR no respondió')}</div>`; $('jor-sub').textContent = ''; return; }
+    renderJornada(movil, fecha, data.items || [], desp || []);
+  } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
+  finally { btn.disabled = false; }
+}
+// Reconstruye la jornada minuto a minuto a partir del stream de eventos
+function _construirJornada(eventos) {
+  const evs = eventos.filter((e) => e.hora).map((e) => ({ m: _minHora(e.hora), ev: e.evento || '', vel: (e.velocidad != null ? e.velocidad : null) })).sort((a, b) => a.m - b.m);
+  if (!evs.length) return null;
+  const N = 24 * 60;
+  const first = Math.max(0, evs[0].m), last = Math.min(N - 1, evs[evs.length - 1].m);
+  // 1) Motor ON/OFF por minuto
+  const chg = [];
+  for (const e of evs) {
+    if (/apagado/i.test(e.ev)) chg.push([e.m, false]);
+    else if (/encendido/i.test(e.ev)) chg.push([e.m, true]);
+    else if ((e.vel || 0) > 0) chg.push([e.m, true]);
+    else if (/inicio de ruta|reporte por distancia|abandono/i.test(e.ev)) chg.push([e.m, true]);
+  }
+  chg.sort((a, b) => a[0] - b[0]);
+  const motor = new Array(N).fill(null);
+  { let cur = null, ci = 0; for (let m = first; m <= last; m++) { while (ci < chg.length && chg[ci][0] <= m) { cur = chg[ci][1]; ci++; } motor[m] = cur; } }
+  // 2) Geocercas: en terminal / en taller
+  const enTerminal = new Array(N).fill(false), enTaller = new Array(N).fill(false);
+  { const geos = evs.filter((e) => /^ingreso a |^salida de /i.test(e.ev)); let ter = false, tal = false, gi = 0;
+    for (let m = first; m <= last; m++) {
+      while (gi < geos.length && geos[gi].m <= m) { const g = geos[gi]; const ing = /^ingreso a (.+)/i.exec(g.ev);
+        if (ing) { const nom = ing[1]; if (/taller|lavadero/i.test(nom)) { tal = true; ter = false; } else if (/estaci|despacho|parq|terminal|patio|control/i.test(nom)) ter = true; }
+        else { if (/taller|lavadero/i.test(g.ev)) tal = false; else ter = false; } gi++; }
+      enTerminal[m] = ter; enTaller[m] = tal; } }
+  // 3) "Parada mayor" → ventana de varado hasta el próximo movimiento
+  const parada = new Array(N).fill(false);
+  for (let k = 0; k < evs.length; k++) { if (/parada mayor/i.test(evs[k].ev)) { let end = last;
+    for (let j = k + 1; j < evs.length; j++) { if ((evs[j].vel || 0) > 0 || /inicio de ruta/i.test(evs[j].ev)) { end = evs[j].m; break; } }
+    for (let m = evs[k].m; m <= Math.min(end, last); m++) parada[m] = true; } }
+  // 4) Viajes desde eventos (Inicio de ruta → Fín/Cancelada/Abandono)
+  const enViaje = new Array(N).fill(false); const trips = []; let tini = null;
+  for (const e of evs) {
+    if (/inicio de ruta/i.test(e.ev)) { if (tini != null) trips.push({ ini: tini, fin: e.m }); tini = e.m; }
+    else if (/(f.n de ruta|ruta cancelada|abandono de ruta)/i.test(e.ev)) { if (tini != null) { trips.push({ ini: tini, fin: e.m, end: e.ev }); tini = null; } }
+  }
+  if (tini != null) trips.push({ ini: tini, fin: last });
+  for (const t of trips) { for (let m = t.ini; m < t.fin; m++) enViaje[m] = true; }
+  // 5) Estado por minuto (prioridad)
+  const state = new Array(N).fill(null);
+  for (let m = first; m <= last; m++) {
+    if (enViaje[m]) state[m] = 'viaje';
+    else if (motor[m] === false) state[m] = 'apagado';
+    else if (enTaller[m]) state[m] = 'taller';
+    else if (parada[m] && !enTerminal[m]) state[m] = 'varado';
+    else state[m] = 'muerto';
+  }
+  // 6) Merge en segmentos + resumen
+  const segs = []; const res = { viaje: 0, apagado: 0, varado: 0, muerto: 0, taller: 0 };
+  let curSt = state[first], curIni = first;
+  for (let m = first + 1; m <= last; m++) { if (state[m] !== curSt) { segs.push({ ini: curIni, fin: m, estado: curSt }); res[curSt] += (m - curIni); curSt = state[m]; curIni = m; } }
+  segs.push({ ini: curIni, fin: last + 1, estado: curSt }); res[curSt] += (last + 1 - curIni);
+  return { first, last, segs, res, trips };
+}
+function renderJornada(movil, fecha, eventos, despachos) {
+  const body = $('jor-body'); if (!body) return;
+  despachos = despachos || [];
+  const J = _construirJornada(eventos);
+  if (!J) { body.innerHTML = '<div class="cump-empty">Ese móvil no tiene reportes GPS ese día.</div>'; $('jor-sub').textContent = ''; return; }
+  const span = (J.last - J.first) || 1;
+  const fmtH = (min) => { const h = Math.floor(min / 60), m = min % 60; return h ? `${h}h ${m}m` : `${m}m`; };
+  const hhmm = (min) => `${_pad2(Math.floor(min / 60) % 24)}:${_pad2(min % 60)}`;
+  const segHTML = J.segs.map((s) => { const w = (s.fin - s.ini) / (span + 1) * 100; const e = JOR_EST[s.estado];
+    return `<span class="jor-seg ${e.cls}" style="width:${w}%" title="${e.ico} ${e.lbl} · ${hhmm(s.ini)}–${hhmm(s.fin)} · ${fmtH(s.fin - s.ini)}"></span>`; }).join('');
+  const h0 = Math.floor(J.first / 60), h1 = Math.ceil((J.last + 1) / 60); let ticks = '';
+  for (let h = h0; h <= h1; h++) { const pos = (h * 60 - J.first) / (span + 1) * 100; if (pos >= -1 && pos <= 101) ticks += `<span class="jor-tick" style="left:${Math.max(0, Math.min(100, pos))}%">${_pad2(h % 24)}</span>`; }
+  // Despachos del día: marcadores alineados a la hora programada + lista
+  const pinPos = (hhmmStr) => (_minHora(hhmmStr) - J.first) / (span + 1) * 100;
+  const pines = despachos.map((d) => { const pos = pinPos(d.hora); if (pos < -1 || pos > 101) return '';
+    const t = `${d.hora} · ${d.ruta || '?'} · ${d.tipo || ''}${d.novedad ? ' · ' + d.novedad : ''} · ${d.realizado ? 'realizado' : 'NO realizado'}`;
+    return `<span class="jor-pin ${d.realizado ? 'ok' : 'no'}" style="left:${Math.max(0, Math.min(100, pos))}%" title="${esc(t)}"></span>`; }).join('');
+  const dlist = despachos.length ? despachos.map((d) => `<div class="jor-drow ${d.realizado ? 'ok' : 'no'}">`
+    + `<span class="jor-dh">${esc(d.hora)}</span>`
+    + `<span class="jor-dt ${d.tipo === 'LIBRE' ? 'libre' : 'tabla'}">${esc(d.tipo || '—')}</span>`
+    + `<span class="jor-dr">${esc(d.ruta || '')}</span>`
+    + `<span class="jor-dn">${esc(d.novedad || (d.realizado ? '✓ realizado' : '✗ no realizado'))}</span></div>`).join('')
+    : '<div class="pax-hint">Sin despachos registrados ese día para este móvil.</div>';
+  const nRealiz = despachos.filter((d) => d.realizado).length;
+  const nCanc = eventos.filter((e) => /ruta cancelada/i.test(e.evento || '')).length;
+  const nAband = eventos.filter((e) => /abandono de ruta/i.test(e.evento || '')).length;
+  const onMin = J.res.viaje + J.res.varado + J.res.muerto + J.res.taller;
+  const utilProd = onMin ? Math.round(100 * J.res.viaje / onMin) : 0;
+  const log = eventos.slice().sort((a, b) => (String(a.hora) < String(b.hora) ? -1 : 1)).map((e) =>
+    `<div class="jor-logrow"><span class="jor-lh">${esc(String(e.hora).slice(11, 16))}</span><span class="jor-le">${esc(e.evento || '')}</span>${e.velocidad != null ? `<span class="jor-lv">${esc(String(e.velocidad))} km/h</span>` : ''}</div>`).join('');
+  body.innerHTML = `
+    <div class="pax-hero">
+      <div class="pax-card up"><div class="pax-num">${J.trips.length}</div><div class="pax-lbl">viajes · ${fmtH(J.res.viaje)} en ruta</div></div>
+      <div class="pax-card blk"><div class="pax-num">${utilProd}<span class="pax-v2">%</span></div><div class="pax-lbl">productividad (viaje / motor encendido)</div></div>
+      <div class="pax-card dn"><div class="pax-num">${fmtH(J.res.varado + J.res.muerto)}</div><div class="pax-lbl">🔴 varado + 🟡 muerto</div></div>
+    </div>
+    <div class="frec-legend">
+      <span class="frec-chip cumplio">🟢 En viaje ${fmtH(J.res.viaje)}</span>
+      <span class="frec-chip nolab">🔴 Varado ${fmtH(J.res.varado)}</span>
+      <span class="frec-chip libre">🟡 Muerto ${fmtH(J.res.muerto)}</span>
+      <span class="frec-chip apagado">⚫ Apagado ${fmtH(J.res.apagado)}</span>
+      <span class="frec-chip justif">🔧 Taller ${fmtH(J.res.taller)}</span>
+      ${(nCanc || nAband) ? `<span class="frec-chip nolab">🚫 ${nCanc} cancel. · ${nAband} abandonos</span>` : ''}
+    </div>
+    <div class="pax-sec"><h3>Línea de tiempo del día <span class="pax-hint">(${hhmm(J.first)}–${hhmm(J.last)} · 📍 despacho · pasa el mouse por cada tramo)</span></h3>
+      ${despachos.length ? `<div class="jor-desp-track">${pines}</div>` : ''}
+      <div class="jor-timeline">${segHTML}</div>
+      <div class="jor-axis">${ticks}</div>
+    </div>
+    <div class="pax-sec"><h3>Despachos del día (${nRealiz}/${despachos.length} realizados) <span class="pax-hint">(lo asignado en la base vs. lo que hizo el GPS arriba)</span></h3>
+      <div class="jor-dlist">${dlist}</div>
+    </div>
+    <div class="pax-sec"><h3 class="jor-logtoggle">📋 Eventos GPS del día (${eventos.length}) <span class="pax-hint">clic para ver/ocultar</span></h3>
+      <div id="jor-log" class="jor-log" hidden>${log}</div>
+    </div>`;
+  $('jor-sub').textContent = `Móvil ${movil} · ${fecha}`;
+  body.querySelector('.jor-logtoggle')?.addEventListener('click', () => { const l = $('jor-log'); if (l) l.hidden = !l.hidden; });
+}
+$('jor-consultar')?.addEventListener('click', consultarJornada);
+$('jor-close')?.addEventListener('click', cerrarJornada);
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
   const fecha = $('pax-fecha').value;
@@ -5788,6 +6261,9 @@ async function openUsuarios() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -8407,6 +8883,9 @@ async function showMapView() {
   $('malla-view').hidden = true;
   $('laureles-view').hidden = true;
   $('integradas-view').hidden = true;
+  $('frecuencia-view').hidden = true;
+  $('productividad-view').hidden = true;
+  $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
