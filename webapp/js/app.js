@@ -5102,6 +5102,14 @@ async function loadVehiculos() {
   if (!vehList || !vehList.length) { const { data } = await sb.from('vehiculos').select('id,numero,placa').order('numero').limit(3000); vehList = data || []; }
   return vehList;
 }
+// Vehículos que el usuario puede consultar: el afiliado SOLO sus móviles (CTX.moviles); el resto, todos.
+async function _vehiculosScope() {
+  const veh = await loadVehiculos();
+  if (!isAfiliado()) return veh || [];
+  const mset = movilesAfiliado();
+  const byNum = new Map((veh || []).map((v) => [String(v.numero).trim(), v]));
+  return [...mset].map((n) => byNum.get(n) || { numero: n, placa: '' });
+}
 async function loadDespachadores() {
   if (!despList || !despList.length) { const { data } = await sb.from('despachadores').select('id,nombre').order('nombre').limit(2000); despList = data || []; }
   return despList;
@@ -5454,7 +5462,14 @@ function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('
 let _frecRutas = null;
 async function loadRutasSel() {
   if (_frecRutas) return _frecRutas;
-  try { const { data } = await sb.from('rutas').select('id,nombre').order('nombre'); _frecRutas = data || []; } catch { _frecRutas = []; }
+  try {
+    if (isAfiliado()) {
+      // El afiliado SOLO ve las rutas donde están SUS vehículos (no toda la empresa).
+      const { data } = await sb.rpc('rutas_afiliado'); _frecRutas = data || [];
+    } else {
+      const { data } = await sb.from('rutas').select('id,nombre').order('nombre'); _frecRutas = data || [];
+    }
+  } catch { _frecRutas = []; }
   return _frecRutas;
 }
 async function openFrecuencia() {
@@ -5483,6 +5498,8 @@ async function openFrecuencia() {
   // Rango por defecto: últimos 30 días hasta hoy
   if (!$('frec-hasta').value) $('frec-hasta').value = hoyServidor();
   if (!$('frec-desde').value) { try { const dd = new Date(hoyServidor() + 'T12:00:00'); dd.setDate(dd.getDate() - 30); $('frec-desde').value = dd.toISOString().slice(0, 10); } catch (e) { /* */ } }
+  // Afiliado con una sola ruta: la dejamos elegida y consultamos directo.
+  if (isAfiliado() && rutas.length === 1 && sel && !sel.value) { sel.value = String(rutas[0].id); consultarFrecuencia(); return; }
   if (!$('frec-body').innerHTML.trim()) $('frec-body').innerHTML = '<div class="integ-info">Elige una <b>ruta</b>, el <b>día-tipo</b> y el <b>rango de fechas</b>, y pulsa <b>Consultar</b>. Verás <b>cada cuántos minutos sale un carro</b> por franja de 20 min (promedio de los días de ese tipo), y dónde está el pico y el valle.</div>';
 }
 function cerrarFrecuencia() { $('frecuencia-view').hidden = true; selectTable(current); }
@@ -5585,7 +5602,8 @@ async function openProductividad() {
   const rutas = await loadRutasSel();
   const sel = $('prod-ruta');
   if (sel && sel.options.length <= 1) {
-    sel.innerHTML = '<option value="">Toda la flota</option>' + rutas.map((r) => `<option value="${r.id}">${esc(r.nombre)}</option>`).join('');
+    const todos = isAfiliado() ? 'Todos mis vehículos' : 'Toda la flota';
+    sel.innerHTML = `<option value="">${todos}</option>` + rutas.map((r) => `<option value="${r.id}">${esc(r.nombre)}</option>`).join('');
   }
   if (!$('prod-hasta').value) $('prod-hasta').value = hoyServidor();
   if (!$('prod-desde').value) { try { const dd = new Date(hoyServidor() + 'T12:00:00'); dd.setDate(dd.getDate() - 30); $('prod-desde').value = dd.toISOString().slice(0, 10); } catch (e) { /* */ } }
@@ -5698,7 +5716,7 @@ function renderProductividad(d) {
       <div class="prod-peores"><b>Franjas más críticas:</b> ${peoresChips}</div>
     </div>
     <div class="pax-sec"><h3>Carros — del que menos viajes hizo al que más <span class="pax-hint">(barra = viajes programados por categoría · da clic para ver el perfil del día y el detalle)</span></h3>${rows}</div>`;
-  $('prod-sub').textContent = `${rutaNom ? rutaNom.nombre : 'Toda la flota'} · ${esc(diaLbl)} · ${d.desde} → ${d.hasta}`;
+  $('prod-sub').textContent = `${rutaNom ? rutaNom.nombre : (isAfiliado() ? 'Todos mis vehículos' : 'Toda la flota')} · ${esc(diaLbl)} · ${d.desde} → ${d.hasta}`;
   body.querySelectorAll('.prod-row').forEach((row) => row.addEventListener('click', () => {
     const i = row.getAttribute('data-i'); const det = $('prod-det-' + i); if (!det) return;
     det.hidden = !det.hidden;
@@ -5738,7 +5756,13 @@ async function openJornada() {
   $('nav-jor')?.classList.add('active');
   buildBottomNav();
   if (!$('jor-fecha').value) $('jor-fecha').value = hoyServidor();
-  if (!$('jor-body').innerHTML.trim()) $('jor-body').innerHTML = '<div class="integ-info">Escribe un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Ver jornada</b>. Se arma la <b>línea de tiempo del día</b> con los viajes reales y el tiempo por fuera: ⚫ apagado, 🔴 varado (parado en ruta con motor encendido), 🟡 tiempo muerto y 🔧 taller. Sale del GPS de SONAR (puede tardar unos segundos).</div>';
+  // Lista de móviles (no se escribe a mano): afiliado = sus carros; admin/auditor = todos.
+  const sel = $('jor-movil');
+  if (sel && sel.options.length <= 1) {
+    const veh = (await _vehiculosScope()).slice().sort((a, b) => String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true }));
+    sel.innerHTML = '<option value="">— móvil —</option>' + veh.map((v) => `<option value="${esc(v.numero)}">${esc(v.numero)}${v.placa ? ' · ' + esc(v.placa) : ''}</option>`).join('');
+  }
+  if (!$('jor-body').innerHTML.trim()) $('jor-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Ver jornada</b>. Se arma la <b>línea de tiempo del día</b> con los viajes reales y el tiempo por fuera: ⚫ apagado, 🔴 varado (parado en ruta con motor encendido), 🟡 tiempo muerto y 🔧 taller. Sale del GPS de SONAR (puede tardar unos segundos).</div>';
 }
 function cerrarJornada() { $('jornada-view').hidden = true; selectTable(current); }
 // móvil → mid (Id GPS) desde ubicaciones
@@ -5898,6 +5922,8 @@ function renderJornada(movil, fecha, eventos, despachos) {
 }
 $('jor-consultar')?.addEventListener('click', consultarJornada);
 $('jor-close')?.addEventListener('click', cerrarJornada);
+$('jor-movil')?.addEventListener('change', () => { if ($('jor-movil').value && $('jor-fecha').value) consultarJornada(); });
+$('jor-fecha')?.addEventListener('change', () => { if ($('jor-movil').value && $('jor-fecha').value) consultarJornada(); });
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
   const fecha = $('pax-fecha').value;
