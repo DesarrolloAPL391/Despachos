@@ -30,10 +30,15 @@ declare
                             'CONDUCTOR EN OTRA RUTA','CONDUCTOR EN OTRO VEHICULO','ADELANTADO'];
   -- 🌧️ Externo: no imputable a la operación.
   v_externo text[] := array['CONGESTION VEHICULAR'];
+  -- Rendimiento: el alcance por vehículo del afiliado se calcula UNA sola vez (no fila
+  -- por fila). v_ids = null → admin/auditor (ven todo); v_ids = sus vehículos → afiliado.
+  v_ids     bigint[];
 begin
   if not (public.es_admin() or public.es_auditor() or public.es_afiliado()) then
     raise exception 'No autorizado.';
   end if;
+  v_ids := case when (public.es_admin() or public.es_auditor()) then null
+                else public.mis_vehiculo_ids_afiliado() end;
 
   with base as (
     select d.fecha, d.hora, d.estado,
@@ -48,7 +53,7 @@ begin
       and d.hora is not null
       and d.vehiculo_programado_id is not null
       and coalesce(upper(btrim(d.tipo)), '') <> 'LIBRE'   -- solo TABLA (turno fijo); LIBRE va aparte
-      and (public.es_admin() or public.es_auditor() or vp.id = any(public.mis_vehiculo_ids_afiliado()))  -- afiliado: solo sus carros
+      and (v_ids is null or d.vehiculo_programado_id = any(v_ids))  -- afiliado: solo sus carros (filtro sobre la columna, sin llamar la función por fila)
       and case p_dia_tipo
             when 'sabado'  then (extract(isodow from d.fecha) = 6 and not public.es_festivo(d.fecha))
             when 'domingo' then (extract(isodow from d.fecha) = 7 or public.es_festivo(d.fecha))
@@ -67,7 +72,7 @@ begin
       and d.hora is not null
       and upper(btrim(d.tipo)) = 'LIBRE'
       and (d.estado_despacho in ('DESPACHADO','SI') or d.sonar_regid is not null)
-      and (public.es_admin() or public.es_auditor() or vr.id = any(public.mis_vehiculo_ids_afiliado()))  -- afiliado: solo sus carros
+      and (v_ids is null or d.vehiculo_id = any(v_ids))  -- afiliado: solo sus carros (usa idx_despachos_vehiculo)
       and case p_dia_tipo
             when 'sabado'  then (extract(isodow from d.fecha) = 6 and not public.es_festivo(d.fecha))
             when 'domingo' then (extract(isodow from d.fecha) = 7 or public.es_festivo(d.fecha))
@@ -84,7 +89,7 @@ begin
     join public.vehiculos vr on vr.id = d.vehiculo_id
     where d.fecha between p_desde and p_hasta
       and (d.estado_despacho in ('DESPACHADO','SI') or d.sonar_regid is not null)
-      and (public.es_admin() or public.es_auditor() or vr.id = any(public.mis_vehiculo_ids_afiliado()))  -- afiliado: solo sus carros
+      and (v_ids is null or d.vehiculo_id = any(v_ids))  -- afiliado: solo sus carros (usa idx_despachos_vehiculo)
       and case p_dia_tipo
             when 'sabado'  then (extract(isodow from d.fecha) = 6 and not public.es_festivo(d.fecha))
             when 'domingo' then (extract(isodow from d.fecha) = 7 or public.es_festivo(d.fecha))
