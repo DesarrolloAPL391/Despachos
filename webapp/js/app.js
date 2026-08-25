@@ -146,13 +146,12 @@ function visibleTables() {
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
-  // Afiliado: las tablas de despacho donde están SUS carros (solo lectura, filtradas por RLS).
-  // 'ver_despachos' = alguno de sus carros aparece en la vista general "Despachos". Mapa y
-  // Pasajeros se agregan aparte como acciones del menú.
+  // Afiliado: ve TODAS las tablas de despacho en VIVO y SOLO LECTURA — la vista general
+  // "Despachos" + las tablas de puesto con datos (RLS ahora le muestra todos los vehículos,
+  // no solo los suyos). Mapa y Pasajeros se agregan aparte como acciones del menú.
   if (isAfiliado()) {
-    const mine = (CTX?.tablas || []).map((t) => t.tabla).filter((t) => TABLES[t]);
-    if (CTX?.ver_despachos && !mine.includes('despachos')) mine.unshift('despachos');
-    return mine;
+    const puesto = (CTX?.afilTables || []).filter((t) => TABLES[t]);
+    return ['despachos', ...puesto];
   }
   // Auditor: la pantalla Despachos + "Auditoría SONAR" (los viajes REALES que trae SONAR,
   // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
@@ -455,6 +454,9 @@ async function showApp(user) {
   await registerPuestoTables();
   // Auditor: descubre en qué tablas de puesto tiene despachos de sus rutas (para el menú)
   if (CTX?.rol === 'auditor') { try { CTX.auditTables = await tablasAuditablesDePuesto(); } catch { CTX.auditTables = []; } }
+  // Afiliado: ve TODOS los despachos en vivo (solo lectura), así que descubre las tablas de
+  // puesto con datos para listarlas en el menú (reusa el mismo conteo del auditor).
+  if (CTX?.rol === 'afiliado') { try { CTX.afilTables = await tablasAuditablesDePuesto(); } catch { CTX.afilTables = []; } }
   // ¿El despachador (con tablas propias) además tiene rutas que se despachan en "Despachos"?
   // Se muestra el tab "Despachos" solo si hay filas visibles para sus rutas (evita tabs vacíos).
   CTX && (CTX.verDespachos = false);
@@ -531,7 +533,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
-  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
+  if (isAdmin() || isAuditor()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
@@ -5473,7 +5475,7 @@ async function loadRutasSel() {
   return _frecRutas;
 }
 async function openFrecuencia() {
-  if (!isAdmin() && !isAuditor() && !isAfiliado()) return;
+  if (!isAdmin() && !isAuditor()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'frecuencia';
   cerrarRecorridoBus();
