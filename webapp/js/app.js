@@ -697,8 +697,9 @@ function selectTable(name) {
   // filas a lo que le pertenece a cada quien y se respetan los filtros activos.
   $('export-btn').hidden = !((isAdmin() || isAuditor()) && TABLES[name] && (TABLES[name].columns || []).length > 0);
   $('recon-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor())); // Conciliar SONAR: auditor/admin en Resumen
-  // Borrar día: solo admin, en las tablas por puesto (programación), no en Despachos
-  $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable && name !== 'despachos');
+  // Borrar día: solo admin, en las tablas de despacho (Despachos general + tablas de puesto).
+  // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
+  $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
