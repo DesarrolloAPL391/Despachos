@@ -6618,12 +6618,22 @@ async function filtrarMovilesPorRuta() {
   const veh = await loadVehiculos();
   const estChk = $('nd-estacion'), estWrap = $('nd-estacion-wrap');
   const puestoChk = $('nd-puesto-todos'), puestoWrap = $('nd-puesto-wrap');
+  const todosChk = $('nd-todos'), todosWrap = $('nd-todos-wrap');
   let lista = veh; let placeholder = '— selecciona móvil —';
-  if (itin && esDiaLibreDespacho()) {
-    // Domingo/festivo: cualquier móvil por cualquier ruta (sin filtro de grupo). lista queda = veh (todos)
+  // Casilla "Mostrar TODOS los móviles (cualquier ruta)": disponible para admin y despachador
+  // cuando hay ruta elegida y no es domingo/festivo (ahí ya se ven todos). Levanta el filtro por
+  // grupo → deja despachar CUALQUIER carro por CUALQUIER ruta (ej. 5515 de la 136 por la 136A).
+  // El servidor no restringe el INSERT por grupo, así que basta con abrir la lista aquí.
+  const puedeTodos = isAdmin() || filtraComoDespachador();
+  const mostrarTodosToggle = !!itin && !esDiaLibreDespacho() && puedeTodos;
+  if (todosWrap) todosWrap.hidden = !mostrarTodosToggle;
+  if (!mostrarTodosToggle && todosChk) todosChk.checked = false;
+  const usarTodos = mostrarTodosToggle && todosChk && todosChk.checked;
+  if (itin && (esDiaLibreDespacho() || usarTodos)) {
+    // Sin filtro de grupo: cualquier móvil por cualquier ruta. lista queda = veh (todos)
     if (estWrap) { estWrap.hidden = true; if (estChk) estChk.checked = false; }
     if (puestoWrap) puestoWrap.hidden = true;
-    placeholder = '— domingo/festivo: cualquier móvil —';
+    placeholder = usarTodos ? '— cualquier ruta: todos los móviles —' : '— domingo/festivo: cualquier móvil —';
   } else if (itin) {
     const [gmap, rmap, extra] = await Promise.all([loadRutaGrupos(), loadParqueRutas(), loadIntegradasExtra()]);
     // El despachador solo ve móviles de SUS grupos (admin = todos)
@@ -6687,6 +6697,7 @@ async function filtrarMovilesPorRuta() {
 }
 $('nd-ruta').addEventListener('change', filtrarMovilesPorRuta);
 $('nd-puesto-todos')?.addEventListener('change', filtrarMovilesPorRuta);
+$('nd-todos')?.addEventListener('change', filtrarMovilesPorRuta);
 $('nd-estacion').addEventListener('change', filtrarMovilesPorRuta);
 
 // Captura el GPS del celular para llenar "ubicacion". Nunca bloquea el despacho:
