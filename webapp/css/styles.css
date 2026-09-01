@@ -1875,3 +1875,17 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .usr-afil-edit { padding: 5px 12px; font-size: 12.5px; }
 .usr-afil-del { padding: 5px 12px; font-size: 12.5px; }
 .usr-req { color: var(--primary); font-weight: 800; }
+
+/* 🏆 Top de movilización */
+.top-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+.top-row.podio { background: rgba(237,28,36,.04); }
+.top-pos { flex: 0 0 34px; text-align: center; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
+.top-row.podio .top-pos { font-size: 20px; }
+.top-mov { flex: 0 0 110px; font-weight: 700; display: flex; flex-direction: column; line-height: 1.15; }
+.top-placa { font-weight: 500; font-size: 11.5px; color: var(--muted); }
+.top-bar { flex: 1 1 auto; height: 14px; background: var(--border); border-radius: 7px; overflow: hidden; min-width: 60px; }
+.top-fill { display: block; height: 100%; background: linear-gradient(90deg, #2E75B6, #1F4E79); border-radius: 7px; }
+.top-row.podio .top-fill { background: linear-gradient(90deg, #f59e0b, #ED1C24); }
+.top-n { flex: 0 0 auto; text-align: right; min-width: 96px; display: flex; flex-direction: column; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.top-sub2 { font-weight: 500; font-size: 11.5px; color: var(--muted); }
+@media (max-width: 560px) { .top-mov { flex-basis: 78px; } .top-n { min-width: 78px; } }

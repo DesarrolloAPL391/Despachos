@@ -536,6 +536,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
+  if (isAdmin() || isAfiliado()) addNavAction(nav, '🏆', 'Top de movilización', openTop, 'nav-top');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
@@ -561,6 +562,7 @@ function buildSidebar() {
   const afr = $('nav-frec'); if (afr) afr.classList.toggle('active', currentView === 'frecuencia');
   const apr = $('nav-prod'); if (apr) apr.classList.toggle('active', currentView === 'productividad');
   const ajo = $('nav-jor'); if (ajo) ajo.classList.toggle('active', currentView === 'jornada');
+  const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   buildBottomNav();
@@ -664,7 +666,7 @@ function selectTable(name) {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -3778,7 +3780,7 @@ async function openCumplimiento() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4045,7 +4047,7 @@ async function openRutasVivo(modo) {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -4273,7 +4275,7 @@ async function openMalla() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4441,7 +4443,7 @@ function cerrarLaureles() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   selectTable(current);
 }
 function _armarAutoLaur() {
@@ -5461,7 +5463,7 @@ async function openPasajeros() {
   if (paxMap) { paxMap.remove(); paxMap = null; }
   $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen del <b>ERP APL</b> los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
 }
-function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; selectTable(current); }
+function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; selectTable(current); }
 
 // ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
 let _frecRutas = null;
@@ -5485,7 +5487,7 @@ async function openFrecuencia() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -5595,7 +5597,7 @@ async function openProductividad() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -5751,7 +5753,7 @@ async function openJornada() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -5929,6 +5931,74 @@ $('jor-consultar')?.addEventListener('click', consultarJornada);
 $('jor-close')?.addEventListener('click', cerrarJornada);
 $('jor-movil')?.addEventListener('change', () => { if ($('jor-movil').value && $('jor-fecha').value) consultarJornada(); });
 $('jor-fecha')?.addEventListener('change', () => { if ($('jor-movil').value && $('jor-fecha').value) consultarJornada(); });
+
+// ── 🏆 Top de movilización: carros que más pasajeros movilizaron (semana/mes) ──
+// Admin ve toda la flota; el afiliado solo SUS carros. Datos de pasajeros_dia (top_movilizacion).
+async function openTop() {
+  if (!isAdmin() && !isAfiliado()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'top';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('top-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-top')?.classList.add('active');
+  buildBottomNav();
+  consultarTop();
+}
+function cerrarTop() { $('top-view').hidden = true; selectTable(current); }
+async function consultarTop() {
+  const periodo = $('top-periodo').value || 'semana';
+  const body = $('top-body'); body.innerHTML = '<div class="loading">Calculando el top…</div>';
+  const btn = $('top-consultar'); if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('top_movilizacion', { p_periodo: periodo });
+    if (error) throw error;
+    renderTop(data);
+  } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
+  finally { if (btn) btn.disabled = false; }
+}
+function renderTop(d) {
+  const body = $('top-body'); if (!body) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('top-sub').textContent = ''; return; }
+  const cs = d.carros || []; const r = d.resumen || {};
+  const perLbl = d.periodo === 'mes' ? 'Último mes' : 'Última semana';
+  if (!cs.length) {
+    body.innerHTML = `<div class="cump-empty">Aún no hay datos de pasajeros para este periodo.<br><span class="pax-hint">Los pasajeros se están sincronizando desde el ERP; el top se llena en las próximas horas.</span></div>`;
+    $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}`;
+    return;
+  }
+  const maxS = Math.max(1, ...cs.map((c) => c.subidas || 0));
+  const medalla = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`);
+  const rows = cs.map((c, i) => {
+    const w = Math.round((c.subidas || 0) / maxS * 100);
+    return `<div class="top-row${i < 3 ? ' podio' : ''}">`
+      + `<span class="top-pos">${medalla(i)}</span>`
+      + `<span class="top-mov">${esc(c.movil)}${c.placa ? `<span class="top-placa">${esc(c.placa)}</span>` : ''}</span>`
+      + `<span class="top-bar"><span class="top-fill" style="width:${w}%"></span></span>`
+      + `<span class="top-n"><b>${(c.subidas || 0).toLocaleString('es-CO')}</b><span class="pax-v2"> pas.</span>`
+      + `<span class="top-sub2">${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
+      + `</div>`;
+  }).join('');
+  body.innerHTML = `<div class="pax-hero">
+      <div class="pax-card up"><div class="pax-num">${(r.subidas_total || 0).toLocaleString('es-CO')}</div><div class="pax-lbl">pasajeros movilizados</div></div>
+      <div class="pax-card blk"><div class="pax-num">${r.moviles || 0}</div><div class="pax-lbl">carros en el ranking</div></div>
+      <div class="pax-card"><div class="pax-num">${r.dias_con_datos || 0}</div><div class="pax-lbl">días con datos</div></div>
+    </div>
+    <div class="pax-sec"><h3>Ranking por pasajeros movilizados <span class="pax-hint">(subidas contadas por el ERP · del que más movilizó al que menos)</span></h3>${rows}</div>`;
+  $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}${isAfiliado() ? ' · mis vehículos' : ''}`;
+}
+$('top-consultar')?.addEventListener('click', consultarTop);
+$('top-close')?.addEventListener('click', cerrarTop);
+$('top-periodo')?.addEventListener('change', consultarTop);
+
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
   const fecha = $('pax-fecha').value;
@@ -6296,7 +6366,7 @@ async function openUsuarios() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -8890,7 +8960,7 @@ async function showMapView() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;
