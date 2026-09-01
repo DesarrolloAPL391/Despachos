@@ -8663,46 +8663,7 @@ function ensureFlotaMap() {
   flotaMap.on('click', onMapClickGeo); // en modo "agregar geocerca", el clic la coloca
   loadGeocercas(); // dibuja origen/destino/controles (piloto Laureles)
 }
-// Capa de TRÁFICO en vivo (TomTom) SOBRE el mapa base OSM. Solo el tráfico viene de TomTom
-// (el mapa base sigue en OSM), así se consume poco la clave de evaluación y carga completo.
-let trafficLayer = null, traficoOn = false;
-function toggleTrafico() {
-  if (!flotaMap) return;
-  if (!TOMTOM_KEY) { toast('Falta la clave de tráfico (config.js → TOMTOM_KEY)', 'err'); return; }
-  if (!trafficLayer) {
-    // "relative0": vías coloreadas según qué tan lento va el tráfico vs. lo normal.
-    // Tiles estándar de 256px (la rejilla que entiende Leaflet por defecto).
-    trafficLayer = L.tileLayer(
-      'https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=' + TOMTOM_KEY,
-      {
-        maxZoom: 19, opacity: 0.9, attribution: '© TomTom',
-        updateWhenIdle: true,      // pide tiles al SOLTAR el mapa, no durante el arrastre → menos peticiones
-        updateWhenZooming: false,  // no recarga a media animación de zoom
-        keepBuffer: 3,             // conserva tiles alrededor: al volver a esa zona ya están (sin recargar)
-        crossOrigin: true,
-      });
-    // Aviso si TomTom rechaza los tiles (clave, cuota, red): así no queda "en silencio".
-    let _avisoTraf = false;
-    trafficLayer.on('tileerror', () => {
-      if (_avisoTraf) return; _avisoTraf = true;
-      toast('No se pudo cargar el tráfico (TomTom): revisa la clave o la cuota', 'err');
-    });
-    trafficLayer.on('load', () => { console.log('[traffic] tiles TomTom cargados'); });
-  }
-  traficoOn = !traficoOn;
-  const fab = $('traffic-fab');
-  if (traficoOn) {
-    trafficLayer.addTo(flotaMap);
-    setTimeout(() => flotaMap.invalidateSize(), 60); // recalcula el tamaño → no deja franjas sin tiles
-    fab && fab.classList.add('on'); fab && fab.setAttribute('aria-pressed', 'true');
-    toast('Tráfico activado', 'ok');
-  } else {
-    if (flotaMap.hasLayer(trafficLayer)) flotaMap.removeLayer(trafficLayer);
-    fab && fab.classList.remove('on'); fab && fab.setAttribute('aria-pressed', 'false');
-    toast('Tráfico oculto', 'ok');
-  }
-}
-$('traffic-fab')?.addEventListener('click', (e) => { e.preventDefault(); toggleTrafico(); });
+// (Capa de tráfico de TomTom retirada: el botón 🚦 del mapa se eliminó por pedido.)
 
 // ===== GEOCERCAS + ETA (piloto Laureles) =====
 // Usa SOLO el GPS que ya trae SONAR (tabla 'ubicaciones', refresco cada minuto).
