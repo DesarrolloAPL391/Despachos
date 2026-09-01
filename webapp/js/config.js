@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v216';
+export const APP_VERSION = 'v217';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -79,7 +79,9 @@ export const TABLES = {
     pk: 'id',
     dispatchable: true, // permite despachar/cancelar a SONAR desde las filas
     eventosSonar: true, // botón 🔎 de eventos del bus (auditor/admin). Lo heredan las tablas de puesto
-    noDelete: true, // un despacho no se elimina (ni TABLA ni LIBRE)
+    // El ADMIN sí puede eliminar un despacho fila por fila (botón 🗑️; solo admin, RLS es_admin()).
+    // Lo heredan las tablas de puesto. Ojo: si el viaje ya tiene regId de SONAR, borrarlo aquí NO
+    // lo cancela en SONAR (se avisa al confirmar). Para borrar todo el día está "🗑️ Borrar día".
     confirmSave: true, // pide confirmación antes de guardar cambios
     despachador: true, // visible para despachadores (filtrado por sus rutas)
     // Al elegir/cambiar la ruta, el "Móvil (real)" se limita a los carros del GRUPO de esa ruta

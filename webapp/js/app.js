@@ -3359,10 +3359,12 @@ async function deleteRow(row) {
   const cfg = TABLES[current];
   if (cfg.noDelete) { toast('Esta tabla no permite eliminar registros', 'err'); return; }
   if (filaBloqueada(cfg, row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
+  // Si el viaje ya fue despachado a SONAR, borrar la fila aquí NO lo cancela allá: se avisa.
+  const yaSonar = cfg.dispatchable && row.sonar_regid;
   const ok = await confirmAction({
     title: '¿Eliminar registro?',
     lead: `Se eliminará este registro de ${cfg.label}.`,
-    message: 'Esta acción no se puede deshacer.',
+    message: (yaSonar ? `⚠️ Este viaje YA fue despachado en SONAR (regId ${row.sonar_regid}). Eliminarlo aquí NO lo cancela en SONAR.\n\n` : '') + 'Esta acción no se puede deshacer.',
     okLabel: 'Eliminar', danger: true,
   });
   if (!ok) return;
