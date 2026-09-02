@@ -6044,8 +6044,8 @@ function renderTopRuta(d) {
       <div class="pax-card blk"><div class="pax-num">${r.rutas || 0}</div><div class="pax-lbl">rutas en el ranking</div></div>
       <div class="pax-card"><div class="pax-num">${r.dias_con_datos || 0}</div><div class="pax-lbl">días con datos</div></div>
     </div>
-    <div class="pax-sec"><h3>Ranking por ruta <span class="pax-hint">(pasajeros del carro repartidos por sus viajes de cada ruta · estimado)</span></h3>${rows}</div>`;
-  $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}${isAfiliado() ? ' · mis vehículos' : ''}`;
+    <div class="pax-sec"><h3>Ranking por ruta <span class="pax-hint">(incluye TABLAS de puesto · pasajeros del carro repartidos por sus viajes de cada ruta · estimado)</span></h3>${rows}</div>`;
+  $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta} · toda la operación`;
 }
 $('top-consultar')?.addEventListener('click', consultarTop);
 $('top-close')?.addEventListener('click', cerrarTop);

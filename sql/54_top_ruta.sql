@@ -15,7 +15,7 @@ security definer
 set search_path to 'public'
 as $function$
 declare
-  v_dias int; v_desde date; v_hasta date; v_afil boolean; v_ids text[];
+  v_dias int; v_desde date; v_hasta date;
 begin
   if not (public.es_admin() or public.es_afiliado()) then
     raise exception 'No autorizado.';
@@ -23,28 +23,18 @@ begin
   v_dias  := case when lower(coalesce(p_periodo,'')) = 'mes' then 30 else 7 end;
   v_hasta := current_date - 1;               -- hasta ayer (día completo)
   v_desde := current_date - v_dias;
-  v_afil  := public.es_afiliado() and not public.es_admin();
-  v_ids   := case when v_afil then public.mis_moviles_afiliado() else null end;
+  -- Vista de RUTA: todos ven todas las rutas y todos los carros (admin y afiliado por igual).
 
   return (
-    with pax as (  -- pasajeros por carro/día en el periodo (afiliado: solo sus móviles)
+    with pax as (  -- pasajeros por carro/día en el periodo (toda la flota)
       select trim(pd.movil) as movil, pd.fecha, pd.subidas, pd.bajadas
       from public.pasajeros_dia pd
       where pd.fecha between v_desde and v_hasta
-        and (v_ids is null or trim(pd.movil) = any(v_ids))
     ),
-    disp as (      -- viajes realizados por (carro, día, ruta)
-      select trim(v.numero) as movil, d.fecha,
-             coalesce(rr.nombre, rp.nombre) as ruta,
-             count(*)::numeric as viajes
-      from public.despachos d
-      join public.vehiculos v on v.id = d.vehiculo_id
-      left join public.rutas rr on rr.id = d.ruta_id
-      left join public.rutas rp on rp.id = d.ruta_programada_id
-      where d.fecha between v_desde and v_hasta
-        and (d.estado_despacho in ('DESPACHADO','SI') or d.sonar_regid is not null)
-        and coalesce(rr.nombre, rp.nombre) is not null
-      group by trim(v.numero), d.fecha, coalesce(rr.nombre, rp.nombre)
+    disp as (      -- viajes realizados por (carro, día, ruta) de TODAS las fuentes (incluye TABLAS de puesto)
+      select dr.movil, dr.fecha, dr.ruta, count(*)::numeric as viajes
+      from public._despachos_realizados(v_desde, v_hasta) dr
+      group by dr.movil, dr.fecha, dr.ruta
     ),
     tot as (       -- total de viajes del carro en el día (denominador del reparto)
       select movil, fecha, sum(viajes) as viajes_dia
