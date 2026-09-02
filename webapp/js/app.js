@@ -6019,10 +6019,10 @@ function renderTopRuta(d) {
     const w = Math.round((c.subidas || 0) / maxS * 100);
     const carros = c.carros || [];
     const maxC = Math.max(1, ...carros.map((x) => x.subidas || 0));
-    const sub = carros.map((v) => {
+    const sub = carros.map((v, j) => {
       const wv = Math.round((v.subidas || 0) / maxC * 100);
       return `<div class="top-crow">`
-        + `<span class="top-cmov">${esc(v.movil)}${v.placa ? `<span class="top-cplaca">${esc(v.placa)}</span>` : ''}</span>`
+        + `<span class="top-cpos">${j + 1}º</span>`
         + `<span class="top-cbar"><span class="top-cfill" style="width:${wv}%"></span></span>`
         + `<span class="top-cn"><b>${(v.subidas || 0).toLocaleString('es-CO')}</b> pas.<span class="top-csub"> · ${v.dias} día${v.dias === 1 ? '' : 's'}</span></span>`
         + `</div>`;
