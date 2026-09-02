@@ -58,14 +58,25 @@ begin
       join disp on disp.movil = pax.movil and disp.fecha = pax.fecha
       join tot  on tot.movil  = pax.movil and tot.fecha  = pax.fecha
     ),
-    agg as (
-      select ruta,
+    agg_carro as (  -- pasajeros atribuidos por (ruta, carro) — el desglose de cada ruta
+      select ruta, movil,
              round(sum(sub_attr))::int  as subidas,
              round(sum(baj_attr))::int  as bajadas,
-             count(distinct movil)::int as moviles,
              count(distinct fecha)::int as dias
       from attrib
-      group by ruta
+      group by ruta, movil
+    ),
+    ruta_dias as (  -- días con datos por ruta (distintas fechas, no suma por carro)
+      select ruta, count(distinct fecha)::int as dias
+      from attrib group by ruta
+    ),
+    agg as (        -- total de ruta = suma de sus carros (cuadra con el desglose)
+      select ac.ruta,
+             sum(ac.subidas)::int as subidas,
+             sum(ac.bajadas)::int as bajadas,
+             count(*)::int        as moviles
+      from agg_carro ac
+      group by ac.ruta
     )
     select jsonb_build_object(
       'ok', true, 'periodo', case when v_dias = 30 then 'mes' else 'semana' end,
@@ -76,9 +87,16 @@ begin
         'dias_con_datos', (select count(distinct fecha) from attrib)),
       'rutas', (
         select coalesce(jsonb_agg(x order by x.subidas desc), '[]'::jsonb) from (
-          select ruta, subidas, bajadas, moviles, dias,
-                 round(subidas::numeric / nullif(dias,0), 0) as prom_dia
-          from agg
+          select ag.ruta, ag.subidas, ag.bajadas, ag.moviles, rd.dias,
+                 round(ag.subidas::numeric / nullif(rd.dias,0), 0) as prom_dia,
+                 (select coalesce(jsonb_agg(c order by c.subidas desc), '[]'::jsonb) from (
+                    select ac.movil,
+                           (select v.placa from public.vehiculos v where trim(v.numero) = trim(ac.movil) limit 1) as placa,
+                           ac.subidas, ac.bajadas, ac.dias
+                    from agg_carro ac where ac.ruta = ag.ruta
+                  ) c) as carros
+          from agg ag
+          join ruta_dias rd on rd.ruta = ag.ruta
         ) x)
     )
   );

@@ -6017,12 +6017,26 @@ function renderTopRuta(d) {
   const medalla = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`);
   const rows = rs.map((c, i) => {
     const w = Math.round((c.subidas || 0) / maxS * 100);
-    return `<div class="top-row${i < 3 ? ' podio' : ''}">`
+    const carros = c.carros || [];
+    const maxC = Math.max(1, ...carros.map((x) => x.subidas || 0));
+    const sub = carros.map((v) => {
+      const wv = Math.round((v.subidas || 0) / maxC * 100);
+      return `<div class="top-crow">`
+        + `<span class="top-cmov">${esc(v.movil)}${v.placa ? `<span class="top-cplaca">${esc(v.placa)}</span>` : ''}</span>`
+        + `<span class="top-cbar"><span class="top-cfill" style="width:${wv}%"></span></span>`
+        + `<span class="top-cn"><b>${(v.subidas || 0).toLocaleString('es-CO')}</b> pas.<span class="top-csub"> · ${v.dias} día${v.dias === 1 ? '' : 's'}</span></span>`
+        + `</div>`;
+    }).join('');
+    return `<div class="top-rgroup">`
+      + `<div class="top-row${i < 3 ? ' podio' : ''}" data-idx="${i}" role="button" tabindex="0" title="Ver los carros de esta ruta">`
       + `<span class="top-pos">${medalla(i)}</span>`
       + `<span class="top-mov">${esc(c.ruta)}<span class="top-placa">${c.moviles} carro${c.moviles === 1 ? '' : 's'}</span></span>`
       + `<span class="top-bar"><span class="top-fill" style="width:${w}%"></span></span>`
       + `<span class="top-n"><b>${(c.subidas || 0).toLocaleString('es-CO')}</b><span class="pax-v2"> pas.</span>`
       + `<span class="top-sub2">${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
+      + `<span class="top-exp">▸</span>`
+      + `</div>`
+      + `<div class="top-carros" hidden>${sub || '<div class="top-crow top-cempty">Sin desglose de carros.</div>'}</div>`
       + `</div>`;
   }).join('');
   body.innerHTML = `<div class="pax-hero">
@@ -6037,6 +6051,19 @@ $('top-consultar')?.addEventListener('click', consultarTop);
 $('top-close')?.addEventListener('click', cerrarTop);
 $('top-periodo')?.addEventListener('change', consultarTop);
 $('top-modo')?.addEventListener('change', consultarTop);
+// Desplegar/plegar los carros de una ruta (solo en modo "Por ruta")
+function _toggleTopRuta(row) {
+  const grp = row.closest('.top-rgroup'); if (!grp) return;
+  const list = grp.querySelector('.top-carros'); if (!list) return;
+  const abrir = list.hidden; list.hidden = !abrir; row.classList.toggle('open', abrir);
+}
+$('top-body')?.addEventListener('click', (e) => {
+  const row = e.target.closest('.top-row[data-idx]'); if (row) _toggleTopRuta(row);
+});
+$('top-body')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('.top-row[data-idx]'); if (row) { e.preventDefault(); _toggleTopRuta(row); }
+});
 
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
