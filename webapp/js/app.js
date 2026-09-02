@@ -5956,12 +5956,19 @@ async function openTop() {
 function cerrarTop() { $('top-view').hidden = true; selectTable(current); }
 async function consultarTop() {
   const periodo = $('top-periodo').value || 'semana';
+  const modo = $('top-modo')?.value || 'ruta';
   const body = $('top-body'); body.innerHTML = '<div class="loading">Calculando el top…</div>';
   const btn = $('top-consultar'); if (btn) btn.disabled = true;
   try {
-    const { data, error } = await sb.rpc('top_movilizacion', { p_periodo: periodo });
-    if (error) throw error;
-    renderTop(data);
+    if (modo === 'ruta') {
+      const { data, error } = await sb.rpc('top_ruta', { p_periodo: periodo });
+      if (error) throw error;
+      renderTopRuta(data);
+    } else {
+      const { data, error } = await sb.rpc('top_movilizacion', { p_periodo: periodo });
+      if (error) throw error;
+      renderTop(data);
+    }
   } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
   finally { if (btn) btn.disabled = false; }
 }
@@ -5995,9 +6002,41 @@ function renderTop(d) {
     <div class="pax-sec"><h3>Ranking por pasajeros movilizados <span class="pax-hint">(subidas contadas por el ERP · del que más movilizó al que menos)</span></h3>${rows}</div>`;
   $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}${isAfiliado() ? ' · mis vehículos' : ''}`;
 }
+// Top POR RUTA: pasajeros atribuidos a la ruta según la cuota de viajes del carro ese día (top_ruta).
+function renderTopRuta(d) {
+  const body = $('top-body'); if (!body) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('top-sub').textContent = ''; return; }
+  const rs = d.rutas || []; const r = d.resumen || {};
+  const perLbl = d.periodo === 'mes' ? 'Último mes' : 'Última semana';
+  if (!rs.length) {
+    body.innerHTML = `<div class="cump-empty">Aún no hay datos de pasajeros para este periodo.<br><span class="pax-hint">Los pasajeros se están sincronizando desde el ERP; el top se llena en las próximas horas.</span></div>`;
+    $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}`;
+    return;
+  }
+  const maxS = Math.max(1, ...rs.map((x) => x.subidas || 0));
+  const medalla = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`);
+  const rows = rs.map((c, i) => {
+    const w = Math.round((c.subidas || 0) / maxS * 100);
+    return `<div class="top-row${i < 3 ? ' podio' : ''}">`
+      + `<span class="top-pos">${medalla(i)}</span>`
+      + `<span class="top-mov">${esc(c.ruta)}<span class="top-placa">${c.moviles} carro${c.moviles === 1 ? '' : 's'}</span></span>`
+      + `<span class="top-bar"><span class="top-fill" style="width:${w}%"></span></span>`
+      + `<span class="top-n"><b>${(c.subidas || 0).toLocaleString('es-CO')}</b><span class="pax-v2"> pas.</span>`
+      + `<span class="top-sub2">${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
+      + `</div>`;
+  }).join('');
+  body.innerHTML = `<div class="pax-hero">
+      <div class="pax-card up"><div class="pax-num">${(r.subidas_total || 0).toLocaleString('es-CO')}</div><div class="pax-lbl">pasajeros movilizados</div></div>
+      <div class="pax-card blk"><div class="pax-num">${r.rutas || 0}</div><div class="pax-lbl">rutas en el ranking</div></div>
+      <div class="pax-card"><div class="pax-num">${r.dias_con_datos || 0}</div><div class="pax-lbl">días con datos</div></div>
+    </div>
+    <div class="pax-sec"><h3>Ranking por ruta <span class="pax-hint">(pasajeros del carro repartidos por sus viajes de cada ruta · estimado)</span></h3>${rows}</div>`;
+  $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}${isAfiliado() ? ' · mis vehículos' : ''}`;
+}
 $('top-consultar')?.addEventListener('click', consultarTop);
 $('top-close')?.addEventListener('click', cerrarTop);
 $('top-periodo')?.addEventListener('change', consultarTop);
+$('top-modo')?.addEventListener('change', consultarTop);
 
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
