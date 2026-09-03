@@ -5955,28 +5955,55 @@ async function openTop() {
 }
 function cerrarTop() { $('top-view').hidden = true; selectTable(current); }
 async function consultarTop() {
-  const periodo = $('top-periodo').value || 'semana';
+  const periodo = $('top-periodo').value || 'mes';
   const modo = $('top-modo')?.value || 'ruta';
-  const body = $('top-body'); body.innerHTML = '<div class="loading">Calculando el top…</div>';
+  const body = $('top-body');
+  const args = { p_periodo: periodo };
+  if (periodo === 'rango') {
+    const desde = $('top-desde')?.value, hasta = $('top-hasta')?.value;
+    if (!desde || !hasta) { body.innerHTML = '<div class="cump-empty">Elige las fechas <b>Desde</b> y <b>Hasta</b> y toca Consultar.</div>'; return; }
+    if (desde > hasta) { body.innerHTML = '<div class="cump-empty">La fecha <b>Desde</b> no puede ser mayor que <b>Hasta</b>.</div>'; return; }
+    args.p_desde = desde; args.p_hasta = hasta;
+  }
+  body.innerHTML = '<div class="loading">Calculando el top…</div>';
   const btn = $('top-consultar'); if (btn) btn.disabled = true;
   try {
     if (modo === 'ruta') {
-      const { data, error } = await sb.rpc('top_ruta', { p_periodo: periodo });
+      const { data, error } = await sb.rpc('top_ruta', args);
       if (error) throw error;
       renderTopRuta(data);
     } else {
-      const { data, error } = await sb.rpc('top_movilizacion', { p_periodo: periodo });
+      const { data, error } = await sb.rpc('top_movilizacion', args);
       if (error) throw error;
       renderTop(data);
     }
   } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
   finally { if (btn) btn.disabled = false; }
 }
+// Muestra/oculta las fechas del rango; en día/mes consulta directo, en rango espera a Consultar.
+function onTopPeriodoChange() {
+  const rango = $('top-periodo').value === 'rango';
+  if ($('top-desde-wrap')) $('top-desde-wrap').hidden = !rango;
+  if ($('top-hasta-wrap')) $('top-hasta-wrap').hidden = !rango;
+  if (rango) {
+    // Predeterminar un rango razonable (últimos 7 días hasta ayer) si están vacías
+    const hoy = new Date(); const ayer = new Date(hoy.getTime() - 864e5); const hace7 = new Date(hoy.getTime() - 7 * 864e5);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    if ($('top-hasta') && !$('top-hasta').value) $('top-hasta').value = iso(ayer);
+    if ($('top-desde') && !$('top-desde').value) $('top-desde').value = iso(hace7);
+  } else {
+    consultarTop();
+  }
+}
+// Etiqueta del periodo elegido (día / mes / rango)
+function topPerLbl(d) {
+  return d.periodo === 'mes' ? 'Último mes' : d.periodo === 'dia' ? 'Último día' : d.periodo === 'rango' ? 'Rango de fecha' : 'Última semana';
+}
 function renderTop(d) {
   const body = $('top-body'); if (!body) return;
   if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('top-sub').textContent = ''; return; }
   const cs = d.carros || []; const r = d.resumen || {};
-  const perLbl = d.periodo === 'mes' ? 'Último mes' : 'Última semana';
+  const perLbl = topPerLbl(d);
   if (!cs.length) {
     body.innerHTML = `<div class="cump-empty">Aún no hay datos de pasajeros para este periodo.<br><span class="pax-hint">Los pasajeros se están sincronizando desde el ERP; el top se llena en las próximas horas.</span></div>`;
     $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}`;
@@ -5991,11 +6018,12 @@ function renderTop(d) {
       + `<span class="top-mov">${esc(c.movil)}${c.placa ? `<span class="top-placa">${esc(c.placa)}</span>` : ''}</span>`
       + `<span class="top-bar"><span class="top-fill" style="width:${w}%"></span></span>`
       + `<span class="top-n"><b>${(c.subidas || 0).toLocaleString('es-CO')}</b><span class="pax-v2"> pas.</span>`
-      + `<span class="top-sub2">${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
+      + `<span class="top-sub2">${(c.viajes || 0).toLocaleString('es-CO')} viajes · ${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
       + `</div>`;
   }).join('');
   body.innerHTML = `<div class="pax-hero">
       <div class="pax-card up"><div class="pax-num">${(r.subidas_total || 0).toLocaleString('es-CO')}</div><div class="pax-lbl">pasajeros movilizados</div></div>
+      <div class="pax-card"><div class="pax-num">${(r.viajes_total || 0).toLocaleString('es-CO')}</div><div class="pax-lbl">viajes realizados</div></div>
       <div class="pax-card blk"><div class="pax-num">${r.moviles || 0}</div><div class="pax-lbl">carros en el ranking</div></div>
       <div class="pax-card"><div class="pax-num">${r.dias_con_datos || 0}</div><div class="pax-lbl">días con datos</div></div>
     </div>
@@ -6007,7 +6035,7 @@ function renderTopRuta(d) {
   const body = $('top-body'); if (!body) return;
   if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('top-sub').textContent = ''; return; }
   const rs = d.rutas || []; const r = d.resumen || {};
-  const perLbl = d.periodo === 'mes' ? 'Último mes' : 'Última semana';
+  const perLbl = topPerLbl(d);
   if (!rs.length) {
     body.innerHTML = `<div class="cump-empty">Aún no hay datos de pasajeros para este periodo.<br><span class="pax-hint">Los pasajeros se están sincronizando desde el ERP; el top se llena en las próximas horas.</span></div>`;
     $('top-sub').textContent = `${perLbl} · ${d.desde} → ${d.hasta}`;
@@ -6024,16 +6052,16 @@ function renderTopRuta(d) {
       return `<div class="top-crow">`
         + `<span class="top-cpos">${j + 1}º</span>`
         + `<span class="top-cbar"><span class="top-cfill" style="width:${wv}%"></span></span>`
-        + `<span class="top-cn"><b>${(v.subidas || 0).toLocaleString('es-CO')}</b> pas.<span class="top-csub"> · ${v.dias} día${v.dias === 1 ? '' : 's'}</span></span>`
+        + `<span class="top-cn"><b>${(v.subidas || 0).toLocaleString('es-CO')}</b> pas.<span class="top-csub"> · ${(v.viajes || 0).toLocaleString('es-CO')} viajes · ${v.dias} día${v.dias === 1 ? '' : 's'}</span></span>`
         + `</div>`;
     }).join('');
     return `<div class="top-rgroup">`
       + `<div class="top-row${i < 3 ? ' podio' : ''}" data-idx="${i}" role="button" tabindex="0" title="Ver los carros de esta ruta">`
       + `<span class="top-pos">${medalla(i)}</span>`
-      + `<span class="top-mov">${esc(c.ruta)}<span class="top-placa">${c.moviles} carro${c.moviles === 1 ? '' : 's'}</span></span>`
+      + `<span class="top-mov">${esc(c.ruta)}<span class="top-placa">${c.moviles} carro${c.moviles === 1 ? '' : 's'} · ${(c.viajes || 0).toLocaleString('es-CO')} viajes</span></span>`
       + `<span class="top-bar"><span class="top-fill" style="width:${w}%"></span></span>`
       + `<span class="top-n"><b>${(c.subidas || 0).toLocaleString('es-CO')}</b><span class="pax-v2"> pas.</span>`
-      + `<span class="top-sub2">${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
+      + `<span class="top-sub2">${(c.viajes || 0).toLocaleString('es-CO')} viajes · ${c.dias} día${c.dias === 1 ? '' : 's'} · ${(c.prom_dia || 0).toLocaleString('es-CO')}/día</span></span>`
       + `<span class="top-exp">▸</span>`
       + `</div>`
       + `<div class="top-carros" hidden>${sub || '<div class="top-crow top-cempty">Sin desglose de carros.</div>'}</div>`
@@ -6041,6 +6069,7 @@ function renderTopRuta(d) {
   }).join('');
   body.innerHTML = `<div class="pax-hero">
       <div class="pax-card up"><div class="pax-num">${(r.subidas_total || 0).toLocaleString('es-CO')}</div><div class="pax-lbl">pasajeros movilizados</div></div>
+      <div class="pax-card"><div class="pax-num">${(r.viajes_total || 0).toLocaleString('es-CO')}</div><div class="pax-lbl">viajes realizados</div></div>
       <div class="pax-card blk"><div class="pax-num">${r.rutas || 0}</div><div class="pax-lbl">rutas en el ranking</div></div>
       <div class="pax-card"><div class="pax-num">${r.dias_con_datos || 0}</div><div class="pax-lbl">días con datos</div></div>
     </div>
@@ -6049,7 +6078,7 @@ function renderTopRuta(d) {
 }
 $('top-consultar')?.addEventListener('click', consultarTop);
 $('top-close')?.addEventListener('click', cerrarTop);
-$('top-periodo')?.addEventListener('change', consultarTop);
+$('top-periodo')?.addEventListener('change', onTopPeriodoChange);
 $('top-modo')?.addEventListener('change', consultarTop);
 // Desplegar/plegar los carros de una ruta (solo en modo "Por ruta")
 function _toggleTopRuta(row) {
@@ -6185,7 +6214,11 @@ function renderPasajeros(d) {
       }).join('')
     : '<div class="integ-vacio">— sin registros de pasajeros ese día —</div>';
   const puertas = d.por_puerta && Object.keys(d.por_puerta).length
-    ? `<div class="pax-puertas">Por puerta (subidas): ${Object.entries(d.por_puerta).map(([p, n]) => `Puerta ${esc(p)}: <b>${n}</b>`).join(' · ')}</div>` : '';
+    ? `<div class="pax-puertas"><b>Por puerta</b> <span class="pax-hint">(↑ suben / ↓ bajan)</span><div class="pax-puertas-list">${Object.entries(d.por_puerta).map(([p, o]) => {
+        const sub = (o && typeof o === 'object') ? (o.subidas || 0) : (o || 0);
+        const baj = (o && typeof o === 'object') ? (o.bajadas || 0) : 0;
+        return `<span class="pax-puerta"><span class="pax-puerta-n">🚪 Puerta ${esc(p)}</span><span class="pax-puerta-v"><b class="up">${sub}</b> ↑ · <b class="down">${baj}</b> ↓</span></span>`;
+      }).join('')}</div></div>` : '';
   // Paradas: "¿dónde se monta la gente?" — ranking + mapa
   const paradas = (d.paradas || []).filter((p) => (p.subidas || 0) > 0);
   _paxParadas = paradas;

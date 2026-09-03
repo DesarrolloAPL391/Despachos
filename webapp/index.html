@@ -465,9 +465,14 @@
               </select></label>
             <label class="cump-fl">Periodo
               <select id="top-periodo">
-                <option value="semana">Última semana</option>
-                <option value="mes">Último mes</option>
+                <option value="dia">Último día</option>
+                <option value="mes" selected>Último mes</option>
+                <option value="rango">Rango de fecha</option>
               </select></label>
+            <label class="cump-fl top-rango" id="top-desde-wrap" hidden>Desde
+              <input type="date" id="top-desde"></label>
+            <label class="cump-fl top-rango" id="top-hasta-wrap" hidden>Hasta
+              <input type="date" id="top-hasta"></label>
             <button id="top-consultar" class="btn primary">Consultar</button>
             <button id="top-close" class="btn">← Volver</button>
           </div>

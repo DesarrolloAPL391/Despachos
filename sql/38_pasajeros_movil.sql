@@ -10,7 +10,9 @@ declare
   v_mid text; v_ini text; v_fin text; v_resp extensions.http_response; v_doc xml;
   v_status text; v_sub int; v_baj int; v_blq int; v_n int; v_porhora jsonb; v_porpuerta jsonb;
 begin
-  if not public.es_admin() then raise exception 'Solo un administrador puede consultar pasajeros.'; end if;
+  -- Admin ve cualquier móvil; el afiliado solo los suyos (mismo criterio que viajes_movil).
+  if not (public.es_admin() or (public.es_afiliado() and trim(p_movil) = any(public.mis_moviles_afiliado()))) then
+    raise exception 'No autorizado para consultar este móvil.'; end if;
   if nullif(trim(p_movil),'') is null then return jsonb_build_object('ok', false, 'error', 'Móvil vacío.'); end if;
   if p_fecha is null then return jsonb_build_object('ok', false, 'error', 'Fecha vacía.'); end if;
 
@@ -69,9 +71,10 @@ begin
     from (select extract(hour from ts_co)::int h, sum(din) s, sum(dout) b
           from _dd where ts_co is not null group by 1) t;
 
-  select jsonb_object_agg(door::text, s)
+  -- Por puerta: subidas (DoorIn) y bajadas (DoorOut) de CADA puerta.
+  select jsonb_object_agg(door::text, jsonb_build_object('subidas', s, 'bajadas', b))
     into v_porpuerta
-    from (select door, sum(din) s from _dd where door is not null group by door) t;
+    from (select door, sum(din) s, sum(dout) b from _dd where door is not null group by door) t;
 
   return jsonb_build_object(
     'ok', true, 'movil', trim(p_movil), 'mid', v_mid, 'fecha', p_fecha,

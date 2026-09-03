@@ -1573,6 +1573,12 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .pax-v { width: 78px; text-align: right; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pax-v .pax-v2 { color: var(--muted); font-weight: 400; }
 .pax-puertas { margin-top: 12px; font-size: 13px; color: var(--muted); }
+.pax-puertas-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.pax-puerta { display: inline-flex; flex-direction: column; gap: 2px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card, #fff); }
+.pax-puerta-n { font-weight: 600; color: var(--text); font-size: 12.5px; }
+.pax-puerta-v { font-variant-numeric: tabular-nums; }
+.pax-puerta-v .up { color: #1F7A34; }
+.pax-puerta-v .down { color: #B02A2A; }
 
 /* Combo buscador de móvil (lista bonita, filtrable) */
 .pax-combo { position: relative; display: inline-block; }

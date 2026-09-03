@@ -123,52 +123,76 @@ begin
 end $function$;
 
 -- Top de movilización por MÓVIL (pasajeros = subidas) en un periodo. Admin ve toda la flota;
--- el afiliado solo SUS móviles. p_periodo: 'semana' (últimos 7 días) o 'mes' (últimos 30).
-create or replace function public.top_movilizacion(p_periodo text default 'semana')
+-- el afiliado solo SUS móviles. Periodo: 'dia' (ayer), 'mes' (últimos 30) o 'rango' con
+-- p_desde/p_hasta. Devuelve también el nº de VIAJES realizados por carro (_despachos_realizados).
+drop function if exists public.top_movilizacion(text);
+
+create or replace function public.top_movilizacion(p_periodo text default 'mes', p_desde date default null, p_hasta date default null)
 returns jsonb
 language plpgsql
 security definer
 set search_path to 'public'
 as $function$
 declare
-  v_dias int; v_desde date; v_hasta date; v_afil boolean; v_ids text[];
+  v_per text; v_desde date; v_hasta date; v_afil boolean; v_ids text[];
 begin
   if not (public.es_admin() or public.es_afiliado()) then
     raise exception 'No autorizado.';
   end if;
-  v_dias  := case when lower(coalesce(p_periodo,'')) = 'mes' then 30 else 7 end;
-  v_hasta := current_date - 1;               -- hasta ayer (día completo)
-  v_desde := current_date - v_dias;
-  v_afil  := public.es_afiliado() and not public.es_admin();
-  v_ids   := case when v_afil then public.mis_moviles_afiliado() else null end;
+  v_per := lower(coalesce(p_periodo, 'mes'));
+  if v_per = 'rango' and p_desde is not null and p_hasta is not null then
+    v_desde := p_desde;
+    v_hasta := least(p_hasta, current_date - 1);
+    if v_desde > v_hasta then v_desde := v_hasta; end if;
+    if v_hasta - v_desde > 92 then v_desde := v_hasta - 92; end if;
+  elsif v_per = 'dia' then
+    v_hasta := current_date - 1; v_desde := current_date - 1;
+  elsif v_per = 'semana' then
+    v_hasta := current_date - 1; v_desde := current_date - 7;
+  else
+    v_per := 'mes'; v_hasta := current_date - 1; v_desde := current_date - 30;
+  end if;
+  v_afil := public.es_afiliado() and not public.es_admin();
+  v_ids  := case when v_afil then public.mis_moviles_afiliado() else null end;
 
-  return jsonb_build_object(
-    'ok', true, 'periodo', case when v_dias = 30 then 'mes' else 'semana' end,
-    'desde', v_desde, 'hasta', v_hasta,
-    'resumen', (
-      select jsonb_build_object(
-        'moviles', count(distinct movil),
-        'subidas_total', coalesce(sum(subidas), 0),
-        'dias_con_datos', count(distinct fecha))
-      from public.pasajeros_dia
-      where fecha between v_desde and v_hasta
-        and (v_ids is null or movil = any(v_ids))),
-    'carros', (
-      select coalesce(jsonb_agg(x order by x.subidas desc), '[]'::jsonb) from (
-        select pd.movil,
-               (select v.placa from public.vehiculos v where trim(v.numero) = trim(pd.movil) limit 1) as placa,
-               sum(pd.subidas)::int as subidas,
-               sum(pd.bajadas)::int as bajadas,
-               count(distinct pd.fecha)::int as dias,
-               round(sum(pd.subidas)::numeric / nullif(count(distinct pd.fecha),0), 0) as prom_dia
-        from public.pasajeros_dia pd
-        where pd.fecha between v_desde and v_hasta
-          and (v_ids is null or pd.movil = any(v_ids))
-        group by pd.movil
-      ) x)
+  return (
+    with base as (  -- pasajeros por carro en el periodo (afiliado: solo sus móviles)
+      select trim(pd.movil) as movil,
+             sum(pd.subidas)::int as subidas, sum(pd.bajadas)::int as bajadas,
+             count(distinct pd.fecha)::int as dias
+      from public.pasajeros_dia pd
+      where pd.fecha between v_desde and v_hasta
+        and (v_ids is null or trim(pd.movil) = any(v_ids))
+      group by trim(pd.movil)
+    ),
+    vc as (  -- viajes realizados por carro en el periodo (todas las rutas/fuentes)
+      select dr.movil, count(*)::int as viajes
+      from public._despachos_realizados(v_desde, v_hasta) dr
+      group by dr.movil
+    )
+    select jsonb_build_object(
+      'ok', true, 'periodo', v_per, 'desde', v_desde, 'hasta', v_hasta,
+      'resumen', jsonb_build_object(
+        'moviles',        (select count(*) from base),
+        'subidas_total',  (select coalesce(sum(subidas), 0) from base),
+        'viajes_total',   (select coalesce(sum(vc.viajes), 0) from vc where vc.movil in (select movil from base)),
+        'dias_con_datos', (select count(distinct fecha) from public.pasajeros_dia
+                            where fecha between v_desde and v_hasta
+                              and (v_ids is null or trim(movil) = any(v_ids)))),
+      'carros', (
+        select coalesce(jsonb_agg(x order by x.subidas desc), '[]'::jsonb) from (
+          select b.movil,
+                 (select v.placa from public.vehiculos v where trim(v.numero) = b.movil limit 1) as placa,
+                 b.subidas, b.bajadas, b.dias,
+                 round(b.subidas::numeric / nullif(b.dias,0), 0) as prom_dia,
+                 coalesce(vc.viajes, 0) as viajes
+          from base b
+          left join vc on vc.movil = b.movil
+        ) x)
+    )
   );
 end $function$;
 
 revoke all on function public.sync_pasajeros_dia(int,int) from public;
-revoke all on function public.top_movilizacion(text) from public;
-grant execute on function public.top_movilizacion(text) to authenticated;
+revoke all on function public.top_movilizacion(text,date,date) from public;
+grant execute on function public.top_movilizacion(text,date,date) to authenticated;
