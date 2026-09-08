@@ -400,6 +400,7 @@
               </select></label>
             <input type="search" id="pv-buscar" placeholder="Interno, placa, ruta…" autocomplete="off" />
             <button id="pv-refresh" class="btn">↻ Actualizar</button>
+            <button id="pv-ayuda" class="btn" hidden>❓ ¿Cómo notifico?</button>
             <button id="pv-close" class="btn">← Volver</button>
           </div>
           <div id="pv-body" class="integ-body"></div>
@@ -618,6 +619,7 @@
         <label class="field"><span>Conductor *</span><select id="nd-cond"></select></label>
         <div class="field full sonar-info" id="nd-info" hidden></div>
         <div class="field full" id="nd-docwarn" hidden></div>
+        <div class="field full" id="nd-pvwarn" hidden></div>
         <label class="field"><span>Despachador (tú)</span><input id="nd-desp-name" readonly /></label>
         <input type="hidden" id="nd-desp" />
         <label class="field full"><span>Comentario</span><input id="nd-com" /></label>
@@ -659,6 +661,7 @@
         <label class="field"><span>Comentarios</span><input id="s-com" /></label>
         <div class="field full sonar-info" id="s-info" hidden></div>
         <div class="field full" id="s-docwarn" hidden></div>
+        <div class="field full" id="s-pvwarn" hidden></div>
         <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>
       </form>
       <div class="modal-foot">
@@ -987,6 +990,33 @@
       <div class="modal-foot">
         <span class="spacer"></span>
         <button id="docp-cerrar" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cómo notificar una preventiva (guía para el despachador) -->
+  <div id="pvcomo-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3>🔧 ¿Cómo notifico una preventiva?</h3>
+        <button id="pvcomo-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form pvcomo-body">
+        <p>Cuando un carro tiene <b>revisión técnico-mecánica (preventiva)</b> programada, hay que avisarle al <b>conductor</b> por WhatsApp para que asista. Se hace así:</p>
+        <ol class="pvcomo-steps">
+          <li>Abre el menú <b>☰ Más</b> → <b>🔧 Preventivas</b>.</li>
+          <li>Busca el carro por <b>interno o placa</b>, o mira la lista del <b>día</b>.</li>
+          <li>Toca el botón verde <b>📲 Notificar por WhatsApp</b> del carro.</li>
+          <li>Se abre <b>WhatsApp</b> con el mensaje de citación <b>ya escrito</b>.</li>
+          <li><b>Elige el contacto del conductor</b> que va a manejar ese carro y envíalo.</li>
+          <li>El carro queda marcado <b>✅ Notificado</b> (con tu nombre y la hora), para llevar el control.</li>
+        </ol>
+        <p class="pvcomo-note">💡 El mensaje trae el <b>interno, la placa, la ruta, la fecha y el lugar</b> de la revisión. Si el mismo carro tiene otro conductor, puedes volver a tocar el botón y enviarlo de nuevo.</p>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="pvcomo-ir" class="btn btn-primary" hidden>🔧 Abrir Preventivas</button>
+        <button id="pvcomo-ok" class="btn">Entendido</button>
       </div>
     </div>
   </div>

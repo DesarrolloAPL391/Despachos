@@ -550,7 +550,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
   if (isAdmin() || isAfiliado()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
-  if (isAdmin() || isDespachador()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
+  if (isAdmin() || isDespachador() || isAfiliado()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
@@ -5224,8 +5224,9 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; const w = $('nd-docwarn'); if (w) w.hidden = true; return; }
+  if (!vr) { info.hidden = true; const w = $('nd-docwarn'); if (w) w.hidden = true; const p = $('nd-pvwarn'); if (p) p.hidden = true; return; }
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
+  avisarPreventivaMovil(vr.numero, 'nd-pvwarn'); // aviso de preventiva pendiente por notificar
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
@@ -5495,7 +5496,7 @@ function pvMensaje(p) {
   return L.join('\n');
 }
 async function openPreventivas() {
-  if (!isAdmin() && !isDespachador()) return;
+  if (!isAdmin() && !isDespachador() && !isAfiliado()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'preventivas';
   cerrarRecorridoBus();
@@ -5511,6 +5512,7 @@ async function openPreventivas() {
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-preventivas')?.classList.add('active');
   buildBottomNav();
+  const ayuda = $('pv-ayuda'); if (ayuda) ayuda.hidden = isAfiliado(); // el afiliado solo consulta
   await cargarPreventivas();
 }
 function cerrarPreventivas() { $('preventivas-view').hidden = true; selectTable(current); }
@@ -5535,7 +5537,8 @@ function renderPreventivas() {
   if (q) rows = rows.filter((r) => [r.interno, r.placa, r.ruta, r.propietario].some((x) => String(x || '').toLowerCase().includes(q)));
   const total = (_pvDatos || []).length;
   const pend = (_pvDatos || []).filter((r) => !r.notificado).length;
-  $('pv-sub').textContent = `${total} programadas · ${pend} sin notificar`;
+  const deQuien = isAfiliado() ? ' de tus carros' : '';
+  $('pv-sub').textContent = `${total} programadas${deQuien} · ${pend} sin notificar`;
   if (!rows.length) { body.innerHTML = '<div class="cump-empty">No hay preventivas para este filtro.</div>'; return; }
   const hoy = hoyServidor();
   const grupos = new Map();
@@ -5556,7 +5559,7 @@ function renderPreventivas() {
         + `${r.propietario ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
         + `<div class="pv-estado">${badge}${meta}</div>`
         + '</div>'
-        + `<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`
+        + (isAfiliado() ? '' : `<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`)
         + '</div>';
     }).join('');
     return `<div class="pv-group">${hdr}${cards}</div>`;
@@ -5585,6 +5588,34 @@ $('pv-refresh')?.addEventListener('click', cargarPreventivas);
 $('pv-estado')?.addEventListener('change', renderPreventivas);
 $('pv-buscar')?.addEventListener('input', renderPreventivas);
 $('pv-body')?.addEventListener('click', (e) => { const b = e.target.closest('.pv-wa'); if (b) pvNotificar(b.dataset.id); });
+
+// ---- Aviso AL DESPACHAR: si el móvil tiene una preventiva pendiente por notificar ----
+async function avisarPreventivaMovil(numero, boxId) {
+  const box = $(boxId); if (!box) return;
+  box.hidden = true; box.innerHTML = '';
+  if (!numero) return;
+  try {
+    const { data } = await sb.from('preventivas')
+      .select('id,interno,fecha,lugar')
+      .eq('interno', String(numero).trim()).eq('notificado', false)
+      .gte('fecha', hoyServidor()).order('fecha', { ascending: true }).limit(1);
+    const p = data && data[0]; if (!p) return;
+    box.className = 'sonar-info pvwarn';
+    box.innerHTML = `🔧 <b>Preventiva programada</b> · móvil ${esc(String(numero).trim())}<br>`
+      + `Revisión técnico-mecánica el <b>${esc(pvFechaLarga(p.fecha))}</b>${p.lugar ? ' · ' + esc(p.lugar) : ''}.<br>`
+      + 'Recuerda <b>notificar al conductor</b> por WhatsApp desde el módulo 🔧 Preventivas. '
+      + '<button type="button" class="pvwarn-como">❓ ¿Cómo se hace?</button>';
+    box.hidden = false;
+  } catch (e) { /* el aviso es informativo: si falla, no estorba el despacho */ }
+}
+// Modal instructivo "¿Cómo notifico una preventiva?"
+function pvComoAbrir() { const m = $('pvcomo-modal'); if (m) m.hidden = false; }
+function pvComoCerrar() { const m = $('pvcomo-modal'); if (m) m.hidden = true; }
+$('pv-ayuda')?.addEventListener('click', pvComoAbrir);
+$('pvcomo-x')?.addEventListener('click', pvComoCerrar);
+$('pvcomo-ok')?.addEventListener('click', pvComoCerrar);
+$('pvcomo-modal')?.addEventListener('click', (e) => { if (e.target.id === 'pvcomo-modal') pvComoCerrar(); });
+['nd-pvwarn', 's-pvwarn'].forEach((id) => { $(id)?.addEventListener('click', (e) => { if (e.target.closest('.pvwarn-como')) pvComoAbrir(); }); });
 
 // ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
 let _frecRutas = null;
@@ -7583,8 +7614,9 @@ async function updateSonarInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const info = $('s-info');
-  if (!vr) { info.hidden = true; const w = $('s-docwarn'); if (w) w.hidden = true; return; }
+  if (!vr) { info.hidden = true; const w = $('s-docwarn'); if (w) w.hidden = true; const p = $('s-pvwarn'); if (p) p.hidden = true; return; }
   avisarDocsMovil(vr.numero); // aviso de documentos vencidos / por vencer de este móvil
+  avisarPreventivaMovil(vr.numero, 's-pvwarn'); // aviso de preventiva pendiente por notificar
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
@@ -7726,7 +7758,7 @@ function aplicarSonarRealizo() {
   ['s-mov', 's-itin', 's-drv', 's-com'].forEach((id) => {
     const w = $(id)?.closest('.field'); if (w) w.classList.toggle('hidden-field', ocultarDespacho);
   });
-  if (ocultarDespacho) ['s-cond-note', 's-info', 's-docwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+  if (ocultarDespacho) ['s-cond-note', 's-info', 's-docwarn', 's-pvwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
   $('s-nov-wrap').hidden = !esNo; // la novedad solo es obligatoria cuando NO se realizó
   const aviso = $('s-sinsonar'); if (aviso) aviso.hidden = !sonarSinEnvio;
   $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : 'Despachar');
