@@ -5633,9 +5633,11 @@ async function consultarProductividad() {
 }
 function renderProductividad(d) {
   const body = $('prod-body'); if (!body) return;
+  _prodUltimo = null; if ($('prod-excel')) $('prod-excel').hidden = true;
   if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos')}</div>`; $('prod-sub').textContent = ''; return; }
   const cs = d.carros || []; const r = d.resumen || {};
   if (!cs.length) { body.innerHTML = '<div class="cump-empty">Sin despachos programados para ese filtro</div>'; $('prod-sub').textContent = ''; return; }
+  _prodUltimo = d; if ($('prod-excel')) $('prod-excel').hidden = false;
   const pctG = r.viajes_prog ? Math.round(100 * r.viajes_realiz / r.viajes_prog) : 0;
   const rutaNom = (_frecRutas || []).find((x) => String(x.id) === String(d.ruta_id));
   const diaLbl = { habil: 'Hábil (L–V)', sabado: 'Sábado', domingo: 'Domingo/Festivo' }[d.dia_tipo] || d.dia_tipo;
@@ -5872,8 +5874,10 @@ function _construirJornada(eventos) {
 function renderJornada(movil, fecha, eventos, despachos) {
   const body = $('jor-body'); if (!body) return;
   despachos = despachos || [];
+  _jorUltimo = null; if ($('jor-excel')) $('jor-excel').hidden = true;
   const J = _construirJornada(eventos);
   if (!J) { body.innerHTML = '<div class="cump-empty">Ese móvil no tiene reportes GPS ese día.</div>'; $('jor-sub').textContent = ''; return; }
+  _jorUltimo = { movil, fecha, jor: J, despachos, eventos }; if ($('jor-excel')) $('jor-excel').hidden = false;
   const span = (J.last - J.first) || 1;
   const fmtH = (min) => { const h = Math.floor(min / 60), m = min % 60; return h ? `${h}h ${m}m` : `${m}m`; };
   const hhmm = (min) => `${_pad2(Math.floor(min / 60) % 24)}:${_pad2(min % 60)}`;
@@ -5966,16 +5970,19 @@ async function consultarTop() {
     args.p_desde = desde; args.p_hasta = hasta;
   }
   body.innerHTML = '<div class="loading">Calculando el top…</div>';
+  _topUltimo = null; if ($('top-excel')) $('top-excel').hidden = true;
   const btn = $('top-consultar'); if (btn) btn.disabled = true;
   try {
     if (modo === 'ruta') {
       const { data, error } = await sb.rpc('top_ruta', args);
       if (error) throw error;
       renderTopRuta(data);
+      if (data && data.ok && (data.rutas || []).length) { _topUltimo = { modo: 'ruta', data }; if ($('top-excel')) $('top-excel').hidden = false; }
     } else {
       const { data, error } = await sb.rpc('top_movilizacion', args);
       if (error) throw error;
       renderTop(data);
+      if (data && data.ok && (data.carros || []).length) { _topUltimo = { modo: 'carro', data }; if ($('top-excel')) $('top-excel').hidden = false; }
     }
   } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
   finally { if (btn) btn.disabled = false; }
@@ -6093,6 +6100,143 @@ $('top-body')?.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const row = e.target.closest('.top-row[data-idx]'); if (row) { e.preventDefault(); _toggleTopRuta(row); }
 });
+
+// ==================== Descarga a Excel de las vistas de análisis ====================
+// Últimos resultados consultados (para exportar sin volver a pedir al servidor).
+let _prodUltimo = null, _jorUltimo = null, _topUltimo = null;
+// Genera un .xlsx real (SheetJS de esm.sh) con varias hojas. hojas = [{name, aoa}].
+async function _xlsxDescargar(hojas, filename) {
+  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+  const wb = XLSX.utils.book_new();
+  for (const h of hojas) {
+    const ws = XLSX.utils.aoa_to_sheet(h.aoa);
+    const ncol = Math.max(1, ...h.aoa.map((r) => r.length));
+    ws['!cols'] = Array.from({ length: ncol }, (_, i) =>
+      ({ wch: Math.min(48, Math.max(10, ...h.aoa.map((r) => String(r[i] == null ? '' : r[i]).length + 2))) }));
+    XLSX.utils.book_append_sheet(wb, ws, String(h.name).slice(0, 31));
+  }
+  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+// Envuelve un handler de botón "⬇️ Excel": estado ⏳, toast de éxito/error.
+async function _conExcelBtn(id, fn) {
+  const btn = $(id); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
+  try { await fn(); toast('Excel generado.', 'ok'); }
+  catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = prev; } }
+}
+
+// ── Productividad por carro → Excel (Resumen + Carros + Viajes faltantes) ──
+function exportarProductividadXlsx() {
+  const d = _prodUltimo; if (!d) { toast('Primero consulta la productividad.', 'err'); return; }
+  _conExcelBtn('prod-excel', async () => {
+    const r = d.resumen || {}; const cs = d.carros || [];
+    const rutaNom = (_frecRutas || []).find((x) => String(x.id) === String(d.ruta_id));
+    const diaLbl = { habil: 'Hábil (L-V)', sabado: 'Sábado', domingo: 'Domingo/Festivo' }[d.dia_tipo] || d.dia_tipo || '';
+    const alcance = rutaNom ? rutaNom.nombre : (isAfiliado() ? 'Todos mis vehículos' : 'Toda la flota');
+    const pctG = r.viajes_prog ? Math.round(100 * r.viajes_realiz / r.viajes_prog) : 0;
+    const resumen = [
+      ['Productividad por carro'],
+      ['Alcance', alcance], ['Día-tipo', diaLbl], ['Desde', d.desde], ['Hasta', d.hasta], [],
+      ['Indicador', 'Valor'],
+      ['Viajes de tabla programados', r.viajes_prog || 0],
+      ['Viajes de tabla realizados', r.viajes_realiz || 0],
+      ['Cumplimiento tabla (%)', pctG],
+      ['Refuerzos libres', r.viajes_libre || 0],
+      ['Justificados', r.viajes_justif || 0],
+      ['No se enturnó', r.viajes_no_enturno || 0],
+      ['No laboró (viajes)', r.viajes_no_laboro || 0],
+      ['Carros que no laboraron', r.carros_no_laboro || 0],
+    ];
+    const carrosHead = ['Móvil', 'Estado', 'Viajes tabla', 'Refuerzos libres', 'Total viajes', '% tabla', 'No se enturnó', 'No laboró (viajes)', 'Días no laboró', 'Justificados', 'Reasignados'];
+    const carros = cs.map((c) => [
+      c.movil, (PROD_EST[c.estado] || {}).lbl || c.estado || '',
+      c.realizados || 0, c.refuerzos || 0, (c.realizados || 0) + (c.refuerzos || 0),
+      c.pct == null ? '' : c.pct, c.no_enturno || 0, c.no_laboro || 0, c.dias_no_laboro || 0,
+      c.justificado || 0, c.reasignado || 0,
+    ]);
+    const CAT = { no_laboro: 'No laboró', no_enturno: 'No se enturnó', justificado: 'Justificado', reasignado: 'Reasignado' };
+    const falt = [];
+    cs.forEach((c) => (c.faltantes || []).forEach((f) => falt.push([c.movil, f.fecha, f.hora, CAT[f.categoria] || f.categoria || '', f.novedad || ''])));
+    const hojas = [
+      { name: 'Resumen', aoa: resumen },
+      { name: 'Carros', aoa: [carrosHead, ...carros] },
+    ];
+    if (falt.length) hojas.push({ name: 'Viajes faltantes', aoa: [['Móvil', 'Fecha', 'Hora', 'Categoría', 'Novedad'], ...falt] });
+    await _xlsxDescargar(hojas, `Productividad_${alcance.replace(/\s+/g, '_')}_${d.desde}_a_${d.hasta}.xlsx`);
+  });
+}
+
+// ── Jornada del carro → Excel (Resumen + Tramos + Despachos + Eventos GPS) ──
+function exportarJornadaXlsx() {
+  const T = _jorUltimo; if (!T) { toast('Primero consulta la jornada.', 'err'); return; }
+  _conExcelBtn('jor-excel', async () => {
+    const J = T.jor; const res = J.res;
+    const fmtH = (min) => { const h = Math.floor(min / 60), m = min % 60; return h ? `${h}h ${m}m` : `${m}m`; };
+    const hhmm = (min) => `${_pad2(Math.floor(min / 60) % 24)}:${_pad2(min % 60)}`;
+    const onMin = res.viaje + res.varado + res.muerto + res.taller;
+    const utilProd = onMin ? Math.round(100 * res.viaje / onMin) : 0;
+    const nCanc = (T.eventos || []).filter((e) => /ruta cancelada/i.test(e.evento || '')).length;
+    const nAband = (T.eventos || []).filter((e) => /abandono de ruta/i.test(e.evento || '')).length;
+    const resumen = [
+      ['Jornada del carro'],
+      ['Móvil', T.movil], ['Fecha', T.fecha], [],
+      ['Indicador', 'Valor'],
+      ['Viajes (GPS)', J.trips.length],
+      ['Tiempo en viaje', fmtH(res.viaje)],
+      ['Productividad (viaje / motor encendido) %', utilProd],
+      ['Varado', fmtH(res.varado)],
+      ['Tiempo muerto', fmtH(res.muerto)],
+      ['Apagado', fmtH(res.apagado)],
+      ['Taller / lavadero', fmtH(res.taller)],
+      ['Rutas canceladas', nCanc],
+      ['Abandonos de ruta', nAband],
+    ];
+    const tramos = J.segs.map((s) => [hhmm(s.ini), hhmm(s.fin), s.fin - s.ini, (JOR_EST[s.estado] || {}).lbl || s.estado]);
+    const desp = (T.despachos || []).map((x) => [x.hora, x.tipo || '', x.ruta || '', x.novedad || '', x.realizado ? 'Sí' : 'No']);
+    const ev = (T.eventos || []).slice().sort((a, b) => (String(a.hora) < String(b.hora) ? -1 : 1))
+      .map((e) => [String(e.hora).slice(11, 16), e.evento || '', e.velocidad != null ? e.velocidad : '']);
+    await _xlsxDescargar([
+      { name: 'Resumen', aoa: resumen },
+      { name: 'Tramos', aoa: [['Inicio', 'Fin', 'Duración (min)', 'Estado'], ...tramos] },
+      { name: 'Despachos del día', aoa: [['Hora', 'Tipo', 'Ruta', 'Novedad', 'Realizado'], ...desp] },
+      { name: 'Eventos GPS', aoa: [['Hora', 'Evento', 'Velocidad (km/h)'], ...ev] },
+    ], `Jornada_${String(T.movil).replace(/\s+/g, '_')}_${T.fecha}.xlsx`);
+  });
+}
+
+// ── Top de movilización → Excel (por ruta: Rutas + Carros por posición · por carro: Carros) ──
+function exportarTopXlsx() {
+  const T = _topUltimo; if (!T || !T.data) { toast('Primero consulta el top.', 'err'); return; }
+  _conExcelBtn('top-excel', async () => {
+    const d = T.data; const perLbl = topPerLbl(d);
+    if (T.modo === 'ruta') {
+      const rs = d.rutas || [];
+      const head = ['#', 'Ruta', 'Pasajeros', 'Bajadas', 'Carros', 'Viajes', 'Días', 'Prom/día'];
+      const filas = rs.map((c, i) => [i + 1, c.ruta, c.subidas || 0, c.bajadas || 0, c.moviles || 0, c.viajes || 0, c.dias || 0, c.prom_dia || 0]);
+      const det = [];
+      rs.forEach((c) => (c.carros || []).forEach((v, j) => det.push([c.ruta, j + 1, v.subidas || 0, v.bajadas || 0, v.viajes || 0, v.dias || 0])));
+      await _xlsxDescargar([
+        { name: 'Rutas', aoa: [['Top de movilización por ruta'], [perLbl, `${d.desde} -> ${d.hasta}`], [], head, ...filas] },
+        { name: 'Carros por posición', aoa: [['Ruta', 'Posición', 'Pasajeros', 'Bajadas', 'Viajes', 'Días'], ...det] },
+      ], `Top_movilizacion_ruta_${d.desde}_a_${d.hasta}.xlsx`);
+    } else {
+      const cs = d.carros || [];
+      const head = ['#', 'Móvil', 'Placa', 'Pasajeros', 'Bajadas', 'Viajes', 'Días', 'Prom/día'];
+      const filas = cs.map((c, i) => [i + 1, c.movil, c.placa || '', c.subidas || 0, c.bajadas || 0, c.viajes || 0, c.dias || 0, c.prom_dia || 0]);
+      await _xlsxDescargar([
+        { name: 'Carros', aoa: [['Top de movilización por carro'], [perLbl, `${d.desde} -> ${d.hasta}`], [], head, ...filas] },
+      ], `Top_movilizacion_carro_${d.desde}_a_${d.hasta}.xlsx`);
+    }
+  });
+}
+$('prod-excel')?.addEventListener('click', exportarProductividadXlsx);
+$('jor-excel')?.addEventListener('click', exportarJornadaXlsx);
+$('top-excel')?.addEventListener('click', exportarTopXlsx);
 
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
