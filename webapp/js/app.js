@@ -6264,6 +6264,10 @@ function exportarPasajerosXlsx() {
       `${t.ini || ''}${t.fin ? '–' + t.fin : ''}`, t.ruta || '', t.estado || '',
       t.subidas || 0, t.bajadas || 0, t.dur_min == null ? '' : t.dur_min,
     ]);
+    const viajesPuerta = [];
+    (v.viajes || []).forEach((t) => (t.puertas || []).forEach((p) => viajesPuerta.push([
+      `${t.ini || ''}${t.fin ? '–' + t.fin : ''}`, t.ruta || '', `Puerta ${p.puerta}`, p.subidas || 0, p.bajadas || 0, p.bloqueos || 0,
+    ])));
     const paradas = (d.paradas || []).filter((p) => (p.subidas || 0) > 0)
       .map((p, i) => [i + 1, p.parada || '', p.subidas || 0, p.bajadas || 0, p.lat == null ? '' : p.lat, p.lon == null ? '' : p.lon]);
     const hojas = [
@@ -6272,6 +6276,7 @@ function exportarPasajerosXlsx() {
       { name: 'Por puerta', aoa: [['Puerta', 'Subieron', 'Bajaron'], ...porPuerta] },
     ];
     if (viajes.length) hojas.push({ name: 'Viajes del día', aoa: [['Horario', 'Ruta', 'Estado', 'Subieron', 'Bajaron', 'Duración (min)'], ...viajes] });
+    if (viajesPuerta.length) hojas.push({ name: 'Viajes por puerta', aoa: [['Horario', 'Ruta', 'Puerta', 'Subieron', 'Bajaron', 'Bloqueos'], ...viajesPuerta] });
     if (paradas.length) hojas.push({ name: 'Paradas', aoa: [['#', 'Dirección', 'Subieron', 'Bajaron', 'Lat', 'Lon'], ...paradas] });
     await _xlsxDescargar(hojas, `Pasajeros_${String(d.movil).replace(/\s+/g, '_')}_${d.fecha}.xlsx`);
   });
@@ -6330,12 +6335,21 @@ function renderViajes(v) {
           + `<span class="pax-frv">${f.s || 0}<span class="pax-v2"> / ${f.b || 0}</span></span></div>`).join('')
       : '<div class="pax-frempty">— sin registros de pasajeros en este viaje —</div>';
     const dur = t.dur_min != null ? `${t.dur_min} min` : '—';
+    const puertas = t.puertas || [];
+    const puertasHtml = puertas.length
+      ? `<div class="pax-vd-frtitle">Por puerta <span class="pax-hint">(↑ suben / ↓ bajan / 🔒 bloqueos)</span></div>
+         <div class="pax-vd-puertas">${puertas.map((p) => `<span class="pax-vd-puerta">`
+          + `<span class="pax-vd-pn">🚪 Puerta ${esc(String(p.puerta))}</span>`
+          + `<span class="pax-vd-pv"><b class="up">${p.subidas || 0}</b> ↑ · <b class="down">${p.bajadas || 0}</b> ↓`
+          + `<span class="pax-hint"> · ${p.bloqueos || 0} 🔒</span></span></span>`).join('')}</div>`
+      : '';
     return `<div class="pax-vd">
       <div class="pax-vd-stats">
         <div class="pax-vd-pill up"><b>${t.subidas || 0}</b><span>↑ subieron</span></div>
         <div class="pax-vd-pill down"><b>${t.bajadas || 0}</b><span>↓ bajaron</span></div>
         <div class="pax-vd-pill dur"><b>${esc(dur)}</b><span>⏱ duración</span></div>
       </div>
+      ${puertasHtml}
       <div class="pax-vd-frtitle">Pasajeros durante el viaje <span class="pax-hint">(cada 15 min · sub / baj)</span></div>
       <div class="pax-vd-fr">${barras}</div>
       <div class="pax-vd-reg">ID de viaje (ERP APL): <b>${esc(t.reg || '—')}</b></div>

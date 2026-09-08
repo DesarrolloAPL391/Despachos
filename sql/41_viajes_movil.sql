@@ -83,10 +83,12 @@ begin
     ||'</GET_PassengersCounter></soap:Body></soap:Envelope>'
   )::extensions.http_request);
   create temp table _dd on commit drop as
-  select coalesce(din,0) din, coalesce(dout,0) dout, to_timestamp(gps,'MM/DD/YYYY HH24:MI:SS') ts_utc
+  select coalesce(din,0) din, coalesce(dout,0) dout, coalesce(dblock,0) dblock, door,
+         to_timestamp(gps,'MM/DD/YYYY HH24:MI:SS') ts_utc
   from xmltable(xmlnamespaces('http://sonaravl.com/webservices/' as n),
     '//n:DoorDetails' passing xmlparse(document v_resp.content)
-    columns din int path 'n:DoorIn', dout int path 'n:DoorOut', gps text path '../../n:gps_UTC');
+    columns din int path 'n:DoorIn', dout int path 'n:DoorOut', dblock int path 'n:DoorBlocking',
+            door int path 'n:Door', gps text path '../../n:gps_UTC');
   select coalesce(sum(din),0), coalesce(sum(dout),0) into v_tot_sub, v_tot_baj from _dd;
 
   -- 2) Historial de CADA itinerario candidato (best-effort, con tope de tiempo) -> _trips
@@ -140,6 +142,8 @@ begin
         'estado', est.estado,
         'subidas', case when est.estado = 'Cancelado' then 0 else coalesce(pax.s,0) end,
         'bajadas', case when est.estado = 'Cancelado' then 0 else coalesce(pax.b,0) end,
+        -- Desglose POR PUERTA del viaje: {puerta, subidas(DoorIn), bajadas(DoorOut), bloqueos}
+        'puertas', case when est.estado = 'Cancelado' then '[]'::jsonb else coalesce(pu.j,'[]'::jsonb) end,
         -- Desglose de pasajeros del viaje en franjas de 15 min (para el detalle al hacer clic)
         'franjas', case when est.estado = 'Cancelado' then '[]'::jsonb else coalesce(fr.j,'[]'::jsonb) end
       ) x
@@ -154,6 +158,16 @@ begin
         select coalesce(sum(d.din),0) s, coalesce(sum(d.dout),0) b
         from _dd d where d.ts_utc >= t.ini_ts and d.ts_utc <= coalesce(t.fin_ts, now())
       ) pax
+      cross join lateral (
+        -- Por puerta dentro de la ventana del viaje
+        select jsonb_agg(jsonb_build_object('puerta', z.door, 'subidas', z.s, 'bajadas', z.b, 'bloqueos', z.blq) order by z.door) j
+        from (
+          select d.door, sum(d.din) s, sum(d.dout) b, sum(d.dblock) blq
+          from _dd d
+          where d.ts_utc >= t.ini_ts and d.ts_utc <= coalesce(t.fin_ts, now()) and d.door is not null
+          group by d.door
+        ) z
+      ) pu
       cross join lateral (
         select jsonb_agg(jsonb_build_object(
                  't', to_char(g.bucket at time zone 'America/Bogota','HH24:MI'),
