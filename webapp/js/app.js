@@ -5281,7 +5281,7 @@ async function updateNdInfo() {
   const info = $('nd-info');
   if (!vr) { info.hidden = true; const w = $('nd-docwarn'); if (w) w.hidden = true; const p = $('nd-pvwarn'); if (p) p.hidden = true; return; }
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
-  avisarPreventivaMovil(vr.numero, 'nd-pvwarn'); // aviso de preventiva pendiente por notificar
+  avisarPreventivaMovil(vr.numero, 'nd-pvwarn', 'nd-save'); // preventiva: bloqueo (rechazada) o recordatorio
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
@@ -5746,12 +5746,37 @@ $('pvrech-cancel')?.addEventListener('click', pvRechazarCerrar);
 $('pvrech-ok')?.addEventListener('click', pvRechazarConfirmar);
 $('pvrech-modal')?.addEventListener('click', (e) => { if (e.target.id === 'pvrech-modal') pvRechazarCerrar(); });
 
-// ---- Aviso AL DESPACHAR: si el móvil tiene una preventiva pendiente por notificar ----
-async function avisarPreventivaMovil(numero, boxId) {
+// Mensaje del BLOQUEO por preventiva rechazada (para caja de aviso y para el error del guardado)
+function pvBloqueoMsg(b) {
+  const mot = b.motivo ? ` Motivo: ${esc(b.motivo)}.` : '';
+  const nf = b.nueva_fecha ? ` Nueva cita: <b>${esc(pvFechaCorta(b.nueva_fecha))}</b>.` : '';
+  return `🚫 <b>DESPACHO SUSPENDIDO</b> · móvil ${esc(String(b.interno || '').trim())}<br>`
+    + `El vehículo <b>no aprobó la preventiva</b>${b.fecha_rechazo ? ' (revisión del ' + esc(pvFechaCorta(b.fecha_rechazo)) + ')' : ''}.${mot}<br>`
+    + `No se puede despachar hasta que <b>operaciones apruebe</b> la nueva revisión.${nf}`;
+}
+// Devuelve el detalle del bloqueo si el móvil está suspendido (o null). Fail-open ante error de red.
+async function pvSuspendido(interno) {
+  try { const { data } = await sb.rpc('preventiva_bloqueo', { p_interno: String(interno).trim() }); return (data && data.bloqueado) ? data : null; }
+  catch (e) { return null; }
+}
+// ---- Aviso AL DESPACHAR: bloqueo por preventiva rechazada, o recordatorio de preventiva por notificar ----
+async function avisarPreventivaMovil(numero, boxId, btnId) {
   const box = $(boxId); if (!box) return;
   box.hidden = true; box.innerHTML = '';
+  const btn = btnId ? $(btnId) : null;
+  if (btn) { btn.disabled = false; btn.dataset.pvblock = ''; } // reset del bloqueo
   if (!numero) return;
   try {
+    // 1) ¿SUSPENDIDO por preventiva RECHAZADA? → caja roja + botón deshabilitado
+    const bloq = await pvSuspendido(numero);
+    if (bloq) {
+      box.className = 'sonar-info pvblock';
+      box.innerHTML = pvBloqueoMsg(bloq);
+      box.hidden = false;
+      if (btn) { btn.disabled = true; btn.dataset.pvblock = '1'; }
+      return;
+    }
+    // 2) Recordatorio de preventiva pendiente por notificar
     const { data } = await sb.from('preventivas')
       .select('id,interno,fecha,lugar')
       .eq('interno', String(numero).trim()).eq('notificado', false)
@@ -7614,6 +7639,9 @@ $('nd-save').addEventListener('click', async () => {
     despId: Number($('nd-desp').value) || null, com: $('nd-com').value.trim(),
   };
 
+  // Bloqueo por preventiva RECHAZADA: suspendido hasta que operaciones apruebe la nueva revisión
+  if (vrow?.numero) { const bq = await pvSuspendido(vrow.numero); if (bq) { err.innerHTML = pvBloqueoMsg(bq); err.hidden = false; return; } }
+
   // Aviso de doble despacho por tiempo (< 20 min)
   const minDesde = await minutosUltimoDespacho(Number(vehVal));
   if (minDesde !== null && minDesde < 20) {
@@ -7779,7 +7807,9 @@ async function updateSonarInfo() {
   const info = $('s-info');
   if (!vr) { info.hidden = true; const w = $('s-docwarn'); if (w) w.hidden = true; const p = $('s-pvwarn'); if (p) p.hidden = true; return; }
   avisarDocsMovil(vr.numero); // aviso de documentos vencidos / por vencer de este móvil
-  avisarPreventivaMovil(vr.numero, 's-pvwarn'); // aviso de preventiva pendiente por notificar
+  // En SONAR el botón también sirve para "no realizó" (no es despacho): no lo deshabilitamos;
+  // la caja roja avisa y el guarda del botón Despachar bloquea solo el despacho real.
+  avisarPreventivaMovil(vr.numero, 's-pvwarn');
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
@@ -7999,6 +8029,9 @@ $('sonar-send').addEventListener('click', async () => {
   if (horaYaPaso(horaSel)) { err.textContent = 'La hora de despacho ya pasó. Usa la hora actual o una posterior.'; err.hidden = false; return; }
   const g = await gpsInfoFor(vr.numero); const mId = g?.tracker_id;
   if (!mId) { err.textContent = 'Ese móvil no tiene Id GPS en SONAR.'; err.hidden = false; return; }
+
+  // Bloqueo por preventiva RECHAZADA: suspendido hasta que operaciones apruebe la nueva revisión
+  { const bq = await pvSuspendido(vr.numero); if (bq) { err.innerHTML = pvBloqueoMsg(bq); err.hidden = false; return; } }
 
   // Aviso de DOBLE DESPACHO por tiempo: si el móvil fue despachado hace menos de 20 min
   const minDesde = await minutosUltimoDespacho(vr.id);
