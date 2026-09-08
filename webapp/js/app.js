@@ -60,6 +60,9 @@ function isDespachador() { return CTX?.rol === 'despachador'; }
 // Afiliado (dueño de vehículos): ve el MAPA, PASAJEROS y las TABLAS de despacho donde están
 // SUS carros — todo en SOLO LECTURA y filtrado (por RLS) únicamente a sus móviles.
 function isAfiliado() { return CTX?.rol === 'afiliado'; }
+// Área de OPERACIONES: cuentas de rol despachador cuyo correo contiene 'operaciones' (o admin).
+// Solo ellas marcan el RESULTADO de una preventiva (aprobado/rechazado).
+function isOperaciones() { return isAdmin() || (isDespachador() && /operaciones/.test(miCorreo())); }
 // El afiliado nunca crea/edita/despacha: sus tablas se muestran en solo lectura.
 function afiliadoSoloLectura() { return isAfiliado() || (PREVIEW && PREVIEW.rol === 'afiliado'); }
 // Móviles (números) del afiliado logueado (los trae mi_contexto en CTX.moviles)
@@ -608,7 +611,7 @@ function buildBottomNav() {
     bn.appendChild(b);
   }
   if (showNotif) {
-    const n = (typeof DOC_ALERTAS !== 'undefined' && DOC_ALERTAS) ? DOC_ALERTAS.length : 0;
+    const n = avisosCount();
     const b = document.createElement('button');
     b.className = 'bn-item';
     b.innerHTML = `<span class="bn-ic">🔔${n ? `<span class="bn-badge">${n}</span>` : ''}</span><span class="bn-lb">Avisos</span>`;
@@ -632,7 +635,7 @@ function addNavAction(nav, icon, label, fn, id) {
 function addNavNotif(nav) {
   const b = document.createElement('button');
   b.className = 'nav-action'; b.id = 'nav-notif';
-  const n = (typeof DOC_ALERTAS !== 'undefined' && DOC_ALERTAS) ? DOC_ALERTAS.length : 0;
+  const n = avisosCount();
   b.innerHTML = `<span>🔔</span> Notificaciones${n ? ` <span class="nav-badge">${n}</span>` : ''}`;
   b.onclick = () => { openDocPanel(); closeMenu(); };
   nav.appendChild(b);
@@ -2643,6 +2646,36 @@ async function openDocsVehiculo(row, soloKeys) {
   renderDocEstados(row, soloKeys);
   $('doc-modal').hidden = false;
   await loadDocHist(row.id);
+  loadDocCambios(row.id); // historial de cambios de la ficha (admin/operaciones)
+}
+// Historial de CUALQUIER cambio de la ficha del vehículo (parque_auditoria); solo admin/operaciones
+const PARQUE_CAMPO_LBL = {
+  estado: 'Estado', ruta: 'Ruta', placa: 'Placa', numero_interno: 'Interno',
+  marca: 'Marca', modelo: 'Modelo', propietario: 'Propietario', tenedor: 'Tenedor',
+  vence_soat: 'SOAT (vence)', vence_tecnomecanica: 'Tecnomecánica (vence)', vence_tarjeta_operacion: 'T. operación (vence)',
+  num_soat: 'N° SOAT', num_tecnomecanica: 'N° Tecnomecánica', num_tarjeta_operacion: 'N° T. operación',
+};
+function _fmtAudVal(v) { return (v === null || v === undefined || v === '') ? '—' : String(v); }
+async function loadDocCambios(vehId) {
+  const wrap = $('doc-cambios-wrap'), cont = $('doc-cambios');
+  if (!wrap || !cont) return;
+  if (!(isAdmin() || isOperaciones())) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  cont.innerHTML = '<p class="tab-load">Cargando…</p>';
+  try {
+    const { data, error } = await sb.rpc('parque_auditoria_veh', { p_vehiculo_id: vehId });
+    if (error) throw error;
+    if (!data || !data.length) { cont.innerHTML = '<p class="doc-empty">Sin cambios registrados en la ficha.</p>'; return; }
+    cont.innerHTML = data.map((h) => {
+      const acc = h.accion === 'insert' ? '➕ Alta' : (h.accion === 'delete' ? '🗑️ Baja' : '✏️ Edición');
+      let detalle = '';
+      if (h.accion === 'update' && h.cambios) {
+        detalle = Object.entries(h.cambios).map(([k, v]) => `<div class="doc-hobs">• <b>${esc(PARQUE_CAMPO_LBL[k] || k)}</b>: ${esc(_fmtAudVal(v && v.antes))} → ${esc(_fmtAudVal(v && v.despues))}</div>`).join('');
+      }
+      return `<div class="doc-hrow"><div class="doc-hmain"><b>${acc}</b></div>`
+        + `<div class="doc-hmeta">👤 ${esc(h.por || '—')} · 🕒 ${fmtFechaHora(h.en)}</div>${detalle}</div>`;
+    }).join('');
+  } catch (e) { cont.innerHTML = `<p class="error">${esc(e.message || e)}</p>`; }
 }
 function prefillDoc() {
   const t = DOC_TIPOS.find((x) => x.key === $('doc-tipo').value);
@@ -2807,6 +2840,19 @@ $('doc-save').addEventListener('click', async () => {
 
 // ---- Alertas de vencimiento: despachador (móviles de sus rutas) / admin (toda la flota) ----
 let DOC_ALERTAS = [];
+let PV_REPROG = []; // preventivas reprogramadas pendientes (rechazadas → nueva cita) para la campana 🔔
+// Contador combinado del centro de avisos 🔔 (documentos por vencer + preventivas reprogramadas)
+function avisosCount() { return (DOC_ALERTAS?.length || 0) + (PV_REPROG?.length || 0); }
+// Carga las preventivas reprogramadas pendientes (solo admin/despachador tienen campana)
+async function cargarPreventivasReprog() {
+  if (!(isAdmin() || isDespachador())) return [];
+  const { data, error } = await sb.from('preventivas')
+    .select('id,interno,placa,ruta,fecha,resultado,reprogramada_de')
+    .not('reprogramada_de', 'is', null).eq('resultado', 'PENDIENTE POR REVISION')
+    .gte('fecha', hoyServidor()).order('fecha', { ascending: true }).limit(500);
+  if (error || !data) return [];
+  return data;
+}
 async function cargarAlertasDocumentos() {
   const { data, error } = await sb.from('parque_automotor')
     .select('id,numero_interno,placa,ruta,estado,vence_soat,vence_tecnomecanica,vence_tarjeta_operacion,num_soat,num_tecnomecanica,num_tarjeta_operacion')
@@ -2835,6 +2881,7 @@ async function cargarAlertasDocumentos() {
 }
 async function refrescarAlertasDocs() {
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
+  try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
@@ -2849,9 +2896,16 @@ $('doc-banner-x') && $('doc-banner-x').addEventListener('click', () => { $('doc-
 
 function openDocPanel() {
   const body = $('docp-body');
-  if (!DOC_ALERTAS.length) { body.innerHTML = '<p class="doc-empty">Sin alertas de documentos. 👍</p>'; }
+  // Sección superior: preventivas reprogramadas (rechazadas → deben volver)
+  let head = '';
+  if ((PV_REPROG || []).length) {
+    const chips = PV_REPROG.slice(0, 40).map((r) => `<span class="pv-rbchip">🚌 ${esc(r.interno)} · ${esc(pvFechaCorta(r.fecha))}</span>`).join('');
+    head = `<div class="docp-prev"><div class="docp-prev-h">🔧 <b>${PV_REPROG.length}</b> preventiva(s) reprogramada(s) — el carro fue rechazado y debe volver`
+      + ` <button class="btn btn-sm docp-ir-prev">Ver en Preventivas</button></div><div class="pv-rb-list">${chips}</div></div>`;
+  }
+  if (!DOC_ALERTAS.length) { body.innerHTML = head + '<p class="doc-empty">Sin alertas de documentos. 👍</p>'; }
   else {
-    body.innerHTML = DOC_ALERTAS.map((a) => {
+    body.innerHTML = head + DOC_ALERTAS.map((a) => {
       const chips = a.items.map((it) => `<span class="doc-chip ${it.b.cls}">${esc(it.label)}: ${esc(it.b.txt)}</span>`).join(' ');
       const adminBtn = isAdmin() ? `<button class="btn btn-sm docp-edit" data-id="${a.id}">📄 Gestionar</button>` : '';
       return `<div class="docp-item"><div class="docp-h"><b>${esc(a.numero_interno || '')}</b> · ${esc(a.placa || '')}`
@@ -2859,6 +2913,7 @@ function openDocPanel() {
     }).join('');
   }
   $('docp-modal').hidden = false;
+  body.querySelector('.docp-ir-prev')?.addEventListener('click', () => { $('docp-modal').hidden = true; openPreventivas(); });
   body.querySelectorAll('.docp-edit').forEach((b) => b.addEventListener('click', () => {
     const a = DOC_ALERTAS.find((x) => String(x.id) === b.dataset.id);
     if (a) { $('docp-modal').hidden = true; openDocsVehiculo(a, (a.items || []).map((i) => i.key)); }
@@ -5478,6 +5533,12 @@ function pvFechaLarga(iso) { // '2026-09-02' -> 'martes 2 de septiembre de 2026'
   try { const d = new Date(iso + 'T12:00:00'); return `${PV_DIAS[d.getDay()]} ${d.getDate()} de ${PV_MESES[d.getMonth()]} de ${d.getFullYear()}`; }
   catch (e) { return iso; }
 }
+function pvFechaCorta(iso) { // '2026-09-02' -> '2/09/2026'
+  try { const d = new Date(iso + 'T12:00:00'); return `${d.getDate()}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
+  catch (e) { return iso; }
+}
+// ¿La preventiva sigue sin resultado (pendiente por revisión)?
+function pvPendResultado(r) { const s = (r.resultado || '').toUpperCase(); return !s || s === 'PENDIENTE POR REVISION'; }
 // Mensaje de WhatsApp para el conductor
 function pvMensaje(p) {
   const L = [];
@@ -5526,8 +5587,8 @@ async function cargarPreventivas() {
   const body = $('pv-body'); body.innerHTML = '<div class="loading">Cargando programación…</div>';
   try {
     const { data, error } = await sb.from('preventivas')
-      .select('id,interno,placa,ruta,propietario,fecha,lugar,notificado,notificado_por,notificado_en,notif_veces')
-      .order('fecha', { ascending: true }).order('interno', { ascending: true }).limit(2000);
+      .select('id,interno,placa,ruta,propietario,fecha,lugar,notificado,notificado_por,notificado_en,notif_veces,resultado,resultado_por,resultado_en,motivo_rechazo,reprogramada_de,reprogramada_a')
+      .order('fecha', { ascending: true }).order('interno', { ascending: true }).limit(3000);
     if (error) throw error;
     _pvDatos = data || [];
     renderPreventivas();
@@ -5545,8 +5606,19 @@ function renderPreventivas() {
   const pend = (_pvDatos || []).filter((r) => !r.notificado).length;
   const deQuien = isAfiliado() ? ' de tus carros' : '';
   $('pv-sub').textContent = `${total} programadas${deQuien} · ${pend} sin notificar`;
-  if (!rows.length) { body.innerHTML = '<div class="cump-empty">No hay preventivas para este filtro.</div>'; return; }
+  // Índice por id (para enlazar la cita rechazada con su nueva cita)
+  const porId = new Map((_pvDatos || []).map((r) => [String(r.id), r]));
+  // Aviso general de REPROGRAMACIONES: citas nuevas que nacieron de un rechazo y siguen pendientes
+  const reprog = (_pvDatos || []).filter((r) => r.reprogramada_de && pvPendResultado(r));
+  let banner = '';
+  if (reprog.length) {
+    const chips = reprog.slice(0, 30).map((r) => `<span class="pv-rbchip">🚌 ${esc(r.interno)} · ${esc(pvFechaCorta(r.fecha))}</span>`).join('');
+    banner = `<div class="pv-reprog-banner"><div class="pv-rb-h">⚠️ <b>${reprog.length}</b> preventiva(s) <b>reprogramada(s)</b>${isAfiliado() ? ' de tus carros' : ''}: el carro fue <b>rechazado</b> y debe volver a la revisión.</div><div class="pv-rb-list">${chips}</div></div>`;
+  }
+  if (!rows.length) { body.innerHTML = banner + '<div class="cump-empty">No hay preventivas para este filtro.</div>'; return; }
   const hoy = hoyServidor();
+  const ops = isOperaciones();
+  const soloLectura = isAfiliado() || isAuditor();
   const grupos = new Map();
   for (const r of rows) { if (!grupos.has(r.fecha)) grupos.set(r.fecha, []); grupos.get(r.fecha).push(r); }
   const html = [...grupos.entries()].map(([fecha, items]) => {
@@ -5554,23 +5626,47 @@ function renderPreventivas() {
     const hdr = `<div class="pv-daysep ${clsDia}"><b>${esc(pvFechaLarga(fecha))}</b>${fecha === hoy ? ' <span class="pv-hoy">HOY</span>' : ''}<span class="pv-daycount">${items.length} carro${items.length > 1 ? 's' : ''}</span></div>`;
     const cards = items.map((r) => {
       const done = r.notificado;
+      const res = (r.resultado || '').toUpperCase();
+      const pendRes = pvPendResultado(r);
       const quien = r.notificado_por ? esc(r.notificado_por) : '';
       let cuando = '';
       try { if (r.notificado_en) cuando = new Date(r.notificado_en).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { /* */ }
-      const badge = done ? '<span class="pv-badge ok">✅ Notificado</span>' : '<span class="pv-badge pend">⏳ Sin notificar</span>';
-      const meta = done ? `<div class="pv-notinfo">por ${quien}${cuando ? ' · ' + esc(cuando) : ''}${r.notif_veces > 1 ? ` · ${r.notif_veces} envíos` : ''}</div>` : '';
-      return `<div class="pv-card${done ? ' done' : ''}" data-id="${r.id}">`
+      // Badges: notificación + resultado + reprogramada
+      const bNotif = done ? '<span class="pv-badge ok">✅ Notificado</span>' : '<span class="pv-badge pend">⏳ Sin notificar</span>';
+      let bRes = '';
+      if (res === 'APROBADO') bRes = '<span class="pv-badge aprob">✅ Aprobada</span>';
+      else if (res === 'RECHAZADO') bRes = '<span class="pv-badge rech">❌ Rechazada</span>';
+      const bReprog = r.reprogramada_de ? '<span class="pv-badge reprog">🔁 Reprogramada</span>' : '';
+      // Meta
+      const metas = [];
+      if (done) metas.push(`Notificado por ${quien}${cuando ? ' · ' + esc(cuando) : ''}${r.notif_veces > 1 ? ` · ${r.notif_veces} envíos` : ''}`);
+      if (res === 'APROBADO' && r.resultado_por) metas.push(`Aprobada por ${esc(r.resultado_por)}`);
+      if (res === 'RECHAZADO') {
+        const nueva = r.reprogramada_a ? porId.get(String(r.reprogramada_a)) : null;
+        metas.push(`Rechazada${r.resultado_por ? ' por ' + esc(r.resultado_por) : ''}${r.motivo_rechazo ? ' · ' + esc(r.motivo_rechazo) : ''}${nueva ? ' · nueva cita ' + esc(pvFechaCorta(nueva.fecha)) : ''}`);
+      }
+      if (r.reprogramada_de) { const orig = porId.get(String(r.reprogramada_de)); metas.push(`Nueva cita (rechazada${orig ? ' el ' + esc(pvFechaCorta(orig.fecha)) : ''})`); }
+      const meta = metas.length ? `<div class="pv-notinfo">${metas.join('<br>')}</div>` : '';
+      // Botones de acción
+      const btns = [];
+      if (!soloLectura) btns.push(`<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`);
+      if (ops && pendRes) {
+        btns.push(`<button class="pv-aprob" data-id="${r.id}">✅ Aprobar</button>`);
+        btns.push(`<button class="pv-rech" data-id="${r.id}">❌ Rechazar</button>`);
+      }
+      const cardCls = 'pv-card' + (done ? ' done' : '') + (res === 'RECHAZADO' ? ' rech' : '') + (res === 'APROBADO' ? ' aprob' : '');
+      return `<div class="${cardCls}" data-id="${r.id}">`
         + '<div class="pv-info">'
-        + `<div class="pv-top"><span class="pv-int">🚌 ${esc(r.interno)}</span>${r.placa ? `<span class="pv-placa">${esc(r.placa)}</span>` : ''}${r.ruta ? `<span class="pv-ruta">${esc(r.ruta)}</span>` : ''}</div>`
+        + `<div class="pv-top"><span class="pv-int">🚌 ${esc(r.interno)}</span>${r.placa ? `<span class="pv-placa">${esc(r.placa)}</span>` : ''}${r.ruta ? `<span class="pv-ruta">${esc(r.ruta)}</span>` : ''}${bReprog}</div>`
         + `${r.propietario ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
-        + `<div class="pv-estado">${badge}${meta}</div>`
+        + `<div class="pv-estado">${bNotif}${bRes}</div>${meta}`
         + '</div>'
-        + ((isAfiliado() || isAuditor()) ? '' : `<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`)
+        + (btns.length ? `<div class="pv-actions">${btns.join('')}</div>` : '')
         + '</div>';
     }).join('');
     return `<div class="pv-group">${hdr}${cards}</div>`;
   }).join('');
-  body.innerHTML = html;
+  body.innerHTML = banner + html;
 }
 // Abre WhatsApp con el mensaje del conductor y registra la notificación
 async function pvNotificar(id) {
@@ -5593,7 +5689,62 @@ $('pv-close')?.addEventListener('click', cerrarPreventivas);
 $('pv-refresh')?.addEventListener('click', cargarPreventivas);
 $('pv-estado')?.addEventListener('change', renderPreventivas);
 $('pv-buscar')?.addEventListener('input', renderPreventivas);
-$('pv-body')?.addEventListener('click', (e) => { const b = e.target.closest('.pv-wa'); if (b) pvNotificar(b.dataset.id); });
+$('pv-body')?.addEventListener('click', (e) => {
+  const wa = e.target.closest('.pv-wa'); if (wa) { pvNotificar(wa.dataset.id); return; }
+  const ap = e.target.closest('.pv-aprob'); if (ap) { pvAprobar(ap.dataset.id); return; }
+  const re = e.target.closest('.pv-rech'); if (re) { pvRechazarAbrir(re.dataset.id); return; }
+});
+
+// ---- Resultado de la preventiva (SOLO operaciones/admin) ----
+async function pvAprobar(id) {
+  const p = (_pvDatos || []).find((r) => String(r.id) === String(id)); if (!p) return;
+  const ok = await confirmAction({
+    title: '¿Aprobar preventiva?',
+    lead: `Móvil ${p.interno}${p.placa ? ' (' + p.placa + ')' : ''} · ${pvFechaCorta(p.fecha)}`,
+    message: 'Se marcará como APROBADA (revisión superada).', okLabel: 'Aprobar',
+  });
+  if (!ok) return;
+  try {
+    const { error } = await sb.rpc('preventiva_resultado', { p_id: Number(id), p_resultado: 'APROBADO', p_motivo: null, p_nueva_fecha: null });
+    if (error) throw error;
+    toast(`Carro ${p.interno}: preventiva aprobada`, 'ok');
+    await cargarPreventivas();
+    refrescarAlertasDocs();
+  } catch (e) { toast('No se pudo aprobar: ' + (e.message || e), 'err'); }
+}
+let _pvRechId = null;
+function pvRechazarAbrir(id) {
+  const p = (_pvDatos || []).find((r) => String(r.id) === String(id)); if (!p) return;
+  _pvRechId = id;
+  $('pvrech-lead').textContent = `Móvil ${p.interno}${p.placa ? ' (' + p.placa + ')' : ''} · cita ${pvFechaCorta(p.fecha)}`;
+  $('pvrech-motivo').value = '';
+  $('pvrech-err').hidden = true;
+  const f = $('pvrech-fecha'); f.value = ''; try { f.min = hoyServidor(); } catch (e) { /* */ }
+  $('pvrech-modal').hidden = false;
+}
+function pvRechazarCerrar() { $('pvrech-modal').hidden = true; _pvRechId = null; }
+async function pvRechazarConfirmar() {
+  if (!_pvRechId) return;
+  const fecha = $('pvrech-fecha').value;
+  const motivo = $('pvrech-motivo').value.trim() || null;
+  const err = $('pvrech-err');
+  if (!fecha) { err.textContent = 'Indica la nueva fecha en que el carro debe volver.'; err.hidden = false; return; }
+  if (fecha < hoyServidor()) { err.textContent = 'La nueva fecha debe ser de hoy en adelante.'; err.hidden = false; return; }
+  const btn = $('pvrech-ok'); btn.disabled = true;
+  try {
+    const { error } = await sb.rpc('preventiva_resultado', { p_id: Number(_pvRechId), p_resultado: 'RECHAZADO', p_motivo: motivo, p_nueva_fecha: fecha });
+    if (error) throw error;
+    pvRechazarCerrar();
+    toast('Preventiva rechazada · nueva cita creada', 'ok');
+    await cargarPreventivas();
+    refrescarAlertasDocs();
+  } catch (e) { err.textContent = e.message || String(e); err.hidden = false; }
+  finally { btn.disabled = false; }
+}
+$('pvrech-x')?.addEventListener('click', pvRechazarCerrar);
+$('pvrech-cancel')?.addEventListener('click', pvRechazarCerrar);
+$('pvrech-ok')?.addEventListener('click', pvRechazarConfirmar);
+$('pvrech-modal')?.addEventListener('click', (e) => { if (e.target.id === 'pvrech-modal') pvRechazarCerrar(); });
 
 // ---- Aviso AL DESPACHAR: si el móvil tiene una preventiva pendiente por notificar ----
 async function avisarPreventivaMovil(numero, boxId) {

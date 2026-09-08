@@ -969,8 +969,12 @@
         <label class="field full"><span>Archivo — PDF o foto (opcional)</span><input type="file" id="doc-file" accept="application/pdf,image/*" /></label>
         <label class="field full"><span>Observación (opcional)</span><input type="text" id="doc-obs" /></label>
         <p id="doc-err" class="error" hidden></p>
-        <div class="doc-sep">Historial del vehículo</div>
+        <div class="doc-sep">Historial de documentos</div>
         <div id="doc-hist" class="doc-hist"></div>
+        <div id="doc-cambios-wrap" hidden>
+          <div class="doc-sep">🕘 Cambios en la ficha (quién editó qué)</div>
+          <div id="doc-cambios" class="doc-hist"></div>
+        </div>
       </div>
       <div class="modal-foot">
         <span class="spacer"></span>
@@ -1017,6 +1021,28 @@
         <span class="spacer"></span>
         <button id="pvcomo-ir" class="btn btn-primary" hidden>🔧 Abrir Preventivas</button>
         <button id="pvcomo-ok" class="btn">Entendido</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preventivas · marcar RECHAZADO (operaciones): motivo + nueva fecha -->
+  <div id="pvrech-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3>❌ Rechazar preventiva</h3>
+        <button id="pvrech-x" class="icon-btn">✕</button>
+      </div>
+      <div class="edit-form">
+        <p id="pvrech-lead" class="confirm-lead"></p>
+        <label class="field full"><span>Motivo del rechazo (opcional)</span><input type="text" id="pvrech-motivo" placeholder="Ej.: frenos, luces…" /></label>
+        <label class="field full"><span>Nueva fecha en que debe volver *</span><input type="date" id="pvrech-fecha" /></label>
+        <p id="pvrech-err" class="error" hidden></p>
+        <p class="pvcomo-note">Se guardará el rechazo y se creará una <b>nueva cita</b> para esa fecha. Afiliados y despachadores verán el aviso.</p>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="pvrech-cancel" class="btn">Cancelar</button>
+        <button id="pvrech-ok" class="btn btn-primary">Rechazar y reprogramar</button>
       </div>
     </div>
   </div>

@@ -1963,3 +1963,23 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .pvcomo-body { padding: 4px 2px 0; font-size: 14px; line-height: 1.55; color: var(--text); }
 .pvcomo-steps { margin: 10px 0; padding-left: 22px; display: grid; gap: 7px; }
 .pvcomo-note { background: var(--grad-soft); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 13px; }
+/* Resultado de la preventiva (aprobado/rechazado/reprogramada) */
+.pv-badge.aprob { color: var(--ok); background: #eaf7ee; border: 1px solid #bfe6cc; }
+.pv-badge.rech { color: #b91c1c; background: #fdeaea; border: 1px solid #f3b4ad; }
+.pv-badge.reprog { color: #8a4b00; background: #fff2df; border: 1px solid #f0d19a; }
+.pv-card.rech { background: #fdf7f7; }
+.pv-card.aprob { background: #fafdfb; }
+.pv-actions { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.pv-aprob, .pv-rech { border: 0; border-radius: 10px; padding: 9px 12px; font-weight: 700; font-size: 12.5px; color: #fff; }
+.pv-aprob { background: var(--ok); }
+.pv-rech { background: #dc2626; }
+.pv-aprob:active, .pv-rech:active { filter: brightness(.92); }
+/* Banner de reprogramaciones (rechazadas → deben volver) */
+.pv-reprog-banner { background: #fff2df; border: 1px solid #f0d19a; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+.pv-rb-h { font-size: 13.5px; color: #7a3d00; line-height: 1.5; }
+.pv-rb-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pv-rbchip { background: #fff; border: 1px solid #f0d19a; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; color: #7a3d00; }
+/* Panel de la campana: sección de preventivas reprogramadas */
+.docp-prev { background: #fff2df; border: 1px solid #f0d19a; border-radius: 10px; padding: 9px 11px; margin-bottom: 12px; }
+.docp-prev-h { font-size: 13px; color: #7a3d00; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; line-height: 1.5; }
+@media (max-width: 560px) { .pv-actions { flex-direction: row; flex-wrap: wrap; } .pv-actions > * { flex: 1 1 auto; } }
