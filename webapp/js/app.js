@@ -6103,7 +6103,7 @@ $('top-body')?.addEventListener('keydown', (e) => {
 
 // ==================== Descarga a Excel de las vistas de análisis ====================
 // Últimos resultados consultados (para exportar sin volver a pedir al servidor).
-let _prodUltimo = null, _jorUltimo = null, _topUltimo = null;
+let _prodUltimo = null, _jorUltimo = null, _topUltimo = null, _paxUltimo = null;
 // Genera un .xlsx real (SheetJS de esm.sh) con varias hojas. hojas = [{name, aoa}].
 async function _xlsxDescargar(hojas, filename) {
   const XLSX = await import('https://esm.sh/xlsx@0.18.5');
@@ -6234,9 +6234,52 @@ function exportarTopXlsx() {
     }
   });
 }
+// ── Pasajeros (por móvil) → Excel (Resumen + Por hora + Por puerta + Viajes + Paradas) ──
+function exportarPasajerosXlsx() {
+  const T = _paxUltimo; if (!T || !T.pax) { toast('Primero consulta un móvil.', 'err'); return; }
+  _conExcelBtn('pax-excel', async () => {
+    const d = T.pax; const v = T.via || {};
+    const resumen = [
+      ['Pasajeros por móvil'],
+      ['Móvil', d.movil], ['Fecha', String(d.fecha)], [],
+      ['Indicador', 'Valor'],
+      ['Subieron (total)', d.subidas || 0],
+      ['Bajaron (total)', d.bajadas || 0],
+      ['Bloqueos', d.bloqueos || 0],
+      ['Viajes del día', v.n_viajes || 0],
+      ['  · Completos', v.n_completos || 0],
+      ['  · Incompletos', v.n_incompletos || 0],
+      ['  · Cancelados', v.n_cancelados || 0],
+      ['  · En curso', v.n_encurso || 0],
+      ['Fuera de viaje · subieron', v.sin_viaje_subidas || 0],
+      ['Fuera de viaje · bajaron', v.sin_viaje_bajadas || 0],
+    ];
+    const porHora = (d.por_hora || []).map((h) => [`${_pad2(h.hora)}:00`, h.subidas || 0, h.bajadas || 0]);
+    const porPuerta = Object.entries(d.por_puerta || {}).map(([p, o]) => {
+      const sub = (o && typeof o === 'object') ? (o.subidas || 0) : (o || 0);
+      const baj = (o && typeof o === 'object') ? (o.bajadas || 0) : 0;
+      return [`Puerta ${p}`, sub, baj];
+    });
+    const viajes = (v.viajes || []).map((t) => [
+      `${t.ini || ''}${t.fin ? '–' + t.fin : ''}`, t.ruta || '', t.estado || '',
+      t.subidas || 0, t.bajadas || 0, t.dur_min == null ? '' : t.dur_min,
+    ]);
+    const paradas = (d.paradas || []).filter((p) => (p.subidas || 0) > 0)
+      .map((p, i) => [i + 1, p.parada || '', p.subidas || 0, p.bajadas || 0, p.lat == null ? '' : p.lat, p.lon == null ? '' : p.lon]);
+    const hojas = [
+      { name: 'Resumen', aoa: resumen },
+      { name: 'Por hora', aoa: [['Hora', 'Subieron', 'Bajaron'], ...porHora] },
+      { name: 'Por puerta', aoa: [['Puerta', 'Subieron', 'Bajaron'], ...porPuerta] },
+    ];
+    if (viajes.length) hojas.push({ name: 'Viajes del día', aoa: [['Horario', 'Ruta', 'Estado', 'Subieron', 'Bajaron', 'Duración (min)'], ...viajes] });
+    if (paradas.length) hojas.push({ name: 'Paradas', aoa: [['#', 'Dirección', 'Subieron', 'Bajaron', 'Lat', 'Lon'], ...paradas] });
+    await _xlsxDescargar(hojas, `Pasajeros_${String(d.movil).replace(/\s+/g, '_')}_${d.fecha}.xlsx`);
+  });
+}
 $('prod-excel')?.addEventListener('click', exportarProductividadXlsx);
 $('jor-excel')?.addEventListener('click', exportarJornadaXlsx);
 $('top-excel')?.addEventListener('click', exportarTopXlsx);
+$('pax-excel')?.addEventListener('click', exportarPasajerosXlsx);
 
 async function consultarPasajeros() {
   let movil = ($('pax-movil').value || '').split('·')[0].trim();
@@ -6247,6 +6290,7 @@ async function consultarPasajeros() {
   const byPlaca = veh.find((v) => String(v.placa || '').trim().toUpperCase() === movil.toUpperCase());
   if (byPlaca) movil = String(byPlaca.numero).trim();
   const body = $('pax-body'); body.innerHTML = '<div class="loading">Consultando ERP APL…</div>';
+  _paxUltimo = null; if ($('pax-excel')) $('pax-excel').hidden = true;
   const btn = $('pax-consultar'); btn.disabled = true;
   try {
     // Pasajeros + viajes del día en paralelo (RPCs separados, cada uno con su presupuesto de 8 s)
@@ -6259,6 +6303,7 @@ async function consultarPasajeros() {
     if (!data || !data.ok) { body.innerHTML = `<div class="cump-empty">${esc((data && data.error) || 'Sin datos')}</div>`; $('pax-sub').textContent = ''; return; }
     renderPasajeros(data);
     renderViajes(viaR && viaR.data); // rellena #pax-viajes (si falló, queda vacío)
+    _paxUltimo = { pax: data, via: (viaR && viaR.data) || null }; if ($('pax-excel')) $('pax-excel').hidden = false;
   } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
   finally { btn.disabled = false; }
 }
