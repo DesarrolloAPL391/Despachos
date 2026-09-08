@@ -386,6 +386,25 @@
           <div id="pax-body" class="integ-body"></div>
         </div>
 
+        <!-- Vista "Preventivas": programación de revisión técnico-mecánica; el despachador notifica al conductor por WhatsApp -->
+        <div id="preventivas-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🔧 Preventivas</h2>
+            <span id="pv-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Ver
+              <select id="pv-estado">
+                <option value="pend" selected>Pendientes de notificar</option>
+                <option value="notif">Ya notificadas</option>
+                <option value="todas">Todas</option>
+              </select></label>
+            <input type="search" id="pv-buscar" placeholder="Interno, placa, ruta…" autocomplete="off" />
+            <button id="pv-refresh" class="btn">↻ Actualizar</button>
+            <button id="pv-close" class="btn">← Volver</button>
+          </div>
+          <div id="pv-body" class="integ-body"></div>
+        </div>
+
         <!-- Vista "Usuarios": crear accesos (todos los roles) y asignar vehículos a afiliados (admin) -->
         <div id="usuarios-view" class="malla-view" hidden>
           <div class="toolbar cump-toolbar">

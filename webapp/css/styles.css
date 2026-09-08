@@ -1914,3 +1914,45 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .top-csub { color: var(--muted); }
 .top-cempty { color: var(--muted); font-size: 12px; }
 @media (max-width: 560px) { .top-mov { flex-basis: 78px; } .top-n { min-width: 78px; } .top-carros { padding-left: 20px; } }
+
+/* ---------- Preventivas (citación a revisión técnico-mecánica) ---------- */
+#preventivas-view #pv-buscar { padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; min-width: 180px; }
+.pv-group { margin-bottom: 18px; }
+.pv-daysep {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; margin: 4px 0 10px; border-radius: 10px;
+  background: var(--grad-soft); border: 1px solid var(--border); font-size: 14px;
+}
+.pv-daysep b { text-transform: capitalize; }
+.pv-daysep.pasada { opacity: .6; }
+.pv-daysep.hoy { background: #eaf7ee; border-color: #bfe6cc; }
+.pv-hoy { background: var(--ok); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.pv-daycount { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+.pv-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; margin-bottom: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm);
+}
+.pv-card.done { background: #fbfdfb; }
+.pv-info { flex: 1 1 auto; min-width: 0; }
+.pv-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pv-int { font-weight: 700; font-size: 15px; }
+.pv-placa { font-variant-numeric: tabular-nums; font-weight: 600; background: #f3eeee; border: 1px solid var(--border); border-radius: 8px; padding: 1px 8px; font-size: 13px; }
+.pv-ruta { color: #2E75B6; font-weight: 600; font-size: 13px; }
+.pv-prop { color: var(--muted); font-size: 12.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-estado { margin-top: 5px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.pv-badge { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+.pv-badge.ok { color: var(--ok); background: #eaf7ee; border: 1px solid #bfe6cc; }
+.pv-badge.pend { color: #b45309; background: #fdf3e3; border: 1px solid #f0dcae; }
+.pv-notinfo { font-size: 11.5px; color: var(--muted); }
+.pv-wa {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px;
+  border: 0; border-radius: 12px; padding: 11px 16px; font-weight: 700; font-size: 14px;
+  color: #fff; background: #25D366; box-shadow: 0 2px 8px rgba(37,211,102,.35);
+}
+.pv-wa:active { background: #1eb457; }
+.pv-card.done .pv-wa { background: #128C7E; box-shadow: none; }
+@media (max-width: 560px) {
+  .pv-card { flex-direction: column; align-items: stretch; gap: 10px; }
+  .pv-wa { justify-content: center; padding: 12px; }
+}

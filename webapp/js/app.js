@@ -550,10 +550,12 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
   if (isAdmin() || isAfiliado()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+  if (isAdmin() || isDespachador()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
+  const apv = $('nav-preventivas'); if (apv) apv.classList.toggle('active', currentView === 'preventivas');
   const au = $('nav-usuarios'); if (au) au.classList.toggle('active', currentView === 'usuarios');
   const ac = $('nav-cump'); if (ac) ac.classList.toggle('active', currentView === 'cump');
   const ar = $('nav-rutas');  if (ar) ar.classList.toggle('active', currentView === 'rutas' && _rutasModo === 'tabla');
@@ -666,7 +668,7 @@ function selectTable(name) {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -3780,7 +3782,7 @@ async function openCumplimiento() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4047,7 +4049,7 @@ async function openRutasVivo(modo) {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -4275,7 +4277,7 @@ async function openMalla() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4443,7 +4445,7 @@ function cerrarLaureles() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   selectTable(current);
 }
 function _armarAutoLaur() {
@@ -5463,7 +5465,126 @@ async function openPasajeros() {
   if (paxMap) { paxMap.remove(); paxMap = null; }
   $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen del <b>ERP APL</b> los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
 }
-function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; selectTable(current); }
+function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true; selectTable(current); }
+
+// ===== Vista "🔧 Preventivas" (admin/despachador): programación de revisión técnico-mecánica =====
+// El despachador ve la programación del bimestre y NOTIFICA al conductor por WhatsApp:
+// el botón abre WhatsApp con el mensaje ya escrito; él elige el contacto del conductor y lo envía.
+let _pvDatos = null; // filas cargadas de public.preventivas
+const PV_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const PV_DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+function pvFechaLarga(iso) { // '2026-09-02' -> 'martes 2 de septiembre de 2026'
+  try { const d = new Date(iso + 'T12:00:00'); return `${PV_DIAS[d.getDay()]} ${d.getDate()} de ${PV_MESES[d.getMonth()]} de ${d.getFullYear()}`; }
+  catch (e) { return iso; }
+}
+// Mensaje de WhatsApp para el conductor
+function pvMensaje(p) {
+  const L = [];
+  L.push('🔧 *CITACIÓN A PREVENTIVA – APL*');
+  L.push('');
+  L.push('Cordial saludo.');
+  L.push(`Le informamos que el vehículo *INTERNO ${p.interno}*`
+    + (p.placa ? ` (placa *${p.placa}*)` : '')
+    + (p.ruta ? `, ruta *${p.ruta}*` : '')
+    + ' tiene programada su *revisión técnico-mecánica (preventiva)*:');
+  L.push('');
+  L.push(`📅 Fecha: *${pvFechaLarga(p.fecha)}*`);
+  if (p.lugar) L.push(`📍 Lugar: *${p.lugar}*`);
+  L.push('');
+  L.push('Por favor confirmar asistencia y presentarse puntualmente. Gracias.');
+  return L.join('\n');
+}
+async function openPreventivas() {
+  if (!isAdmin() && !isDespachador()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'preventivas';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('preventivas-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-preventivas')?.classList.add('active');
+  buildBottomNav();
+  await cargarPreventivas();
+}
+function cerrarPreventivas() { $('preventivas-view').hidden = true; selectTable(current); }
+async function cargarPreventivas() {
+  const body = $('pv-body'); body.innerHTML = '<div class="loading">Cargando programación…</div>';
+  try {
+    const { data, error } = await sb.from('preventivas')
+      .select('id,interno,placa,ruta,propietario,fecha,lugar,notificado,notificado_por,notificado_en,notif_veces')
+      .order('fecha', { ascending: true }).order('interno', { ascending: true }).limit(2000);
+    if (error) throw error;
+    _pvDatos = data || [];
+    renderPreventivas();
+  } catch (e) { body.innerHTML = `<div class="cump-empty">Error: ${esc(e.message || e)}</div>`; }
+}
+function renderPreventivas() {
+  const body = $('pv-body'); if (!body) return;
+  const filtro = $('pv-estado').value || 'pend';
+  const q = ($('pv-buscar').value || '').trim().toLowerCase();
+  let rows = (_pvDatos || []).slice();
+  if (filtro === 'pend') rows = rows.filter((r) => !r.notificado);
+  else if (filtro === 'notif') rows = rows.filter((r) => r.notificado);
+  if (q) rows = rows.filter((r) => [r.interno, r.placa, r.ruta, r.propietario].some((x) => String(x || '').toLowerCase().includes(q)));
+  const total = (_pvDatos || []).length;
+  const pend = (_pvDatos || []).filter((r) => !r.notificado).length;
+  $('pv-sub').textContent = `${total} programadas · ${pend} sin notificar`;
+  if (!rows.length) { body.innerHTML = '<div class="cump-empty">No hay preventivas para este filtro.</div>'; return; }
+  const hoy = hoyServidor();
+  const grupos = new Map();
+  for (const r of rows) { if (!grupos.has(r.fecha)) grupos.set(r.fecha, []); grupos.get(r.fecha).push(r); }
+  const html = [...grupos.entries()].map(([fecha, items]) => {
+    const clsDia = fecha < hoy ? 'pasada' : (fecha === hoy ? 'hoy' : '');
+    const hdr = `<div class="pv-daysep ${clsDia}"><b>${esc(pvFechaLarga(fecha))}</b>${fecha === hoy ? ' <span class="pv-hoy">HOY</span>' : ''}<span class="pv-daycount">${items.length} carro${items.length > 1 ? 's' : ''}</span></div>`;
+    const cards = items.map((r) => {
+      const done = r.notificado;
+      const quien = r.notificado_por ? esc(r.notificado_por) : '';
+      let cuando = '';
+      try { if (r.notificado_en) cuando = new Date(r.notificado_en).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (e) { /* */ }
+      const badge = done ? '<span class="pv-badge ok">✅ Notificado</span>' : '<span class="pv-badge pend">⏳ Sin notificar</span>';
+      const meta = done ? `<div class="pv-notinfo">por ${quien}${cuando ? ' · ' + esc(cuando) : ''}${r.notif_veces > 1 ? ` · ${r.notif_veces} envíos` : ''}</div>` : '';
+      return `<div class="pv-card${done ? ' done' : ''}" data-id="${r.id}">`
+        + '<div class="pv-info">'
+        + `<div class="pv-top"><span class="pv-int">🚌 ${esc(r.interno)}</span>${r.placa ? `<span class="pv-placa">${esc(r.placa)}</span>` : ''}${r.ruta ? `<span class="pv-ruta">${esc(r.ruta)}</span>` : ''}</div>`
+        + `${r.propietario ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
+        + `<div class="pv-estado">${badge}${meta}</div>`
+        + '</div>'
+        + `<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`
+        + '</div>';
+    }).join('');
+    return `<div class="pv-group">${hdr}${cards}</div>`;
+  }).join('');
+  body.innerHTML = html;
+}
+// Abre WhatsApp con el mensaje del conductor y registra la notificación
+async function pvNotificar(id) {
+  const p = (_pvDatos || []).find((r) => String(r.id) === String(id));
+  if (!p) return;
+  const url = 'https://wa.me/?text=' + encodeURIComponent(pvMensaje(p));
+  window.open(url, '_blank'); // dentro del gesto de clic, para que no lo bloquee el navegador
+  try {
+    const { data, error } = await sb.rpc('preventiva_notificada', { p_id: Number(id) });
+    if (error) throw error;
+    if (data) {
+      const i = (_pvDatos || []).findIndex((r) => String(r.id) === String(id));
+      if (i >= 0) _pvDatos[i] = { ..._pvDatos[i], notificado: true, notificado_por: data.notificado_por, notificado_en: data.notificado_en, notif_veces: data.notif_veces };
+      renderPreventivas();
+      toast(`Carro ${p.interno}: notificación registrada`, 'ok');
+    }
+  } catch (e) { toast('Se abrió WhatsApp, pero no se registró: ' + (e.message || e), 'err'); }
+}
+$('pv-close')?.addEventListener('click', cerrarPreventivas);
+$('pv-refresh')?.addEventListener('click', cargarPreventivas);
+$('pv-estado')?.addEventListener('change', renderPreventivas);
+$('pv-buscar')?.addEventListener('input', renderPreventivas);
+$('pv-body')?.addEventListener('click', (e) => { const b = e.target.closest('.pv-wa'); if (b) pvNotificar(b.dataset.id); });
 
 // ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
 let _frecRutas = null;
@@ -5487,7 +5608,7 @@ async function openFrecuencia() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -5597,7 +5718,7 @@ async function openProductividad() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -5755,7 +5876,7 @@ async function openJornada() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -5946,7 +6067,7 @@ async function openTop() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -6668,7 +6789,7 @@ async function openUsuarios() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -9262,7 +9383,7 @@ async function showMapView() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;
