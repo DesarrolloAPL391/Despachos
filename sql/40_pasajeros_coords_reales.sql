@@ -84,9 +84,10 @@ begin
     from (select extract(hour from ts_co)::int h, sum(din) s, sum(dout) b
           from _dd where ts_co is not null group by 1) t;
 
-  select jsonb_object_agg(door::text, s)
+  -- Por puerta: subidas (DoorIn) y bajadas (DoorOut) de CADA puerta.
+  select jsonb_object_agg(door::text, jsonb_build_object('subidas', s, 'bajadas', b))
     into v_porpuerta
-    from (select door, sum(din) s from _dd where door is not null group by door) t;
+    from (select door, sum(din) s, sum(dout) b from _dd where door is not null group by door) t;
 
   -- 2) Traza GPS real del bus (best-effort: si falla, se geocodifica en el cliente).
   create temp table _trk (ts timestamp, lat float, lon float) on commit drop;

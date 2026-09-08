@@ -1,6 +1,10 @@
--- 38: Pasajeros por móvil y día (solo admin), en vivo desde SONAR (GET_PassengersCounter).
+-- 38: Pasajeros por móvil y día, en vivo desde SONAR (GET_PassengersCounter).
 -- El conteo real está en el detalle por puerta: DoorIn = subieron, DoorOut = bajaron.
 -- El rango del día Colombia se envía en UTC (Colombia + 5h). Devuelve totales + por hora.
+--
+-- ⚠️ OJO: esta función la REDEFINE sql/40 (versión buena, con `paradas` y coords GPS reales).
+-- NO reapliques SOLO este archivo o perderás las paradas ("no reportó direcciones"). Si tocas
+-- pasajeros_movil, hazlo en sql/40 (es la que queda viva al aplicar en orden). (bug corregido)
 
 create or replace function public.pasajeros_movil(p_movil text, p_fecha date)
 returns jsonb
