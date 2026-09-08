@@ -8008,6 +8008,16 @@ $('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n)
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');
   if (btn.dataset.busy === '1') return; // evita doble click / doble despacho
+  // Bloqueo por preventiva RECHAZADA: aplica a CUALQUIER "sí despachó/realizó" desde las tablas
+  // (SONAR o sin SONAR). "No realizó" sí se permite. Suspendido hasta que operaciones apruebe.
+  if ($('s-realizo').value === 'SI') {
+    const vehB = await loadVehiculos();
+    const vrB = vehB.find((v) => String(v.id) === $('s-mov').value);
+    if (vrB?.numero) {
+      const bq = await pvSuspendido(vrB.numero);
+      if (bq) { const e = $('sonar-error'); e.innerHTML = pvBloqueoMsg(bq); e.hidden = false; return; }
+    }
+  }
   // Rutas MADRUGADA/CENTRO: NUNCA se despachan a SONAR; solo se marca si se realizó o no.
   if (sonarSinEnvio) {
     if ($('s-realizo').value === 'SI') { await marcarRealizadoSinSonar(); } else { await marcarNoRealiza(); }
@@ -8029,9 +8039,6 @@ $('sonar-send').addEventListener('click', async () => {
   if (horaYaPaso(horaSel)) { err.textContent = 'La hora de despacho ya pasó. Usa la hora actual o una posterior.'; err.hidden = false; return; }
   const g = await gpsInfoFor(vr.numero); const mId = g?.tracker_id;
   if (!mId) { err.textContent = 'Ese móvil no tiene Id GPS en SONAR.'; err.hidden = false; return; }
-
-  // Bloqueo por preventiva RECHAZADA: suspendido hasta que operaciones apruebe la nueva revisión
-  { const bq = await pvSuspendido(vr.numero); if (bq) { err.innerHTML = pvBloqueoMsg(bq); err.hidden = false; return; } }
 
   // Aviso de DOBLE DESPACHO por tiempo: si el móvil fue despachado hace menos de 20 min
   const minDesde = await minutosUltimoDespacho(vr.id);
