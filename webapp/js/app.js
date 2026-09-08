@@ -550,7 +550,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
   if (isAdmin() || isAfiliado()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
-  if (isAdmin() || isDespachador() || isAfiliado()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
+  if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
@@ -5496,7 +5496,7 @@ function pvMensaje(p) {
   return L.join('\n');
 }
 async function openPreventivas() {
-  if (!isAdmin() && !isDespachador() && !isAfiliado()) return;
+  if (!isAdmin() && !isDespachador() && !isAfiliado() && !isAuditor()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'preventivas';
   cerrarRecorridoBus();
@@ -5512,7 +5512,13 @@ async function openPreventivas() {
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-preventivas')?.classList.add('active');
   buildBottomNav();
-  const ayuda = $('pv-ayuda'); if (ayuda) ayuda.hidden = isAfiliado(); // el afiliado solo consulta
+  // Botón de ayuda: el despachador/admin ve "¿Cómo notifico?", el auditor "¿Cómo audito?"; el afiliado no lo ve.
+  const ayuda = $('pv-ayuda');
+  if (ayuda) { ayuda.hidden = isAfiliado(); ayuda.textContent = isAuditor() ? '❓ ¿Cómo audito?' : '❓ ¿Cómo notifico?'; }
+  // Filtro por defecto según rol: el despachador arranca en "pendientes"; auditor/afiliado en "todas".
+  const est = $('pv-estado'); if (est) est.value = (isAuditor() || isAfiliado()) ? 'todas' : 'pend';
+  // Al auditor le mostramos una vez la guía de la actualización (para que audite todo).
+  if (isAuditor()) { try { if (!localStorage.getItem('pvaud_visto')) { pvAudAbrir(); localStorage.setItem('pvaud_visto', '1'); } } catch (e) { /* */ } }
   await cargarPreventivas();
 }
 function cerrarPreventivas() { $('preventivas-view').hidden = true; selectTable(current); }
@@ -5559,7 +5565,7 @@ function renderPreventivas() {
         + `${r.propietario ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
         + `<div class="pv-estado">${badge}${meta}</div>`
         + '</div>'
-        + (isAfiliado() ? '' : `<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`)
+        + ((isAfiliado() || isAuditor()) ? '' : `<button class="pv-wa" data-id="${r.id}">📲<span class="pv-wa-lb">${done ? 'Volver a notificar' : 'Notificar por WhatsApp'}</span></button>`)
         + '</div>';
     }).join('');
     return `<div class="pv-group">${hdr}${cards}</div>`;
@@ -5608,13 +5614,19 @@ async function avisarPreventivaMovil(numero, boxId) {
     box.hidden = false;
   } catch (e) { /* el aviso es informativo: si falla, no estorba el despacho */ }
 }
-// Modal instructivo "¿Cómo notifico una preventiva?"
+// Modal instructivo "¿Cómo notifico una preventiva?" (despachador/admin)
 function pvComoAbrir() { const m = $('pvcomo-modal'); if (m) m.hidden = false; }
 function pvComoCerrar() { const m = $('pvcomo-modal'); if (m) m.hidden = true; }
-$('pv-ayuda')?.addEventListener('click', pvComoAbrir);
+// Modal "cómo auditar preventivas" (auditor)
+function pvAudAbrir() { const m = $('pvaud-modal'); if (m) m.hidden = false; }
+function pvAudCerrar() { const m = $('pvaud-modal'); if (m) m.hidden = true; }
+$('pv-ayuda')?.addEventListener('click', () => { if (isAuditor()) pvAudAbrir(); else pvComoAbrir(); });
 $('pvcomo-x')?.addEventListener('click', pvComoCerrar);
 $('pvcomo-ok')?.addEventListener('click', pvComoCerrar);
 $('pvcomo-modal')?.addEventListener('click', (e) => { if (e.target.id === 'pvcomo-modal') pvComoCerrar(); });
+$('pvaud-x')?.addEventListener('click', pvAudCerrar);
+$('pvaud-ok')?.addEventListener('click', pvAudCerrar);
+$('pvaud-modal')?.addEventListener('click', (e) => { if (e.target.id === 'pvaud-modal') pvAudCerrar(); });
 ['nd-pvwarn', 's-pvwarn'].forEach((id) => { $(id)?.addEventListener('click', (e) => { if (e.target.closest('.pvwarn-como')) pvComoAbrir(); }); });
 
 // ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
