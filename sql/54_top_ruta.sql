@@ -21,7 +21,7 @@ as $function$
 declare
   v_per text; v_desde date; v_hasta date;
 begin
-  if not (public.es_admin() or public.es_afiliado()) then
+  if not (public.es_admin() or public.es_afiliado() or public.es_operaciones()) then
     raise exception 'No autorizado.';
   end if;
   v_per := lower(coalesce(p_periodo, 'mes'));

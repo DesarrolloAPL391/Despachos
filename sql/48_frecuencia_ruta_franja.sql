@@ -10,7 +10,7 @@ language plpgsql security definer set search_path = public as $$
 declare
   v_dias int := 0; v_total int := 0; v_res jsonb;
 begin
-  if not (public.es_admin() or public.es_auditor() or public.es_afiliado()) then
+  if not (public.es_admin() or public.es_auditor() or public.es_afiliado() or public.es_operaciones()) then
     raise exception 'No autorizado.'; end if;
   if p_ruta_id is null then return jsonb_build_object('ok', false, 'error', 'Falta la ruta.'); end if;
   if p_desde is null or p_hasta is null then return jsonb_build_object('ok', false, 'error', 'Falta el rango de fechas.'); end if;

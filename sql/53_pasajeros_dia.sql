@@ -18,7 +18,7 @@ alter table public.pasajeros_dia enable row level security;
 -- pero dejamos la RLS coherente por si se consulta la tabla directo.)
 drop policy if exists pax_dia_sel on public.pasajeros_dia;
 create policy pax_dia_sel on public.pasajeros_dia for select to authenticated
-  using (public.es_admin() or (public.es_afiliado() and trim(movil) = any(public.mis_moviles_afiliado())));
+  using (public.es_admin() or public.es_operaciones() or (public.es_afiliado() and trim(movil) = any(public.mis_moviles_afiliado())));
 
 -- Baja de SONAR los pasajeros de UN móvil en UN día (Colombia) y devuelve totales.
 -- SECURITY DEFINER; pensada para el cron/backfill (no está atada al statement_timeout del navegador).
@@ -136,7 +136,7 @@ as $function$
 declare
   v_per text; v_desde date; v_hasta date; v_afil boolean; v_ids text[];
 begin
-  if not (public.es_admin() or public.es_afiliado()) then
+  if not (public.es_admin() or public.es_afiliado() or public.es_operaciones()) then
     raise exception 'No autorizado.';
   end if;
   v_per := lower(coalesce(p_periodo, 'mes'));

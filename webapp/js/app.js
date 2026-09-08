@@ -63,6 +63,9 @@ function isAfiliado() { return CTX?.rol === 'afiliado'; }
 // Área de OPERACIONES: cuentas de rol despachador cuyo correo contiene 'operaciones' (o admin).
 // Solo ellas marcan el RESULTADO de una preventiva (aprobado/rechazado).
 function isOperaciones() { return isAdmin() || (isDespachador() && /operaciones/.test(miCorreo())); }
+// Subadministrador (operaciones): base despachador + gestión acotada (usuarios no-admin,
+// parque completo, pantallas de análisis). Equivale a operaciones o admin.
+function isSubadmin() { return isAdmin() || isOperaciones(); }
 // El afiliado nunca crea/edita/despacha: sus tablas se muestran en solo lectura.
 function afiliadoSoloLectura() { return isAfiliado() || (PREVIEW && PREVIEW.rol === 'afiliado'); }
 // Móviles (números) del afiliado logueado (los trae mi_contexto en CTX.moviles)
@@ -532,14 +535,14 @@ function buildSidebar() {
   // acciones especiales (no son tablas)
   if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
+  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
   if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
-  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
+  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
+  if (isAdmin() || isAuditor() || isAfiliado() || isOperaciones()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
-  if (isAdmin() || isAfiliado()) addNavAction(nav, '🏆', 'Top de movilización', openTop, 'nav-top');
+  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(nav, '🏆', 'Top de movilización', openTop, 'nav-top');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
@@ -552,9 +555,9 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
   if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
-  if (isAdmin() || isAfiliado()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
-  if (isAdmin()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
+  if (isAdmin() || isOperaciones()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
@@ -2645,9 +2648,60 @@ async function openDocsVehiculo(row, soloKeys) {
   prefillDoc();
   renderDocEstados(row, soloKeys);
   $('doc-modal').hidden = false;
+  renderFichaEditor(row);   // editor de la ficha (solo subadmin/operaciones)
   await loadDocHist(row.id);
-  loadDocCambios(row.id); // historial de cambios de la ficha (admin/operaciones)
+  loadDocCambios(row.id);   // historial de cambios de la ficha (admin/operaciones)
 }
+// Editor de la FICHA del parque (solo subadmin). Los documentos van por su propio gestor.
+const PARQUE_FICHA_FIELDS = [
+  ['estado', 'Estado', 'estado'], ['ruta', 'Ruta', 'text'], ['propietario', 'Propietario', 'text'],
+  ['identificacion', 'Identificación', 'text'], ['telefono', 'Teléfono', 'text'], ['correo', 'Correo', 'text'],
+  ['direccion', 'Dirección', 'text'], ['administrador', 'Administrador', 'text'], ['correo_admin', 'Correo admin', 'text'],
+  ['placa', 'Placa', 'text'], ['marca', 'Marca', 'text'], ['linea', 'Línea', 'text'], ['modelo', 'Modelo (año)', 'number'],
+  ['color', 'Color', 'text'], ['combustible', 'Combustible', 'text'], ['tecnologia_emision', 'Tecnología emisión', 'text'],
+  ['clase_vehiculo', 'Clase', 'text'], ['tipo_carroceria', 'Carrocería', 'text'], ['cilindraje', 'Cilindraje', 'text'],
+  ['cap_sentados', 'Cap. sentados', 'number'], ['cap_pie', 'Cap. de pie', 'number'], ['capacidad_to', 'Capacidad total', 'number'],
+  ['centro_costos', 'Centro de costos', 'text'], ['sistema_ruta', 'Sistema/ruta', 'text'],
+  ['fecha_matricula', 'Fecha matrícula', 'date'], ['num_matricula', 'N° matrícula', 'text'],
+];
+const PARQUE_ESTADOS = ['Activo', 'Desvinculado', 'Inactivo', 'Mantenimiento'];
+function renderFichaEditor(row) {
+  const wrap = $('doc-ficha-wrap'), cont = $('doc-ficha');
+  if (!wrap || !cont) return;
+  if (!isSubadmin()) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const msg = $('doc-ficha-msg'); if (msg) msg.textContent = '';
+  cont.innerHTML = PARQUE_FICHA_FIELDS.map(([k, lbl, type]) => {
+    const val = row[k] == null ? '' : String(row[k]);
+    if (type === 'estado') {
+      const extra = (val && !PARQUE_ESTADOS.includes(val)) ? `<option value="${esc(val)}" selected>${esc(val)}</option>` : '';
+      const opts = PARQUE_ESTADOS.map((e) => `<option value="${e}"${e === val ? ' selected' : ''}>${e}</option>`).join('');
+      return `<label class="doc-ff"><span>${lbl}</span><select data-k="${k}">${extra}${opts}</select></label>`;
+    }
+    const t = type === 'number' ? 'number' : (type === 'date' ? 'date' : 'text');
+    const v = type === 'date' ? String(val).slice(0, 10) : val;
+    return `<label class="doc-ff"><span>${lbl}</span><input type="${t}" data-k="${k}" value="${esc(v)}" /></label>`;
+  }).join('');
+}
+async function guardarFichaParque() {
+  if (!DOC_VEH || !isSubadmin()) return;
+  const cont = $('doc-ficha'); if (!cont) return;
+  const p_data = {};
+  cont.querySelectorAll('[data-k]').forEach((el) => { p_data[el.dataset.k] = el.value; });
+  const btn = $('doc-ficha-save'); if (btn) btn.disabled = true;
+  const msg = $('doc-ficha-msg');
+  try {
+    const { data, error } = await sb.rpc('subadmin_editar_parque', { p_id: DOC_VEH.id, p_data });
+    if (error) throw error;
+    if (data) Object.assign(DOC_VEH, data);
+    if (msg) msg.textContent = '✓ Ficha guardada.';
+    toast('Ficha del vehículo actualizada', 'ok');
+    await loadDocCambios(DOC_VEH.id);
+    if (current === 'parque_automotor') loadData();
+  } catch (e) { if (msg) msg.textContent = 'Error: ' + (e.message || e); toast('No se pudo guardar la ficha: ' + (e.message || e), 'err'); }
+  finally { if (btn) btn.disabled = false; }
+}
+$('doc-ficha-save')?.addEventListener('click', guardarFichaParque);
 // Historial de CUALQUIER cambio de la ficha del vehículo (parque_auditoria); solo admin/operaciones
 const PARQUE_CAMPO_LBL = {
   estado: 'Estado', ruta: 'Ruta', placa: 'Placa', numero_interno: 'Interno',
@@ -3816,7 +3870,7 @@ async function descargarFallosTabla() {
   }
 }
 async function openCumplimiento() {
-  if (!(isAdmin() || isAuditor())) return;
+  if (!(isAdmin() || isAuditor() || isOperaciones())) return;
   const tablas = cumpTablas();
   $('cump-puesto').innerHTML = [['todas', 'Todas'], ...tablas.map((t) => [t, TABLES[t].label || t])]
     .map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
@@ -5482,7 +5536,7 @@ $('integ-body')?.addEventListener('click', (e) => { const b = e.target.closest('
 
 // ===== Vista "🧑‍🤝‍🧑 Pasajeros" (solo admin): conteo de pasajeros por móvil y día desde SONAR =====
 async function openPasajeros() {
-  if (!isAdmin() && !isAfiliado()) return;
+  if (!isAdmin() && !isAfiliado() && !isOperaciones()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'pasajeros';
   cerrarRecorridoBus();
@@ -5820,7 +5874,7 @@ async function loadRutasSel() {
   return _frecRutas;
 }
 async function openFrecuencia() {
-  if (!isAdmin() && !isAuditor()) return;
+  if (!isAdmin() && !isAuditor() && !isOperaciones()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'frecuencia';
   cerrarRecorridoBus();
@@ -5930,7 +5984,7 @@ const PROD_EST = {
   fuera:      { ico: '🔧', lbl: 'Fuera justif.', cls: 'fuera' },
 };
 async function openProductividad() {
-  if (!isAdmin() && !isAuditor() && !isAfiliado()) return;
+  if (!isAdmin() && !isAuditor() && !isAfiliado() && !isOperaciones()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'productividad';
   cerrarRecorridoBus();
@@ -6279,7 +6333,7 @@ $('jor-fecha')?.addEventListener('change', () => { if ($('jor-movil').value && $
 // ── 🏆 Top de movilización: carros que más pasajeros movilizaron (semana/mes) ──
 // Admin ve toda la flota; el afiliado solo SUS carros. Datos de pasajeros_dia (top_movilizacion).
 async function openTop() {
-  if (!isAdmin() && !isAfiliado()) return;
+  if (!isAdmin() && !isAfiliado() && !isOperaciones()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'top';
   cerrarRecorridoBus();
@@ -6993,7 +7047,7 @@ $('pax-fecha')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.
 let _usrVeh = null;        // caché de vehículos para el selector
 let _usrEditEmail = null;  // si no es null: modo "editar vehículos de este afiliado"
 async function openUsuarios() {
-  if (!isAdmin()) return;
+  if (!isAdmin() && !isOperaciones()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'usuarios';
   cerrarRecorridoBus();
@@ -7031,7 +7085,7 @@ async function renderUsuarios() {
           <option value="despachador">Despachador</option>
           <option value="auditor">Auditor / Control</option>
           <option value="afiliado">Afiliado (dueño)</option>
-          <option value="admin">Administrador</option>
+          ${isAdmin() ? '<option value="admin">Administrador</option>' : ''}
         </select></label>
         <label>Nombre <b class="usr-req">*</b> <input id="usr-nombre" type="text" placeholder="Nombre y apellido" autocomplete="off" required /></label>
         <label>Correo <b class="usr-req">*</b> <input id="usr-email" type="email" placeholder="correo@dominio.com" autocomplete="off" required /></label>
@@ -7139,7 +7193,7 @@ async function cargarUsuarios() {
       + `<span class="usr-afil-e">${esc(u.email)}</span>`
       + (esAfi ? `<span class="usr-afil-v">🚗 ${u.vehiculos || 0}</span>` : '<span class="usr-afil-v"></span>')
       + (esAfi ? `<button class="btn usr-afil-edit" data-email="${esc(u.email)}" data-nombre="${esc(u.nombre || '')}">Editar vehículos</button>` : '')
-      + (esYo ? '' : `<button class="btn danger usr-afil-del" data-email="${esc(u.email)}" data-nombre="${esc(u.nombre || u.email)}">Eliminar</button>`)
+      + ((esYo || !isAdmin()) ? '' : `<button class="btn danger usr-afil-del" data-email="${esc(u.email)}" data-nombre="${esc(u.nombre || u.email)}">Eliminar</button>`)
       + `</div>`;
   }).join('');
   cont.querySelectorAll('.usr-afil-edit').forEach((b) => b.addEventListener('click', () => abrirEdicionAfiliado(b.dataset.email, b.dataset.nombre)));

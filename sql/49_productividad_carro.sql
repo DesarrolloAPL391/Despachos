@@ -34,10 +34,10 @@ declare
   -- por fila). v_ids = null → admin/auditor (ven todo); v_ids = sus vehículos → afiliado.
   v_ids     bigint[];
 begin
-  if not (public.es_admin() or public.es_auditor() or public.es_afiliado()) then
+  if not (public.es_admin() or public.es_auditor() or public.es_afiliado() or public.es_operaciones()) then
     raise exception 'No autorizado.';
   end if;
-  v_ids := case when (public.es_admin() or public.es_auditor()) then null
+  v_ids := case when (public.es_admin() or public.es_auditor() or public.es_operaciones()) then null
                 else public.mis_vehiculo_ids_afiliado() end;
 
   with base as (

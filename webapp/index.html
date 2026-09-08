@@ -969,6 +969,12 @@
         <label class="field full"><span>Archivo — PDF o foto (opcional)</span><input type="file" id="doc-file" accept="application/pdf,image/*" /></label>
         <label class="field full"><span>Observación (opcional)</span><input type="text" id="doc-obs" /></label>
         <p id="doc-err" class="error" hidden></p>
+        <div id="doc-ficha-wrap" hidden>
+          <div class="doc-sep">✏️ Editar ficha del vehículo</div>
+          <div id="doc-ficha" class="doc-ficha"></div>
+          <div class="usr-actions"><button id="doc-ficha-save" class="btn primary" type="button">Guardar ficha</button></div>
+          <p id="doc-ficha-msg" class="pax-hint"></p>
+        </div>
         <div class="doc-sep">Historial de documentos</div>
         <div id="doc-hist" class="doc-hist"></div>
         <div id="doc-cambios-wrap" hidden>
