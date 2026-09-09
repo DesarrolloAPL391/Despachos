@@ -699,6 +699,10 @@ function selectTable(name) {
   $('marcar-out-btn').hidden = true;
   actualizarEstadoAsistencia();
   $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
+  // "Traer TODO de SONAR": barrido completo de TODOS los móviles de un día (no solo los
+  // despachados en la app). Solo admin, en Auditoría SONAR. El cron nocturno ya lo hace
+  // del día anterior; este botón sirve para llenar el día de hoy o un día viejo ya mismo.
+  $('sonarfull-btn').hidden = !(name === 'despachos_sonar' && isAdmin());
   $('syncfleet-btn').hidden = name !== 'vehiculosgps' || !isAdmin(); // sincronizar flota: solo admin
   $('synccond-btn').hidden = name !== 'conductores_sonar' || !isAdmin(); // sincronizar conductores: solo admin
   $('import-btn').hidden = !TABLES[name].import || !isAdmin();   // Importar: solo admin
@@ -9945,6 +9949,42 @@ $('synccond-btn').addEventListener('click', async () => {
   if (error) { toast('Error: ' + error.message, 'err'); return; }
   if (data && data.ok) { drvList = null; toast(`Conductores sincronizados: ${data.conductores}`, 'ok'); if (current === 'conductores_sonar') loadData(); }
   else toast('No se pudo: ' + (data?.error || '?'), 'err');
+});
+
+// Traer TODO de SONAR: barrido completo de un día (todos los móviles, no solo los
+// despachados en la app). Va por lotes hasta pendientes=0 (son ~340 llamadas a SONAR).
+$('sonarfull-btn').addEventListener('click', async () => {
+  const btn = $('sonarfull-btn'); if (btn.dataset.busy === '1') return;
+  const fecha = filters['fecha'] || hoyServidor();
+  const ok = await confirmAction({
+    title: 'Traer TODO de SONAR',
+    lead: `Todos los viajes del ${fecha}`,
+    message: 'Trae de SONAR los viajes de TODOS los móviles (no solo los despachados en la app). Son unas 340 consultas y puede tardar 5–10 min. No cierres la pestaña.',
+    okLabel: 'Traer todo',
+  });
+  if (!ok) return;
+  const t = btn.textContent; btn.dataset.busy = '1'; btn.disabled = true;
+  let viajes = 0, vueltas = 0;
+  try {
+    // Re-consulta todo el día desde cero (por si el día sigue cambiando).
+    btn.textContent = 'Preparando…';
+    await sb.rpc('sync_despachos_sonar_reset', { p_fecha: fecha });
+    while (true) {
+      vueltas++;
+      const { data, error } = await sb.rpc('sync_despachos_sonar', { p_fecha: fecha, p_limite: 60 });
+      if (error) { toast('Error: ' + error.message, 'err'); break; }
+      if (!data || !data.ok) { toast('No se pudo: ' + (data?.error || '?'), 'err'); break; }
+      viajes += (data.viajes || 0);
+      const pend = data.pendientes || 0;
+      btn.textContent = `⏳ ${pend} móviles por traer…`;
+      if (pend <= 0 || (data.moviles || 0) === 0) break;
+      if (vueltas > 20) break; // tope de seguridad (20×60 = 1200 móviles)
+    }
+    toast(`Listo: ${viajes} viajes de SONAR del ${fecha}.`, 'ok');
+    if (current === 'despachos_sonar') loadData();
+  } finally {
+    btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = t;
+  }
 });
 
 // ---------- Administración de accesos (solo admin) ----------
