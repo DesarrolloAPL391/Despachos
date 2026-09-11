@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v235';
+export const APP_VERSION = 'v236';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -287,17 +287,23 @@ export const TABLES = {
       // Puesto: se llena solo con el puesto del usuario logueado; el despachador no lo edita
       { key: 'puesto', label: 'Puesto', type: 'text', section: 'General', ctxValue: 'puesto', softReadOnlyDispatcher: true },
 
-      { key: 'vehiculo_id', label: 'Móvil', type: 'fk', qr: true, fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación' },
-      { key: 'despachador_id', label: 'Despachador', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación' },
-      // Viajes: solo aparece al EDITAR el registro, y siempre positivo
+      // Móvil y Conductor: obligatorios para ABRIR el carro (apertura).
+      { key: 'vehiculo_id', label: 'Móvil', type: 'fk', qr: true, fk: { table: 'vehiculos', sel: 'id,numero,placa', label: labelVeh, order: 'numero' }, section: 'Operación', required: true },
+      // Despachador: quien ABRE. Se autocompleta con el usuario logueado (ctxValue) y no lo edita el
+      // despachador (softReadOnly); el handler lo fija a la sesión SOLO al crear (no se sobrescribe cuando
+      // otro despachador del turno de la tarde cierra). Obligatorio (el admin sí lo elige a mano).
+      { key: 'despachador_id', label: 'Despachador (abre)', type: 'fk', fk: { table: 'despachadores', sel: 'id,nombre', label: 'nombre', order: 'nombre' }, section: 'Operación', required: true, ctxValue: 'despachador_id', softReadOnlyDispatcher: true },
+      // Viajes: dato de CIERRE (lo llena el 2º despachador al terminar). Solo aparece al EDITAR,
+      // no al abrir. No obligatorio para abrir; el registro queda 'Cerrado' cuando se llena (closeRequired).
       { key: 'viajes', label: 'Viajes', type: 'number', min: 0, editOnly: true, section: 'Operación' },
       { key: 'ubicacion', label: 'Ubicación (GPS lat, lng)', type: 'text', section: 'Operación', readOnly: true },
       // Estado y Total de pasajeros: ocultos. Hora de cierre: automática (momento de guardado).
 
       // ----- Conductor -----
-      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Conductor', qr: true },
+      { key: 'conductor_id', label: 'Conductor (SONAR)', type: 'sonardrv', nameFrom: 'cond.nombre', section: 'Conductor', qr: true, required: true },
       { key: 'doble_turno', label: '¿Doble turno? (otro conductor en otra jornada)', type: 'boolean', section: 'Conductor' },
-      // Las jornadas y el 2.º conductor solo aparecen si es doble turno
+      // Las jornadas y el 2.º conductor solo aparecen si es doble turno. Son datos de CIERRE:
+      // se exigen para cerrar (closeRequiredDoble), no para abrir el carro.
       { key: 'jornada1_inicio', label: 'Jornada 1 · inicia', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'jornada1_fin', label: 'Jornada 1 · termina', type: 'time', section: 'Conductor', showWhen: { field: 'doble_turno', in: [true] } },
       { key: 'conductor2_id', label: 'Conductor jornada 2 (SONAR)', type: 'sonardrv', nameFrom: 'cond2.nombre', section: 'Conductor', qr: true, showWhen: { field: 'doble_turno', in: [true] } },

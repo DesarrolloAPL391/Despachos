@@ -3365,6 +3365,14 @@ $('modal-save').addEventListener('click', async () => {
     payload[key] = data.id;
   }
 
+  // Resumen: el Despachador que ABRE es quien tiene la sesión. Se fija SOLO al crear (apertura);
+  // al editar/cerrar NO se sobrescribe (son 2 despachadores en turnos distintos: uno abre, otro
+  // cierra, y debe quedar registrado quién abrió). El admin/auditor (sin despachador_id en
+  // contexto) respeta lo que elija el formulario.
+  if (current === 'resumen' && !editing && !isAdmin() && CTX?.despachador_id != null) {
+    payload.despachador_id = CTX.despachador_id;
+  }
+
   // Validar requeridos y mínimos (omitiendo los campos bloqueados/ocultos)
   for (const f of cfg.fields) {
     const el = $('edit-form').querySelector(`[data-key="${f.key}"]`);
