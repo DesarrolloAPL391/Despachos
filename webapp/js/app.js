@@ -3278,8 +3278,12 @@ async function _openEditorInterno(row) {
       else if (f.readOnly || (isDispatched && !f.postDispatch && !f.audit)) input.disabled = true; // solo lectura / ya despachado
       // El auditor solo edita los campos de auditoría; el resto queda de solo lectura
       if (soyAuditor && !f.audit) input.disabled = true;
-      // Solo lectura "suave" para el despachador: no lo puede cambiar pero SÍ se guarda (ej. puesto)
-      if (f.softReadOnlyDispatcher && !isAdmin()) input.readOnly = true;
+      // Solo lectura "suave" para el despachador: no lo puede cambiar (ej. puesto, despachador).
+      // readOnly NO tiene efecto en <select>: ese se DESHABILITA (el valor queda fijo por el
+      // contexto/ctxValue en el form y el handler de guardado lo sella). En texto, readOnly sí sirve.
+      if (f.softReadOnlyDispatcher && !isAdmin()) {
+        if (input.tagName === 'SELECT') input.disabled = true; else input.readOnly = true;
+      }
       wrap.appendChild(input);
       if (f.hint) wrap.appendChild(Object.assign(document.createElement('span'), { className: 'field-hint', textContent: f.hint }));
       // Lector de QR junto al campo (solo donde se marca f.qr en la config):
