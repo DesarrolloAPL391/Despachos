@@ -2169,6 +2169,26 @@ function gruposDeMisRutas(gmap) {
   for (const rn of rutasRaw) { const g = _grupoDeRuta(gmap, rn); if (g) s.add(g); }
   return s;
 }
+// Base numérica de una ruta/grupo: "136A" -> "136", "136" -> "136", "193II" -> "193".
+// Las rutas hermanas (misma base) son una FAMILIA que COMPARTE carros: así el despachador
+// puede mandar un carro de la 136 a la 136A (y viceversa) y verlo en la lista de móviles.
+function baseRuta(g) { const m = String(g || '').match(/^\s*(\d+)/); return m ? m[1] : null; }
+function familiaDeGrupo(grupoRuta, gmap) {
+  const base = baseRuta(grupoRuta);
+  if (!base) return grupoRuta ? [grupoRuta] : [];
+  const fam = new Set([grupoRuta]);
+  for (const g of new Set(gmap.values())) { if (baseRuta(g) === base) fam.add(g); }
+  return [...fam];
+}
+// Objetivo de grupos para filtrar móviles al despachar una ruta: la FAMILIA de la ruta elegida
+// (136 + 136A + …), acotada a los grupos del despachador cuando los tenga. Sin ruta elegida:
+// todos sus grupos. Devuelve un Set, o null si no hay con qué filtrar (admin).
+function objetivoGruposDespacho(grupoRuta, misGrupos, gmap) {
+  if (!grupoRuta) return (misGrupos && misGrupos.size) ? new Set(misGrupos) : null;
+  let objetivo = new Set(familiaDeGrupo(grupoRuta, gmap));
+  if (misGrupos && misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g)));
+  return objetivo;
+}
 // Igual que setupVehByRoute pero usando el GRUPO del parque (ruta_grupos + parque_automotor).
 // Misma filosofía que Nuevo despacho:
 //   • Si hay ruta elegida → móviles del GRUPO de esa ruta (+ pool Integradas si es integrada).
@@ -2192,12 +2212,8 @@ async function setupVehByGroup(form, conf) {
     let objetivo = null; // null = no filtrar
     // Domingo/festivo: cualquier móvil por cualquier ruta -> objetivo queda null (no filtra)
     if (!esDiaLibreDespacho()) {
-      if (grupoRuta) {
-        objetivo = new Set([grupoRuta]);
-        if (misGrupos && misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g)));
-      } else if (misGrupos && misGrupos.size) {
-        objetivo = new Set(misGrupos); // sin ruta: los carros de TODOS sus grupos
-      }
+      // Familia de ruta: la 136 y la 136A comparten carros (se puede mover un carro entre hermanas).
+      objetivo = objetivoGruposDespacho(grupoRuta, misGrupos, gmap);
       // Pool Integradas: si algún grupo objetivo es integrado (I/II), suma los móviles del pool
       if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     }
@@ -7942,9 +7958,9 @@ async function _openSonarInterno(row) {
     const rname = (row?.ruta?.nombre || row?.rutap?.nombre || '').trim();
     const grupoRuta = _grupoDeRuta(gmap, rname);
     const misGrupos = gruposDeMisRutas(gmap);
-    let objetivo = null;
-    if (grupoRuta) { objetivo = new Set([grupoRuta]); if (misGrupos.size) objetivo = new Set([...objetivo].filter((g) => misGrupos.has(g))); }
-    else if (misGrupos.size) objetivo = new Set(misGrupos);
+    // Familia de ruta: la 136 y la 136A comparten carros → al despachar una, se muestran también
+    // los carros de la hermana (se puede mandar un carro de la 136 a la 136A y viceversa).
+    let objetivo = objetivoGruposDespacho(grupoRuta, misGrupos, gmap);
     if (objetivo && [...objetivo].some(esGrupoIntegrada)) objetivo.add(GRUPO_INTEGRADAS);
     if (objetivo && objetivo.size) {
       const progNum = String(row?.veh?.numero || row?.vehp?.numero || '').trim(); // conservar el móvil programado
