@@ -486,6 +486,7 @@ async function showApp(user) {
   processQueue();
   checkAsistenciaPendiente(); // avisar si falta marcar el ingreso de hoy
   refrescarAlertasDocs();     // avisar de documentos vencidos / por vencer
+  avisarNovedadDesbloqueos(); // novedad v239: cómo desbloquear un móvil con documento vencido
 }
 
 $('login-form').addEventListener('submit', async (e) => {
@@ -533,7 +534,7 @@ function buildSidebar() {
     nav.appendChild(b);
   }
   // acciones especiales (no son tablas)
-  if (isAdmin() || CTX?.rol === 'despachador') addNavNotif(nav);
+  if (isAdmin() || CTX?.rol === 'despachador' || CTX?.rol === 'afiliado') addNavNotif(nav);
   addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
   if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
@@ -558,6 +559,7 @@ function buildSidebar() {
   if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin() || isOperaciones()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
+  if (isAdmin() || isOperaciones() || isAuditor()) addNavAction(nav, '🔓', `Desbloqueos de documentos${DESBLOQ_PEND ? ` <span class="nav-badge">${DESBLOQ_PEND}</span>` : ''}`, openDesbloqueos, 'nav-desbloq');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
@@ -592,7 +594,7 @@ function buildBottomNav() {
   const bn = $('bottomnav'); if (!bn) return;
   bn.innerHTML = '';
   const vis = visibleTables();
-  const showNotif = isAdmin() || CTX?.rol === 'despachador';
+  const showNotif = isAdmin() || CTX?.rol === 'despachador' || CTX?.rol === 'afiliado';
   const pref = CTX?.rol === 'despachador'
     ? ['asistencia', 'resumen', 'despachos']
     : ['despachos', 'resumen', 'asistencia'];
@@ -653,6 +655,7 @@ function closeMenu() { setMenu(false); }
 function cerrarPanelesFlotantes() {
   const dp = $('docp-modal'); if (dp) dp.hidden = true;
   const dm = $('doc-modal'); if (dm) dm.hidden = true;
+  ['desbloq-modal', 'docblk-modal', 'dbrev-modal'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
 }
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
@@ -2928,14 +2931,23 @@ async function cargarPreventivasReprog() {
   return data;
 }
 async function cargarAlertasDocumentos() {
-  const { data, error } = await sb.from('parque_automotor')
+  // El AFILIADO solo consulta SUS carros (CTX.moviles); así no se le manda toda la flota.
+  const esAfi = isAfiliado();
+  let q = sb.from('parque_automotor')
     .select('id,numero_interno,placa,ruta,estado,vence_soat,vence_tecnomecanica,vence_tarjeta_operacion,num_soat,num_tecnomecanica,num_tarjeta_operacion')
-    .eq('estado', 'Activo').limit(5000);
+    .eq('estado', 'Activo');
+  if (esAfi) {
+    const mios = Array.from(movilesAfiliado());
+    if (!mios.length) return [];
+    q = q.in('numero_interno', mios);
+  }
+  const { data, error } = await q.limit(5000);
   if (error || !data) return [];
   // admin: toda la flota. despachador (o admin en vista previa): solo móviles de los GRUPOS
   // de sus rutas (rutas SONAR → grupo del parque vía ruta_grupos; parque_automotor.ruta = grupo).
-  let permitido = null; // null = todos (admin)
-  if (filtraComoDespachador()) {
+  // afiliado: ya viene acotado por la consulta (sus móviles), no se filtra por ruta.
+  let permitido = null; // null = todos (admin / afiliado ya acotado)
+  if (!esAfi && filtraComoDespachador()) {
     const gmap = await loadRutaGrupos();
     permitido = new Set();
     const rutasSrc = PREVIEW ? (PREVIEW.rutasRaw || []) : (CTX?.rutas || []);
@@ -2956,6 +2968,7 @@ async function cargarAlertasDocumentos() {
 async function refrescarAlertasDocs() {
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
   try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
+  try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; } catch { DESBLOQ_PEND = 0; }
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
@@ -2980,7 +2993,11 @@ function openDocPanel() {
   if (!DOC_ALERTAS.length) { body.innerHTML = head + '<p class="doc-empty">Sin alertas de documentos. 👍</p>'; }
   else {
     body.innerHTML = head + DOC_ALERTAS.map((a) => {
-      const chips = a.items.map((it) => `<span class="doc-chip ${it.b.cls}">${esc(it.label)}: ${esc(it.b.txt)}</span>`).join(' ');
+      const chips = a.items.map((it) => {
+        const d = it.b.dias;
+        const cuando = d == null ? '' : (d < 0 ? ` · vencido hace ${Math.abs(d)}d` : ` · faltan ${d}d`);
+        return `<span class="doc-chip ${it.b.cls}">${esc(it.label)}: ${esc(it.b.txt)}${cuando}</span>`;
+      }).join(' ');
       const adminBtn = isAdmin() ? `<button class="btn btn-sm docp-edit" data-id="${a.id}">📄 Gestionar</button>` : '';
       return `<div class="docp-item"><div class="docp-h"><b>${esc(a.numero_interno || '')}</b> · ${esc(a.placa || '')}`
         + ` <span class="docp-ruta">${esc(a.ruta || '')}</span> ${adminBtn}</div><div class="docp-chips">${chips}</div></div>`;
@@ -5365,7 +5382,8 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; const w = $('nd-docwarn'); if (w) w.hidden = true; const p = $('nd-pvwarn'); if (p) p.hidden = true; return; }
+  if (!vr) { info.hidden = true; ['nd-docblk', 'nd-docwarn', 'nd-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; if (s.dataset.pvblock !== '1') s.disabled = false; } return; }
+  avisarBloqueoDocMovil(vr.numero, 'nd-docblk', 'nd-save'); // BLOQUEO por documento vencido (SOAT/tecno/tarjeta)
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
   avisarPreventivaMovil(vr.numero, 'nd-pvwarn', 'nd-save'); // preventiva: bloqueo (rechazada) o recordatorio
   const g = await gpsInfoFor(vr.numero);
@@ -5850,7 +5868,7 @@ async function avisarPreventivaMovil(numero, boxId, btnId) {
   const box = $(boxId); if (!box) return;
   box.hidden = true; box.innerHTML = '';
   const btn = btnId ? $(btnId) : null;
-  if (btn) { btn.disabled = false; btn.dataset.pvblock = ''; } // reset del bloqueo
+  if (btn) { btn.dataset.pvblock = ''; btn.disabled = (btn.dataset.docblock === '1'); } // reset (respeta bloqueo por documento)
   if (!numero) return;
   try {
     // 1) ¿SUSPENDIDO por preventiva RECHAZADA? → caja roja + botón deshabilitado
@@ -5890,6 +5908,260 @@ $('pvaud-x')?.addEventListener('click', pvAudCerrar);
 $('pvaud-ok')?.addEventListener('click', pvAudCerrar);
 $('pvaud-modal')?.addEventListener('click', (e) => { if (e.target.id === 'pvaud-modal') pvAudCerrar(); });
 ['nd-pvwarn', 's-pvwarn'].forEach((id) => { $(id)?.addEventListener('click', (e) => { if (e.target.closest('.pvwarn-como')) pvComoAbrir(); }); });
+
+// ===================================================================================
+// BLOQUEO DE DESPACHO POR DOCUMENTO VENCIDO (SOAT / tecnomecánica / tarjeta de operación)
+// Molde = preventivas. El despachador sube foto/PDF -> desbloqueo PROVISIONAL; operaciones aprueba/rechaza.
+// ===================================================================================
+let DESBLOQ_PEND = 0; // # de desbloqueos PENDIENTES (badge del menú operaciones/auditor)
+function dbFechaHora(x) {
+  try { return new Date(x).toLocaleString('es-CO', { timeZone: 'America/Bogota', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  catch (e) { return String(x || ''); }
+}
+// Devuelve el detalle del bloqueo si el móvil está suspendido por documento (o null). Fail-open ante error.
+async function docSuspendido(numero) {
+  try {
+    const { data } = await sb.rpc('doc_bloqueo_estado', { p_interno: String(numero).trim() });
+    return (data && data.bloqueado) ? data : null;
+  } catch (e) { return null; }
+}
+// Mensaje del bloqueo (caja roja del despacho / error del guardado)
+function docBloqueoMsg(b) {
+  const docs = (b.docs || []).filter((d) => d.situacion === 'vencido_sin_subir' || d.situacion === 'rechazado');
+  const li = docs.map((d) => {
+    const venc = d.vence ? fechaLegible(d.vence) : '';
+    const extra = d.situacion === 'rechazado'
+      ? ` — <b>operaciones rechazó</b> el documento${d.motivo_rechazo ? ': ' + esc(d.motivo_rechazo) : ''}`
+      : '';
+    return `• <b>${esc(d.label)}</b> vencido (${esc(venc)})${extra}`;
+  }).join('<br>');
+  return `🚫 <b>DESPACHO BLOQUEADO</b> · móvil ${esc(String(b.interno || '').trim())}<br>${li}<br>`
+    + 'Sube la foto o el PDF del documento para <b>desbloquear</b>. Operaciones lo revisará después.';
+}
+// Aviso al elegir el móvil: caja roja + botón para subir (si bloqueado), o nota ámbar "en revisión".
+async function avisarBloqueoDocMovil(numero, boxId, btnId) {
+  const box = $(boxId); if (!box) return;
+  box.hidden = true; box.innerHTML = ''; box.className = 'field full';
+  const btn = btnId ? $(btnId) : null;
+  if (btn) { btn.dataset.docblock = ''; if (btn.dataset.pvblock !== '1') btn.disabled = false; }
+  if (!numero) return;
+  try {
+    const { data } = await sb.rpc('doc_bloqueo_estado', { p_interno: String(numero).trim() });
+    if (!data) return;
+    if (data.bloqueado) {
+      box.className = 'field full sonar-info docblk';
+      box.innerHTML = docBloqueoMsg(data)
+        + ` <button type="button" class="docblk-subir" data-veh="${data.vehiculo_id}" data-mov="${esc(String(data.interno || ''))}">📎 Subir documento para desbloquear</button>`;
+      box.hidden = false;
+      if (btn) { btn.disabled = true; btn.dataset.docblock = '1'; }
+      return;
+    }
+    const rev = (data.docs || []).filter((d) => d.situacion === 'en_revision');
+    if (rev.length) {
+      box.className = 'field full sonar-info docblk revi';
+      box.innerHTML = `⏳ <b>Desbloqueo provisional</b> · móvil ${esc(String(data.interno || '').trim())}<br>`
+        + rev.map((d) => `• <b>${esc(d.label)}</b> vencido — documento <b>subido, en revisión</b> por operaciones`).join('<br>');
+      box.hidden = false;
+    }
+  } catch (e) { /* informativo: si falla, no estorba el despacho */ }
+}
+
+// ---- Subir foto/PDF para DESBLOQUEAR (despachador) ----
+let DOC_BLK = null; // { vehId, movil, after }
+async function openDocBlk(vehId, movil, after) {
+  DOC_BLK = { vehId, movil, after };
+  $('docblk-error').hidden = true;
+  $('docblk-file').value = ''; $('docblk-obs').value = '';
+  $('docblk-info').innerHTML = `Móvil <b>${esc(String(movil || ''))}</b>`;
+  const sel = $('docblk-tipo'); sel.innerHTML = '<option value="">Cargando…</option>';
+  $('docblk-modal').hidden = false;
+  try {
+    const { data } = await sb.rpc('doc_bloqueo_estado', { p_interno: String(movil).trim() });
+    const docs = (data?.docs || []).filter((d) => d.situacion === 'vencido_sin_subir' || d.situacion === 'rechazado');
+    sel.innerHTML = docs.length
+      ? docs.map((d) => `<option value="${d.tipo}">${esc(d.label)} (vencido ${esc(d.vence ? fechaLegible(d.vence) : '')})</option>`).join('')
+      : '<option value="">No hay documentos por desbloquear</option>';
+  } catch (e) { sel.innerHTML = '<option value="">Error cargando</option>'; }
+}
+function closeDocBlk() { $('docblk-modal').hidden = true; DOC_BLK = null; }
+$('docblk-x')?.addEventListener('click', closeDocBlk);
+$('docblk-cancel')?.addEventListener('click', closeDocBlk);
+$('docblk-modal')?.addEventListener('click', (e) => { if (e.target.id === 'docblk-modal') closeDocBlk(); });
+$('docblk-save')?.addEventListener('click', async () => {
+  if (!DOC_BLK) return;
+  const btn = $('docblk-save'); if (btn.dataset.busy === '1') return;
+  const err = $('docblk-error'); err.hidden = true;
+  const tipo = $('docblk-tipo').value;
+  const file = $('docblk-file').files[0];
+  const obs = $('docblk-obs').value.trim();
+  if (!tipo) { err.textContent = 'Selecciona el documento a desbloquear.'; err.hidden = false; return; }
+  if (!file) { err.textContent = 'Debes adjuntar la foto o el PDF del documento.'; err.hidden = false; return; }
+  if (file.size > 15 * 1024 * 1024) { err.textContent = 'El archivo supera 15 MB.'; err.hidden = false; return; }
+  btn.dataset.busy = '1'; btn.disabled = true; const old = btn.textContent; btn.textContent = 'Subiendo…';
+  showBusy('Subiendo documento…');
+  try {
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${DOC_BLK.vehId}/desbloqueo_${tipo}/${Date.now()}_${safe}`;
+    const up = await sb.storage.from('docs-vehiculos').upload(path, file, { upsert: false, contentType: file.type || undefined });
+    if (up.error) throw up.error;
+    const { error } = await sb.rpc('doc_desbloqueo_subir', {
+      p_vehiculo_id: DOC_BLK.vehId, p_tipo: tipo, p_archivo_path: path,
+      p_archivo_nombre: file.name, p_observacion: obs,
+    });
+    if (error) throw error;
+    const after = DOC_BLK.after;
+    hideBusy(); closeDocBlk();
+    toast('Documento subido. Móvil desbloqueado provisionalmente ✅', 'ok');
+    refrescarDesbloqPend();
+    if (typeof after === 'function') after();
+  } catch (e) {
+    hideBusy(); err.textContent = e.message || String(e); err.hidden = false;
+  } finally { btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = old; }
+});
+// Botón "Subir documento para desbloquear" dentro de la caja roja de cada modal de despacho
+['nd-docblk', 's-docblk'].forEach((id) => {
+  $(id)?.addEventListener('click', (e) => {
+    const b = e.target.closest('.docblk-subir'); if (!b) return;
+    const veh = Number(b.dataset.veh), mov = b.dataset.mov;
+    const btnId = id === 'nd-docblk' ? 'nd-save' : null;
+    openDocBlk(veh, mov, () => avisarBloqueoDocMovil(mov, id, btnId));
+  });
+});
+
+// ---- Panel de DESBLOQUEOS (operaciones revisa / auditor observa) ----
+async function refrescarDesbloqPend() {
+  try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; }
+  catch (e) { DESBLOQ_PEND = 0; }
+  buildSidebar();
+}
+let _desbloqTab = 'PENDIENTE';
+function openDesbloqueos() {
+  $('desbloq-modal').hidden = false;
+  document.querySelectorAll('.desbloq-tab').forEach((t) => t.classList.toggle('active', (t.dataset.estado || '') === _desbloqTab));
+  loadDesbloqueos(_desbloqTab);
+}
+async function loadDesbloqueos(estado) {
+  const body = $('desbloq-body'); body.innerHTML = '<p class="muted">Cargando…</p>';
+  const puedeRevisar = isAdmin() || isOperaciones();
+  const tipoLbl = { soat: 'SOAT', tecnomecanica: 'Tecnomecánica', tarjeta_operacion: 'Tarjeta de operación' };
+  const estTag = { PENDIENTE: ['pend', 'PENDIENTE'], APROBADO: ['aprob', 'APROBADO'], RECHAZADO: ['rech', 'RECHAZADO'] };
+  try {
+    const { data, error } = await sb.rpc('doc_desbloqueos_listar', { p_estado: estado || null });
+    if (error) throw error;
+    const rows = data || [];
+    if (!rows.length) { body.innerHTML = '<p class="muted">No hay solicitudes en esta pestaña.</p>'; return; }
+    body.innerHTML = rows.map((r) => {
+      const et = estTag[r.estado] || ['pend', r.estado];
+      let meta = `📎 Subido por <b>${esc(r.subido_por || '—')}</b> · ${esc(dbFechaHora(r.subido_en))}`;
+      if (r.vence_al_subir) meta += `<br>Vencía: ${esc(fechaLegible(r.vence_al_subir))}`;
+      if (r.observacion) meta += `<br>Obs: ${esc(r.observacion)}`;
+      if (r.estado === 'APROBADO') meta += `<br>✅ Aprobado por <b>${esc(r.revisado_por || '—')}</b> · ${esc(dbFechaHora(r.revisado_en))}${r.nueva_fecha ? ' · nueva vigencia ' + esc(fechaLegible(r.nueva_fecha)) : ''}`;
+      if (r.estado === 'RECHAZADO') meta += `<br>❌ Rechazado por <b>${esc(r.revisado_por || '—')}</b> · ${esc(dbFechaHora(r.revisado_en))}${r.motivo_rechazo ? ' · ' + esc(r.motivo_rechazo) : ''}`;
+      const acts = (puedeRevisar && r.estado === 'PENDIENTE')
+        ? `<div class="db-acts"><button class="btn btn-sm btn-primary db-rev" data-id="${r.id}">Revisar</button></div>`
+        : '';
+      const link = r.archivo_path
+        ? `<a href="#" class="db-doclink" data-path="${esc(r.archivo_path)}">📄 Ver documento</a>`
+        : '<span class="muted">sin archivo</span>';
+      return `<div class="db-row ${et[0]}">`
+        + `<div class="db-row-h">🚌 ${esc(r.numero_interno || '')} <span class="muted">${esc(r.placa || '')} · ${esc(r.ruta || '')}</span>`
+        + ` <span class="db-tag ${et[0]}">${et[1]}</span><span class="spacer"></span>${link}</div>`
+        + `<div class="db-meta">${esc(tipoLbl[r.tipo] || r.tipo)} — ${meta}</div>${acts}</div>`;
+    }).join('');
+    body.querySelectorAll('.db-rev').forEach((b) => b.addEventListener('click', () => {
+      const row = rows.find((x) => String(x.id) === b.dataset.id); if (row) openDbRev(row);
+    }));
+    body.querySelectorAll('.db-doclink').forEach((a) => a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        const su = await sb.storage.from('docs-vehiculos').createSignedUrl(a.dataset.path, 3600);
+        if (su?.data?.signedUrl) window.open(su.data.signedUrl, '_blank');
+        else toast('No se pudo abrir el documento', 'err');
+      } catch (er) { toast('No se pudo abrir el documento', 'err'); }
+    }));
+  } catch (e) { body.innerHTML = `<p class="error">Error: ${esc(e.message || String(e))}</p>`; }
+}
+document.querySelectorAll('.desbloq-tab').forEach((t) => t.addEventListener('click', () => {
+  _desbloqTab = t.dataset.estado || '';
+  document.querySelectorAll('.desbloq-tab').forEach((x) => x.classList.toggle('active', x === t));
+  loadDesbloqueos(_desbloqTab);
+}));
+$('desbloq-x')?.addEventListener('click', () => { $('desbloq-modal').hidden = true; });
+$('desbloq-cerrar')?.addEventListener('click', () => { $('desbloq-modal').hidden = true; });
+$('desbloq-modal')?.addEventListener('click', (e) => { if (e.target.id === 'desbloq-modal') $('desbloq-modal').hidden = true; });
+
+// ---- Revisar un desbloqueo: aprobar (nueva fecha) / rechazar (motivo) ----
+let DB_REV = null;
+function openDbRev(row) {
+  DB_REV = row;
+  const tipoLbl = { soat: 'SOAT', tecnomecanica: 'Tecnomecánica', tarjeta_operacion: 'Tarjeta de operación' };
+  $('dbrev-error').hidden = true;
+  $('dbrev-fecha').value = ''; $('dbrev-num').value = row.nuevo_numero || '';
+  $('dbrev-motivo').value = '';
+  $('dbrev-motivo-wrap').hidden = true;
+  $('dbrev-aprob-wrap').hidden = false;
+  $('dbrev-reject').textContent = 'Rechazar';
+  $('dbrev-info').innerHTML = `🚌 <b>${esc(row.numero_interno || '')}</b> · ${esc(tipoLbl[row.tipo] || row.tipo)}<br>`
+    + `Vencía: ${esc(row.vence_al_subir ? fechaLegible(row.vence_al_subir) : '—')} · subido por ${esc(row.subido_por || '—')}`;
+  $('dbrev-modal').hidden = false;
+}
+function closeDbRev() { $('dbrev-modal').hidden = true; DB_REV = null; }
+$('dbrev-x')?.addEventListener('click', closeDbRev);
+$('dbrev-cancel')?.addEventListener('click', closeDbRev);
+$('dbrev-modal')?.addEventListener('click', (e) => { if (e.target.id === 'dbrev-modal') closeDbRev(); });
+$('dbrev-approve')?.addEventListener('click', async () => {
+  if (!DB_REV) return;
+  const err = $('dbrev-error'); err.hidden = true;
+  const fecha = $('dbrev-fecha').value;
+  if (!fecha) { err.textContent = 'Indica la nueva fecha de vencimiento.'; err.hidden = false; return; }
+  const btn = $('dbrev-approve'); if (btn.dataset.busy === '1') return;
+  btn.dataset.busy = '1'; btn.disabled = true;
+  try {
+    const { error } = await sb.rpc('doc_desbloqueo_revisar', {
+      p_id: DB_REV.id, p_aprobar: true, p_nueva_fecha: fecha, p_numero: $('dbrev-num').value.trim() || null,
+    });
+    if (error) throw error;
+    closeDbRev(); toast('Desbloqueo aprobado ✅', 'ok');
+    refrescarDesbloqPend(); loadDesbloqueos(_desbloqTab);
+    if (current === 'parque_automotor') loadData();
+  } catch (e) { err.textContent = e.message || String(e); err.hidden = false; }
+  finally { btn.dataset.busy = '0'; btn.disabled = false; }
+});
+$('dbrev-reject')?.addEventListener('click', async () => {
+  if (!DB_REV) return;
+  const err = $('dbrev-error'); err.hidden = true;
+  // 1er clic: revela el campo de motivo; 2º clic (motivo lleno): confirma el rechazo
+  if ($('dbrev-motivo-wrap').hidden) {
+    $('dbrev-motivo-wrap').hidden = false; $('dbrev-aprob-wrap').hidden = true;
+    $('dbrev-reject').textContent = 'Confirmar rechazo';
+    $('dbrev-motivo').focus(); return;
+  }
+  const motivo = $('dbrev-motivo').value.trim();
+  if (!motivo) { err.textContent = 'Indica el motivo del rechazo.'; err.hidden = false; return; }
+  const btn = $('dbrev-reject'); if (btn.dataset.busy === '1') return;
+  btn.dataset.busy = '1'; btn.disabled = true;
+  try {
+    const { error } = await sb.rpc('doc_desbloqueo_revisar', { p_id: DB_REV.id, p_aprobar: false, p_motivo: motivo });
+    if (error) throw error;
+    closeDbRev(); toast('Desbloqueo rechazado', 'ok');
+    refrescarDesbloqPend(); loadDesbloqueos(_desbloqTab);
+  } catch (e) { err.textContent = e.message || String(e); err.hidden = false; }
+  finally { btn.dataset.busy = '0'; btn.disabled = false; }
+});
+
+// ---- Aviso único (novedad v239): cómo funcionan los bloqueos/desbloqueos por documento vencido ----
+function abrirDocBlkInfo() { const m = $('docblkinfo-modal'); if (m) m.hidden = false; }
+function cerrarDocBlkInfo() { const m = $('docblkinfo-modal'); if (m) m.hidden = true; }
+$('docblkinfo-x')?.addEventListener('click', cerrarDocBlkInfo);
+$('docblkinfo-ok')?.addEventListener('click', cerrarDocBlkInfo);
+$('docblkinfo-modal')?.addEventListener('click', (e) => { if (e.target.id === 'docblkinfo-modal') cerrarDocBlkInfo(); });
+// Al entrar, mostrar UNA vez a quienes despachan (despachadores/operaciones) cómo desbloquear.
+function avisarNovedadDesbloqueos() {
+  if (!isDespachador()) return;
+  try { if (localStorage.getItem('docblk_info_v239')) return; } catch (e) { return; }
+  abrirDocBlkInfo();
+  try { localStorage.setItem('docblk_info_v239', '1'); } catch (e) { /* */ }
+}
 
 // ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
 let _frecRutas = null;
@@ -7727,6 +7999,8 @@ $('nd-save').addEventListener('click', async () => {
 
   // Bloqueo por preventiva RECHAZADA: suspendido hasta que operaciones apruebe la nueva revisión
   if (vrow?.numero) { const bq = await pvSuspendido(vrow.numero); if (bq) { err.innerHTML = pvBloqueoMsg(bq); err.hidden = false; return; } }
+  // Bloqueo por DOCUMENTO vencido (SOAT/tecno/tarjeta): solo se levanta subiendo la foto/PDF (desbloqueo provisional)
+  if (vrow?.numero) { const db = await docSuspendido(vrow.numero); if (db) { err.innerHTML = docBloqueoMsg(db); err.hidden = false; return; } }
 
   // Aviso de doble despacho por tiempo (< 20 min)
   const minDesde = await minutosUltimoDespacho(Number(vehVal));
@@ -7891,10 +8165,11 @@ async function updateSonarInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const info = $('s-info');
-  if (!vr) { info.hidden = true; const w = $('s-docwarn'); if (w) w.hidden = true; const p = $('s-pvwarn'); if (p) p.hidden = true; return; }
+  if (!vr) { info.hidden = true; ['s-docblk', 's-docwarn', 's-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
+  // BLOQUEO por documento vencido. En SONAR el botón también sirve para "no realizó" (no es despacho):
+  // NO deshabilitamos el botón; la caja roja avisa y el guarda de "Despachar" bloquea solo el despacho real.
+  avisarBloqueoDocMovil(vr.numero, 's-docblk');
   avisarDocsMovil(vr.numero); // aviso de documentos vencidos / por vencer de este móvil
-  // En SONAR el botón también sirve para "no realizó" (no es despacho): no lo deshabilitamos;
-  // la caja roja avisa y el guarda del botón Despachar bloquea solo el despacho real.
   avisarPreventivaMovil(vr.numero, 's-pvwarn');
   const g = await gpsInfoFor(vr.numero);
   if (g) {
@@ -8102,6 +8377,8 @@ $('sonar-send').addEventListener('click', async () => {
     if (vrB?.numero) {
       const bq = await pvSuspendido(vrB.numero);
       if (bq) { const e = $('sonar-error'); e.innerHTML = pvBloqueoMsg(bq); e.hidden = false; return; }
+      const db = await docSuspendido(vrB.numero);
+      if (db) { const e = $('sonar-error'); e.innerHTML = docBloqueoMsg(db); e.hidden = false; return; }
     }
   }
   // Rutas MADRUGADA/CENTRO: NUNCA se despachan a SONAR; solo se marca si se realizó o no.

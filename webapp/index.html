@@ -619,6 +619,7 @@
         <label class="field"><span>Móvil *</span><select id="nd-movil"></select></label>
         <label class="field"><span>Conductor *</span><select id="nd-cond"></select></label>
         <div class="field full sonar-info" id="nd-info" hidden></div>
+        <div class="field full" id="nd-docblk" hidden></div>
         <div class="field full" id="nd-docwarn" hidden></div>
         <div class="field full" id="nd-pvwarn" hidden></div>
         <label class="field"><span>Despachador (tú)</span><input id="nd-desp-name" readonly /></label>
@@ -661,6 +662,7 @@
         <label class="field"><span>Despachador (tú)</span><input id="s-desp-name" readonly /></label>
         <label class="field"><span>Comentarios</span><input id="s-com" /></label>
         <div class="field full sonar-info" id="s-info" hidden></div>
+        <div class="field full" id="s-docblk" hidden></div>
         <div class="field full" id="s-docwarn" hidden></div>
         <div class="field full" id="s-pvwarn" hidden></div>
         <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>
@@ -1001,6 +1003,100 @@
       <div class="modal-foot">
         <span class="spacer"></span>
         <button id="docp-cerrar" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Subir documento para DESBLOQUEAR un móvil (despachador) -->
+  <div id="docblk-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>📎 Desbloquear móvil — subir documento</h3>
+        <button id="docblk-x" class="icon-btn">✕</button>
+      </div>
+      <form id="docblk-form" class="edit-form">
+        <div class="field full sonar-info" id="docblk-info"></div>
+        <label class="field full"><span>Documento a desbloquear *</span><select id="docblk-tipo"></select></label>
+        <label class="field full"><span>Foto o PDF del documento *</span><input type="file" id="docblk-file" accept="image/*,application/pdf" capture="environment" /></label>
+        <label class="field full"><span>Observación (opcional)</span><input id="docblk-obs" placeholder="Ej: SOAT renovado hoy, pendiente por cargar" /></label>
+        <div class="field full sonar-info" id="docblk-nota">ℹ️ Al subir el documento el móvil queda <b>desbloqueado provisionalmente</b> para que puedas despachar. Operaciones revisará y <b>aprobará</b> (o rechazará) el documento.</div>
+      </form>
+      <div class="modal-foot">
+        <p id="docblk-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="docblk-cancel" class="btn">Cancelar</button>
+        <button id="docblk-save" class="btn btn-primary">Subir y desbloquear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel de DESBLOQUEOS de documentos (operaciones revisa / auditor observa) -->
+  <div id="desbloq-modal" class="modal" hidden>
+    <div class="modal-card ds-card">
+      <div class="modal-head">
+        <h3>🔓 Desbloqueos de documentos</h3>
+        <button id="desbloq-x" class="icon-btn">✕</button>
+      </div>
+      <div class="desbloq-tabs">
+        <button type="button" class="btn btn-sm desbloq-tab active" data-estado="PENDIENTE">Pendientes</button>
+        <button type="button" class="btn btn-sm desbloq-tab" data-estado="APROBADO">Aprobados</button>
+        <button type="button" class="btn btn-sm desbloq-tab" data-estado="RECHAZADO">Rechazados</button>
+        <button type="button" class="btn btn-sm desbloq-tab" data-estado="">Todos</button>
+      </div>
+      <div id="desbloq-body" class="docp-body"></div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="desbloq-cerrar" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Revisar un desbloqueo: aprobar (nueva fecha) o rechazar (motivo) -->
+  <div id="dbrev-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3 id="dbrev-title">Revisar desbloqueo</h3>
+        <button id="dbrev-x" class="icon-btn">✕</button>
+      </div>
+      <form id="dbrev-form" class="edit-form">
+        <div class="field full sonar-info" id="dbrev-info"></div>
+        <div id="dbrev-aprob-wrap">
+          <label class="field full"><span>Nueva fecha de vencimiento *</span><input type="date" id="dbrev-fecha" /></label>
+          <label class="field full"><span>Número del documento (opcional)</span><input id="dbrev-num" /></label>
+        </div>
+        <label class="field full" id="dbrev-motivo-wrap" hidden><span>Motivo del rechazo *</span><input id="dbrev-motivo" placeholder="Ej: el documento subido no corresponde / está ilegible" /></label>
+      </form>
+      <div class="modal-foot">
+        <p id="dbrev-error" class="error" hidden></p>
+        <span class="spacer"></span>
+        <button id="dbrev-cancel" class="btn">Cancelar</button>
+        <button id="dbrev-reject" class="btn btn-danger">Rechazar</button>
+        <button id="dbrev-approve" class="btn btn-primary">Aprobar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NOVEDAD (v239): cómo funcionan los bloqueos/desbloqueos por documento vencido -->
+  <div id="docblkinfo-modal" class="modal" hidden>
+    <div class="modal-card confirm-card">
+      <div class="modal-head">
+        <h3>🔒 Novedad: bloqueo por documentos vencidos</h3>
+        <button id="docblkinfo-x" class="icon-btn">✕</button>
+      </div>
+      <div class="docblkinfo-body">
+        <p>Desde ahora, si un móvil tiene el <b>SOAT</b>, la <b>tecnomecánica</b> o la <b>tarjeta de operación VENCIDA</b>, la app <b>no deja despacharlo</b> — ni en <b>Despachos</b> ni en las <b>tablas de tu puesto</b>. Verás una caja roja: <b>“🚫 DESPACHO BLOQUEADO”</b>.</p>
+        <p><b>Para desbloquear el móvil:</b></p>
+        <ol class="docblkinfo-steps">
+          <li>Toca el botón <b>“📎 Subir documento para desbloquear”</b>.</li>
+          <li>Elige el documento vencido y <b>toma la foto</b> (o adjunta el <b>PDF</b>) del documento renovado.</li>
+          <li>Al subirlo, el móvil queda <b>desbloqueado de inmediato</b> y ya puedes despacharlo.</li>
+        </ol>
+        <p><b>Operaciones lo revisa después:</b> si está bien lo <b>aprueba</b> y actualiza la fecha de vencimiento; si algo está mal lo <b>rechaza</b> (con motivo) y el móvil <b>se vuelve a bloquear</b> hasta que subas el documento correcto.</p>
+        <p class="docblkinfo-note">Todo queda registrado: quién subió el documento, a qué hora y qué decidió operaciones. 📸 Sube siempre el documento <b>legible</b>.</p>
+      </div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="docblkinfo-ok" class="btn btn-primary">Entendido</button>
       </div>
     </div>
   </div>
