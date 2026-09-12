@@ -619,6 +619,7 @@
         <label class="field"><span>Móvil *</span><select id="nd-movil"></select></label>
         <label class="field"><span>Conductor *</span><select id="nd-cond"></select></label>
         <div class="field full sonar-info" id="nd-info" hidden></div>
+        <div class="field full" id="nd-restrwarn" hidden></div>
         <div class="field full" id="nd-docblk" hidden></div>
         <div class="field full" id="nd-docwarn" hidden></div>
         <div class="field full" id="nd-pvwarn" hidden></div>
@@ -662,6 +663,7 @@
         <label class="field"><span>Despachador (tú)</span><input id="s-desp-name" readonly /></label>
         <label class="field"><span>Comentarios</span><input id="s-com" /></label>
         <div class="field full sonar-info" id="s-info" hidden></div>
+        <div class="field full" id="s-restrwarn" hidden></div>
         <div class="field full" id="s-docblk" hidden></div>
         <div class="field full" id="s-docwarn" hidden></div>
         <div class="field full" id="s-pvwarn" hidden></div>
@@ -1047,6 +1049,33 @@
       <div class="modal-foot">
         <span class="spacer"></span>
         <button id="desbloq-cerrar" class="btn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard: estadística de restricciones (auditores) -->
+  <div id="restrstats-modal" class="modal" hidden>
+    <div class="modal-card rst-card">
+      <div class="modal-head">
+        <h3>🚨 Estadísticas de restricciones</h3>
+        <button id="restrstats-x" class="icon-btn">✕</button>
+      </div>
+      <div class="rst-filters">
+        <label>Desde <input type="date" id="rst-desde" /></label>
+        <label>Hasta <input type="date" id="rst-hasta" /></label>
+        <label>Estado
+          <select id="rst-estado">
+            <option value="">Todas</option>
+            <option value="VIGENTE">Solo vigentes</option>
+            <option value="CANCELADA">Solo canceladas</option>
+          </select>
+        </label>
+        <button id="rst-consultar" class="btn btn-sm btn-primary">Consultar</button>
+      </div>
+      <div id="restrstats-body" class="rst-body"></div>
+      <div class="modal-foot">
+        <span class="spacer"></span>
+        <button id="restrstats-cerrar" class="btn">Cerrar</button>
       </div>
     </div>
   </div>

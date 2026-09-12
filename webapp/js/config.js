@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v239';
+export const APP_VERSION = 'v240';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -24,7 +24,7 @@ const NOVEDADES = [
 
 export const TABLE_ORDER = [
   'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
-  'conductores_sonar', 'parque_automotor', 'itinerarios',
+  'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios',
 ];
 // Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
 // y se registran en tiempo de ejecución (ver app.js). No hay que editar config por cada una.
@@ -71,6 +71,10 @@ const IMPORT_MAP_RESUMEN = {
   'conductor': 'conductor', 'vehiculo': 'vehiculo', 'puesto': 'puesto', 'despachador': 'despachador',
   'ubicacion': 'ubicacion', 'hora de cerrada de vehiculo': 'hora_cierre', 'estado': 'estado',
 };
+
+// Claves de las tablas de puesto (para condicionar los campos de Restricciones de rutas).
+// 'despachos' es la vista general (restricción por vehículo + conductor + franja).
+const PUESTO_TABLE_KEYS = ['laureles', 't_130', 't_132a', 't_133_133d', 't_135_sab', 't_193', 't_287', 't_313'];
 
 export const TABLES = {
   despachos: {
@@ -583,6 +587,57 @@ export const TABLES = {
       { key: 'email', label: 'Email', type: 'text' },
       { key: 'mid', label: 'mId', type: 'text' },
       { key: 'status', label: 'Estado', type: 'text' },
+    ],
+  },
+  restricciones_rutas: {
+    label: 'Restricciones de rutas',
+    icon: '🚫',
+    despachador: true,     // el despachador la ve (solo lectura); el AUDITOR las crea/edita
+    pk: 'id',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['vehiculo', 'conductor', 'ruta', 'novedad', 'propietario'],
+    defaultOrder: { col: 'fecha_novedad', asc: false },
+    filters: [
+      { col: 'estado', label: 'Estado', options: ['VIGENTE', 'CANCELADA'] },
+    ],
+    columns: [
+      { key: 'fecha_novedad', label: 'F. novedad', m: true },
+      { key: 'vehiculo', label: 'Móvil', m: true },
+      { key: 'tabla', label: 'Tabla' },
+      { key: 'ruta_restringida', label: 'Ruta restr.', m: true },
+      { key: 'modo', label: 'Tipo' },
+      { key: 'fecha_restriccion', label: 'F. restricción', m: true },
+      { key: 'viajes_hora', label: 'Detalle' },
+      { key: 'novedad', label: 'Novedad' },
+      { key: 'estado', label: 'Estado', badge: true, m: true },
+    ],
+    fields: [
+      { key: 'fecha_novedad', label: 'Fecha novedad', type: 'date', section: 'General' },
+      { key: 'ruta', label: 'Ruta infracción', type: 'textsel', optionsFrom: { table: 'itinerarios', col: 'nombre' }, section: 'General', hint: 'Ruta donde ocurrió la infracción (informativo). Elígela de la lista.' },
+      { key: 'vehiculo', label: 'Móvil (N° interno)', type: 'textsel', optionsFrom: { table: 'vehiculos', col: 'numero' }, section: 'General', requiredWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, hint: 'En tablas de puesto el bloqueo es por móvil (obligatorio ahí). En Despachos es opcional (ahí bloquea el conductor). Elígelo de la lista para que coincida con el despacho.' },
+      { key: 'conductor', label: 'Conductor', type: 'textsel', optionsFrom: { table: 'conductores_sonar', col: 'nombre', where: ['status', 'ENABLED'] }, section: 'General', requiredWhen: { field: 'tabla', in: ['despachos'] }, hint: 'En Despachos el bloqueo sigue al CONDUCTOR en cualquier móvil (obligatorio ahí). Elígelo de la lista para que coincida EXACTO con el despacho.' },
+      { key: 'novedad', label: 'Novedad (qué incumplió)', type: 'text', section: 'General' },
+      { key: 'tabla', label: 'Tabla / puesto donde aplica', type: 'enum', options: [...PUESTO_TABLE_KEYS, 'despachos'], required: true, section: 'Restricción', hint: 'Una tabla de puesto (laureles, t_130, …) = bloquea por MÓVIL + RUTA. "despachos" (vista general) = bloquea por CONDUCTOR (cualquier móvil) + franja horaria.' },
+      { key: 'fecha_restriccion', label: 'Fecha en que se cumple la restricción', type: 'date', required: true, section: 'Restricción', hint: 'Día en que el móvil queda restringido (se usa para bloquear el despacho).' },
+      { key: 'ruta_restringida', label: 'Ruta a restringir', type: 'textsel', optionsFrom: { table: 'itinerarios', col: 'nombre' }, section: 'Restricción', showWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, requiredWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, hint: 'Ruta del viaje castigado (p. ej. 192). Elígela de la lista. Solo para tablas de puesto.' },
+      { key: 'modo', label: 'Tipo de restricción', type: 'enum', options: ['VIAJE', 'HORA'], section: 'Restricción', showWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, requiredWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, hint: 'VIAJE = un viaje puntual (ruta + hora de salida). HORA = una franja. Solo para tablas de puesto.' },
+      { key: 'hora_viaje', label: 'Hora del viaje a restringir', type: 'time', section: 'Restricción', showWhen: { field: 'modo', in: ['VIAJE'] }, hint: 'Hora de salida del viaje castigado. Se bloquea ±30 min alrededor.' },
+      { key: 'hora_inicial', label: 'Hora inicial (franja)', type: 'time', section: 'Restricción', hint: 'Franja bloqueada: para tipo HORA (puesto) o para Despachos.' },
+      { key: 'hora_finalizacion', label: 'Hora finalización (franja)', type: 'time', section: 'Restricción' },
+      { key: 'viajes_hora', label: 'Detalle (texto libre)', type: 'text', section: 'Restricción', hint: 'Opcional, p. ej. "se restringe viaje 10:45 ruta 192".' },
+      { key: 'estado', label: 'Estado', type: 'enum', options: ['VIGENTE', 'CANCELADA'], required: true, section: 'Restricción' },
+      { key: 'observaciones', label: 'Observaciones', type: 'text', section: 'Restricción' },
+      { key: 'propietario', label: 'Propietario', type: 'text', section: 'Propietario' },
+      { key: 'correo_propietario', label: 'Correo propietario', type: 'text', section: 'Propietario' },
+      { key: 'celular_propietario', label: 'Celular propietario', type: 'text', section: 'Propietario' },
+      { key: 'despachador_am', label: 'Despachador AM', type: 'text', section: 'Despacho' },
+      { key: 'numero_am', label: 'Número AM', type: 'text', section: 'Despacho' },
+      { key: 'despachador_pm', label: 'Despachador PM', type: 'text', section: 'Despacho' },
+      { key: 'numero_pm', label: 'Número PM', type: 'text', section: 'Despacho' },
+      { key: 'key_origen', label: 'KEY (origen)', type: 'text', section: 'Meta', readOnly: true },
+      { key: 'usuario', label: 'Usuario', type: 'text', section: 'Meta' },
+      { key: 'accion_usuario', label: 'Acción usuario', type: 'text', section: 'Meta' },
     ],
   },
   itinerarios: {

@@ -68,6 +68,8 @@ function isOperaciones() { return isAdmin() || (isDespachador() && /operaciones/
 function isSubadmin() { return isAdmin() || isOperaciones(); }
 // El afiliado nunca crea/edita/despacha: sus tablas se muestran en solo lectura.
 function afiliadoSoloLectura() { return isAfiliado() || (PREVIEW && PREVIEW.rol === 'afiliado'); }
+// Restricciones de rutas: SOLO el auditor (y admin) las crea/edita; despachador/afiliado las ven.
+function puedeGestionarRestricciones() { return isAdmin() || isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor'); }
 // Móviles (números) del afiliado logueado (los trae mi_contexto en CTX.moviles)
 function movilesAfiliado() { return new Set((CTX?.moviles || []).map((m) => String(m).trim())); }
 // Candado por fila (rowLocked): si la tabla marca `adminBypassLock`, NO aplica al admin
@@ -148,7 +150,7 @@ function matchItinerario(its, rutaNombre) {
 function visibleTables() {
   // Vista previa (admin simulando): el menú se reduce como el del usuario simulado
   if (PREVIEW) {
-    if (PREVIEW.rol === 'auditor') return ['despachos', 'despachos_sonar', 'resumen', ...(PREVIEW.auditTables || [])];
+    if (PREVIEW.rol === 'auditor') return ['despachos', 'despachos_sonar', 'resumen', 'restricciones_rutas', ...(PREVIEW.auditTables || [])];
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
@@ -157,13 +159,13 @@ function visibleTables() {
   // no solo los suyos). Mapa y Pasajeros se agregan aparte como acciones del menú.
   if (isAfiliado()) {
     const puesto = (CTX?.afilTables || []).filter((t) => TABLES[t]);
-    return ['despachos', ...puesto];
+    return ['despachos', ...puesto, 'restricciones_rutas']; // ve las restricciones de SUS carros (RLS)
   }
   // Auditor: la pantalla Despachos + "Auditoría SONAR" (los viajes REALES que trae SONAR,
   // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
   // de puesto donde tiene despachos de sus rutas (así audita TODO lo suyo, esté en la vista
   // general o en cualquier tabla de puesto).
-  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', ...(CTX?.auditTables || [])];
+  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'restricciones_rutas', ...(CTX?.auditTables || [])];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -525,41 +527,64 @@ $('logout-btn').addEventListener('click', async () => {
 // ---------- navegación ----------
 function buildSidebar() {
   const nav = $('sidebar'); nav.innerHTML = '';
-  for (const name of visibleTables()) {
-    const cfg = TABLES[name];
-    const b = document.createElement('button');
-    b.innerHTML = `<span>${cfg.icon || '•'}</span> ${cfg.label}`;
-    b.classList.toggle('active', name === current);
-    b.onclick = () => { selectTable(name); closeMenu(); };
-    nav.appendChild(b);
-  }
-  // acciones especiales (no son tablas)
+  const vis = visibleTables();
+  // Tablas de configuración/catálogo van DENTRO de submenús (no sueltas arriba)
+  const TBL_GROUP = {
+    ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
+    restricciones_rutas: 'restr',
+    horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin',
+  };
+  // 🚌 Despachos: la operación diaria (Despachos general + tablas de puesto + Auditoría SONAR +
+  // Resumen + Asistencia) en su propio submenú, ARRIBA y ABIERTO por defecto.
+  const enDespachos = (n) => n === 'despachos' || n === 'despachos_sonar' || n === 'resumen' || n === 'asistencia' || puestoTables.includes(n);
+  const gDe = addNavGroup(nav, '🚌', 'Despachos', 'desp', true);
+  for (const name of vis) { if (enDespachos(name)) addTableBtn(gDe, name); }
+  // acciones especiales (no son tablas), organizadas en SUBMENÚS plegables
   if (isAdmin() || CTX?.rol === 'despachador' || CTX?.rol === 'afiliado') addNavNotif(nav);
-  addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa');
-  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(nav, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
-  if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
-  if (isAdmin() || isAuditor() || isDespachador()) addNavAction(nav, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
-  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(nav, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
-  if (isAdmin() || isAuditor() || isAfiliado() || isOperaciones()) addNavAction(nav, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
-  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(nav, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
-  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(nav, '🏆', 'Top de movilización', openTop, 'nav-top');
-  if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(nav, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
-  if (isAdmin() || isAuditor()) addNavAction(nav, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
+  addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa'); // acceso rápido, fuera de grupos
+
+  // 🚦 Operación en vivo
+  const gOp = addNavGroup(nav, '🚦', 'Operación en vivo', 'op');
+  if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
+  if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
+
+  // 📈 Cumplimiento y análisis
+  const gAn = addNavGroup(nav, '📈', 'Cumplimiento y análisis', 'analisis');
+  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gAn, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
+  if (isAdmin() || isAuditor()) addNavAction(gAn, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
+  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gAn, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
+  if (isAdmin() || isAuditor() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
+  if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(gAn, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
+  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🏆', 'Top de movilización', openTop, 'nav-top');
+  if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(gAn, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
+  if (isAdmin() || isAuditor()) addNavAction(gAn, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
+  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+
+  // 🚫 Restricciones y documentos (tabla del módulo + acciones)
+  const gRe = addNavGroup(nav, '🚫', 'Restricciones y documentos', 'restr');
+  for (const name of vis) { if (TBL_GROUP[name] === 'restr') addTableBtn(gRe, name); }
+  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gRe, '🚨', 'Estadísticas de restricciones', openRestrStats, 'nav-restrstats');
+  if (isAdmin() || isOperaciones() || isAuditor()) addNavAction(gRe, '🔓', `Desbloqueos de documentos${DESBLOQ_PEND ? ` <span class="nav-badge">${DESBLOQ_PEND}</span>` : ''}`, openDesbloqueos, 'nav-desbloq');
+  if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
+
+  // 🗃️ Catálogos (tablas maestras: parque, conductores, vehículos GPS, itinerarios, ubicaciones)
+  const gCat = addNavGroup(nav, '🗃️', 'Catálogos', 'cat');
+  for (const name of vis) { if (TBL_GROUP[name] === 'cat') addTableBtn(gCat, name); }
+
+  // ⚙️ Administración (tablas de configuración + acciones)
+  const gAd = addNavGroup(nav, '⚙️', 'Administración', 'admin');
+  for (const name of vis) { if (TBL_GROUP[name] === 'admin') addTableBtn(gAd, name); }
   const prevDesp = PREVIEW && PREVIEW.rol !== 'auditor';
   const prevAud = PREVIEW && PREVIEW.rol === 'auditor';
-  if (isAdmin()) addNavAction(nav, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
-  if (isAdmin()) addNavAction(nav, '🔎', prevAud ? `Viendo: ${PREVIEW.nombre}` : 'Ver como auditor', openPreviewAuditor, 'nav-preview-aud');
-  if (isAdmin()) addNavAction(nav, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
-  if (isAdmin()) addNavAction(nav, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
-  if (isAdmin()) addNavAction(nav, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
-  if (isAdmin()) addNavAction(nav, '👥', 'Conectados', openConectados, 'nav-conectados');
-  if (isAdmin()) addNavAction(nav, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
-  if (isAdmin()) addNavAction(nav, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
-  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(nav, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
-  if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(nav, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
-  if (isAdmin() || isOperaciones()) addNavAction(nav, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
-  if (isAdmin() || isOperaciones() || isAuditor()) addNavAction(nav, '🔓', `Desbloqueos de documentos${DESBLOQ_PEND ? ` <span class="nav-badge">${DESBLOQ_PEND}</span>` : ''}`, openDesbloqueos, 'nav-desbloq');
+  if (isAdmin() || isOperaciones()) addNavAction(gAd, '👤', 'Usuarios', openUsuarios, 'nav-usuarios');
+  if (isAdmin()) addNavAction(gAd, '👁️', prevDesp ? `Viendo: ${PREVIEW.nombre}` : 'Ver como despachador', openPreviewDespachador, 'nav-preview');
+  if (isAdmin()) addNavAction(gAd, '🔎', prevAud ? `Viendo: ${PREVIEW.nombre}` : 'Ver como auditor', openPreviewAuditor, 'nav-preview-aud');
+  if (isAdmin()) addNavAction(gAd, '📌', 'Asignar puesto', openAsignarPuesto, 'nav-puesto');
+  if (isAdmin()) addNavAction(gAd, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
+  if (isAdmin()) addNavAction(gAd, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
+  if (isAdmin()) addNavAction(gAd, '👥', 'Conectados', openConectados, 'nav-conectados');
+  if (isAdmin()) addNavAction(gAd, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
+  if (isAdmin()) addNavAction(gAd, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
@@ -575,6 +600,12 @@ function buildSidebar() {
   const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
+  // Submenús: ocultar los grupos que quedaron vacíos (según el rol) y abrir el que tiene la opción activa
+  nav.querySelectorAll('.nav-group').forEach((g) => {
+    const body = g.querySelector('.nav-group-body');
+    if (!body || !body.children.length) { g.hidden = true; return; }
+    if (body.querySelector('.active')) { body.hidden = false; g.querySelector('.nav-group-h')?.classList.add('open'); }
+  });
   buildBottomNav();
 }
 
@@ -636,6 +667,41 @@ function addNavAction(nav, icon, label, fn, id) {
   b.onclick = () => { fn(); closeMenu(); };
   nav.appendChild(b);
 }
+// Botón de TABLA para el menú (arriba o dentro de un submenú, según se le pase el contenedor)
+function addTableBtn(nav, name) {
+  const cfg = TABLES[name]; if (!cfg) return;
+  const b = document.createElement('button');
+  b.innerHTML = `<span>${cfg.icon || '•'}</span> ${cfg.label}`;
+  b.classList.toggle('active', name === current);
+  b.onclick = () => { selectTable(name); closeMenu(); };
+  nav.appendChild(b);
+}
+// Submenú plegable del menú lateral. Devuelve el contenedor donde van sus acciones (addNavAction).
+// Recuerda si el grupo está plegado (localStorage). Por defecto: plegado (menú corto).
+function navGrpCollapsed(key, defOpen) {
+  try { const v = localStorage.getItem('navgrp_' + key); return v === null ? !defOpen : v === '1'; } catch { return !defOpen; }
+}
+function addNavGroup(nav, icon, title, key, defOpen) {
+  const wrap = document.createElement('div');
+  wrap.className = 'nav-group';
+  const collapsed = navGrpCollapsed(key, defOpen);
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'nav-group-h' + (collapsed ? '' : ' open');
+  head.innerHTML = `<span class="nav-group-t"><span>${icon}</span> ${title}</span><span class="nav-group-caret">▸</span>`;
+  const body = document.createElement('div');
+  body.className = 'nav-group-body';
+  body.hidden = collapsed;
+  head.onclick = () => {
+    const open = body.hidden;               // estaba oculto -> ahora se abre
+    body.hidden = !open;
+    head.classList.toggle('open', open);
+    try { localStorage.setItem('navgrp_' + key, open ? '0' : '1'); } catch { /* */ }
+  };
+  wrap.append(head, body);
+  nav.appendChild(wrap);
+  return body;
+}
 // Centro de notificaciones (alertas de documentos), con contador
 function addNavNotif(nav) {
   const b = document.createElement('button');
@@ -655,7 +721,7 @@ function closeMenu() { setMenu(false); }
 function cerrarPanelesFlotantes() {
   const dp = $('docp-modal'); if (dp) dp.hidden = true;
   const dm = $('doc-modal'); if (dm) dm.hidden = true;
-  ['desbloq-modal', 'docblk-modal', 'dbrev-modal'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+  ['desbloq-modal', 'docblk-modal', 'dbrev-modal', 'restrstats-modal'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
 }
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
@@ -721,7 +787,10 @@ function selectTable(name) {
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
   // sin "+ Nuevo" donde no aplica (el auditor no crea; tampoco en la vista previa "como auditor")
-  $('new-btn').hidden = !!TABLES[name].readonly || afiliadoSoloLectura() || !!TABLES[name].noCreate || isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor');
+  $('new-btn').hidden = !!TABLES[name].readonly || afiliadoSoloLectura() || !!TABLES[name].noCreate
+    || (name === 'restricciones_rutas'
+          ? !puedeGestionarRestricciones()                       // restricciones: solo auditor/admin crean
+          : (isAuditor() || (PREVIEW && PREVIEW.rol === 'auditor'))); // resto: el auditor no crea
   buildSidebar();
   renderFilters();
   loadData();
@@ -1788,7 +1857,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
     if (hasMobile && !c.m) th.className = 'col-hide';
     head.appendChild(th);
   });
-  if ((!cfg.readonly || cfg.asistenciaMarcar) && !afiliadoSoloLectura()) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
+  if ((!cfg.readonly || cfg.asistenciaMarcar) && !afiliadoSoloLectura() && (current !== 'restricciones_rutas' || puedeGestionarRestricciones())) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;
@@ -1867,7 +1936,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       tr.appendChild(td);
     }
-    if (!cfg.readonly && !afiliadoSoloLectura()) {
+    if (!cfg.readonly && !afiliadoSoloLectura() && (current !== 'restricciones_rutas' || puedeGestionarRestricciones())) {
       const act = document.createElement('td');
       act.className = 'row-actions';
       act.dataset.label = 'Acciones';
@@ -3358,8 +3427,35 @@ async function _openEditorInterno(row) {
   setupCollapsibleSections(form, cfg);
   // "Cambio" se recalcula solo al elegir un móvil distinto al programado
   setupCambioAuto(form, cfg);
+  // Restricciones: al elegir el móvil, trae propietario/correo/celular del parque (base del admin)
+  if (current === 'restricciones_rutas') setupRestriccionAutofill(form);
 
   $('modal').hidden = false;
+}
+
+// En Restricciones: al elegir el móvil, autocompleta los datos del propietario desde
+// parque_automotor (la base que mantiene el admin: actualizarla una vez basta para todo).
+async function setupRestriccionAutofill(form) {
+  const selMov = form.querySelector('[data-key="vehiculo"]');
+  if (!selMov) return;
+  const put = (key, v) => {
+    const el = form.querySelector(`[data-key="${key}"]`);
+    if (el) { el.value = v || ''; if (el._comboSync) el._comboSync(); }
+  };
+  selMov.addEventListener('change', async () => {
+    const num = String(selMov.value || '').trim();
+    if (!num) return;
+    try {
+      const { data } = await sb.from('parque_automotor')
+        .select('propietario,correo,telefono').eq('numero_interno', num).limit(1);
+      const row = (data || [])[0];
+      if (!row) return;
+      put('propietario', row.propietario);
+      put('correo_propietario', row.correo);
+      put('celular_propietario', row.telefono);
+      toast('Datos del propietario traídos del parque', 'ok');
+    } catch (e) { /* informativo: si falla, el auditor los llena a mano */ }
+  });
 }
 
 function closeModal() { $('modal').hidden = true; editing = null; }
@@ -5382,7 +5478,8 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; ['nd-docblk', 'nd-docwarn', 'nd-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; if (s.dataset.pvblock !== '1') s.disabled = false; } return; }
+  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; if (s.dataset.pvblock !== '1') s.disabled = false; } return; }
+  avisoRestriccionND(); // aviso de restricción vigente de hoy (por móvil o por conductor)
   avisarBloqueoDocMovil(vr.numero, 'nd-docblk', 'nd-save'); // BLOQUEO por documento vencido (SOAT/tecno/tarjeta)
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
   avisarPreventivaMovil(vr.numero, 'nd-pvwarn', 'nd-save'); // preventiva: bloqueo (rechazada) o recordatorio
@@ -5410,6 +5507,14 @@ async function nombreConductorDeVehiculo(vehId, fecha) {
   } catch (e) { /* sin resultado → null */ }
   return null;
 }
+// Refresca el aviso de restricción de Nuevo despacho con el móvil y el conductor actuales.
+async function avisoRestriccionND() {
+  const veh = await loadVehiculos();
+  const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
+  const drs = await loadDrivers();
+  const drow = drs.find((d) => d.dr_id === $('nd-cond').value);
+  await avisarRestriccionMovil(vr?.numero || '', drow?.nombre || '', 'nd-restrwarn');
+}
 // Al elegir el móvil en Nuevo despacho, trae el conductor (mapeando por NOMBRE al conductor SONAR)
 async function traerConductorND() {
   const vehId = $('nd-movil').value;
@@ -5423,12 +5528,14 @@ async function traerConductorND() {
     sel.value = String(dm.dr_id);
     sel._comboSync && sel._comboSync();
     toast(`Conductor traído del Resumen: ${dm.nombre || nombre}`, 'ok');
+    avisoRestriccionND(); // el conductor cambió: revisar restricción del conductor
   }
 }
 function closeND() { $('nd-modal').hidden = true; }
 $('nd-close').addEventListener('click', closeND);
 $('nd-cancel').addEventListener('click', closeND);
 $('nd-movil').addEventListener('change', () => { updateNdInfo(); traerConductorND(); });
+$('nd-cond').addEventListener('change', () => { avisoRestriccionND(); }); // restricción sigue al conductor
 
 // ---- Al elegir la ruta, cargar solo los móviles de esa ruta (parque_automotor.ruta) ----
 let _parqueRutas = null; // Map numero_interno -> ruta (grupo del parque)
@@ -5930,13 +6037,16 @@ function docBloqueoMsg(b) {
   const docs = (b.docs || []).filter((d) => d.situacion === 'vencido_sin_subir' || d.situacion === 'rechazado');
   const li = docs.map((d) => {
     const venc = d.vence ? fechaLegible(d.vence) : '';
+    const dv = Math.abs(Number(d.dias) || 0); // d.dias viene negativo (venció hace tantos días)
+    const hace = dv ? ` — <b>vencido hace ${dv} ${dv === 1 ? 'día' : 'días'}</b>` : '';
     const extra = d.situacion === 'rechazado'
-      ? ` — <b>operaciones rechazó</b> el documento${d.motivo_rechazo ? ': ' + esc(d.motivo_rechazo) : ''}`
+      ? `<br>&nbsp;&nbsp;↳ <b>operaciones rechazó</b> el documento subido${d.motivo_rechazo ? ': ' + esc(d.motivo_rechazo) : ''}. Debes subirlo de nuevo.`
       : '';
-    return `• <b>${esc(d.label)}</b> vencido (${esc(venc)})${extra}`;
+    return `• <b>${esc(d.label)}</b>: venció el ${esc(venc)}${hace}${extra}`;
   }).join('<br>');
   return `🚫 <b>DESPACHO BLOQUEADO</b> · móvil ${esc(String(b.interno || '').trim())}<br>${li}<br>`
-    + 'Sube la foto o el PDF del documento para <b>desbloquear</b>. Operaciones lo revisará después.';
+    + '<b>¿Por qué?</b> El vehículo tiene un documento obligatorio vencido: no puede circular ni despacharse hasta actualizarlo.<br>'
+    + '<b>¿Qué hacer?</b> Sube la foto o el PDF del documento vigente para <b>desbloquear</b> (queda desbloqueado provisionalmente). Operaciones lo revisará y confirmará la nueva fecha.';
 }
 // Aviso al elegir el móvil: caja roja + botón para subir (si bloqueado), o nota ámbar "en revisión".
 async function avisarBloqueoDocMovil(numero, boxId, btnId) {
@@ -6162,6 +6272,140 @@ function avisarNovedadDesbloqueos() {
   abrirDocBlkInfo();
   try { localStorage.setItem('docblk_info_v239', '1'); } catch (e) { /* */ }
 }
+
+// ===================================================================================
+// BLOQUEO DE DESPACHO POR RESTRICCIÓN DE RUTA (castigo del auditor por incumplir itinerarios)
+// Bloquea el despacho de un móvil en la RUTA castigada, en su fecha y ventana horaria.
+// ===================================================================================
+// Devuelve el detalle si el móvil está restringido para (ruta, fecha, hora), o null. Fail-open.
+async function restriccionSuspende(movil, ruta, fecha, hora, tabla, conductor) {
+  try {
+    const { data } = await sb.rpc('restriccion_bloqueo', {
+      p_movil: String(movil || '').trim(), p_ruta: String(ruta || ''),
+      p_fecha: fecha || null, p_hora: hora || null, p_tabla: tabla || null,
+      p_conductor: conductor || null,
+    });
+    return (data && data.bloqueado) ? data : null;
+  } catch (e) { return null; }
+}
+function restriccionBloqueoMsg(b) {
+  let cuando = '';
+  if (b.modo === 'VIAJE' && b.hora_viaje) cuando = ` en el viaje de las <b>${esc(String(b.hora_viaje).slice(0, 5))}</b>`;
+  else if (b.hora_ini && b.hora_fin) cuando = ` entre <b>${esc(String(b.hora_ini).slice(0, 5))}</b> y <b>${esc(String(b.hora_fin).slice(0, 5))}</b>`;
+  const esDespachos = String(b.tabla || '').toLowerCase() === 'despachos';
+  if (esDespachos) {
+    // En Despachos la restricción es del CONDUCTOR: no puede despacharse en ningún móvil.
+    return `🚫 <b>CONDUCTOR RESTRINGIDO</b> · ${esc(String(b.conductor || '').trim())}<br>`
+      + `Tiene una <b>restricción vigente</b>${cuando} (${esc(b.fecha || '')}). No puede despacharse en <b>ningún móvil</b>.<br>`
+      + (b.viaje ? `Detalle: ${esc(b.viaje)}.<br>` : '')
+      + 'El auditor debe <b>cancelar</b> la restricción para levantarla.';
+  }
+  return `🚫 <b>MÓVIL RESTRINGIDO</b> · ${esc(String(b.movil || '').trim())}<br>`
+    + `Tiene una <b>restricción vigente</b> en la ruta <b>${esc(b.ruta || '')}</b>${cuando} (${esc(b.fecha || '')}).<br>`
+    + (b.viaje ? `Detalle: ${esc(b.viaje)}.<br>` : '')
+    + 'No se puede despachar. El auditor debe <b>cancelar</b> la restricción para levantarla.';
+}
+// Aviso informativo al elegir el móvil: restricciones VIGENTES de HOY para ese móvil.
+async function avisarRestriccionMovil(numero, conductor, boxId) {
+  const box = $(boxId); if (!box) return;
+  box.hidden = true; box.innerHTML = ''; box.className = 'field full';
+  const mov = String(numero || '').trim();
+  const cond = String(conductor || '').trim();
+  if (!mov && !cond) return;
+  try {
+    // Despachos avisa por CONDUCTOR (cualquier móvil); puesto avisa por MÓVIL.
+    const { data } = await sb.rpc('restricciones_movil_dia', { p_movil: mov, p_conductor: cond });
+    const rows = data || [];
+    if (!rows.length) return;
+    box.className = 'field full sonar-info docblk';
+    box.innerHTML = '🚫 <b>Restricción(es) vigente(s) HOY</b><br>'
+      + rows.map((r) => {
+        const esDesp = String(r.tabla || '').toLowerCase() === 'despachos';
+        const franja = (r.hora_inicial && r.hora_finalizacion)
+          ? ` ${String(r.hora_inicial).slice(0, 5)}–${String(r.hora_finalizacion).slice(0, 5)}` : '';
+        const win = esDesp ? franja
+          : (r.modo === 'VIAJE' ? (r.hora_viaje ? ` viaje ${String(r.hora_viaje).slice(0, 5)}` : '') : franja);
+        const quien = esDesp
+          ? `Conductor <b>${esc(r.conductor || '?')}</b> (en cualquier móvil)`
+          : `Móvil <b>${esc(r.vehiculo || '?')}</b> · ruta <b>${esc(r.ruta_restringida || '?')}</b>`;
+        return `• ${quien}${win}${r.viajes_hora ? ' — ' + esc(r.viajes_hora) : ''}`;
+      }).join('<br>')
+      + '<br>No se puede despachar en ese horario.';
+    box.hidden = false;
+  } catch (e) { /* informativo */ }
+}
+
+// ===================================================================================
+// DASHBOARD: Estadística de restricciones (auditores / admin / operaciones)
+// Un solo RPC (restricciones_estadisticas) agrega todo; aquí se pinta el tablero.
+// ===================================================================================
+async function openRestrStats() {
+  if (!isAdmin() && !isAuditor() && !isOperaciones()) return;
+  cerrarPanelesFlotantes();
+  $('restrstats-modal').hidden = false;
+  await consultarRestrStats();
+}
+async function consultarRestrStats() {
+  const body = $('restrstats-body'); if (!body) return;
+  body.innerHTML = '<div class="loading">Calculando estadísticas…</div>';
+  const btn = $('rst-consultar'); if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('restricciones_estadisticas', {
+      p_desde: $('rst-desde').value || null,
+      p_hasta: $('rst-hasta').value || null,
+      p_estado: $('rst-estado').value || null,
+    });
+    if (error) throw error;
+    renderRestrStats(data);
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
+  } finally { if (btn) btn.disabled = false; }
+}
+function rstKpi(n, label) {
+  return `<div class="rst-kpi"><div class="rst-kpi-n">${Number(n || 0).toLocaleString('es-CO')}</div><div class="rst-kpi-l">${label}</div></div>`;
+}
+function rstBarList(items) {
+  const arr = items || [];
+  if (!arr.length) return '<div class="rst-empty">Sin datos.</div>';
+  const max = Math.max(...arr.map((i) => Number(i.n) || 0), 1);
+  return '<div class="rst-bars">' + arr.map((i, idx) => {
+    const pct = Math.round(((Number(i.n) || 0) / max) * 100);
+    return `<div class="rst-row"><div class="rst-lbl" title="${esc(String(i.k))}">${idx + 1}. ${esc(String(i.k))}</div>`
+      + `<div class="rst-track"><div class="rst-fill" style="width:${pct}%"></div></div>`
+      + `<div class="rst-val">${i.n}</div></div>`;
+  }).join('') + '</div>';
+}
+function rstMonthly(items) {
+  const arr = items || [];
+  if (!arr.length) return '<div class="rst-empty">Sin datos.</div>';
+  const max = Math.max(...arr.map((i) => Number(i.n) || 0), 1);
+  return '<div class="rst-months">' + arr.map((i) => {
+    const h = Math.round(((Number(i.n) || 0) / max) * 100);
+    const et = String(i.k || '');
+    const lbl = et.length >= 7 ? `${et.slice(5)}/${et.slice(2, 4)}` : et; // YYYY-MM -> MM/YY
+    return `<div class="rst-mcol" title="${esc(et)}: ${i.n}"><div class="rst-mbarwrap"><div class="rst-mbar" style="height:${h}%"></div></div>`
+      + `<div class="rst-mval">${i.n}</div><div class="rst-mlbl">${esc(lbl)}</div></div>`;
+  }).join('') + '</div>';
+}
+function renderRestrStats(d) {
+  const body = $('restrstats-body'); if (!body) return;
+  if (!d || !Number(d.total)) { body.innerHTML = '<div class="rst-empty">No hay restricciones en el rango elegido.</div>'; return; }
+  body.innerHTML =
+    `<div class="rst-kpis">${rstKpi(d.total, 'Restricciones')}${rstKpi(d.vigentes, 'Vigentes')}${rstKpi(d.canceladas, 'Canceladas')}`
+    + `${rstKpi(d.n_conductores, 'Conductores')}${rstKpi(d.n_moviles, 'Móviles')}${rstKpi(d.n_propietarios, 'Propietarios')}</div>`
+    + '<div class="rst-grid">'
+    + `<section class="rst-sec"><h4>🧑‍✈️ Conductores con más restricciones</h4>${rstBarList(d.top_conductores)}</section>`
+    + `<section class="rst-sec"><h4>🛣️ Rutas más restringidas</h4>${rstBarList(d.top_rutas)}</section>`
+    + `<section class="rst-sec"><h4>👤 Propietarios con más restricciones</h4>${rstBarList(d.top_propietarios)}</section>`
+    + `<section class="rst-sec"><h4>🚌 Móviles con más restricciones</h4>${rstBarList(d.top_moviles)}</section>`
+    + `<section class="rst-sec"><h4>🗂️ Por tabla / puesto</h4>${rstBarList(d.por_tabla)}</section>`
+    + `<section class="rst-sec"><h4>⚙️ Por tipo (viaje / hora)</h4>${rstBarList(d.por_modo)}</section>`
+    + '</div>'
+    + `<section class="rst-sec rst-sec-wide"><h4>📈 Tendencia por mes</h4>${rstMonthly(d.por_mes)}</section>`;
+}
+$('restrstats-x')?.addEventListener('click', () => { $('restrstats-modal').hidden = true; });
+$('restrstats-cerrar')?.addEventListener('click', () => { $('restrstats-modal').hidden = true; });
+$('rst-consultar')?.addEventListener('click', consultarRestrStats);
 
 // ===== Vista "⏱️ Frecuencia por franja" (admin/auditor): oferta programada por ruta, en franjas de 20 min =====
 let _frecRutas = null;
@@ -8001,6 +8245,8 @@ $('nd-save').addEventListener('click', async () => {
   if (vrow?.numero) { const bq = await pvSuspendido(vrow.numero); if (bq) { err.innerHTML = pvBloqueoMsg(bq); err.hidden = false; return; } }
   // Bloqueo por DOCUMENTO vencido (SOAT/tecno/tarjeta): solo se levanta subiendo la foto/PDF (desbloqueo provisional)
   if (vrow?.numero) { const db = await docSuspendido(vrow.numero); if (db) { err.innerHTML = docBloqueoMsg(db); err.hidden = false; return; } }
+  // Bloqueo por RESTRICCIÓN de ruta (castigo del auditor): móvil restringido en esa ruta/fecha/ventana
+  if (vrow?.numero) { const rb = await restriccionSuspende(vrow.numero, itin?.nombre || '', intent.fecha, intent.hora, current, drow?.nombre || ''); if (rb) { err.innerHTML = restriccionBloqueoMsg(rb); err.hidden = false; return; } }
 
   // Aviso de doble despacho por tiempo (< 20 min)
   const minDesde = await minutosUltimoDespacho(Number(vehVal));
@@ -8165,7 +8411,10 @@ async function updateSonarInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const info = $('s-info');
-  if (!vr) { info.hidden = true; ['s-docblk', 's-docwarn', 's-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
+  if (!vr) { info.hidden = true; ['s-restrwarn', 's-docblk', 's-docwarn', 's-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
+  const _drsR = await loadDrivers();
+  const _drowR = _drsR.find((d) => d.dr_id === $('s-drv').value);
+  avisarRestriccionMovil(vr.numero, _drowR?.nombre || '', 's-restrwarn'); // aviso: móvil (puesto) o conductor (despachos)
   // BLOQUEO por documento vencido. En SONAR el botón también sirve para "no realizó" (no es despacho):
   // NO deshabilitamos el botón; la caja roja avisa y el guarda de "Despachar" bloquea solo el despacho real.
   avisarBloqueoDocMovil(vr.numero, 's-docblk');
@@ -8379,6 +8628,10 @@ $('sonar-send').addEventListener('click', async () => {
       if (bq) { const e = $('sonar-error'); e.innerHTML = pvBloqueoMsg(bq); e.hidden = false; return; }
       const db = await docSuspendido(vrB.numero);
       if (db) { const e = $('sonar-error'); e.innerHTML = docBloqueoMsg(db); e.hidden = false; return; }
+      const rutaNom = $('s-itin')?.selectedOptions[0]?.textContent || '';
+      const condNom = $('s-drv')?.selectedOptions[0]?.textContent || '';
+      const rb = await restriccionSuspende(vrB.numero, rutaNom, hoyServidor(), $('s-hora')?.value || null, current, condNom);
+      if (rb) { const e = $('sonar-error'); e.innerHTML = restriccionBloqueoMsg(rb); e.hidden = false; return; }
     }
   }
   // Rutas MADRUGADA/CENTRO: NUNCA se despachan a SONAR; solo se marca si se realizó o no.

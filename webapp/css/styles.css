@@ -849,6 +849,19 @@ tbody tr:hover { background: #faf8ff; }
 
 /* Acciones del menú (no son tablas) */
 .sidebar .nav-action:first-of-type { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+/* Submenús plegables del menú lateral */
+.nav-group { display: flex; flex-direction: column; gap: 4px; }
+.sidebar .nav-group-h {
+  justify-content: space-between; padding: 10px 12px; font-size: 12px; font-weight: 700;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .3px; cursor: pointer;
+}
+.sidebar .nav-group-h:hover { color: var(--text); }
+.nav-group-t { display: flex; align-items: center; gap: 10px; }
+.nav-group-caret { font-size: 11px; opacity: .75; transition: transform .15s; }
+.sidebar .nav-group-h.open .nav-group-caret { transform: rotate(90deg); }
+.nav-group-body { display: flex; flex-direction: column; gap: 4px; }
+.sidebar .nav-group-body .nav-action { padding-left: 30px; font-size: 14px; }
+.sidebar .nav-group-body .nav-action:first-of-type { margin-top: 0; padding-top: 11px; border-top: none; }
 
 /* Popup con toda la info */
 .leaflet-popup-content-wrapper { border-radius: 12px; }
@@ -2015,3 +2028,32 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .docp-prev { background: #fff2df; border: 1px solid #f0d19a; border-radius: 10px; padding: 9px 11px; margin-bottom: 12px; }
 .docp-prev-h { font-size: 13px; color: #7a3d00; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; line-height: 1.5; }
 @media (max-width: 560px) { .pv-actions { flex-direction: row; flex-wrap: wrap; } .pv-actions > * { flex: 1 1 auto; } }
+
+/* ===== Dashboard de estadísticas de restricciones ===== */
+.rst-card { max-width: 1000px; width: 96vw; }
+.rst-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 6px 2px 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.rst-filters label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.rst-filters input, .rst-filters select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: #fff; }
+.rst-body { max-height: 72vh; overflow: auto; padding: 2px; }
+.rst-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.rst-kpi { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px 8px; text-align: center; }
+.rst-kpi-n { font-size: 26px; font-weight: 800; color: var(--primary); line-height: 1; }
+.rst-kpi-l { font-size: 11.5px; color: var(--muted); margin-top: 5px; }
+.rst-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
+.rst-sec { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.rst-sec-wide { margin-top: 14px; }
+.rst-sec h4 { margin: 0 0 12px; font-size: 14px; color: var(--text); }
+.rst-bars { display: flex; flex-direction: column; gap: 7px; }
+.rst-row { display: grid; grid-template-columns: minmax(96px, 44%) 1fr 34px; align-items: center; gap: 9px; font-size: 12.5px; }
+.rst-lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rst-track { background: var(--bg); border-radius: 6px; height: 13px; overflow: hidden; }
+.rst-fill { height: 100%; background: var(--primary); border-radius: 6px; min-width: 3px; }
+.rst-val { font-weight: 800; text-align: right; color: var(--text); }
+.rst-empty { color: var(--muted); font-size: 13px; padding: 10px 4px; }
+/* tendencia por mes (barras verticales) */
+.rst-months { display: flex; gap: 5px; align-items: flex-end; overflow-x: auto; padding: 4px 2px 2px; }
+.rst-mcol { display: flex; flex-direction: column; align-items: center; min-width: 28px; }
+.rst-mbarwrap { height: 96px; display: flex; align-items: flex-end; }
+.rst-mbar { width: 18px; background: var(--primary); border-radius: 4px 4px 0 0; min-height: 2px; }
+.rst-mval { font-size: 10px; font-weight: 700; margin-top: 3px; color: var(--text); }
+.rst-mlbl { font-size: 9.5px; color: var(--muted); white-space: nowrap; }
