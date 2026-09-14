@@ -1915,6 +1915,33 @@ function renderTable(cfg, rows, count, diaSel = false) {
         tr.appendChild(td);
         continue;
       }
+      // Hora REAL de despacho (despachado_en → hora Colombia) + diferencia en minutos vs la hora
+      // enviada (row.hora). Ej: despachó 13:50 para una hora de 14:00 → "13:50  −10m". Auditoría.
+      if (c.horaReal) {
+        const iso = row.despachado_en;
+        const d = iso ? new Date(iso) : null;
+        if (d && !isNaN(d)) {
+          const real = d.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', hour12: false });
+          const h = String(row.hora || '').slice(0, 5);
+          let extra = '';
+          if (h && /^\d\d:\d\d$/.test(real) && /^\d\d?:\d\d$/.test(h)) {
+            const [rh, rm] = real.split(':').map(Number);
+            const [ph, pm] = h.split(':').map(Number);
+            const diff = (rh * 60 + rm) - (ph * 60 + pm);
+            if (diff !== 0) extra = ` <span class="hr-diff ${diff < 0 ? 'early' : 'late'}">${diff > 0 ? '+' : ''}${diff}m</span>`;
+          }
+          td.innerHTML = esc(real) + extra;
+        }
+        tr.appendChild(td); continue;
+      }
+      // Cambio de RUTA: ruta programada → ruta despachada, solo cuando difieren.
+      if (c.cambioRuta) {
+        const rp = row.rutap && row.rutap.nombre, rr = row.ruta && row.ruta.nombre;
+        if (rp && rr && String(rp).trim() !== String(rr).trim()) {
+          td.innerHTML = `<span class="chg-badge">${esc(rp)} → ${esc(rr)}</span>`;
+        }
+        tr.appendChild(td); continue;
+      }
       const val = c.path ? getPath(row, c.path) : row[c.key];
       if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
         td.innerHTML = `<a href="https://www.google.com/maps?q=${encodeURIComponent(String(val))}" target="_blank" rel="noopener" class="maps-link" title="${esc(String(val))}">📍 Ver</a>`;

@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v242';
+export const APP_VERSION = 'v243';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -111,10 +111,15 @@ export const TABLES = {
       { key: 'tipo', label: 'Tipo', badge: true },
       { key: 'fecha', label: 'Fecha' },
       { key: 'hora', label: 'Hora', m: true },
+      // Hora REAL a la que el despachador despachó (despachado_en), con la diferencia en minutos
+      // frente a la hora enviada. Solo auditor/admin (para detectar que despacharon antes/después).
+      { key: 'despachado_en', label: 'Hora real', horaReal: true, auditCol: true },
       { path: 'ruta.nombre', label: 'Ruta', m: true },
+      // Cambio de RUTA: ruta programada → ruta despachada (cuando difieren). Solo auditor/admin.
+      { label: 'Cambio ruta', cambioRuta: true, auditCol: true },
       { path: 'vehp.numero', label: 'Móvil prog.' },
       { path: 'veh.numero', label: 'Móvil', m: true },
-      { key: 'cambio', label: 'Cambio' },
+      { key: 'cambio', label: 'Cambio móvil' },
       { path: 'cond.nombre', label: 'Conductor' },
       { path: 'desp.nombre', label: 'Despachador' },
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },

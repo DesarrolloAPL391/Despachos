@@ -256,6 +256,16 @@ tbody tr:hover { background: #faf8ff; }
   background: var(--ok, #16a34a); color: #fff; font-size: 11px; font-weight: 800; line-height: 17px;
   text-align: center; vertical-align: middle; }
 
+/* Auditoría: diferencia de minutos entre la hora real de despacho y la hora enviada.
+   early = despachó ANTES de la hora (rojo); late = despachó DESPUÉS (ámbar). */
+.hr-diff { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 8px;
+  font-size: 11px; font-weight: 800; line-height: 16px; vertical-align: middle; }
+.hr-diff.early { background: #fdeaea; color: var(--primary-dark, #C20F16); }
+.hr-diff.late  { background: #fff4e5; color: #b45309; }
+/* Auditoría: cambio de ruta (programada → despachada) */
+.chg-badge { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 12px; font-weight: 700;
+  background: #fff4e5; color: #b45309; white-space: nowrap; }
+
 /* En pantallas anchas (web) la tabla puede ser más ancha que el área visible. La
    columna de ACCIONES queda FIJA a la derecha para que despachar/cancelar/editar
    siempre se vean; el resto de columnas se recorre con scroll horizontal. */
