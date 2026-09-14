@@ -4,6 +4,11 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VE
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
 
+// DEV (solo pruebas): en localhost permite despachar/cancelar/editar filas de CUALQUIER fecha,
+// saltándose la regla "solo se opera el día de hoy". En producción (GitHub Pages) es SIEMPRE false,
+// así la restricción queda intacta aunque este archivo se publique por error.
+const DEV_LOCAL = (typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname || ''));
+
 // Estado
 let current = null;     // nombre de la tabla actual
 let page = 0;
@@ -1944,8 +1949,8 @@ function renderTable(cfg, rows, count, diaSel = false) {
       // La fecha es clave: solo se opera el día actual. No se despacha/cancela/edita un viaje
       // de un día anterior (pasada) NI de un día futuro (adelantada).
       const frow = row.fecha ? String(row.fecha).slice(0, 10) : '';
-      const esPasada = !!(cfg.dispatchable && frow && frow < hoyServidor());
-      const esFutura = !!(cfg.dispatchable && frow && frow > hoyServidor());
+      const esPasada = !!(cfg.dispatchable && frow && frow < hoyServidor()) && !DEV_LOCAL;
+      const esFutura = !!(cfg.dispatchable && frow && frow > hoyServidor()) && !DEV_LOCAL;
       if (locked) {
         act.appendChild(Object.assign(document.createElement('span'), {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
@@ -3612,7 +3617,21 @@ $('modal-save').addEventListener('click', async () => {
   toast(cerrado ? 'Registro completo: cerrado y bloqueado' : (editing ? 'Registro actualizado' : 'Registro creado'), 'ok');
   // Si se editó el catálogo de tablas de despacho (encender/apagar una tabla en el menú),
   // re-descubrir las tablas de puesto y reconstruir el menú al instante (sin esperar el timer de 12s).
-  if (current === 'tablas_despacho') { try { await registerPuestoTables(); buildSidebar(); } catch { /* el timer periódico lo hará */ } }
+  if (current === 'tablas_despacho') {
+    // Si cambió el PUESTO, regenerar la RLS de la tabla física para que coincida con el nuevo
+    // nombre (setup_tabla_puesto recrea pp_sel/pp_upd/pp_ins/pp_del con lower(puesto)=any(mis_puestos())).
+    // Sin esto, el menú mostraría el puesto nuevo pero la RLS seguiría exigiendo el anterior (tabla vacía).
+    try {
+      if (editing && editing.tabla && payload.puesto && payload.puesto !== editing.puesto) {
+        showBusy('Actualizando permisos de la tabla…');
+        const { error: eRls } = await sb.rpc('setup_tabla_puesto', { p_tabla: editing.tabla, p_puesto: payload.puesto });
+        hideBusy();
+        if (eRls) toast('Puesto guardado, pero no se pudo sincronizar la RLS: ' + eRls.message, 'err');
+        else toast(`RLS de ${editing.label || editing.tabla} sincronizada al puesto "${payload.puesto}"`, 'ok');
+      }
+    } catch (e) { hideBusy(); toast('No se pudo sincronizar la RLS de la tabla: ' + (e.message || e), 'err'); }
+    try { await registerPuestoTables(); buildSidebar(); } catch { /* el timer periódico lo hará */ }
+  }
   loadData();
 });
 
@@ -7897,7 +7916,10 @@ async function activarPreviewAuditor(email) {
     rol: 'auditor', email, nombre: ctx.nombre || email, puesto: '', dia_tipo: '',
     rutas: new Set(rutasArr.map(normRuta)), rutasRaw: rutasArr,
     grupos: new Set(), ids, tablas: [], verDespachos: false,
-    auditTables: await previewAuditTables(ids),
+    // El auditor real ve TODAS las tablas de puesto con datos (sql/42, pp_sel_aud = es_auditor()),
+    // no solo las de sus rutas. La simulación usa el mismo criterio (contar filas) para reflejar
+    // exactamente lo que verá el auditor en su menú (incluye tablas como 136II).
+    auditTables: await tablasAuditablesDePuesto(),
   };
   $('preview-modal').hidden = true;
   $('preview-banner-txt').textContent =
@@ -8460,8 +8482,9 @@ async function openSonar(row) {
   finally { _sonarAbriendo = false; hideBusy(); }
 }
 async function _openSonarInterno(row) {
-  // La fecha es clave: solo se despacha el día actual (fecha del servidor, no del celular)
-  if (row && row.fecha) {
+  // La fecha es clave: solo se despacha el día actual (fecha del servidor, no del celular).
+  // En localhost (DEV_LOCAL) se omite para poder hacer pruebas con fechas futuras/pasadas.
+  if (!DEV_LOCAL && row && row.fecha) {
     const f = String(row.fecha).slice(0, 10);
     if (f < hoyServidor()) { toast('No se puede despachar: la fecha del viaje ya pasó.', 'err'); return; }
     if (f > hoyServidor()) { toast('No se puede despachar: la fecha aún no llega (adelantada).', 'err'); return; }
@@ -8568,12 +8591,15 @@ function aplicarSonarRealizo() {
   if (ocultarDespacho) ['s-cond-note', 's-info', 's-docwarn', 's-pvwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
   $('s-nov-wrap').hidden = !esNo; // la novedad solo es obligatoria cuando NO se realizó
   const aviso = $('s-sinsonar');
+  // El despachador NO debe enterarse de que la tabla no envía a SONAR: la nota y el rótulo
+  // "sin SONAR" solo se muestran a admin/auditor. Para el despachador se ve como un despacho normal.
+  const verSinSonar = efIsAdmin() || efIsAuditor();
   if (aviso) {
     if (sonarSinEnvio) { aviso.textContent = '⚠️ Esta ruta (MADRUGADA/CENTRO) no se despacha a SONAR: solo se marca si se realizó.'; aviso.hidden = false; }
-    else if (tSin && !esNo) { aviso.textContent = '📝 Esta tabla NO despacha a SONAR: queda el registro (quién despachó, móvil, conductor y hora).'; aviso.hidden = false; }
+    else if (tSin && !esNo && verSinSonar) { aviso.textContent = '📝 Esta tabla NO despacha a SONAR: queda el registro (quién despachó, móvil, conductor y hora).'; aviso.hidden = false; }
     else { aviso.hidden = true; }
   }
-  $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : (tSin ? 'Registrar (sin SONAR)' : 'Despachar'));
+  $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : (tSin && verSinSonar ? 'Registrar (sin SONAR)' : 'Despachar'));
   if (!ocultarDespacho) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ
 }
 $('s-realizo').addEventListener('change', aplicarSonarRealizo);
@@ -8645,12 +8671,14 @@ async function despacharSinSonar() {
   const progId = sonarRow ? (sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || null) : null;
   const esReemplazo = progId && Number(progId) !== Number(vr.id);
   const movProg = esReemplazo ? (veh.find((v) => Number(v.id) === Number(progId))?.numero || progId) : null;
+  // Al despachador se le presenta como un despacho normal (sin mencionar SONAR).
+  const verSinSonar = efIsAdmin() || efIsAuditor();
   const ok = await confirmAction({
-    title: '¿Registrar despacho (sin SONAR)?',
-    lead: 'Se guardará el registro del despacho. NO se envía a SONAR:',
+    title: verSinSonar ? '¿Registrar despacho (sin SONAR)?' : '¿Despachar viaje?',
+    lead: verSinSonar ? 'Se guardará el registro del despacho. NO se envía a SONAR:' : 'Se registrará el despacho:',
     message: `Móvil:     ${vr.numero}\nConductor: ${drvLabel}` + (com ? `\nComent.:   ${com}` : '')
       + (esReemplazo ? `\n\n⚠️ Reemplazo: el móvil programado ${movProg} quedará como NO realizó el viaje.` : ''),
-    okLabel: 'Registrar',
+    okLabel: verSinSonar ? 'Registrar' : 'Despachar',
   });
   if (!ok) return;
   btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Procesando…';
@@ -8680,9 +8708,9 @@ async function despacharSinSonar() {
     if (error) { err.textContent = 'No se pudo registrar: ' + error.message; err.hidden = false; btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); return; }
     if (!data || !data.length) { err.textContent = 'No se guardó: tu turno terminó o el registro no es editable.'; err.hidden = false; btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); return; }
     const res = $('sonar-result'); res.hidden = false; res.className = 'sonar-result ok';
-    res.textContent = '✅ Despacho registrado (sin SONAR).\n📍 Ubicación registrada: ' + ubicGps;
-    toast('Despacho registrado (sin SONAR)', 'ok');
-    sonarRow = null; btn.dataset.busy = '0'; btn.disabled = true; btn.textContent = 'Registrado ✓';
+    res.textContent = (verSinSonar ? '✅ Despacho registrado (sin SONAR).' : '✅ Despacho registrado.') + '\n📍 Ubicación registrada: ' + ubicGps;
+    toast(verSinSonar ? 'Despacho registrado (sin SONAR)' : 'Despacho registrado', 'ok');
+    sonarRow = null; btn.dataset.busy = '0'; btn.disabled = true; btn.textContent = verSinSonar ? 'Registrado ✓' : 'Despachado ✓';
     if (current === sonarTable) loadData();
   } finally { hideBusy(); }
 }
