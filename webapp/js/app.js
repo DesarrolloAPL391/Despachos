@@ -22,14 +22,14 @@ let puestoTables = []; // tablas de puesto descubiertas (laureles, etc.)
 // Descubre las tablas de despacho desde `tablas_despacho` y registra su config en caliente
 async function registerPuestoTables() {
   puestoTables = [];
-  const { data, error } = await sb.from('tablas_despacho').select('tabla, label, puesto').eq('activo', true).order('label');
+  const { data, error } = await sb.from('tablas_despacho').select('tabla, label, puesto, sin_sonar').eq('activo', true).order('label');
   if (error) return;
   for (const t of (data || [])) {
     if (!t.tabla) continue;
     // Se (re)construye según el rol actual. El auditor y el admin la ven CON las columnas de
     // control (el auditor para auditar; el admin para supervisar y para la "vista como auditor").
     // Al despachador se le ocultan. Reconstruir siempre evita configs desactualizadas.
-    TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto, { auditor: isAuditor() || isAdmin() });
+    TABLES[t.tabla] = configTablaPuesto(t.label, t.puesto, { auditor: isAuditor() || isAdmin(), sinSonar: t.sin_sonar });
     if (!puestoTables.includes(t.tabla)) puestoTables.push(t.tabla);
   }
 }
@@ -532,7 +532,7 @@ function buildSidebar() {
   const TBL_GROUP = {
     ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
     restricciones_rutas: 'restr',
-    horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin',
+    horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin', tablas_despacho: 'admin',
   };
   // 🚌 Despachos: la operación diaria (Despachos general + tablas de puesto + Auditoría SONAR +
   // Resumen + Asistencia) en su propio submenú, ARRIBA y ABIERTO por defecto.
@@ -3610,6 +3610,9 @@ $('modal-save').addEventListener('click', async () => {
   }
   closeModal();
   toast(cerrado ? 'Registro completo: cerrado y bloqueado' : (editing ? 'Registro actualizado' : 'Registro creado'), 'ok');
+  // Si se editó el catálogo de tablas de despacho (encender/apagar una tabla en el menú),
+  // re-descubrir las tablas de puesto y reconstruir el menú al instante (sin esperar el timer de 12s).
+  if (current === 'tablas_despacho') { try { await registerPuestoTables(); buildSidebar(); } catch { /* el timer periódico lo hará */ } }
   loadData();
 });
 
@@ -8556,16 +8559,22 @@ $('s-mov').addEventListener('change', () => { updateSonarInfo(); updateSonarProg
 // NO = solo se pide la novedad (obligatoria) y se marca la fila, sin llamar a SONAR.
 function aplicarSonarRealizo() {
   const esNo = $('s-realizo').value !== 'SI';
-  // MADRUGADA/CENTRO no se despachan a SONAR: se ocultan los campos de despacho aunque sea "SÍ".
+  const tSin = tablaSinSonar(); // la TABLA registra sin enviar a SONAR (los campos SÍ se muestran)
+  // MADRUGADA/CENTRO ocultan el despacho aunque sea "SÍ"; una tabla sin_sonar (136II) NO los oculta.
   const ocultarDespacho = esNo || sonarSinEnvio;
   ['s-mov', 's-itin', 's-drv', 's-com'].forEach((id) => {
     const w = $(id)?.closest('.field'); if (w) w.classList.toggle('hidden-field', ocultarDespacho);
   });
   if (ocultarDespacho) ['s-cond-note', 's-info', 's-docwarn', 's-pvwarn', 's-prog'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
   $('s-nov-wrap').hidden = !esNo; // la novedad solo es obligatoria cuando NO se realizó
-  const aviso = $('s-sinsonar'); if (aviso) aviso.hidden = !sonarSinEnvio;
-  $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : 'Despachar');
-  if (!ocultarDespacho) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ (con SONAR)
+  const aviso = $('s-sinsonar');
+  if (aviso) {
+    if (sonarSinEnvio) { aviso.textContent = '⚠️ Esta ruta (MADRUGADA/CENTRO) no se despacha a SONAR: solo se marca si se realizó.'; aviso.hidden = false; }
+    else if (tSin && !esNo) { aviso.textContent = '📝 Esta tabla NO despacha a SONAR: queda el registro (quién despachó, móvil, conductor y hora).'; aviso.hidden = false; }
+    else { aviso.hidden = true; }
+  }
+  $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : (tSin ? 'Registrar (sin SONAR)' : 'Despachar'));
+  if (!ocultarDespacho) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ
 }
 $('s-realizo').addEventListener('change', aplicarSonarRealizo);
 // Si cambian el itinerario, recalcular si va SIN SONAR (MADRUGADA/CENTRO) y reajustar el modal
@@ -8612,6 +8621,71 @@ async function marcarRealizadoSinSonar() {
     hideBusy(); btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo();
   }
 }
+// ¿La TABLA actual está marcada como SIN SONAR? (p. ej. 136II: se registra pero NO se envía a SONAR)
+function tablaSinSonar() { const t = sonarTable || current; return !!(t && TABLES[t] && TABLES[t].sinSonar); }
+// Registra el despacho COMPLETO (móvil, conductor, hora, despachador, GPS) SIN enviarlo a SONAR.
+// Igual que el despacho normal pero sin la llamada a SONAR ni el mId. Para tablas sin_sonar.
+async function despacharSinSonar() {
+  const btn = $('sonar-send'); const err = $('sonar-error'); err.hidden = true;
+  const veh = await loadVehiculos();
+  const vr = veh.find((v) => String(v.id) === $('s-mov').value);
+  const drv = $('s-drv').value, com = $('s-com').value.trim();
+  const horaSel = $('s-hora')?.value || '';
+  if (!sonarRow?.id) { err.textContent = 'No hay un viaje seleccionado.'; err.hidden = false; return; }
+  if (!vr) { err.textContent = 'Selecciona un móvil.'; err.hidden = false; return; }
+  if (!drv) { err.textContent = 'Selecciona un conductor.'; err.hidden = false; return; }
+  if (horaYaPaso(horaSel)) { err.textContent = 'La hora de despacho ya pasó. Usa la hora actual o una posterior.'; err.hidden = false; return; }
+  if (!(await verificarSesionVigente())) return; // el turno pudo terminar
+  const minDesde = await minutosUltimoDespacho(vr.id);
+  if (minDesde !== null && minDesde < 20) {
+    const seguir = await confirmAction({ title: '⚠️ Móvil despachado hace poco', lead: `El móvil ${vr.numero} fue despachado hace ${minDesde} min.`, message: '¿Desea despachar nuevamente?', okLabel: 'Despachar de nuevo', danger: true });
+    if (!seguir) return;
+  }
+  const drvLabel = $('s-drv').selectedOptions[0]?.textContent || '—';
+  const progId = sonarRow ? (sonarRow.vehiculo_programado_id || sonarRow.vehiculo_id || null) : null;
+  const esReemplazo = progId && Number(progId) !== Number(vr.id);
+  const movProg = esReemplazo ? (veh.find((v) => Number(v.id) === Number(progId))?.numero || progId) : null;
+  const ok = await confirmAction({
+    title: '¿Registrar despacho (sin SONAR)?',
+    lead: 'Se guardará el registro del despacho. NO se envía a SONAR:',
+    message: `Móvil:     ${vr.numero}\nConductor: ${drvLabel}` + (com ? `\nComent.:   ${com}` : '')
+      + (esReemplazo ? `\n\n⚠️ Reemplazo: el móvil programado ${movProg} quedará como NO realizó el viaje.` : ''),
+    okLabel: 'Registrar',
+  });
+  if (!ok) return;
+  btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Procesando…';
+  const ubicGps = await requerirGps(); // GPS del celular del despachador (igual que un despacho normal)
+  if (!ubicGps) { btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); err.textContent = 'Cancelado: se requiere la ubicación (GPS).'; err.hidden = false; return; }
+  showBusy('Registrando…');
+  try {
+    const newVehId = Number($('s-mov').value) || sonarRow.vehiculo_id || null;
+    const huboCambio = !!(progId && newVehId && Number(progId) !== Number(newVehId));
+    const numDe = (id) => { const v = veh.find((x) => Number(x.id) === Number(id)); return v ? v.numero : id; };
+    const patch = {
+      estado_despacho: 'DESPACHADO',
+      vehiculo_id: newVehId,
+      vehiculo_programado_id: progId || newVehId,
+      realizo_programado: !huboCambio,
+      cambio: huboCambio ? `${numDe(progId)} → ${numDe(newVehId)}` : null,
+      despachado_en: new Date().toISOString(),
+    };
+    if (horaSel) patch.hora = horaSel;
+    if (CTX?.despachador_id) patch.despachador_id = CTX.despachador_id; // queda quién despachó
+    if (ubicGps) patch.ubicacion = ubicGps;
+    try {
+      const drow = (await loadDrivers()).find((d) => String(d.dr_id) === String(drv));
+      if (drow?.nombre) { const { data: c } = await sb.from('conductores').upsert({ nombre: drow.nombre }, { onConflict: 'nombre' }).select('id').single(); if (c?.id) patch.conductor_id = c.id; }
+    } catch { /* si el conductor no mapea, el registro sigue válido */ }
+    const { data, error } = await sb.from(sonarTable).update(patch).eq('id', sonarRow.id).select();
+    if (error) { err.textContent = 'No se pudo registrar: ' + error.message; err.hidden = false; btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); return; }
+    if (!data || !data.length) { err.textContent = 'No se guardó: tu turno terminó o el registro no es editable.'; err.hidden = false; btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); return; }
+    const res = $('sonar-result'); res.hidden = false; res.className = 'sonar-result ok';
+    res.textContent = '✅ Despacho registrado (sin SONAR).\n📍 Ubicación registrada: ' + ubicGps;
+    toast('Despacho registrado (sin SONAR)', 'ok');
+    sonarRow = null; btn.dataset.busy = '0'; btn.disabled = true; btn.textContent = 'Registrado ✓';
+    if (current === sonarTable) loadData();
+  } finally { hideBusy(); }
+}
 // Si el usuario elige el conductor a mano, se oculta el aviso del Resumen
 $('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n) n.hidden = true; });
 
@@ -8633,6 +8707,11 @@ $('sonar-send').addEventListener('click', async () => {
       const rb = await restriccionSuspende(vrB.numero, rutaNom, hoyServidor(), $('s-hora')?.value || null, current, condNom);
       if (rb) { const e = $('sonar-error'); e.innerHTML = restriccionBloqueoMsg(rb); e.hidden = false; return; }
     }
+  }
+  // Tabla marcada SIN SONAR (p. ej. 136II): registra el despacho COMPLETO localmente y NO lo envía a SONAR.
+  if (tablaSinSonar()) {
+    if ($('s-realizo').value === 'SI') { await despacharSinSonar(); } else { await marcarNoRealiza(); }
+    return;
   }
   // Rutas MADRUGADA/CENTRO: NUNCA se despachan a SONAR; solo se marca si se realizó o no.
   if (sonarSinEnvio) {

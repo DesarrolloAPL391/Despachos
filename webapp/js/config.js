@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v240';
+export const APP_VERSION = 'v241';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -23,7 +23,7 @@ const NOVEDADES = [
 ];
 
 export const TABLE_ORDER = [
-  'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'ubicaciones', 'vehiculosgps',
+  'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'tablas_despacho', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios',
 ];
 // Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
@@ -62,6 +62,8 @@ const IMPORT_MAP_TABLAS = {
   'hora de salida programada': 'hora_prog', 'hora de salida programado': 'hora_prog', 'hora de despacho programada': 'hora_prog',
   'nombre de conductor': 'conductor', 'nombre conductor': 'conductor',
   'codigo de conductor': 'codigo',
+  'hora de salida': 'hora', // en las tablas la salida real = hora del viaje
+  'estado': 'despachado',   // en las tablas "estado" es el estado del despacho (SIN DESPACHO / DESPACHADO)
 };
 
 // Mapa de encabezados (normalizados) -> campo, para la importación de resumen
@@ -419,6 +421,36 @@ export const TABLES = {
     ],
   },
 
+  // Administración de las TABLAS DE DESPACHO por puesto (las que se descubren en caliente).
+  // La tabla física se crea por SQL (setup_tabla_puesto); aquí el admin la ENCIENDE/APAGA en el
+  // menú (activo) y ajusta su nombre visible / puesto. Solo el admin la ve (menuOrder). Escribe
+  // con la sesión del propio admin (RLS td_all + en_horario()=true para admin).
+  tablas_despacho: {
+    label: 'Tablas de despacho',
+    icon: '🚌',
+    pk: 'tabla',
+    pkEditable: false,
+    noCreate: true, // las tablas físicas se crean por SQL (setup_tabla_puesto), no como fila suelta
+    noDelete: true, // quitar la fila la saca del menú de TODOS; se hace por SQL a conciencia
+    select: '*',
+    searchCols: ['label', 'tabla', 'puesto'],
+    defaultOrder: { col: 'label', asc: true },
+    columns: [
+      { key: 'label', label: 'Nombre', m: true },
+      { key: 'tabla', label: 'Tabla (BD)' },
+      { key: 'puesto', label: 'Puesto', m: true },
+      { key: 'activo', label: 'Activa', badge: true, m: true },
+      { key: 'sin_sonar', label: 'Sin SONAR', badge: true },
+    ],
+    fields: [
+      { key: 'tabla', label: 'Tabla (BD)', type: 'text', hint: 'Nombre físico en la base. No se edita: se define al crearla por SQL.' },
+      { key: 'label', label: 'Nombre visible', type: 'text', required: true, hint: 'Como aparece en el menú (ej. 136II).' },
+      { key: 'puesto', label: 'Puesto', type: 'textsel', optionsFrom: { table: 'puestos', col: 'nombre' }, hint: 'Debe coincidir con el puesto: define quién (qué despachador) la ve.' },
+      { key: 'activo', label: '¿Activa? (aparece en el menú)', type: 'boolean', default: false, hint: 'Enciéndela para que la tabla salga en el submenú 🚌 Despachos. Apágala para ocultarla.' },
+      { key: 'sin_sonar', label: '¿Registra sin enviar a SONAR?', type: 'boolean', default: false, hint: 'Si está activo, al despachar solo se guarda el registro local (quién despachó, móvil, conductor, hora, GPS) y NO se envía a SONAR.' },
+    ],
+  },
+
   ubicaciones: {
     label: 'Ubicaciones',
     icon: '📍',
@@ -715,5 +747,5 @@ export function configTablaPuesto(label, puesto, opts = {}) {
   // Importación propia de la tabla por puesto (inserta en SU tabla, no en despachos)
   const importar = { rpc: 'importar_tabla_puesto', map: IMPORT_MAP_TABLAS, keyField: 'fecha', tablaParam: true, kept: 'duplicados_omitidos', keptLabel: 'Ya existían (omitidos)' };
   // La tabla pertenece a un puesto: el campo "Ruta" se limita a las rutas de ese puesto (puestos.rutas)
-  return { ...TABLES.despachos, fields, columns, filters, defaultOrder, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false, puesto, routeByPuesto: 'ruta_id' };
+  return { ...TABLES.despachos, fields, columns, filters, defaultOrder, select, label, icon: '🛣️', import: importar, noCreate: true, despachador: false, puesto, routeByPuesto: 'ruta_id', sinSonar: !!opts.sinSonar };
 }
