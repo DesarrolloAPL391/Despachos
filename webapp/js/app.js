@@ -2777,35 +2777,58 @@ async function openDocsVehiculo(row, soloKeys) {
   loadDocCambios(row.id);   // historial de cambios de la ficha (admin/operaciones)
 }
 // Editor de la FICHA del parque (solo subadmin). Los documentos van por su propio gestor.
-const PARQUE_FICHA_FIELDS = [
-  ['estado', 'Estado', 'estado'], ['ruta', 'Ruta', 'text'], ['propietario', 'Propietario', 'text'],
-  ['identificacion', 'Identificación', 'text'], ['telefono', 'Teléfono', 'text'], ['correo', 'Correo', 'text'],
-  ['direccion', 'Dirección', 'text'], ['administrador', 'Administrador', 'text'], ['correo_admin', 'Correo admin', 'text'],
-  ['placa', 'Placa', 'text'], ['marca', 'Marca', 'text'], ['linea', 'Línea', 'text'], ['modelo', 'Modelo (año)', 'number'],
-  ['color', 'Color', 'text'], ['combustible', 'Combustible', 'text'], ['tecnologia_emision', 'Tecnología emisión', 'text'],
-  ['clase_vehiculo', 'Clase', 'text'], ['tipo_carroceria', 'Carrocería', 'text'], ['cilindraje', 'Cilindraje', 'text'],
-  ['cap_sentados', 'Cap. sentados', 'number'], ['cap_pie', 'Cap. de pie', 'number'], ['capacidad_to', 'Capacidad total', 'number'],
-  ['centro_costos', 'Centro de costos', 'text'], ['sistema_ruta', 'Sistema/ruta', 'text'],
-  ['fecha_matricula', 'Fecha matrícula', 'date'], ['num_matricula', 'N° matrícula', 'text'],
+// Campos agrupados por secciones (mismas claves editables que subadmin_editar_parque).
+const PARQUE_FICHA_SECS = [
+  { t: 'Operación', ic: '🚦', f: [
+    ['estado', 'Estado', 'estado'], ['ruta', 'Ruta', 'text'],
+    ['sistema_ruta', 'Sistema / ruta', 'text'], ['centro_costos', 'Centro de costos', 'text'],
+  ] },
+  { t: 'Datos del vehículo', ic: '🚐', f: [
+    ['placa', 'Placa', 'text'], ['marca', 'Marca', 'text'], ['linea', 'Línea', 'text'],
+    ['modelo', 'Modelo (año)', 'number'], ['color', 'Color', 'text'],
+    ['clase_vehiculo', 'Clase', 'text'], ['tipo_carroceria', 'Carrocería', 'text'],
+    ['combustible', 'Combustible', 'text'], ['tecnologia_emision', 'Tecnología emisión', 'text'],
+    ['cilindraje', 'Cilindraje', 'text'],
+  ] },
+  { t: 'Capacidad', ic: '👥', f: [
+    ['cap_sentados', 'Cap. sentados', 'number'], ['cap_pie', 'Cap. de pie', 'number'],
+    ['capacidad_to', 'Capacidad total', 'number'],
+  ] },
+  { t: 'Matrícula', ic: '🪪', f: [
+    ['fecha_matricula', 'Fecha matrícula', 'date'], ['num_matricula', 'N° matrícula', 'text'],
+  ] },
+  { t: 'Propietario', ic: '🏢', f: [
+    ['propietario', 'Propietario', 'text'], ['identificacion', 'Identificación', 'text'],
+    ['telefono', 'Teléfono', 'text'], ['correo', 'Correo', 'text'], ['direccion', 'Dirección', 'text'],
+  ] },
+  { t: 'Administrador', ic: '👤', f: [
+    ['administrador', 'Administrador', 'text'], ['correo_admin', 'Correo admin', 'text'],
+  ] },
 ];
+// Campos que ocupan una fila completa (textos largos)
+const PARQUE_WIDE = new Set(['direccion', 'correo', 'correo_admin', 'propietario', 'sistema_ruta']);
 const PARQUE_ESTADOS = ['Activo', 'Desvinculado', 'Inactivo', 'Mantenimiento'];
+function _fichaCampo(row, [k, lbl, type]) {
+  const val = row[k] == null ? '' : String(row[k]);
+  const wide = PARQUE_WIDE.has(k) ? ' wide' : '';
+  if (type === 'estado') {
+    const extra = (val && !PARQUE_ESTADOS.includes(val)) ? `<option value="${esc(val)}" selected>${esc(val)}</option>` : '';
+    const opts = PARQUE_ESTADOS.map((e) => `<option value="${e}"${e === val ? ' selected' : ''}>${e}</option>`).join('');
+    return `<label class="doc-ff${wide}"><span>${lbl}</span><select data-k="${k}">${extra}${opts}</select></label>`;
+  }
+  const t = type === 'number' ? 'number' : (type === 'date' ? 'date' : 'text');
+  const v = type === 'date' ? String(val).slice(0, 10) : val;
+  return `<label class="doc-ff${wide}"><span>${lbl}</span><input type="${t}" data-k="${k}" value="${esc(v)}" /></label>`;
+}
 function renderFichaEditor(row) {
   const wrap = $('doc-ficha-wrap'), cont = $('doc-ficha');
   if (!wrap || !cont) return;
   if (!isSubadmin()) { wrap.hidden = true; return; }
   wrap.hidden = false;
   const msg = $('doc-ficha-msg'); if (msg) msg.textContent = '';
-  cont.innerHTML = PARQUE_FICHA_FIELDS.map(([k, lbl, type]) => {
-    const val = row[k] == null ? '' : String(row[k]);
-    if (type === 'estado') {
-      const extra = (val && !PARQUE_ESTADOS.includes(val)) ? `<option value="${esc(val)}" selected>${esc(val)}</option>` : '';
-      const opts = PARQUE_ESTADOS.map((e) => `<option value="${e}"${e === val ? ' selected' : ''}>${e}</option>`).join('');
-      return `<label class="doc-ff"><span>${lbl}</span><select data-k="${k}">${extra}${opts}</select></label>`;
-    }
-    const t = type === 'number' ? 'number' : (type === 'date' ? 'date' : 'text');
-    const v = type === 'date' ? String(val).slice(0, 10) : val;
-    return `<label class="doc-ff"><span>${lbl}</span><input type="${t}" data-k="${k}" value="${esc(v)}" /></label>`;
-  }).join('');
+  cont.innerHTML = PARQUE_FICHA_SECS.map((s) =>
+    `<section class="ficha-sec"><h4 class="ficha-sec-h">${s.ic ? s.ic + ' ' : ''}${esc(s.t)}</h4>`
+    + `<div class="ficha-grid">${s.f.map((c) => _fichaCampo(row, c)).join('')}</div></section>`).join('');
 }
 async function guardarFichaParque() {
   if (!DOC_VEH || !isSubadmin()) return;
@@ -5799,6 +5822,18 @@ function pvFechaCorta(iso) { // '2026-09-02' -> '2/09/2026'
 }
 // ¿La preventiva sigue sin resultado (pendiente por revisión)?
 function pvPendResultado(r) { const s = (r.resultado || '').toUpperCase(); return !s || s === 'PENDIENTE POR REVISION'; }
+// Badge de vigencia de la revisión técnico-mecánica (RTM): rojo si vencida, ámbar si vence en <=30 días, verde si vigente.
+function pvRtmBadge(iso) {
+  if (!iso) return '';
+  let cls = 'rtmok', txt = 'RTM vigente';
+  try {
+    const d = new Date(iso + 'T12:00:00'), hoy = new Date(hoyServidor() + 'T12:00:00');
+    const dias = Math.round((d - hoy) / 86400000);
+    if (dias < 0) { cls = 'rtmvenc'; txt = 'RTM vencida'; }
+    else if (dias <= 30) { cls = 'rtmprox'; txt = 'RTM por vencer'; }
+  } catch (e) { /* */ }
+  return `<span class="pv-badge ${cls}">🛠️ ${txt}: ${esc(pvFechaCorta(iso))}</span>`;
+}
 // Mensaje de WhatsApp para el conductor
 function pvMensaje(p) {
   const L = [];
@@ -5847,7 +5882,7 @@ async function cargarPreventivas() {
   const body = $('pv-body'); body.innerHTML = '<div class="loading">Cargando programación…</div>';
   try {
     const { data, error } = await sb.from('preventivas')
-      .select('id,interno,placa,ruta,propietario,fecha,lugar,notificado,notificado_por,notificado_en,notif_veces,resultado,resultado_por,resultado_en,motivo_rechazo,reprogramada_de,reprogramada_a')
+      .select('id,interno,placa,ruta,propietario,fecha,lugar,notificado,notificado_por,notificado_en,notif_veces,resultado,resultado_por,resultado_en,motivo_rechazo,reprogramada_de,reprogramada_a,fecha_vigencia_rtm')
       .order('fecha', { ascending: true }).order('interno', { ascending: true }).limit(3000);
     if (error) throw error;
     _pvDatos = data || [];
@@ -5897,6 +5932,7 @@ function renderPreventivas() {
       if (res === 'APROBADO') bRes = '<span class="pv-badge aprob">✅ Aprobada</span>';
       else if (res === 'RECHAZADO') bRes = '<span class="pv-badge rech">❌ Rechazada</span>';
       const bReprog = r.reprogramada_de ? '<span class="pv-badge reprog">🔁 Reprogramada</span>' : '';
+      const bRtm = pvRtmBadge(r.fecha_vigencia_rtm);
       // Meta
       const metas = [];
       if (done) metas.push(`Notificado por ${quien}${cuando ? ' · ' + esc(cuando) : ''}${r.notif_veces > 1 ? ` · ${r.notif_veces} envíos` : ''}`);
@@ -5919,7 +5955,7 @@ function renderPreventivas() {
         + '<div class="pv-info">'
         + `<div class="pv-top"><span class="pv-int">🚌 ${esc(r.interno)}</span>${r.placa ? `<span class="pv-placa">${esc(r.placa)}</span>` : ''}${r.ruta ? `<span class="pv-ruta">${esc(r.ruta)}</span>` : ''}${bReprog}</div>`
         + `${r.propietario ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
-        + `<div class="pv-estado">${bNotif}${bRes}</div>${meta}`
+        + `<div class="pv-estado">${bNotif}${bRes}${bRtm}</div>${meta}`
         + '</div>'
         + (btns.length ? `<div class="pv-actions">${btns.join('')}</div>` : '')
         + '</div>';
