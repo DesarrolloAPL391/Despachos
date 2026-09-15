@@ -336,6 +336,13 @@ tbody tr:hover { background: #faf8ff; }
   background: var(--surface, #fff); border: 1px solid var(--border, #e3e3e3); border-radius: 14px;
   box-shadow: 0 10px 34px rgba(0,0,0,.22); display: flex; flex-direction: column; overflow: hidden;
 }
+/* Panel ACOPLADO (PC): el mapa se encoge a la izquierda y el panel ocupa la derecha sin taparlo,
+   así se ven mapa + lista de alertas al tiempo. En celular sigue como hoja inferior. */
+@media (min-width: 761px) {
+  .map-view.rec-active #map.map { width: calc(100% - 348px); }
+  .map-view.rec-active .rec-panel { top: 8px; right: 8px; bottom: 8px; width: 326px; }
+  .map-view.rec-active .rec-ruta-chip { left: calc(50% - 174px); }
+}
 /* Leyenda flotante que explica los colores del rastreo */
 .rec-legend { position: absolute; left: 12px; bottom: 24px; z-index: 1140; background: rgba(255,255,255,.96); border: 1px solid var(--border, #e3e3e3); border-radius: 12px; padding: 9px 12px; font-size: 12px; line-height: 1.7; box-shadow: 0 8px 26px rgba(0,0,0,.18); max-width: 250px; }
 .rl-title { font-weight: 800; font-size: 13px; margin-bottom: 5px; }

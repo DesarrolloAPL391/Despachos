@@ -9938,9 +9938,28 @@ function _tripOf(hhmm) {
   return -1;
 }
 function _recQuitarHi() { if (_recTripHi) { try { (recLayer || flotaMap).removeLayer(_recTripHi); } catch (e) {} _recTripHi = null; } }
-// Encuadre que reserva el espacio del panel lateral (der.) y del aviso de ruta (arriba), para que
-// el recorrido no quede tapado ni "se salga de contexto" al hacer zoom en PC.
-function _recFitOpts() { return window.innerWidth > 760 ? { paddingTopLeft: [56, 72], paddingBottomRight: [356, 56] } : { padding: [36, 36] }; }
+// Encuadre del recorrido. En PC el panel va ACOPLADO al lado (no tapa el mapa) → solo se reserva
+// el aviso de ruta (arriba). En celular la hoja inferior tapa abajo → se reserva ese espacio.
+function _recFitOpts() {
+  return window.innerWidth > 760
+    ? { paddingTopLeft: [40, 74], paddingBottomRight: [40, 48] }
+    : { paddingTopLeft: [28, 64], paddingBottomRight: [28, 180] };
+}
+// Acopla/desacopla el panel del recorrido: el mapa se encoge para que quepan mapa + lista sin
+// taparse, y se re-encaja el trazo al nuevo tamaño (invalidateSize para que Leaflet re-renderice).
+function _recDock(on) {
+  const mv = $('map-view'); if (mv) mv.classList.toggle('rec-active', !!on);
+  if (!flotaMap) return;
+  setTimeout(() => {
+    try {
+      flotaMap.invalidateSize();
+      if (on && _recLatLng.length) {
+        const seg = _recRange ? _recLatLng.slice(_recRange.from, _recRange.to + 1) : _recLatLng;
+        flotaMap.fitBounds(seg.length ? seg : _recLatLng, _recFitOpts());
+      }
+    } catch (e) {}
+  }, 60);
+}
 // Detiene el reproductor y restablece el botón ▶️
 function recStop() {
   if (_recTimer) { clearInterval(_recTimer); _recTimer = null; }
@@ -10032,6 +10051,7 @@ function limpiarRecorrido() {
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
   const lg = $('rec-legend'); if (lg) lg.hidden = true;
+  _recDock(false); // el mapa recupera todo el ancho
 }
 function dibujarRecorrido(pts, movil, rutaName) {
   if (!flotaMap) return;
@@ -10127,10 +10147,11 @@ function renderRecPanel(pts, movil) {
   // En celular arranca con la lista oculta (mapa visible); en PC, con la lista abierta
   pn.classList.toggle('list-open', window.innerWidth > 760);
   pn.hidden = false;
+  _recDock(true); // acopla el panel: el mapa se encoge para verse completo al lado
   recGoto(0);
 }
 $('rec-panel-toggle') && $('rec-panel-toggle').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.classList.toggle('list-open'); });
-$('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => { recStop(); const p = $('rec-panel'); if (p) p.hidden = true; });
+$('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => limpiarRecorrido()); // ✕ = cerrar el rastreo (el botón "Quitar recorrido" queda tapado por el panel)
 // Controles del reproductor del recorrido (⏮ ◀ ▶️ ▶ + velocidad)
 $('rec-play') && $('rec-play').addEventListener('click', recPlay);
 $('rec-next') && $('rec-next').addEventListener('click', () => recStepBy(1));
