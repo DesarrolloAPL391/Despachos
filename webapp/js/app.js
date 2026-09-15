@@ -560,6 +560,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gAn, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
   if (isAdmin() || isAuditor() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(gAn, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
+  if (isAfiliado()) addNavAction(gAn, '🔎', 'Eventos del bus', abrirEventosMovil, 'nav-eventos');
   if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🏆', 'Top de movilización', openTop, 'nav-top');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(gAn, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(gAn, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
@@ -9555,8 +9556,29 @@ function _evtLocal(fecha, hhmm) { // 'YYYY-MM-DD' + 'HH:MM' -> valor de datetime
 function _evtMovil(row) { return row.veh?.numero || row.vehp?.numero || row.movil || ''; }
 function _evtRuta(row) { return row.ruta?.nombre || row.rutap?.nombre || (typeof row.ruta === 'string' ? row.ruta : '') || ''; }
 function _evtHora(row) { return String(row.hora || row.hora_inicio || '00:00').slice(0, 5); }
+// Abre el visor de eventos SIN partir de un despacho: el usuario elige el vehículo y el rango.
+// Pensado para el afiliado (ve solo SUS carros; la RLS del RPC además valida la propiedad).
+async function abrirEventosMovil() {
+  const moviles = [...movilesAfiliado()].filter(Boolean).sort();
+  if (!moviles.length) { toast('No tienes vehículos asignados.', 'err'); return; }
+  const sel = $('evt-veh');
+  sel.innerHTML = moviles.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  $('evt-veh-wrap').hidden = false;
+  _evtRow = { movil: moviles[0], fecha: hoyServidor(), standalone: true };
+  _evtItems = []; _evtFiltro = 'todo';
+  $('evt-movil').textContent = moviles[0];
+  $('evt-lista').innerHTML = ''; $('evt-resumen').textContent = ''; $('evt-msg').textContent = '';
+  document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => c.classList.toggle('evt-on', c.dataset.f === 'todo'));
+  // Ventana por defecto: la jornada de hoy (04:00 → 23:59), hora de Colombia.
+  const f = hoyServidor();
+  $('evt-desde').value = _evtLocal(f, '04:00');
+  $('evt-hasta').value = _evtLocal(f, '23:59');
+  $('evt-modal').hidden = false;
+  await verEventosAuditor();
+}
 async function abrirEventosAuditor(row) {
   _evtRow = row; _evtItems = []; _evtFiltro = 'todo';
+  $('evt-veh-wrap').hidden = true; // desde una fila: el móvil viene fijo del despacho
   const movil = _evtMovil(row);
   const rt = _evtRuta(row);
   $('evt-movil').textContent = `${movil}${rt ? ' · ' + rt : ''}`;
@@ -9575,8 +9597,8 @@ async function abrirEventosAuditor(row) {
 }
 async function verEventosAuditor() {
   if (!_evtRow) return;
-  const movil = _evtMovil(_evtRow);
-  // Auditoría SONAR ya trae el tracker (mid); en Despachos hay que buscarlo por el móvil.
+  const movil = _evtRow.standalone ? ($('evt-veh').value || '') : _evtMovil(_evtRow);
+  // Auditoría SONAR ya trae el tracker (mid); en Despachos/afiliado hay que buscarlo por el móvil.
   const mid = _evtRow.mid || await gpsIdFor(movil);
   const msg = $('evt-msg');
   if (!mid) { msg.textContent = '🚫 El móvil ' + movil + ' no tiene Id GPS en SONAR.'; return; }
@@ -9627,6 +9649,10 @@ function cerrarEventos() { $('evt-modal').hidden = true; _evtRow = null; _evtIte
 $('evt-x').addEventListener('click', cerrarEventos);
 $('evt-cerrar').addEventListener('click', cerrarEventos);
 $('evt-ver').addEventListener('click', verEventosAuditor);
+$('evt-veh')?.addEventListener('change', () => {
+  if (_evtRow) { _evtRow.movil = $('evt-veh').value; $('evt-movil').textContent = $('evt-veh').value; }
+  verEventosAuditor();
+});
 document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => {
   c.addEventListener('click', () => {
     _evtFiltro = c.dataset.f;
