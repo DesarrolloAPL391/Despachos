@@ -9956,8 +9956,8 @@ let _recParadas = [];      // paradas largas detectadas {ini,fin,durMin,lat,lon,
 let _recParadaMarks = [];  // marcadores 🅿️ en el mapa (paralelo a _recParadas)
 let _recTab = 'ev';        // pestaña activa de la lista: 'ev' eventos | 'st' paradas
 function _hmToMin(hhmm) { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
-// "18 min" / "1 h 5 min" a partir de minutos
-function _durTxt(min) { const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h${m ? ' ' + m + ' min' : ''}` : `${m} min`; }
+// "18 min" / "1 h 5 min" a partir de minutos (para las paradas largas)
+function _durParada(min) { const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h${m ? ' ' + m + ' min' : ''}` : `${m} min`; }
 // Índice del viaje que contiene la hora hh:mm (-1 fuera de todo viaje, -2 si aún no se sabe).
 // Ventana [iniMin, finMin): contigua entre vueltas, sin solaparse.
 function _tripOf(hhmm) {
@@ -10185,7 +10185,7 @@ function renderRecLista() {
     list.innerHTML = _recParadas.map((s, k) => `<button type="button" class="rec-stop" data-k="${k}">
       <span class="rec-stop-ic">🅿️</span>
       <span class="rec-stop-t">${esc(_hora12(s.ini))}–${esc(_hora12(s.fin))}</span>
-      <span class="rec-stop-dur">${esc(_durTxt(s.durMin))}</span>
+      <span class="rec-stop-dur">${esc(_durParada(s.durMin))}</span>
       <span class="rec-stop-d">${esc(s.dir || '—')}</span>
     </button>`).join('');
     list.querySelectorAll('.rec-stop').forEach((b) => b.addEventListener('click', () => recGotoParada(+b.dataset.k)));
@@ -10212,7 +10212,7 @@ function pintarParadasEnMapa() {
     const m = L.marker([s.lat, s.lon], {
       icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="stop-mark${big ? ' big' : ''}">🅿️ ${lbl}</div>` }),
       zIndexOffset: 500,
-    }).bindPopup(`🅿️ <b>Parada ${esc(_durTxt(s.durMin))}</b><br>${esc(_hora12(s.ini))}–${esc(_hora12(s.fin))}${s.dir ? '<br>' + esc(s.dir) : ''}`).addTo(recLayer);
+    }).bindPopup(`🅿️ <b>Parada ${esc(_durParada(s.durMin))}</b><br>${esc(_hora12(s.ini))}–${esc(_hora12(s.fin))}${s.dir ? '<br>' + esc(s.dir) : ''}`).addTo(recLayer);
     _recParadaMarks.push(m);
   }
 }
