@@ -9672,7 +9672,22 @@ function dibujarRastreoEventos(items, movil, rutaName) {
   }
   flotaMap.fitBounds(latlngs, { padding: [40, 40] });
   const b = $('rec-clear'); if (b) b.hidden = false; // reusa el botón "quitar recorrido"
+  // Panel lateral con la LISTA de eventos: clic en uno → salta el cursor al punto en el mapa.
+  _recPts = items.map((e) => ({
+    lat: e.lat, lon: e.lon, t: hm(e), vel: e.velocidad ?? 0,
+    dir: e.evento ? (e.evento + (e.direccion ? ' · ' + e.direccion : '')) : (e.direccion || ''),
+  }));
+  _recCursor = L.circleMarker([_recPts[0].lat, _recPts[0].lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ED1C24', fillOpacity: 1 }).addTo(recLayer);
+  renderRecPanel(_recPts, movil);
   toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ruta ' + rutaName : ''}`, 'ok');
+}
+// Ruta del carro (para activar su KMZ): la trae 'ubicaciones' (ej. "133-133D"), instantáneo.
+async function rutaDeMovil(movil) {
+  const m = String(movil || '').trim();
+  const hit = (lastUbic || []).find((u) => String(u.movil || '').trim() === m);
+  if (hit && hit.ruta) return hit.ruta;
+  try { const { data } = await sb.from('ubicaciones').select('ruta').eq('movil', m).limit(1).maybeSingle(); return (data && data.ruta) || ''; }
+  catch (e) { return ''; }
 }
 // Botón "Ver en el mapa" del visor de eventos: pinta el rastreo + KMZ y cierra el modal.
 async function eventosAlMapa() {
@@ -9681,11 +9696,7 @@ async function eventosAlMapa() {
   const movil = _evtRow?.standalone ? ($('evt-veh').value || '') : _evtMovil(_evtRow || {});
   cerrarEventos();
   if (currentView !== 'mapa') await showMapView();
-  let ruta = '';
-  try {
-    const mid = await gpsIdFor(movil);
-    if (mid) { const { data } = await sb.rpc('ruta_actual_sonar', { p_mid: mid }); if (data && data.ok) ruta = data.ruta || ''; }
-  } catch (e) { /* la ruta del KMZ es best-effort */ }
+  const ruta = await rutaDeMovil(movil); // ubicaciones.ruta → activa el KMZ autorizado
   dibujarRastreoEventos(items, movil, ruta);
 }
 function cerrarEventos() { $('evt-modal').hidden = true; _evtRow = null; _evtItems = []; }
