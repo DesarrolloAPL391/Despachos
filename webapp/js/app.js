@@ -9715,7 +9715,7 @@ function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
     L.circleMarker([e.lat, e.lon], { radius: 6, color: '#b91c1c', fillColor: '#b91c1c', fillOpacity: 0.9, weight: 1 })
       .bindPopup(`🚨 <b>${esc(hm(e))}</b> · ${esc(e.evento || '')}<br>${esc(String(e.velocidad))}${e.limite ? ' / ' + esc(String(e.limite)) : ''} km/h${e.direccion ? '<br>' + esc(e.direccion) : ''}`).addTo(recLayer);
   }
-  flotaMap.fitBounds(latlngs, { padding: [40, 40] });
+  flotaMap.fitBounds(latlngs, _recFitOpts());
   const b = $('rec-clear'); if (b) b.hidden = false; // reusa el botón "quitar recorrido"
   // 6) Panel lateral con la LISTA de eventos (clic en uno → salta el cursor al punto).
   _recLatLng = latlngs; // para resaltar el tramo de un viaje elegido
@@ -9887,6 +9887,9 @@ function _tripOf(hhmm) {
   return -1;
 }
 function _recQuitarHi() { if (_recTripHi) { try { (recLayer || flotaMap).removeLayer(_recTripHi); } catch (e) {} _recTripHi = null; } }
+// Encuadre que reserva el espacio del panel lateral (der.) y del aviso de ruta (arriba), para que
+// el recorrido no quede tapado ni "se salga de contexto" al hacer zoom en PC.
+function _recFitOpts() { return window.innerWidth > 760 ? { paddingTopLeft: [56, 72], paddingBottomRight: [356, 56] } : { padding: [36, 36] }; }
 // Detiene el reproductor y restablece el botón ▶️
 function recStop() {
   if (_recTimer) { clearInterval(_recTimer); _recTimer = null; }
@@ -9917,15 +9920,19 @@ function recViajeElegido(ix) {
   recStop(); _recQuitarHi();
   if (ix < 0 || !_recTrips[ix] || _recTrips[ix].i0 < 0) {
     _recRange = null;
-    if (flotaMap && _recLatLng.length) flotaMap.fitBounds(_recLatLng, { padding: [40, 40] });
+    if (flotaMap && _recLatLng.length) flotaMap.fitBounds(_recLatLng, _recFitOpts());
     recGoto(0); return;
   }
   const t = _recTrips[ix];
   _recRange = { from: t.i0, to: t.i1 };
   const seg = _recLatLng.slice(t.i0, t.i1 + 1);
   if (flotaMap && seg.length) {
-    _recTripHi = L.polyline(seg, { color: '#16a34a', weight: 7, opacity: 0.9 }).addTo(recLayer || flotaMap);
-    flotaMap.fitBounds(seg, { padding: [50, 50] });
+    // halo violeta suave (no satura como el verde): banda ancha translúcida + núcleo fino
+    _recTripHi = L.layerGroup([
+      L.polyline(seg, { color: '#7c3aed', weight: 11, opacity: 0.22, lineCap: 'round', lineJoin: 'round' }),
+      L.polyline(seg, { color: '#7c3aed', weight: 3, opacity: 0.9 }),
+    ]).addTo(recLayer || flotaMap);
+    flotaMap.fitBounds(seg, _recFitOpts());
   }
   recGoto(t.i0);
 }
@@ -9954,7 +9961,7 @@ function _recAplicarViajes(trips) {
   if (sub) sub.innerHTML += validos.length ? ` · 🚍 <b>${validos.length}</b> viaje${validos.length > 1 ? 's' : ''} despachado${validos.length > 1 ? 's' : ''}` : ' · sin despacho ese día';
   const lg = $('rec-legend');
   if (lg && !lg.hidden && validos.length && !lg.querySelector('.rl-trip'))
-    lg.insertAdjacentHTML('beforeend', '<div class="rl-row rl-trip"><span class="rl-line" style="border-top-color:#16a34a;border-top-width:4px"></span> Tramo del viaje elegido</div>');
+    lg.insertAdjacentHTML('beforeend', '<div class="rl-row rl-trip"><span class="rl-line" style="border-top-color:#7c3aed;border-top-width:4px"></span> Tramo del viaje elegido</div>');
   const sl = $('rec-slider'); if (sl) recGoto(+sl.value); // refresca la etiqueta del punto actual
 }
 function limpiarRecorrido() {
@@ -9965,6 +9972,7 @@ function limpiarRecorrido() {
   _recPts = []; _recCursor = null; _recLatLng = [];
   _recTrips = []; _recTripsLoaded = false; _recRange = null;
   const st = $('rec-trip'); if (st) { st.hidden = true; st.innerHTML = ''; }
+  const rc = $('rec-ruta-chip'); if (rc) rc.hidden = true;
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
   const lg = $('rec-legend'); if (lg) lg.hidden = true;
@@ -9989,7 +9997,7 @@ function dibujarRecorrido(pts, movil, rutaName) {
   });
   // cursor móvil (lo controla el slider / la lista)
   _recCursor = L.circleMarker([pts[0].lat, pts[0].lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ED1C24', fillOpacity: 1 }).addTo(recLayer);
-  flotaMap.fitBounds(latlngs, { padding: [40, 40] });
+  flotaMap.fitBounds(latlngs, _recFitOpts());
   const b = $('rec-clear'); if (b) b.hidden = false;
   renderRecPanel(pts, movil);
 }
@@ -10017,13 +10025,21 @@ async function overlayRutaKmzEnRecorrido(rutaName) {
 // Mueve el cursor al punto i: marcador + mapa + info + slider + lista (todo sincronizado)
 function recGoto(i) {
   const p = _recPts[i]; if (!p || !flotaMap) return;
-  if (_recCursor) _recCursor.setLatLng([p.lat, p.lon]);
-  flotaMap.panTo([p.lat, p.lon], { animate: false });
+  const ll = [p.lat, p.lon];
+  if (_recCursor) _recCursor.setLatLng(ll);
+  // No recentra en cada paso (eso "sacaba de contexto"): solo desplaza si el punto se acerca al borde.
+  try { if (!flotaMap.getBounds().pad(-0.18).contains(ll)) flotaMap.panTo(ll, { animate: false }); } catch (e) {}
   const det = (p.vel ?? 0) === 0 ? 'detenido' : `${p.vel} km/h`;
   const ti = _tripOf(p.t);
   let trip = '';
   if (ti >= 0) { const v = _recTrips[ti]; trip = `<span class="rec-trip-now on">🚍 En viaje despachado${v.ruta ? ' · ' + esc(v.ruta) : ''} · ${esc(_hora12(v.ini))}–${esc(_hora12(v.fin))}</span>`; }
   else if (ti === -1) { trip = `<span class="rec-trip-now off">⚪ Sin despacho a esta hora</span>`; }
+  // Aviso flotante no invasivo: qué ruta va haciendo en este punto (solo dentro de un viaje).
+  const chip = $('rec-ruta-chip');
+  if (chip) {
+    if (ti >= 0) { const v = _recTrips[ti]; chip.innerHTML = `🚍 Ruta ${esc(v.ruta || '—')}<span class="rc-sub">viaje ${esc(_hora12(v.ini))}–${esc(_hora12(v.fin))}</span>`; chip.hidden = false; }
+    else chip.hidden = true;
+  }
   const info = $('rec-scrub-info'); if (info) info.innerHTML = `${trip}<div class="rec-scrub-line"><b>${esc(_hora12(p.t))}</b> · ${esc(det)} · ${esc(p.dir || '')}</div>`;
   const sl = $('rec-slider'); if (sl && +sl.value !== i) sl.value = i;
   const list = $('rec-panel-list');
@@ -10037,6 +10053,7 @@ function renderRecPanel(pts, movil) {
   recStop(); _recQuitarHi();
   _recTrips = []; _recTripsLoaded = false; _recRange = null;
   const st = $('rec-trip'); if (st) { st.hidden = true; st.innerHTML = ''; }
+  const rc = $('rec-ruta-chip'); if (rc) rc.hidden = true;
   $('rec-panel-title').textContent = `🛣️ ${movil || ''}`;
   $('rec-panel-sub').textContent = `${pts.length} puntos · ${_hora12(pts[0].t)}–${_hora12(pts[pts.length - 1].t)}`;
   const list = $('rec-panel-list');

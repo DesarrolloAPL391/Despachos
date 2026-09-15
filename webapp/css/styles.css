@@ -371,8 +371,17 @@ tbody tr:hover { background: #faf8ff; }
 .rec-trip-now { font-weight: 800; font-size: 12px; border-radius: 7px; padding: 3px 8px; margin-bottom: 5px; display: inline-block; }
 .rec-trip-now.on { background: #dcfce7; color: #14532d; }
 .rec-trip-now.off { background: #f1f1f4; color: #6b7280; }
-/* Punto de la lista que cae dentro de un viaje despachado: barra verde a la izquierda */
-.rec-pt.rec-in-trip { border-left: 4px solid #16a34a; padding-left: 8px; }
+/* Punto de la lista que cae dentro de un viaje despachado: barra a la izquierda */
+.rec-pt.rec-in-trip { border-left: 4px solid #7c3aed; padding-left: 8px; }
+/* Aviso flotante (no invasivo) de la ruta que va haciendo el bus mientras se reproduce */
+.rec-ruta-chip {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 1160;
+  background: rgba(124,58,237,.94); color: #fff; font-weight: 800; font-size: 13.5px;
+  padding: 8px 16px; border-radius: 999px; box-shadow: 0 6px 22px rgba(76,29,149,.35);
+  pointer-events: none; white-space: nowrap; max-width: 92%; overflow: hidden; text-overflow: ellipsis;
+}
+.rec-ruta-chip .rc-sub { font-weight: 600; opacity: .9; font-size: 12px; margin-left: 6px; }
+@media (max-width: 760px) { .rec-ruta-chip { top: 60px; font-size: 12px; padding: 6px 12px; } }
 /* La lista solo se ve cuando el panel está "abierto" (botón ☰) */
 .rec-panel-list { display: none; overflow-y: auto; padding: 6px; -webkit-overflow-scrolling: touch; }
 .rec-panel.list-open .rec-panel-list { display: block; flex: 1 1 auto; min-height: 0; }
