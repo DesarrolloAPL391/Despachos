@@ -9645,41 +9645,84 @@ function pintarEventosAuditor() {
     </div>`;
   }).join('');
 }
-// Dibuja en el mapa el RASTREO GPS del carro a partir de los eventos ya consultados
-// (traza roja) + la ruta AUTORIZADA del KMZ encima (azul punteada), para comparar.
-function dibujarRastreoEventos(items, movil, rutaName) {
+// Distancia en metros entre dos coordenadas (haversine).
+function _haversineM(aLat, aLon, bLat, bLon) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (bLat - aLat) * toR, dLon = (bLon - aLon) * toR;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * toR) * Math.cos(bLat * toR) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+// Distancia mínima de un punto al corredor KMZ (a sus vértices). Corta apenas está "dentro".
+function _minKmzDistM(lat, lon, verts) {
+  let best = Infinity;
+  for (const v of verts) { const d = _haversineM(lat, lon, v[0], v[1]); if (d < best) { best = d; if (best < 45) break; } }
+  return best;
+}
+// Puntos [lat,lon] de la(s) ruta(s) KMZ del carro (para dibujar el corredor y medir desvíos).
+async function kmzPuntosDeRuta(rutaName) {
+  const recMap = await loadRecorridos();
+  const polys = [];
+  for (const c of _codigosDeRuta(rutaName, recMap)) {
+    const rec = recMap.get(c);
+    if (rec && Array.isArray(rec.puntos) && rec.puntos.length) polys.push(rec.puntos);
+  }
+  return polys;
+}
+// Dibuja el RASTREO GPS del carro (traza roja) sobre el corredor AUTORIZADO del KMZ (azul grueso
+// punteado, protagonista) y AUDITA los DESVÍOS: resalta en naranja dónde el bus se salió de la
+// ruta. Reusa el panel del recorrido para la lista de eventos.
+function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
   if (!flotaMap) return;
   limpiarRecorrido();
   if (flotaLayer && flotaMap.hasLayer(flotaLayer)) flotaMap.removeLayer(flotaLayer); // oculta la flota
   recLayer = L.layerGroup().addTo(flotaMap);
-  overlayRutaKmzEnRecorrido(rutaName); // KMZ autorizado (azul punteado), best-effort
-  const latlngs = items.map((e) => [e.lat, e.lon]);
   const hm = (e) => String(e.hora || '').slice(11, 16);
-  L.polyline(latlngs, { color: '#ED1C24', weight: 3, opacity: 0.8 }).addTo(recLayer);
-  L.circleMarker(latlngs[0], { radius: 7, color: '#137a2b', fillColor: '#137a2b', fillOpacity: 0.95, weight: 2 })
-    .bindTooltip('Inicio ' + hm(items[0])).addTo(recLayer);
-  L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: '#0b5cad', fillColor: '#0b5cad', fillOpacity: 0.95, weight: 2 })
-    .bindTooltip('Fin ' + hm(items[items.length - 1])).addTo(recLayer);
-  // Marca lo que importa: excesos 🚨 (rojo) y pasos por punto de control 📍 (azul), con popup.
+  const latlngs = items.map((e) => [e.lat, e.lon]);
+  // 1) Corredor AUTORIZADO (KMZ): grueso y punteado, como referencia protagonista (va debajo).
+  const kmzVerts = [];
+  for (const poly of (kmzPolys || [])) {
+    L.polyline(poly, { color: '#2563eb', weight: 9, opacity: 0.45, dashArray: '1,12', lineCap: 'round' })
+      .bindTooltip('Ruta autorizada ' + (rutaName || ''), { sticky: true }).addTo(recLayer);
+    for (const p of poly) kmzVerts.push(p);
+  }
+  // 2) AUDITORÍA de desvíos: puntos del GPS a más de OFF_M del corredor autorizado.
+  const OFF_M = 150, MIN_RUN = 3;
+  const off = kmzVerts.length ? items.map((e) => _minKmzDistM(e.lat, e.lon, kmzVerts) > OFF_M) : items.map(() => false);
+  // 3) Traza REAL (roja) por encima del corredor.
+  L.polyline(latlngs, { color: '#ED1C24', weight: 3, opacity: 0.85 }).addTo(recLayer);
+  // 4) Tramos FUERA DE RUTA en naranja grueso + marca ⚠️ donde se salió (la auditoría).
+  let desvios = 0, run = [];
+  const flush = () => {
+    if (run.length >= MIN_RUN) {
+      desvios++;
+      L.polyline(run.map((i) => latlngs[i]), { color: '#ff6a00', weight: 6, opacity: 0.95 }).addTo(recLayer);
+      const e0 = items[run[0]], e1 = items[run[run.length - 1]];
+      L.circleMarker(latlngs[run[0]], { radius: 8, color: '#ff6a00', fillColor: '#fff7ed', fillOpacity: 1, weight: 3 })
+        .bindPopup(`⚠️ <b>Se salió de la ruta</b><br>${esc(hm(e0))}–${esc(hm(e1))}${e0.direccion ? '<br>' + esc(e0.direccion) : ''}`).addTo(recLayer);
+    }
+    run = [];
+  };
+  off.forEach((o, i) => { if (o) run.push(i); else flush(); });
+  flush();
+  // 5) Inicio / fin y excesos 🚨 (con popup).
+  L.circleMarker(latlngs[0], { radius: 7, color: '#137a2b', fillColor: '#137a2b', fillOpacity: 0.95, weight: 2 }).bindTooltip('Inicio ' + hm(items[0])).addTo(recLayer);
+  L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: '#0b5cad', fillColor: '#0b5cad', fillOpacity: 0.95, weight: 2 }).bindTooltip('Fin ' + hm(items[items.length - 1])).addTo(recLayer);
   for (const e of items) {
-    const ex = _evtExceso(e), geo = _evtTipo(e) === 'geo';
-    if (!ex && !geo) continue;
-    const col = ex ? '#b91c1c' : '#2563eb';
-    L.circleMarker([e.lat, e.lon], { radius: ex ? 6 : 4, color: col, fillColor: col, fillOpacity: 0.9, weight: 1 })
-      .bindPopup(`<b>${esc(hm(e))}</b> · ${esc(e.evento || '')}`
-        + (e.velocidad != null ? `<br>${esc(String(e.velocidad))}${e.limite ? ' / ' + esc(String(e.limite)) : ''} km/h` : '')
-        + (e.direccion ? `<br>${esc(e.direccion)}` : '')).addTo(recLayer);
+    if (!_evtExceso(e)) continue;
+    L.circleMarker([e.lat, e.lon], { radius: 6, color: '#b91c1c', fillColor: '#b91c1c', fillOpacity: 0.9, weight: 1 })
+      .bindPopup(`🚨 <b>${esc(hm(e))}</b> · ${esc(e.evento || '')}<br>${esc(String(e.velocidad))}${e.limite ? ' / ' + esc(String(e.limite)) : ''} km/h${e.direccion ? '<br>' + esc(e.direccion) : ''}`).addTo(recLayer);
   }
   flotaMap.fitBounds(latlngs, { padding: [40, 40] });
   const b = $('rec-clear'); if (b) b.hidden = false; // reusa el botón "quitar recorrido"
-  // Panel lateral con la LISTA de eventos: clic en uno → salta el cursor al punto en el mapa.
+  // 6) Panel lateral con la LISTA de eventos (clic en uno → salta el cursor al punto).
   _recPts = items.map((e) => ({
     lat: e.lat, lon: e.lon, t: hm(e), vel: e.velocidad ?? 0,
     dir: e.evento ? (e.evento + (e.direccion ? ' · ' + e.direccion : '')) : (e.direccion || ''),
   }));
   _recCursor = L.circleMarker([_recPts[0].lat, _recPts[0].lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ED1C24', fillOpacity: 1 }).addTo(recLayer);
   renderRecPanel(_recPts, movil);
-  toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ruta ' + rutaName : ''}`, 'ok');
+  if (desvios) { const s = $('rec-panel-sub'); if (s) s.innerHTML += ` · <b style="color:#c2410c">⚠️ ${desvios} desvío(s)</b>`; }
+  toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ' + rutaName : ''}${desvios ? ` · ⚠️ ${desvios} desvío(s) de ruta` : ''}`, 'ok');
 }
 // Ruta del carro (para activar su KMZ): la trae 'ubicaciones' (ej. "133-133D"), instantáneo.
 async function rutaDeMovil(movil) {
@@ -9697,7 +9740,8 @@ async function eventosAlMapa() {
   cerrarEventos();
   if (currentView !== 'mapa') await showMapView();
   const ruta = await rutaDeMovil(movil); // ubicaciones.ruta → activa el KMZ autorizado
-  dibujarRastreoEventos(items, movil, ruta);
+  const kmz = await kmzPuntosDeRuta(ruta); // corredor autorizado (para dibujar y medir desvíos)
+  dibujarRastreoEventos(items, movil, ruta, kmz);
 }
 function cerrarEventos() { $('evt-modal').hidden = true; _evtRow = null; _evtItems = []; }
 $('evt-x').addEventListener('click', cerrarEventos);
