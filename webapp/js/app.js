@@ -560,7 +560,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gAn, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
   if (isAdmin() || isAuditor() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(gAn, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
-  if (isAfiliado()) addNavAction(gAn, '🔎', 'Eventos del bus', abrirEventosMovil, 'nav-eventos');
+  if (isAfiliado() || isAuditor() || isAdmin()) addNavAction(gAn, '🔎', 'Eventos del bus', abrirEventosMovil, 'nav-eventos');
   if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🏆', 'Top de movilización', openTop, 'nav-top');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(gAn, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(gAn, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
@@ -9556,11 +9556,21 @@ function _evtLocal(fecha, hhmm) { // 'YYYY-MM-DD' + 'HH:MM' -> valor de datetime
 function _evtMovil(row) { return row.veh?.numero || row.vehp?.numero || row.movil || ''; }
 function _evtRuta(row) { return row.ruta?.nombre || row.rutap?.nombre || (typeof row.ruta === 'string' ? row.ruta : '') || ''; }
 function _evtHora(row) { return String(row.hora || row.hora_inicio || '00:00').slice(0, 5); }
+// Lista de móviles para el visor por vehículo, según el rol: el afiliado ve SUS carros; el auditor/
+// admin ven la flota que pueden ver (ubicaciones ya está filtrada por RLS a sus rutas).
+async function _movilesParaVisor() {
+  if (isAfiliado()) return [...movilesAfiliado()].filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  let src = (lastUbic || []).map((u) => String(u.movil || '').trim()).filter(Boolean);
+  if (!src.length) {
+    try { const { data } = await sb.from('ubicaciones').select('movil'); src = (data || []).map((u) => String(u.movil || '').trim()).filter(Boolean); } catch (e) {}
+  }
+  return [...new Set(src)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
 // Abre el visor de eventos SIN partir de un despacho: el usuario elige el vehículo y el rango.
-// Pensado para el afiliado (ve solo SUS carros; la RLS del RPC además valida la propiedad).
+// Afiliado (solo SUS carros) y auditor/admin (flota de sus rutas). La RLS del RPC valida el acceso.
 async function abrirEventosMovil() {
-  const moviles = [...movilesAfiliado()].filter(Boolean).sort();
-  if (!moviles.length) { toast('No tienes vehículos asignados.', 'err'); return; }
+  const moviles = await _movilesParaVisor();
+  if (!moviles.length) { toast(isAfiliado() ? 'No tienes vehículos asignados.' : 'No hay vehículos para consultar.', 'err'); return; }
   const sel = $('evt-veh');
   sel.innerHTML = moviles.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
   $('evt-veh-wrap').hidden = false;
@@ -9575,6 +9585,9 @@ async function abrirEventosMovil() {
   $('evt-hasta').value = _evtLocal(f, '23:59');
   $('evt-modal').hidden = false;
   await verEventosAuditor();
+  // Primera vez: muestra el tour guiado de la lista de eventos.
+  let visto = true; try { visto = !!localStorage.getItem('tour_evt_v1'); } catch (e) {}
+  if (!visto) { try { localStorage.setItem('tour_evt_v1', '1'); } catch (e) {} setTimeout(tourEventos, 450); }
 }
 async function abrirEventosAuditor(row) {
   _evtRow = row; _evtItems = []; _evtFiltro = 'todo';
@@ -9857,10 +9870,55 @@ $('evt-x').addEventListener('click', cerrarEventos);
 $('evt-cerrar').addEventListener('click', cerrarEventos);
 $('evt-ver').addEventListener('click', verEventosAuditor);
 $('evt-mapa')?.addEventListener('click', eventosAlMapa);
+$('evt-tour')?.addEventListener('click', tourEventos);
 $('evt-veh')?.addEventListener('change', () => {
   if (_evtRow) { _evtRow.movil = $('evt-veh').value; $('evt-movil').textContent = $('evt-veh').value; }
   verEventosAuditor();
 });
+
+// ===== Tour guiado (coach-marks): resalta elementos y los explica paso a paso =====
+let _tourSteps = [], _tourI = 0;
+function _tourTarget() { const s = _tourSteps[_tourI]; if (!s) return null; return typeof s.sel === 'string' ? document.querySelector(s.sel) : s.sel; }
+function _tourRender() {
+  const s = _tourSteps[_tourI]; if (!s) return _tourEnd();
+  const el = _tourTarget();
+  if (!el || el.hidden || !el.offsetParent) { // objetivo ausente/oculto: salta al siguiente
+    if (_tourI < _tourSteps.length - 1) { _tourI++; return _tourRender(); }
+    return _tourEnd();
+  }
+  el.scrollIntoView({ block: 'nearest' });
+  const r = el.getBoundingClientRect(), pad = 6;
+  const hole = $('tour-hole'), pop = $('tour-pop'), ov = $('tour-ov');
+  hole.style.left = (r.left - pad) + 'px'; hole.style.top = (r.top - pad) + 'px';
+  hole.style.width = (r.width + pad * 2) + 'px'; hole.style.height = (r.height + pad * 2) + 'px';
+  $('tour-step').textContent = `Paso ${_tourI + 1} de ${_tourSteps.length}`;
+  $('tour-title').textContent = s.title;
+  $('tour-text').textContent = s.text;
+  $('tour-prev').hidden = _tourI === 0;
+  $('tour-next').textContent = _tourI === _tourSteps.length - 1 ? '¡Listo!' : 'Siguiente ›';
+  ov.hidden = false;
+  // Posiciona el globo: debajo del objetivo si cabe; si no, arriba; y dentro de la pantalla.
+  pop.style.visibility = 'hidden';
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let top = r.bottom + 12; if (top + ph > window.innerHeight - 12) top = Math.max(12, r.top - ph - 12);
+  let left = r.left + r.width / 2 - pw / 2; left = Math.min(Math.max(12, left), window.innerWidth - pw - 12);
+  pop.style.top = top + 'px'; pop.style.left = left + 'px'; pop.style.visibility = 'visible';
+}
+function _tourEnd() { const ov = $('tour-ov'); if (ov) ov.hidden = true; window.removeEventListener('resize', _tourRender); _tourSteps = []; }
+function runTour(steps) { if (!steps || !steps.length) return; _tourSteps = steps; _tourI = 0; window.addEventListener('resize', _tourRender); _tourRender(); }
+$('tour-next')?.addEventListener('click', () => { if (_tourI < _tourSteps.length - 1) { _tourI++; _tourRender(); } else _tourEnd(); });
+$('tour-prev')?.addEventListener('click', () => { if (_tourI > 0) { _tourI--; _tourRender(); } });
+$('tour-skip')?.addEventListener('click', _tourEnd);
+// Tour de la lista de eventos (auditor/afiliado): explica selector, rango, filtros, lista y mapa.
+function tourEventos() {
+  runTour([
+    { sel: '#evt-veh-wrap', title: 'Elige el vehículo', text: 'Selecciona el bus que quieres auditar. Puedes cambiarlo cuando quieras y la lista se actualiza sola.' },
+    { sel: '#evt-desde', title: 'Rango de fecha y hora', text: 'Define el periodo a revisar (por defecto, la jornada de hoy). Ajusta "Desde" y "Hasta" para acotar.' },
+    { sel: '#evt-modal .evt-filtros', title: 'Filtra por tipo', text: 'Muestra solo lo que te interesa: 🚨 excesos de velocidad, 🚪 puertas, 📍 puntos de control o 🛣️ ruta / retrasos.' },
+    { sel: '#evt-lista', title: 'Lista de eventos', text: 'Aquí ves TODOS los reportes del bus: hora, velocidad, dirección y tipo de evento. Esta es la lista de eventos del recorrido.' },
+    { sel: '#evt-mapa', title: 'Ver en el mapa', text: 'Dibuja el recorrido real sobre el corredor autorizado, marca los desvíos y las 🅿️ paradas largas, con reproductor y lista de paradas para localizarlas.' },
+  ]);
+}
 document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => {
   c.addEventListener('click', () => {
     _evtFiltro = c.dataset.f;

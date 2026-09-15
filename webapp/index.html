@@ -1267,9 +1267,26 @@
       <div class="modal-foot">
         <span id="evt-resumen" class="muted"></span>
         <span class="spacer"></span>
+        <button id="evt-tour" class="btn" title="Ver el recorrido guiado">❔ Tour</button>
         <button id="evt-mapa" class="btn">🗺️ Ver en el mapa</button>
         <button id="evt-cerrar" class="btn">Cerrar</button>
         <button id="evt-ver" class="btn btn-primary">🔎 Consultar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tour guiado (coach-marks): resalta elementos y los explica paso a paso -->
+  <div id="tour-ov" class="tour-ov" hidden>
+    <div id="tour-hole" class="tour-hole"></div>
+    <div id="tour-pop" class="tour-pop" role="dialog" aria-modal="true">
+      <div class="tour-step" id="tour-step"></div>
+      <h4 class="tour-title" id="tour-title"></h4>
+      <p class="tour-text" id="tour-text"></p>
+      <div class="tour-actions">
+        <button id="tour-skip" class="btn" type="button">Saltar</button>
+        <span class="spacer"></span>
+        <button id="tour-prev" class="btn" type="button">‹ Anterior</button>
+        <button id="tour-next" class="btn btn-primary" type="button">Siguiente ›</button>
       </div>
     </div>
   </div>
