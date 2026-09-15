@@ -9658,6 +9658,41 @@ function _minKmzDistM(lat, lon, verts) {
   for (const v of verts) { const d = _haversineM(lat, lon, v[0], v[1]); if (d < best) { best = d; if (best < 45) break; } }
   return best;
 }
+// Distancia (m) del punto C a la recta A→B (plano local; sirve para detectar "picos" del GPS).
+function _distPerpM(a, c, b) {
+  const R = 6371000, toR = Math.PI / 180, latm = c.lat * toR;
+  const ax = a.lon * toR * Math.cos(latm) * R, ay = a.lat * toR * R;
+  const bx = b.lon * toR * Math.cos(latm) * R, by = b.lat * toR * R;
+  const cx = c.lon * toR * Math.cos(latm) * R, cy = c.lat * toR * R;
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+  if (L2 === 0) return Math.hypot(cx - ax, cy - ay);
+  let t = ((cx - ax) * dx + (cy - ay) * dy) / L2; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(cx - (ax + t * dx), cy - (ay + t * dy));
+}
+// Descarta LECTURAS GPS con ruido (picos que saltan fuera de la vía y crean líneas cruzando
+// manzanas). No hace map-matching: solo quita los puntos que "sobresalen" de sus vecinos buenos,
+// para que la traza no muestre desvíos que en realidad no ocurrieron. Devuelve {pts, quitados}.
+function _limpiarGps(items) {
+  if (!items || items.length < 3) return { pts: items || [], quitados: 0 };
+  const keep = items.map(() => true);
+  const D = (p, q) => _haversineM(p.lat, p.lon, q.lat, q.lon);
+  const vecino = (i, paso) => { let j = i + paso; while (j >= 0 && j < items.length && !keep[j]) j += paso; return j; };
+  // 1) Picos: el punto sobresale mucho de la recta entre sus vecinos buenos y el rodeo es grande.
+  for (let i = 1; i < items.length - 1; i++) {
+    const a = vecino(i, -1), b = vecino(i, 1); if (a < 0 || b >= items.length) continue;
+    const A = items[a], C = items[i], B = items[b];
+    const dAC = D(A, C), dCB = D(C, B), dAB = D(A, B);
+    if (_distPerpM(A, C, B) > 120 && (dAC + dCB) > dAB * 1.8 && Math.min(dAC, dCB) > 90) keep[i] = false;
+  }
+  // 2) Saltos aislados: muy lejos de ambos vecinos, pero los vecinos están cerca entre sí (out-and-back).
+  for (let i = 1; i < items.length - 1; i++) {
+    if (!keep[i]) continue;
+    const a = vecino(i, -1), b = vecino(i, 1); if (a < 0 || b >= items.length) continue;
+    if (D(items[a], items[i]) > 400 && D(items[i], items[b]) > 400 && D(items[a], items[b]) < 250) keep[i] = false;
+  }
+  const pts = items.filter((_, i) => keep[i]);
+  return pts.length >= 2 ? { pts, quitados: items.length - pts.length } : { pts: items, quitados: 0 };
+}
 // Puntos [lat,lon] de la(s) ruta(s) KMZ del carro (para dibujar el corredor y medir desvíos).
 async function kmzPuntosDeRuta(rutaName) {
   const recMap = await loadRecorridos();
@@ -9673,6 +9708,7 @@ async function kmzPuntosDeRuta(rutaName) {
 // ruta. Reusa el panel del recorrido para la lista de eventos.
 function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
   if (!flotaMap) return;
+  const _lg = _limpiarGps(items); items = _lg.pts; const _gpsQuitados = _lg.quitados; // quita picos de GPS
   limpiarRecorrido();
   if (flotaLayer && flotaMap.hasLayer(flotaLayer)) flotaMap.removeLayer(flotaLayer); // oculta la flota
   recLayer = L.layerGroup().addTo(flotaMap);
@@ -9688,8 +9724,9 @@ function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
     L.polyline(poly, { color: '#1d4ed8', weight: 2, opacity: 0.85 }).addTo(recLayer);
     for (const p of poly) kmzVerts.push(p);
   }
-  // 2) AUDITORÍA de desvíos: puntos del GPS a más de OFF_M del corredor autorizado.
-  const OFF_M = 150, MIN_RUN = 3;
+  // 2) AUDITORÍA de desvíos: puntos del GPS a más de OFF_M del corredor autorizado. Se exige un
+  //    tramo SOSTENIDO (MIN_RUN puntos seguidos) para no marcar un salto suelto del GPS como desvío.
+  const OFF_M = 160, MIN_RUN = 4;
   const off = kmzVerts.length ? items.map((e) => _minKmzDistM(e.lat, e.lon, kmzVerts) > OFF_M) : items.map(() => false);
   // 3) Traza REAL (roja) más fina, para que la banda azul del corredor siga a la vista.
   L.polyline(latlngs, { color: '#ED1C24', weight: 2.5, opacity: 0.9 }).addTo(recLayer);
@@ -9726,8 +9763,9 @@ function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
   _recCursor = L.circleMarker([_recPts[0].lat, _recPts[0].lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ED1C24', fillOpacity: 1 }).addTo(recLayer);
   renderRecPanel(_recPts, movil);
   if (desvios) { const s = $('rec-panel-sub'); if (s) s.innerHTML += ` · <b style="color:#c2410c">⚠️ ${desvios} desvío(s)</b>`; }
+  if (_gpsQuitados) { const s = $('rec-panel-sub'); if (s) s.innerHTML += ` · <span style="color:#6b7280">🧹 ${_gpsQuitados} lectura(s) GPS con ruido descartada(s)</span>`; }
   pintarLeyendaRecorrido({ movil, ruta: rutaName, hayKmz: kmzVerts.length > 0, desvios });
-  toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ' + rutaName : ''}${desvios ? ` · ⚠️ ${desvios} desvío(s) de ruta` : ''}`, 'ok');
+  toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ' + rutaName : ''}${desvios ? ` · ⚠️ ${desvios} desvío(s) de ruta` : ''}${_gpsQuitados ? ` · 🧹 ${_gpsQuitados} lectura(s) con ruido` : ''}`, 'ok');
 }
 // Leyenda flotante que EXPLICA lo que se ve en el mapa (colores del rastreo).
 function pintarLeyendaRecorrido({ movil, ruta, hayKmz, desvios }) {
@@ -9774,11 +9812,19 @@ async function cargarViajesDespachados(movil, items) {
     else { const d = new Date(fEvt + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); d.setUTCHours(5, 0, 0, 0); pFin = d.toISOString().slice(0, 19).replace('T', ' '); }
     const { data, error } = await sb.rpc('despachos_sonar', { p_mid: mid, p_ini: pIni, p_fin: pFin });
     if (error || !data || !data.ok) return;
-    const trips = (data.items || [])
-      .filter((d) => d.fecha === fEvt && d.cancelado !== 'true' && (d.minutos || 0) > 0 && (d.minutos || 0) <= 1440)
-      .map((d) => { const ini = (d.hora || '').slice(0, 5); const f = _finConMinutos(d.fecha, ini, d.minutos || 0); return { ini, fin: f.hhmm, ruta: d.ruta || '', estado: d.corriendo === 'true' ? 'en curso' : 'finalizado' }; })
+    // OJO: 'minutos' de SONAR mide hasta el cierre del turno, NO la vuelta. Lo que sirve son los
+    // INICIOS: cada despacho es una vuelta. El fin de cada viaje = inicio del siguiente (el último,
+    // una ventana amplia que _recAplicarViajes recorta con el último evento real).
+    const raw = (data.items || [])
+      .filter((d) => d.fecha === fEvt && d.cancelado !== 'true')
+      .map((d) => ({ ini: (d.hora || '').slice(0, 5), ruta: d.ruta || '', estado: d.corriendo === 'true' ? 'en curso' : 'finalizado' }))
       .filter((d) => d.ini)
       .sort((a, b) => _hmToMin(a.ini) - _hmToMin(b.ini));
+    const trips = raw.map((d, k) => {
+      const iniMin = _hmToMin(d.ini);
+      const finMin = k < raw.length - 1 ? _hmToMin(raw[k + 1].ini) : iniMin + 240; // último: tope amplio
+      return { ini: d.ini, ruta: d.ruta, estado: d.estado, iniMin, finMin };
+    });
     if (trips.length) _recAplicarViajes(trips);
   } catch (e) { /* silencioso: el rastreo ya está a la vista */ }
 }
@@ -9835,13 +9881,17 @@ async function abrirRecorrido(r) {
   const { data, error } = await sb.rpc('despachos_sonar', { p_mid: r.mid, p_ini: pIni, p_fin: pFin });
   if (error) { sel.innerHTML = '<option value="">—</option>'; $('rec-msg').textContent = 'Error: ' + error.message; return; }
   if (!data || !data.ok) { sel.innerHTML = '<option value="">—</option>'; $('rec-msg').textContent = 'No se pudo consultar SONAR: ' + (data?.error || '?'); return; }
-  // solo HOY, sin cancelados, descartando placeholders con duración absurda (>24 h)
-  const items = (data.items || []).filter((d) => d.fecha === hoy && d.cancelado !== 'true' && (d.minutos || 0) > 0 && (d.minutos || 0) <= 1440);
-  _recDesp = items.map((d) => {
-    const ini = (d.hora || '').slice(0, 5);
-    const f = _finConMinutos(d.fecha, ini, d.minutos || 0);
-    return { fecha: d.fecha, ini, fin: f.hhmm, finFecha: f.fecha, ruta: d.ruta || '', estado: d.corriendo === 'true' ? 'en curso' : 'finalizado' };
-  }).filter((d) => d.ini);
+  // solo HOY, sin cancelados. OJO: 'minutos' de SONAR mide hasta el cierre del turno, NO la vuelta;
+  // el fin de cada despacho = inicio del siguiente (el último, una ventana de 2.5 h por defecto).
+  const base = (data.items || []).filter((d) => d.fecha === hoy && d.cancelado !== 'true')
+    .map((d) => ({ fecha: d.fecha, ini: (d.hora || '').slice(0, 5), ruta: d.ruta || '', estado: d.corriendo === 'true' ? 'en curso' : 'finalizado' }))
+    .filter((d) => d.ini)
+    .sort((a, b) => _hmToMin(a.ini) - _hmToMin(b.ini));
+  _recDesp = base.map((d, i) => {
+    if (i < base.length - 1) return { ...d, fin: base[i + 1].ini, finFecha: d.fecha };
+    const f = _finConMinutos(d.fecha, d.ini, 150); // último: ventana amplia
+    return { ...d, fin: f.hhmm, finFecha: f.fecha };
+  });
   if (!_recDesp.length) {
     sel.innerHTML = '<option value="">—</option>';
     $('rec-msg').textContent = '🚫 Este vehículo no tiene despacho hoy. El recorrido solo se muestra del despacho de hoy.';
@@ -9879,11 +9929,12 @@ let _recRange = null;      // {from,to}: límites del reproductor cuando se elig
 let _recLatLng = [];       // [[lat,lon],…] del recorrido, para resaltar el tramo de un viaje
 let _recTripHi = null;     // capa Leaflet del viaje resaltado en verde
 function _hmToMin(hhmm) { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
-// Índice del viaje que contiene la hora hh:mm (-1 fuera de todo viaje, -2 si aún no se sabe)
+// Índice del viaje que contiene la hora hh:mm (-1 fuera de todo viaje, -2 si aún no se sabe).
+// Ventana [iniMin, finMin): contigua entre vueltas, sin solaparse.
 function _tripOf(hhmm) {
   if (!_recTripsLoaded) return -2;
   const t = _hmToMin(hhmm);
-  for (let i = 0; i < _recTrips.length; i++) { const v = _recTrips[i]; if (t >= _hmToMin(v.ini) && t <= _hmToMin(v.fin)) return i; }
+  for (let i = 0; i < _recTrips.length; i++) { const v = _recTrips[i]; if (t >= v.iniMin && t < v.finMin) return i; }
   return -1;
 }
 function _recQuitarHi() { if (_recTripHi) { try { (recLayer || flotaMap).removeLayer(_recTripHi); } catch (e) {} _recTripHi = null; } }
@@ -9940,9 +9991,14 @@ function recViajeElegido(ix) {
 function _recAplicarViajes(trips) {
   _recTrips = (trips || []).slice();
   for (const t of _recTrips) {
-    const a = _hmToMin(t.ini), b = _hmToMin(t.fin); let i0 = -1, i1 = -1;
-    for (let k = 0; k < _recPts.length; k++) { const m = _hmToMin(_recPts[k].t); if (m >= a && m <= b) { if (i0 < 0) i0 = k; i1 = k; } }
+    let i0 = -1, i1 = -1;
+    for (let k = 0; k < _recPts.length; k++) { const m = _hmToMin(_recPts[k].t); if (m >= t.iniMin && m < t.finMin) { if (i0 < 0) i0 = k; i1 = k; } }
     t.i0 = i0; t.i1 = i1;
+    if (i0 >= 0) {
+      t.ini = _recPts[i0].t;                       // etiqueta: primer evento real del viaje
+      let f = i1; while (f > i0 && (_recPts[f].vel ?? 0) === 0) f--; // recorta el ralentí final (terminal)
+      t.fin = _recPts[f].t;                         // etiqueta: último evento EN MOVIMIENTO del viaje
+    }
   }
   _recTripsLoaded = true;
   const validos = _recTrips.filter((t) => t.i0 >= 0 && t.i1 >= t.i0);
