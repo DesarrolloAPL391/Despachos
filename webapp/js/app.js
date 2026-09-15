@@ -9681,15 +9681,18 @@ function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
   // 1) Corredor AUTORIZADO (KMZ): grueso y punteado, como referencia protagonista (va debajo).
   const kmzVerts = [];
   for (const poly of (kmzPolys || [])) {
-    L.polyline(poly, { color: '#2563eb', weight: 9, opacity: 0.45, dashArray: '1,12', lineCap: 'round' })
+    // banda ancha translúcida = el corredor autorizado (fondo protagonista)
+    L.polyline(poly, { color: '#2563eb', weight: 14, opacity: 0.3, lineCap: 'round', lineJoin: 'round' })
       .bindTooltip('Ruta autorizada ' + (rutaName || ''), { sticky: true }).addTo(recLayer);
+    // línea central nítida = el trazo autorizado exacto
+    L.polyline(poly, { color: '#1d4ed8', weight: 2, opacity: 0.85 }).addTo(recLayer);
     for (const p of poly) kmzVerts.push(p);
   }
   // 2) AUDITORÍA de desvíos: puntos del GPS a más de OFF_M del corredor autorizado.
   const OFF_M = 150, MIN_RUN = 3;
   const off = kmzVerts.length ? items.map((e) => _minKmzDistM(e.lat, e.lon, kmzVerts) > OFF_M) : items.map(() => false);
-  // 3) Traza REAL (roja) por encima del corredor.
-  L.polyline(latlngs, { color: '#ED1C24', weight: 3, opacity: 0.85 }).addTo(recLayer);
+  // 3) Traza REAL (roja) más fina, para que la banda azul del corredor siga a la vista.
+  L.polyline(latlngs, { color: '#ED1C24', weight: 2.5, opacity: 0.9 }).addTo(recLayer);
   // 4) Tramos FUERA DE RUTA en naranja grueso + marca ⚠️ donde se salió (la auditoría).
   let desvios = 0, run = [];
   const flush = () => {
@@ -9722,7 +9725,21 @@ function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
   _recCursor = L.circleMarker([_recPts[0].lat, _recPts[0].lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#ED1C24', fillOpacity: 1 }).addTo(recLayer);
   renderRecPanel(_recPts, movil);
   if (desvios) { const s = $('rec-panel-sub'); if (s) s.innerHTML += ` · <b style="color:#c2410c">⚠️ ${desvios} desvío(s)</b>`; }
+  pintarLeyendaRecorrido({ movil, ruta: rutaName, hayKmz: kmzVerts.length > 0, desvios });
   toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ' + rutaName : ''}${desvios ? ` · ⚠️ ${desvios} desvío(s) de ruta` : ''}`, 'ok');
+}
+// Leyenda flotante que EXPLICA lo que se ve en el mapa (colores del rastreo).
+function pintarLeyendaRecorrido({ movil, ruta, hayKmz, desvios }) {
+  const el = $('rec-legend'); if (!el) return;
+  el.innerHTML =
+    `<div class="rl-title">🚌 ${esc(String(movil || ''))}${ruta ? ' · ' + esc(String(ruta)) : ''}</div>`
+    + (hayKmz
+      ? '<div class="rl-row"><span class="rl-band"></span> Ruta autorizada (corredor)</div>'
+      : '<div class="rl-row rl-muted">Sin ruta autorizada (KMZ) para este carro</div>')
+    + '<div class="rl-row"><span class="rl-line rl-real"></span> Recorrido real del bus</div>'
+    + (hayKmz ? `<div class="rl-row"><span class="rl-line rl-off"></span> Se salió de la ruta${desvios ? ' · <b>' + desvios + '</b>' : ' · 0'}</div>` : '')
+    + '<div class="rl-row"><span class="rl-dot rl-ini"></span> Inicio&nbsp;&nbsp;<span class="rl-dot rl-fin"></span> Fin&nbsp;&nbsp;🚨 Exceso</div>';
+  el.hidden = false;
 }
 // Ruta del carro (para activar su KMZ): la trae 'ubicaciones' (ej. "133-133D"), instantáneo.
 async function rutaDeMovil(movil) {
@@ -9840,6 +9857,7 @@ function limpiarRecorrido() {
   _recPts = []; _recCursor = null;
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
+  const lg = $('rec-legend'); if (lg) lg.hidden = true;
 }
 function dibujarRecorrido(pts, movil, rutaName) {
   if (!flotaMap) return;
