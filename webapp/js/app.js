@@ -7273,7 +7273,7 @@ function exportarPasajerosXlsx() {
       ['Indicador', 'Valor'],
       ['Subieron (total)', d.subidas || 0],
       ['Bajaron (total)', d.bajadas || 0],
-      ['Bloqueos', d.bloqueos || 0],
+      ['Obstrucciones de puerta (sensor, no pasajeros)', d.bloqueos || 0],
       ['Viajes del día', v.n_viajes || 0],
       ['  · Completos', v.n_completos || 0],
       ['  · Incompletos', v.n_incompletos || 0],
@@ -7429,11 +7429,13 @@ function renderPasajeros(d) {
   // Reinicia el mapa de una consulta anterior (se reconstruye al abrir la pestaña Mapa)
   if (paxMap) { paxMap.remove(); paxMap = null; }
   _paxMapaBuilt = false; _paxMarkerByI = new Map();
-  const hero = `<div class="pax-hero">
+  // Solo 2 tarjetas reales de pasajeros (subidas/bajadas del contador de puertas). "Bloqueos"
+  // (DoorBlocking) es telemetría del sensor, no personas → va como nota técnica pequeña, no como KPI.
+  const hero = `<div class="pax-hero pax-hero-2">
     <div class="pax-card up"><div class="pax-num">${nfmt(d.subidas)}</div><div class="pax-lbl">↑ Subieron</div></div>
     <div class="pax-card down"><div class="pax-num">${nfmt(d.bajadas)}</div><div class="pax-lbl">↓ Bajaron</div></div>
-    <div class="pax-card blk"><div class="pax-num">${nfmt(d.bloqueos)}</div><div class="pax-lbl">⛔ Bloqueos</div></div>
-  </div>`;
+  </div>`
+    + (d.bloqueos ? `<div class="pax-tecnota">🚪 ${nfmt(d.bloqueos)} obstrucciones de puerta <span class="pax-hint">(dato técnico del sensor, no son pasajeros)</span></div>` : '');
   const horas = d.por_hora || [];
   const maxH = Math.max(1, ...horas.map((h) => h.subidas || 0));
   const barras = horas.length
