@@ -9645,10 +9645,54 @@ function pintarEventosAuditor() {
     </div>`;
   }).join('');
 }
+// Dibuja en el mapa el RASTREO GPS del carro a partir de los eventos ya consultados
+// (traza roja) + la ruta AUTORIZADA del KMZ encima (azul punteada), para comparar.
+function dibujarRastreoEventos(items, movil, rutaName) {
+  if (!flotaMap) return;
+  limpiarRecorrido();
+  if (flotaLayer && flotaMap.hasLayer(flotaLayer)) flotaMap.removeLayer(flotaLayer); // oculta la flota
+  recLayer = L.layerGroup().addTo(flotaMap);
+  overlayRutaKmzEnRecorrido(rutaName); // KMZ autorizado (azul punteado), best-effort
+  const latlngs = items.map((e) => [e.lat, e.lon]);
+  const hm = (e) => String(e.hora || '').slice(11, 16);
+  L.polyline(latlngs, { color: '#ED1C24', weight: 3, opacity: 0.8 }).addTo(recLayer);
+  L.circleMarker(latlngs[0], { radius: 7, color: '#137a2b', fillColor: '#137a2b', fillOpacity: 0.95, weight: 2 })
+    .bindTooltip('Inicio ' + hm(items[0])).addTo(recLayer);
+  L.circleMarker(latlngs[latlngs.length - 1], { radius: 7, color: '#0b5cad', fillColor: '#0b5cad', fillOpacity: 0.95, weight: 2 })
+    .bindTooltip('Fin ' + hm(items[items.length - 1])).addTo(recLayer);
+  // Marca lo que importa: excesos 🚨 (rojo) y pasos por punto de control 📍 (azul), con popup.
+  for (const e of items) {
+    const ex = _evtExceso(e), geo = _evtTipo(e) === 'geo';
+    if (!ex && !geo) continue;
+    const col = ex ? '#b91c1c' : '#2563eb';
+    L.circleMarker([e.lat, e.lon], { radius: ex ? 6 : 4, color: col, fillColor: col, fillOpacity: 0.9, weight: 1 })
+      .bindPopup(`<b>${esc(hm(e))}</b> · ${esc(e.evento || '')}`
+        + (e.velocidad != null ? `<br>${esc(String(e.velocidad))}${e.limite ? ' / ' + esc(String(e.limite)) : ''} km/h` : '')
+        + (e.direccion ? `<br>${esc(e.direccion)}` : '')).addTo(recLayer);
+  }
+  flotaMap.fitBounds(latlngs, { padding: [40, 40] });
+  const b = $('rec-clear'); if (b) b.hidden = false; // reusa el botón "quitar recorrido"
+  toast(`Rastreo de ${movil}: ${items.length} puntos${rutaName ? ' · ruta ' + rutaName : ''}`, 'ok');
+}
+// Botón "Ver en el mapa" del visor de eventos: pinta el rastreo + KMZ y cierra el modal.
+async function eventosAlMapa() {
+  const items = (_evtItems || []).filter((e) => e.lat != null && e.lon != null);
+  if (!items.length) { $('evt-msg').textContent = 'Primero consulta: no hay eventos con posición GPS para dibujar.'; return; }
+  const movil = _evtRow?.standalone ? ($('evt-veh').value || '') : _evtMovil(_evtRow || {});
+  cerrarEventos();
+  if (currentView !== 'mapa') await showMapView();
+  let ruta = '';
+  try {
+    const mid = await gpsIdFor(movil);
+    if (mid) { const { data } = await sb.rpc('ruta_actual_sonar', { p_mid: mid }); if (data && data.ok) ruta = data.ruta || ''; }
+  } catch (e) { /* la ruta del KMZ es best-effort */ }
+  dibujarRastreoEventos(items, movil, ruta);
+}
 function cerrarEventos() { $('evt-modal').hidden = true; _evtRow = null; _evtItems = []; }
 $('evt-x').addEventListener('click', cerrarEventos);
 $('evt-cerrar').addEventListener('click', cerrarEventos);
 $('evt-ver').addEventListener('click', verEventosAuditor);
+$('evt-mapa')?.addEventListener('click', eventosAlMapa);
 $('evt-veh')?.addEventListener('change', () => {
   if (_evtRow) { _evtRow.movil = $('evt-veh').value; $('evt-movil').textContent = $('evt-veh').value; }
   verEventosAuditor();
