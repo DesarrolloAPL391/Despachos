@@ -9718,6 +9718,7 @@ function dibujarRastreoEventos(items, movil, rutaName, kmzPolys) {
   flotaMap.fitBounds(latlngs, { padding: [40, 40] });
   const b = $('rec-clear'); if (b) b.hidden = false; // reusa el botón "quitar recorrido"
   // 6) Panel lateral con la LISTA de eventos (clic en uno → salta el cursor al punto).
+  _recLatLng = latlngs; // para resaltar el tramo de un viaje elegido
   _recPts = items.map((e) => ({
     lat: e.lat, lon: e.lon, t: hm(e), vel: e.velocidad ?? 0,
     dir: e.evento ? (e.evento + (e.direccion ? ' · ' + e.direccion : '')) : (e.direccion || ''),
@@ -9759,6 +9760,27 @@ async function eventosAlMapa() {
   const ruta = await rutaDeMovil(movil); // ubicaciones.ruta → activa el KMZ autorizado
   const kmz = await kmzPuntosDeRuta(ruta); // corredor autorizado (para dibujar y medir desvíos)
   dibujarRastreoEventos(items, movil, ruta, kmz);
+  cargarViajesDespachados(movil, items); // marca qué tramos fueron con el bus despachado (best-effort)
+}
+// Trae los despachos del día (1 llamada SONAR) para diferenciar cuándo el bus iba en viaje.
+// Es best-effort: el rastreo ya está dibujado; si falla o no hay despachos, no pasa nada.
+async function cargarViajesDespachados(movil, items) {
+  try {
+    const mid = await gpsIdFor(movil); if (!mid) return;
+    const fEvt = String(items[0]?.hora || '').slice(0, 10) || hoyServidor();
+    const pIni = `${fEvt} 05:00:00`; // 00:00 Bogotá → UTC
+    let pFin;
+    if (fEvt === hoyServidor()) { pFin = new Date().toISOString().slice(0, 19).replace('T', ' '); }
+    else { const d = new Date(fEvt + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); d.setUTCHours(5, 0, 0, 0); pFin = d.toISOString().slice(0, 19).replace('T', ' '); }
+    const { data, error } = await sb.rpc('despachos_sonar', { p_mid: mid, p_ini: pIni, p_fin: pFin });
+    if (error || !data || !data.ok) return;
+    const trips = (data.items || [])
+      .filter((d) => d.fecha === fEvt && d.cancelado !== 'true' && (d.minutos || 0) > 0 && (d.minutos || 0) <= 1440)
+      .map((d) => { const ini = (d.hora || '').slice(0, 5); const f = _finConMinutos(d.fecha, ini, d.minutos || 0); return { ini, fin: f.hhmm, ruta: d.ruta || '', estado: d.corriendo === 'true' ? 'en curso' : 'finalizado' }; })
+      .filter((d) => d.ini)
+      .sort((a, b) => _hmToMin(a.ini) - _hmToMin(b.ini));
+    if (trips.length) _recAplicarViajes(trips);
+  } catch (e) { /* silencioso: el rastreo ya está a la vista */ }
 }
 function cerrarEventos() { $('evt-modal').hidden = true; _evtRow = null; _evtItems = []; }
 $('evt-x').addEventListener('click', cerrarEventos);
@@ -9850,11 +9872,99 @@ async function verRecorrido() {
 }
 let _recPts = [];      // puntos del recorrido actual
 let _recCursor = null; // marcador que avanza con el slider
+let _recTimer = null;      // reproductor automático (setInterval)
+let _recTrips = [];        // despachos del día que solapan el recorrido (para diferenciar viajes)
+let _recTripsLoaded = false; // ¿ya se consultaron los despachos? (si no, no afirmar "sin despacho")
+let _recRange = null;      // {from,to}: límites del reproductor cuando se elige un viaje; null = todo
+let _recLatLng = [];       // [[lat,lon],…] del recorrido, para resaltar el tramo de un viaje
+let _recTripHi = null;     // capa Leaflet del viaje resaltado en verde
+function _hmToMin(hhmm) { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+// Índice del viaje que contiene la hora hh:mm (-1 fuera de todo viaje, -2 si aún no se sabe)
+function _tripOf(hhmm) {
+  if (!_recTripsLoaded) return -2;
+  const t = _hmToMin(hhmm);
+  for (let i = 0; i < _recTrips.length; i++) { const v = _recTrips[i]; if (t >= _hmToMin(v.ini) && t <= _hmToMin(v.fin)) return i; }
+  return -1;
+}
+function _recQuitarHi() { if (_recTripHi) { try { (recLayer || flotaMap).removeLayer(_recTripHi); } catch (e) {} _recTripHi = null; } }
+// Detiene el reproductor y restablece el botón ▶️
+function recStop() {
+  if (_recTimer) { clearInterval(_recTimer); _recTimer = null; }
+  const b = $('rec-play'); if (b) { b.textContent = '▶️'; b.classList.remove('playing'); b.title = 'Reproducir recorrido'; }
+}
+// Reproduce el recorrido de corrido (o lo pausa si ya está corriendo)
+function recPlay() {
+  const sl = $('rec-slider'); if (!sl || !_recPts.length) return;
+  if (_recTimer) { recStop(); return; }
+  const b = $('rec-play'); if (b) { b.textContent = '⏸'; b.classList.add('playing'); b.title = 'Pausar'; }
+  const lo = _recRange ? _recRange.from : 0;
+  const hi = _recRange ? _recRange.to : _recPts.length - 1;
+  let i = +sl.value; if (i >= hi || i < lo) i = lo; // si está al final, reinicia
+  recGoto(i);
+  const ms = +($('rec-speed')?.value || 600);
+  _recTimer = setInterval(() => { i++; if (i > hi) { recStop(); return; } recGoto(i); }, ms);
+}
+// Avanza/retrocede d puntos (respeta el viaje elegido) y pausa la reproducción
+function recStepBy(d) {
+  recStop();
+  const sl = $('rec-slider'); if (!sl) return;
+  const lo = _recRange ? _recRange.from : 0, hi = _recRange ? _recRange.to : _recPts.length - 1;
+  recGoto(Math.max(lo, Math.min(hi, (+sl.value) + d)));
+}
+function recSpeedChange() { if (_recTimer) { recStop(); recPlay(); } } // aplica la nueva velocidad al vuelo
+// Elige un viaje del selector: acota el reproductor a su tramo, lo resalta en verde y hace zoom
+function recViajeElegido(ix) {
+  recStop(); _recQuitarHi();
+  if (ix < 0 || !_recTrips[ix] || _recTrips[ix].i0 < 0) {
+    _recRange = null;
+    if (flotaMap && _recLatLng.length) flotaMap.fitBounds(_recLatLng, { padding: [40, 40] });
+    recGoto(0); return;
+  }
+  const t = _recTrips[ix];
+  _recRange = { from: t.i0, to: t.i1 };
+  const seg = _recLatLng.slice(t.i0, t.i1 + 1);
+  if (flotaMap && seg.length) {
+    _recTripHi = L.polyline(seg, { color: '#16a34a', weight: 7, opacity: 0.9 }).addTo(recLayer || flotaMap);
+    flotaMap.fitBounds(seg, { padding: [50, 50] });
+  }
+  recGoto(t.i0);
+}
+// Cruza los despachos del día con los puntos del recorrido y prepara el selector de viajes
+function _recAplicarViajes(trips) {
+  _recTrips = (trips || []).slice();
+  for (const t of _recTrips) {
+    const a = _hmToMin(t.ini), b = _hmToMin(t.fin); let i0 = -1, i1 = -1;
+    for (let k = 0; k < _recPts.length; k++) { const m = _hmToMin(_recPts[k].t); if (m >= a && m <= b) { if (i0 < 0) i0 = k; i1 = k; } }
+    t.i0 = i0; t.i1 = i1;
+  }
+  _recTripsLoaded = true;
+  const validos = _recTrips.filter((t) => t.i0 >= 0 && t.i1 >= t.i0);
+  const sel = $('rec-trip');
+  if (sel) {
+    if (validos.length) {
+      sel.innerHTML = `<option value="-1">🚍 Todo el día · ${validos.length} viaje${validos.length > 1 ? 's' : ''} despachado${validos.length > 1 ? 's' : ''}</option>`
+        + validos.map((t) => `<option value="${_recTrips.indexOf(t)}">🚍 ${esc(_hora12(t.ini))}–${esc(_hora12(t.fin))}${t.ruta ? ' · ' + esc(t.ruta) : ''}</option>`).join('');
+      sel.hidden = false; sel.onchange = () => recViajeElegido(+sel.value);
+    } else { sel.innerHTML = ''; sel.hidden = true; }
+  }
+  // barra verde en las filas de la lista que caen dentro de un viaje
+  const list = $('rec-panel-list');
+  if (list) list.querySelectorAll('.rec-pt').forEach((el) => { const p = _recPts[+el.dataset.i]; el.classList.toggle('rec-in-trip', !!(p && _tripOf(p.t) >= 0)); });
+  const sub = $('rec-panel-sub');
+  if (sub) sub.innerHTML += validos.length ? ` · 🚍 <b>${validos.length}</b> viaje${validos.length > 1 ? 's' : ''} despachado${validos.length > 1 ? 's' : ''}` : ' · sin despacho ese día';
+  const lg = $('rec-legend');
+  if (lg && !lg.hidden && validos.length && !lg.querySelector('.rl-trip'))
+    lg.insertAdjacentHTML('beforeend', '<div class="rl-row rl-trip"><span class="rl-line" style="border-top-color:#16a34a;border-top-width:4px"></span> Tramo del viaje elegido</div>');
+  const sl = $('rec-slider'); if (sl) recGoto(+sl.value); // refresca la etiqueta del punto actual
+}
 function limpiarRecorrido() {
+  recStop(); _recQuitarHi();
   if (recLayer && flotaMap) { flotaMap.removeLayer(recLayer); recLayer = null; }
   // restaura los demás vehículos al quitar el recorrido
   if (flotaLayer && flotaMap && !flotaMap.hasLayer(flotaLayer)) flotaLayer.addTo(flotaMap);
-  _recPts = []; _recCursor = null;
+  _recPts = []; _recCursor = null; _recLatLng = [];
+  _recTrips = []; _recTripsLoaded = false; _recRange = null;
+  const st = $('rec-trip'); if (st) { st.hidden = true; st.innerHTML = ''; }
   const b = $('rec-clear'); if (b) b.hidden = true;
   const pn = $('rec-panel'); if (pn) pn.hidden = true;
   const lg = $('rec-legend'); if (lg) lg.hidden = true;
@@ -9869,6 +9979,7 @@ function dibujarRecorrido(pts, movil, rutaName) {
   // Superpone la ruta AUTORIZADA del KMZ (azul punteado) para comparar contra lo real.
   overlayRutaKmzEnRecorrido(rutaName);
   const latlngs = pts.map((p) => [p.lat, p.lon]);
+  _recLatLng = latlngs; // para resaltar el tramo de un viaje elegido
   L.polyline(latlngs, { color: '#ED1C24', weight: 4, opacity: 0.85 }).addTo(recLayer);
   // puntos pequeños del trayecto (inicio verde, fin azul); sin popups (el detalle va en el panel)
   pts.forEach((p, i) => {
@@ -9909,7 +10020,11 @@ function recGoto(i) {
   if (_recCursor) _recCursor.setLatLng([p.lat, p.lon]);
   flotaMap.panTo([p.lat, p.lon], { animate: false });
   const det = (p.vel ?? 0) === 0 ? 'detenido' : `${p.vel} km/h`;
-  const info = $('rec-scrub-info'); if (info) info.innerHTML = `<b>${esc(_hora12(p.t))}</b> · ${esc(det)} · ${esc(p.dir || '')}`;
+  const ti = _tripOf(p.t);
+  let trip = '';
+  if (ti >= 0) { const v = _recTrips[ti]; trip = `<span class="rec-trip-now on">🚍 En viaje despachado${v.ruta ? ' · ' + esc(v.ruta) : ''} · ${esc(_hora12(v.ini))}–${esc(_hora12(v.fin))}</span>`; }
+  else if (ti === -1) { trip = `<span class="rec-trip-now off">⚪ Sin despacho a esta hora</span>`; }
+  const info = $('rec-scrub-info'); if (info) info.innerHTML = `${trip}<div class="rec-scrub-line"><b>${esc(_hora12(p.t))}</b> · ${esc(det)} · ${esc(p.dir || '')}</div>`;
   const sl = $('rec-slider'); if (sl && +sl.value !== i) sl.value = i;
   const list = $('rec-panel-list');
   list.querySelectorAll('.rec-pt.sel').forEach((x) => x.classList.remove('sel'));
@@ -9918,6 +10033,10 @@ function recGoto(i) {
 }
 function renderRecPanel(pts, movil) {
   const pn = $('rec-panel'); if (!pn) return;
+  // recorrido nuevo: reinicia reproductor y datos de viajes (se recargan aparte si aplica)
+  recStop(); _recQuitarHi();
+  _recTrips = []; _recTripsLoaded = false; _recRange = null;
+  const st = $('rec-trip'); if (st) { st.hidden = true; st.innerHTML = ''; }
   $('rec-panel-title').textContent = `🛣️ ${movil || ''}`;
   $('rec-panel-sub').textContent = `${pts.length} puntos · ${_hora12(pts[0].t)}–${_hora12(pts[pts.length - 1].t)}`;
   const list = $('rec-panel-list');
@@ -9931,14 +10050,29 @@ function renderRecPanel(pts, movil) {
     </button>`;
   }).join('');
   list.querySelectorAll('.rec-pt').forEach((b) => b.addEventListener('click', () => recGoto(+b.dataset.i)));
-  const sl = $('rec-slider'); if (sl) { sl.min = 0; sl.max = pts.length - 1; sl.value = 0; sl.oninput = () => recGoto(+sl.value); }
+  const sl = $('rec-slider'); if (sl) { sl.min = 0; sl.max = pts.length - 1; sl.value = 0; sl.oninput = () => { recStop(); recGoto(+sl.value); }; }
   // En celular arranca con la lista oculta (mapa visible); en PC, con la lista abierta
   pn.classList.toggle('list-open', window.innerWidth > 760);
   pn.hidden = false;
   recGoto(0);
 }
 $('rec-panel-toggle') && $('rec-panel-toggle').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.classList.toggle('list-open'); });
-$('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.hidden = true; });
+$('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => { recStop(); const p = $('rec-panel'); if (p) p.hidden = true; });
+// Controles del reproductor del recorrido (⏮ ◀ ▶️ ▶ + velocidad)
+$('rec-play') && $('rec-play').addEventListener('click', recPlay);
+$('rec-next') && $('rec-next').addEventListener('click', () => recStepBy(1));
+$('rec-prev') && $('rec-prev').addEventListener('click', () => recStepBy(-1));
+$('rec-first') && $('rec-first').addEventListener('click', () => { recStop(); recGoto(_recRange ? _recRange.from : 0); });
+$('rec-speed') && $('rec-speed').addEventListener('change', recSpeedChange);
+// Teclado: ← → avanzan punto a punto, barra espaciadora reproduce/pausa (solo con el panel abierto)
+document.addEventListener('keydown', (e) => {
+  const pn = $('rec-panel'); if (!pn || pn.hidden) return;
+  const tag = (e.target && e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button') return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); recStepBy(1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); recStepBy(-1); }
+  else if (e.key === ' ') { e.preventDefault(); recPlay(); }
+});
 $('rec-x') && $('rec-x').addEventListener('click', () => { $('rec-modal').hidden = true; });
 $('rec-cancel') && $('rec-cancel').addEventListener('click', () => { $('rec-modal').hidden = true; });
 $('rec-ver') && $('rec-ver').addEventListener('click', verRecorrido);

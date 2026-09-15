@@ -353,11 +353,26 @@ tbody tr:hover { background: #faf8ff; }
 .rec-panel-info { flex: 1; min-width: 0; }
 .rec-panel-title { font-weight: 800; font-size: 15px; }
 .rec-panel-sub { font-size: 12px; color: var(--muted, #666); margin-top: 2px; }
-/* Deslizador para recorrer el trayecto de corrido */
+/* Deslizador + controles para recorrer/reproducir el trayecto */
 .rec-scrub { padding: 8px 12px 10px; border-bottom: 1px solid var(--border, #eee); }
 #rec-slider { width: 100%; accent-color: var(--primary, #ED1C24); }
-.rec-scrub-info { font-size: 12px; color: var(--text, #1c1c1c); margin-top: 6px; line-height: 1.35;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Fila de botones de reproducción (⏮ ◀ ▶️ ▶ + velocidad) */
+.rec-ctrls { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.rec-ctrls .icon-btn { width: 34px; height: 34px; font-size: 15px; background: #eef1f6; color: var(--text, #1c1c1c); flex: none; }
+.rec-ctrls .icon-btn:hover { background: #e3e8f0; }
+.rec-play.playing { background: var(--primary, #ED1C24) !important; color: #fff; }
+.rec-speed { margin-left: auto; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border, #dcdcdc); border-radius: 8px; background: var(--surface, #fff); color: var(--text, #1c1c1c); }
+/* Selector de viaje despachado (aparece cuando hay despachos del día) */
+.rec-trip { width: 100%; margin-bottom: 8px; font-size: 13px; font-weight: 700; padding: 8px 10px;
+  border: 1px solid #bfdbbf; border-radius: 9px; background: #f2fbf3; color: #14532d; }
+.rec-scrub-info { font-size: 12px; color: var(--text, #1c1c1c); margin-top: 6px; line-height: 1.35; }
+.rec-scrub-line { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Aviso de "en viaje despachado" / "sin despacho" según el punto actual */
+.rec-trip-now { font-weight: 800; font-size: 12px; border-radius: 7px; padding: 3px 8px; margin-bottom: 5px; display: inline-block; }
+.rec-trip-now.on { background: #dcfce7; color: #14532d; }
+.rec-trip-now.off { background: #f1f1f4; color: #6b7280; }
+/* Punto de la lista que cae dentro de un viaje despachado: barra verde a la izquierda */
+.rec-pt.rec-in-trip { border-left: 4px solid #16a34a; padding-left: 8px; }
 /* La lista solo se ve cuando el panel está "abierto" (botón ☰) */
 .rec-panel-list { display: none; overflow-y: auto; padding: 6px; -webkit-overflow-scrolling: touch; }
 .rec-panel.list-open .rec-panel-list { display: block; flex: 1 1 auto; min-height: 0; }

@@ -286,6 +286,18 @@
               <button id="rec-panel-x" class="icon-btn" aria-label="Cerrar">✕</button>
             </div>
             <div class="rec-scrub">
+              <select id="rec-trip" class="rec-trip" hidden aria-label="Viaje despachado"></select>
+              <div class="rec-ctrls">
+                <button id="rec-first" class="icon-btn" title="Ir al inicio" aria-label="Ir al inicio">⏮</button>
+                <button id="rec-prev" class="icon-btn" title="Punto anterior" aria-label="Punto anterior">◀</button>
+                <button id="rec-play" class="icon-btn rec-play" title="Reproducir recorrido" aria-label="Reproducir el recorrido">▶️</button>
+                <button id="rec-next" class="icon-btn" title="Punto siguiente" aria-label="Punto siguiente">▶</button>
+                <select id="rec-speed" class="rec-speed" title="Velocidad de reproducción" aria-label="Velocidad">
+                  <option value="1200">🐢 Lento</option>
+                  <option value="600" selected>▶ Normal</option>
+                  <option value="250">🐇 Rápido</option>
+                </select>
+              </div>
               <input type="range" id="rec-slider" min="0" max="0" value="0" step="1" />
               <div class="rec-scrub-info" id="rec-scrub-info"></div>
             </div>
