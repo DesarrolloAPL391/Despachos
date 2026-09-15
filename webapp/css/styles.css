@@ -389,9 +389,32 @@ tbody tr:hover { background: #faf8ff; }
 }
 .rec-ruta-chip .rc-sub { font-weight: 600; opacity: .9; font-size: 12px; margin-left: 6px; }
 @media (max-width: 760px) { .rec-ruta-chip { top: 60px; font-size: 12px; padding: 6px 12px; } }
+/* Pestañas Eventos / Paradas (solo visibles con el panel abierto) */
+.rec-tabs { display: none; gap: 6px; padding: 8px 10px 0; }
+.rec-panel.list-open .rec-tabs { display: flex; }
+.rec-tab { flex: 1; border: 1px solid var(--border, #e0e0e0); background: #f4f5f8; color: var(--muted, #555);
+  font-weight: 700; font-size: 12.5px; padding: 7px 8px; border-radius: 9px; cursor: pointer; }
+.rec-tab.on { background: var(--primary, #ED1C24); color: #fff; border-color: var(--primary, #ED1C24); }
+.rec-tab:disabled { opacity: .5; cursor: default; }
 /* La lista solo se ve cuando el panel está "abierto" (botón ☰) */
 .rec-panel-list { display: none; overflow-y: auto; padding: 6px; -webkit-overflow-scrolling: touch; }
 .rec-panel.list-open .rec-panel-list { display: block; flex: 1 1 auto; min-height: 0; }
+/* Fila de PARADA larga en la lista */
+.rec-stop { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "ic t dur" "ic d d"; gap: 2px 8px;
+  width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer; padding: 9px 10px;
+  border-radius: 9px; border-bottom: 1px solid #f0f0f3; }
+.rec-stop:hover { background: #f6f6fa; }
+.rec-stop.sel { background: #eef2ff; }
+.rec-stop-ic { grid-area: ic; align-self: center; font-size: 18px; }
+.rec-stop-t { grid-area: t; font-weight: 700; font-size: 13px; }
+.rec-stop-dur { grid-area: dur; justify-self: end; font-weight: 800; font-size: 12.5px; color: #4338ca; white-space: nowrap; }
+.rec-stop-d { grid-area: d; font-size: 11.5px; color: var(--muted, #777); }
+.rec-stop-empty { padding: 14px 12px; color: var(--muted, #777); font-size: 12.5px; text-align: center; }
+/* Marcador 🅿️ de parada larga en el mapa */
+.stop-mark { background: #4338ca; color: #fff; font-weight: 800; font-size: 11px; line-height: 1;
+  padding: 3px 7px; border-radius: 999px; white-space: nowrap; box-shadow: 0 1px 5px rgba(0,0,0,.45);
+  border: 1.5px solid #fff; transform: translate(-50%, -50%); }
+.stop-mark.big { background: #3730a3; font-size: 12px; }
 .rec-pt {
   display: grid; grid-template-columns: 1fr auto; grid-template-areas: "t v" "d d"; gap: 2px 8px;
   width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;

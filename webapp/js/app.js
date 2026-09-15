@@ -9693,6 +9693,30 @@ function _limpiarGps(items) {
   const pts = items.filter((_, i) => keep[i]);
   return pts.length >= 2 ? { pts, quitados: items.length - pts.length } : { pts: items, quitados: 0 };
 }
+// Detecta PARADAS LARGAS: tramos donde el bus estuvo quieto (vel ≤ VMAX) en el MISMO sitio (radio
+// RAD) por ≥ MIN_MIN minutos. Devuelve [{i0,i1,ini,fin,durMin,lat,lon,dir,count}] para lista+mapa.
+function _detectarParadas(pts) {
+  const paradas = [], MIN_MIN = 5, VMAX = 3, RAD = 80;
+  let s = -1;
+  const cerrar = (e) => {
+    if (s < 0 || e < s) return;
+    const durMin = _hmToMin(pts[e].t) - _hmToMin(pts[s].t);
+    if (durMin >= MIN_MIN) {
+      let la = 0, lo = 0; for (let k = s; k <= e; k++) { la += pts[k].lat; lo += pts[k].lon; }
+      const n = e - s + 1;
+      const dir = pts.slice(s, e + 1).map((p) => p.dir).find((d) => d && d.trim()) || '';
+      paradas.push({ i0: s, i1: e, ini: pts[s].t, fin: pts[e].t, durMin, lat: la / n, lon: lo / n, dir, count: n });
+    }
+    s = -1;
+  };
+  for (let i = 0; i < pts.length; i++) {
+    const quieto = (pts[i].vel ?? 0) <= VMAX;
+    if (quieto && (s < 0 || _haversineM(pts[s].lat, pts[s].lon, pts[i].lat, pts[i].lon) <= RAD)) { if (s < 0) s = i; }
+    else { cerrar(i - 1); if (quieto) s = i; } // si sigue quieto pero se alejó, arranca parada nueva
+  }
+  cerrar(pts.length - 1);
+  return paradas;
+}
 // Puntos [lat,lon] de la(s) ruta(s) KMZ del carro (para dibujar el corredor y medir desvíos).
 async function kmzPuntosDeRuta(rutaName) {
   const recMap = await loadRecorridos();
@@ -9928,7 +9952,12 @@ let _recTripsLoaded = false; // ¿ya se consultaron los despachos? (si no, no af
 let _recRange = null;      // {from,to}: límites del reproductor cuando se elige un viaje; null = todo
 let _recLatLng = [];       // [[lat,lon],…] del recorrido, para resaltar el tramo de un viaje
 let _recTripHi = null;     // capa Leaflet del viaje resaltado en verde
+let _recParadas = [];      // paradas largas detectadas {ini,fin,durMin,lat,lon,dir,...}
+let _recParadaMarks = [];  // marcadores 🅿️ en el mapa (paralelo a _recParadas)
+let _recTab = 'ev';        // pestaña activa de la lista: 'ev' eventos | 'st' paradas
 function _hmToMin(hhmm) { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0); }
+// "18 min" / "1 h 5 min" a partir de minutos
+function _durTxt(min) { const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h${m ? ' ' + m + ' min' : ''}` : `${m} min`; }
 // Índice del viaje que contiene la hora hh:mm (-1 fuera de todo viaje, -2 si aún no se sabe).
 // Ventana [iniMin, finMin): contigua entre vueltas, sin solaparse.
 function _tripOf(hhmm) {
@@ -10046,6 +10075,7 @@ function limpiarRecorrido() {
   if (flotaLayer && flotaMap && !flotaMap.hasLayer(flotaLayer)) flotaLayer.addTo(flotaMap);
   _recPts = []; _recCursor = null; _recLatLng = [];
   _recTrips = []; _recTripsLoaded = false; _recRange = null;
+  _recParadas = []; _recParadaMarks = []; _recTab = 'ev';
   const st = $('rec-trip'); if (st) { st.hidden = true; st.innerHTML = ''; }
   const rc = $('rec-ruta-chip'); if (rc) rc.hidden = true;
   const b = $('rec-clear'); if (b) b.hidden = true;
@@ -10132,17 +10162,14 @@ function renderRecPanel(pts, movil) {
   const rc = $('rec-ruta-chip'); if (rc) rc.hidden = true;
   $('rec-panel-title').textContent = `🛣️ ${movil || ''}`;
   $('rec-panel-sub').textContent = `${pts.length} puntos · ${_hora12(pts[0].t)}–${_hora12(pts[pts.length - 1].t)}`;
-  const list = $('rec-panel-list');
-  list.innerHTML = pts.map((p, i) => {
-    const tag = i === 0 ? '🟢' : (i === pts.length - 1 ? '🔵' : '•');
-    const det = (p.vel ?? 0) === 0 ? '<span class="rec-pt-stop">detenido</span>' : `${p.vel} km/h`;
-    return `<button type="button" class="rec-pt" data-i="${i}">
-      <span class="rec-pt-t">${tag} ${esc(_hora12(p.t))}</span>
-      <span class="rec-pt-v">${det}</span>
-      <span class="rec-pt-d">${esc(p.dir || '—')}</span>
-    </button>`;
-  }).join('');
-  list.querySelectorAll('.rec-pt').forEach((b) => b.addEventListener('click', () => recGoto(+b.dataset.i)));
+  // Paradas largas: detección + marcadores 🅿️ en el mapa + rótulo de la pestaña
+  _recParadas = _detectarParadas(pts);
+  pintarParadasEnMapa();
+  const tb = $('rec-tab-st');
+  if (tb) { tb.textContent = `🅿️ Paradas largas${_recParadas.length ? ' · ' + _recParadas.length : ''}`; tb.disabled = _recParadas.length === 0; }
+  _recTab = 'ev';
+  $('rec-tab-ev')?.classList.add('on'); $('rec-tab-st')?.classList.remove('on');
+  renderRecLista();
   const sl = $('rec-slider'); if (sl) { sl.min = 0; sl.max = pts.length - 1; sl.value = 0; sl.oninput = () => { recStop(); recGoto(+sl.value); }; }
   // En celular arranca con la lista oculta (mapa visible); en PC, con la lista abierta
   pn.classList.toggle('list-open', window.innerWidth > 760);
@@ -10150,6 +10177,66 @@ function renderRecPanel(pts, movil) {
   _recDock(true); // acopla el panel: el mapa se encoge para verse completo al lado
   recGoto(0);
 }
+// Renderiza la lista según la pestaña activa: eventos (recorrido) o paradas largas.
+function renderRecLista() {
+  const list = $('rec-panel-list'); if (!list) return;
+  if (_recTab === 'st') {
+    if (!_recParadas.length) { list.innerHTML = '<div class="rec-stop-empty">No hubo paradas largas (≥ 5 min) en este recorrido.</div>'; return; }
+    list.innerHTML = _recParadas.map((s, k) => `<button type="button" class="rec-stop" data-k="${k}">
+      <span class="rec-stop-ic">🅿️</span>
+      <span class="rec-stop-t">${esc(_hora12(s.ini))}–${esc(_hora12(s.fin))}</span>
+      <span class="rec-stop-dur">${esc(_durTxt(s.durMin))}</span>
+      <span class="rec-stop-d">${esc(s.dir || '—')}</span>
+    </button>`).join('');
+    list.querySelectorAll('.rec-stop').forEach((b) => b.addEventListener('click', () => recGotoParada(+b.dataset.k)));
+  } else {
+    list.innerHTML = _recPts.map((p, i) => {
+      const tag = i === 0 ? '🟢' : (i === _recPts.length - 1 ? '🔵' : '•');
+      const det = (p.vel ?? 0) === 0 ? '<span class="rec-pt-stop">detenido</span>' : `${p.vel} km/h`;
+      return `<button type="button" class="rec-pt" data-i="${i}">
+        <span class="rec-pt-t">${tag} ${esc(_hora12(p.t))}</span>
+        <span class="rec-pt-v">${det}</span>
+        <span class="rec-pt-d">${esc(p.dir || '—')}</span>
+      </button>`;
+    }).join('');
+    list.querySelectorAll('.rec-pt').forEach((b) => b.addEventListener('click', () => recGoto(+b.dataset.i)));
+  }
+}
+// Dibuja un marcador 🅿️ (con los minutos) por cada parada larga, para localizarla en el mapa.
+function pintarParadasEnMapa() {
+  _recParadaMarks = [];
+  if (!recLayer || !flotaMap) return;
+  for (const s of _recParadas) {
+    const big = s.durMin >= 15;
+    const lbl = s.durMin < 60 ? `${s.durMin}m` : `${Math.floor(s.durMin / 60)}h${String(s.durMin % 60).padStart(2, '0')}`;
+    const m = L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: '', iconSize: [0, 0], html: `<div class="stop-mark${big ? ' big' : ''}">🅿️ ${lbl}</div>` }),
+      zIndexOffset: 500,
+    }).bindPopup(`🅿️ <b>Parada ${esc(_durTxt(s.durMin))}</b><br>${esc(_hora12(s.ini))}–${esc(_hora12(s.fin))}${s.dir ? '<br>' + esc(s.dir) : ''}`).addTo(recLayer);
+    _recParadaMarks.push(m);
+  }
+}
+// Localiza una parada en el mapa: centra, abre su globo y la marca en la lista.
+function recGotoParada(k) {
+  const s = _recParadas[k]; if (!s || !flotaMap) return;
+  flotaMap.setView([s.lat, s.lon], Math.max(flotaMap.getZoom(), 16), { animate: true });
+  const m = _recParadaMarks[k]; if (m) m.openPopup();
+  const list = $('rec-panel-list');
+  list.querySelectorAll('.rec-stop.sel').forEach((x) => x.classList.remove('sel'));
+  const it = list.querySelector(`.rec-stop[data-k="${k}"]`);
+  if (it) it.classList.add('sel');
+}
+// Cambia de pestaña (eventos / paradas) y re-renderiza la lista.
+function setRecTab(t) {
+  if (t === 'st' && !_recParadas.length) return;
+  _recTab = t;
+  $('rec-tab-ev')?.classList.toggle('on', t === 'ev');
+  $('rec-tab-st')?.classList.toggle('on', t === 'st');
+  renderRecLista();
+  if (t === 'ev') { const sl = $('rec-slider'); if (sl) recGoto(+sl.value); } // re-marca el punto actual
+}
+$('rec-tab-ev') && $('rec-tab-ev').addEventListener('click', () => setRecTab('ev'));
+$('rec-tab-st') && $('rec-tab-st').addEventListener('click', () => setRecTab('st'));
 $('rec-panel-toggle') && $('rec-panel-toggle').addEventListener('click', () => { const p = $('rec-panel'); if (p) p.classList.toggle('list-open'); });
 $('rec-panel-x') && $('rec-panel-x').addEventListener('click', () => limpiarRecorrido()); // ✕ = cerrar el rastreo (el botón "Quitar recorrido" queda tapado por el panel)
 // Controles del reproductor del recorrido (⏮ ◀ ▶️ ▶ + velocidad)
