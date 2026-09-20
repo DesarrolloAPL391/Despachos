@@ -9560,6 +9560,31 @@ function sstTarjetaTabla(titulo, nota, tabla, ancha = true) {
   _pst.tablas.push({ titulo, nota, ...tabla });
   return card;
 }
+// Quién fue el conductor con MÁS reportes en cada periodo (corte 4 = año, 7 = mes).
+// Si en el periodo nadie repitió, se dice tal cual: señalar a uno al azar sería injusto.
+function sstLideresPorPeriodo(R, corte) {
+  const periodos = [...new Set(R.map((s) => String(s.fecha || '').slice(0, corte)))]
+    .filter((v) => v.length === corte && /^\d{4}/.test(v)).sort().reverse();
+  const filas = [], quienes = [];
+  for (const per of periodos) {
+    const del = R.filter((s) => String(s.fecha || '').startsWith(per));
+    const gm = sstPorConductor(del);
+    const lider = gm[0]; if (!lider) continue;
+    const empatados = gm.filter((x) => x.n === lider.n).length - 1;
+    const etiqueta = corte === 4 ? per : `${PST_MESES[Number(per.slice(5, 7)) - 1]} ${per.slice(0, 4)}`;
+    if (lider.n < 2) {
+      filas.push([etiqueta, del.length, `Ninguno repitió (${gm.length} conductores, uno cada uno)`, '—', '—', '—', '—', '—']);
+      quienes.push(del);
+    } else {
+      filas.push([etiqueta, del.length,
+        (lider.p?.nombre || lider.nombre || '(sin nombre)') + (empatados ? ` (+${empatados} empatado${empatados > 1 ? 's' : ''})` : ''),
+        lider.ced || '—', lider.n, lider.p ? (lider.p.estado || '—') : 'No está en el perfil',
+        lider.resp, lider.monto ? sstMonto(lider.monto) : '—']);
+      quienes.push(lider.rows);
+    }
+  }
+  return { filas, quienes, periodos };
+}
 function renderSiniestrosStats() {
   const body = $('pst-body'); if (!_sst.rows) return;
   const anio = $('sst-anio').value, grav = $('sst-gravedad').value, resp = $('sst-resp').value;
@@ -9662,33 +9687,20 @@ function renderSiniestrosStats() {
       (p) => (p.estado === 'NO ESTÁ EN EL PERFIL' ? 'No está en el perfil' : p.estado === 'ACTIVO' ? 'Activo' : 'Inactivo'),
       { orden: ['Activo', 'Inactivo', 'No está en el perfil'] }),
     { nota: 'Cruce por cédula con el perfil sociodemográfico.' }));
-    // Mes a mes: quién fue el conductor con MÁS reportes en cada mes (y quién es)
-    const meses12 = [...new Set(R.map((s) => String(s.fecha || '').slice(0, 7)).filter((ym) => /^\d{4}-\d{2}$/.test(ym)))]
-      .sort().reverse();
-    const filasMes = [], quienesMes = [];
-    for (const ym of meses12) {
-      const delMes = R.filter((s) => String(s.fecha || '').startsWith(ym));
-      const gm = sstPorConductor(delMes);
-      const lider = gm[0]; if (!lider) continue;
-      const empatados = gm.filter((x) => x.n === lider.n).length - 1;
-      const mes = `${PST_MESES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
-      if (lider.n < 2) {
-        // Ese mes nadie repitió: señalar a uno sería injusto, se dice tal cual
-        filasMes.push([mes, delMes.length, `Ninguno repitió (${gm.length} conductores, uno cada uno)`, '—', '—', '—', '—', '—']);
-        quienesMes.push(delMes);
-      } else {
-        filasMes.push([mes, delMes.length,
-          (lider.p?.nombre || lider.nombre || '(sin nombre)') + (empatados ? ` (+${empatados} empatado${empatados > 1 ? 's' : ''})` : ''),
-          lider.ced || '—', lider.n, lider.p ? (lider.p.estado || '—') : 'No está en el perfil',
-          lider.resp, lider.monto ? sstMonto(lider.monto) : '—']);
-        quienesMes.push(lider.rows);
-      }
+    // Quién fue el conductor con más reportes en cada AÑO y en cada MES
+    const CAB_LIDER = ['Siniestros', 'Conductor con más reportes', 'Cédula', 'Sus siniestros',
+      'Estado en el perfil', 'Con responsabilidad', 'Costo'];
+    const porAnio = sstLideresPorPeriodo(R, 4);
+    if (porAnio.filas.length) {
+      g.appendChild(sstTarjetaTabla('Conductor con más reportes, año a año',
+        'Quién encabezó la accidentalidad en cada año. Toca la fila para ver sus reportes de ese año.',
+        { cab: ['Año', ...CAB_LIDER], filas: porAnio.filas, quienesPorFila: porAnio.quienes }));
     }
-    if (filasMes.length) {
+    const porMes = sstLideresPorPeriodo(R, 7);
+    if (porMes.filas.length) {
       g.appendChild(sstTarjetaTabla('Conductor con más reportes, mes a mes',
         'El conductor que más siniestros reportó en cada mes. Toca la fila para ver sus reportes de ese mes.',
-        { cab: ['Mes', 'Siniestros del mes', 'Conductor con más reportes', 'Cédula', 'Sus siniestros', 'Estado en el perfil', 'Con responsabilidad', 'Costo'],
-          filas: filasMes, quienesPorFila: quienesMes }));
+        { cab: ['Mes', ...CAB_LIDER], filas: porMes.filas, quienesPorFila: porMes.quienes }));
     }
     const sinPerfil = grupos.filter((x) => !x.p);
     if (sinPerfil.length) {
