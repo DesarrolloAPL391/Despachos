@@ -19,6 +19,9 @@
 --          atribuirlo sería acusar al que no fue).
 --   3. fuera de eso → sin conductor.
 --
+-- RESULTADO MEDIDO (20/09/2026, los mismos 252 eventos): 246 quedan con conductor = 97,6%
+-- (antes: 44 de 252 = 17,5%).
+--
 -- Además: el resumen ahora cuenta EPISODIOS, no lecturas sueltas. Un bus que va tres minutos a
 -- 65 km/h genera varias lecturas seguidas; eso es UNA vez que se pasó, no ocho. Se agrupan las
 -- lecturas del mismo móvil y tipo separadas por menos de 5 minutos.
