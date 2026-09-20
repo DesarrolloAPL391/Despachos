@@ -9840,7 +9840,9 @@ async function sstVialRender(cont, R, anio) {
       ? `Histórico del ${fechaLegible(est.desde)} al ${fechaLegible(est.hasta)} · ${pstNum(est.total)} eventos guardados${cobertura}`
       : `Todavía no hay histórico guardado: el barrido corre de madrugada (02:00 a 06:50)${cobertura}`)
     : '';
-  const cab = pstEl('div', 'pst-nota', `Periodo: ${fechaLegible(desde)} a ${fechaLegible(hasta)}${estTxt ? ' · ' + estTxt : ''}`);
+  const umbral = Number(res.umbral_kmh || est?.umbral_kmh || 60);
+  const cab = pstEl('div', 'pst-nota',
+    `Periodo: ${fechaLegible(desde)} a ${fechaLegible(hasta)} · Umbral de la empresa: ${umbral} km/h${estTxt ? ' · ' + estTxt : ''}`);
   cont.appendChild(cab);
   if (isAdmin()) cont.appendChild(sstVialCargaUI());
   if (!items.length) {
@@ -9862,7 +9864,8 @@ async function sstVialRender(cont, R, anio) {
     const c = sinCed(it.cedula);
     const sus = c ? (sinPorCed.get(c) || []) : [];
     const p = c ? _sst.porCedula.get(c) : null;
-    filas.push([it.conductor || '(sin viaje asociado)', it.cedula || '—', it.excesos || 0,
+    filas.push([it.conductor || '(sin viaje asociado)', it.cedula || '—',
+      it.rapidos || 0, it.excesos || 0,
       it.peor_exceso != null ? `+${Math.round(Number(it.peor_exceso))} km/h` : '—',
       it.vel_max != null ? `${Math.round(Number(it.vel_max))} km/h` : '—',
       it.puertas || 0, it.dias || 0, sus.length,
@@ -9870,23 +9873,25 @@ async function sstVialRender(cont, R, anio) {
     quienes.push(sus); // la fila abre los siniestros de ese conductor en el periodo
   }
   cont.appendChild(sstTarjetaTabla('Conducción de riesgo por conductor',
-    'Excesos de velocidad medidos contra el límite de cada vía y puertas abiertas en marcha, del histórico de SONAR. '
-    + 'La última columna son sus siniestros en el mismo periodo: toca la fila para verlos.',
-    { cab: ['Conductor', 'Cédula', 'Excesos', 'Peor exceso', 'Velocidad máxima', 'Puertas abiertas', 'Días con eventos', 'Siniestros', 'Estado en el perfil'],
-      filas, quienesPorFila: quienes }));
+    `"Más de ${umbral}" son las veces que pasó del umbral de la empresa aunque la vía permitiera más; `
+    + '"Excesos" es cuando además superó el límite legal de esa vía. '
+    + 'La columna de siniestros son los suyos en el mismo periodo: toca la fila para verlos.',
+    { cab: ['Conductor', 'Cédula', `Más de ${umbral} km/h`, 'Excesos de la vía', 'Peor exceso',
+      'Velocidad máxima', 'Puertas abiertas', 'Días con eventos', 'Siniestros', 'Estado en el perfil'],
+    filas, quienesPorFila: quienes }));
 
   // Los que arriesgan Y además chocaron: el grupo al que hay que intervenir primero
   const criticos = items.map((it) => {
     const c = sinCed(it.cedula);
     return { it, sus: c ? (sinPorCed.get(c) || []) : [] };
-  }).filter((x) => x.sus.length && (x.it.excesos || 0) > 0)
-    .sort((a, b) => b.sus.length - a.sus.length || (b.it.excesos || 0) - (a.it.excesos || 0));
+  }).filter((x) => x.sus.length && ((x.it.rapidos || 0) > 0 || (x.it.excesos || 0) > 0))
+    .sort((a, b) => b.sus.length - a.sus.length || (b.it.rapidos || 0) - (a.it.rapidos || 0));
   if (criticos.length) {
     cont.appendChild(sstTarjetaTabla('Conductores con excesos Y siniestros en el periodo',
       'Son los casos para intervenir primero: vienen corriendo y además ya tuvieron siniestros.',
-      { cab: ['Conductor', 'Cédula', 'Excesos', 'Puertas abiertas', 'Siniestros', 'Con responsabilidad'],
+      { cab: ['Conductor', 'Cédula', `Más de ${umbral} km/h`, 'Excesos de la vía', 'Puertas abiertas', 'Siniestros', 'Con responsabilidad'],
         filas: criticos.map((x) => [x.it.conductor || '(sin nombre)', x.it.cedula || '—',
-          x.it.excesos || 0, x.it.puertas || 0, x.sus.length,
+          x.it.rapidos || 0, x.it.excesos || 0, x.it.puertas || 0, x.sus.length,
           x.sus.filter((s) => s.responsabilidad === 'SI').length]),
         quienesPorFila: criticos.map((x) => x.sus) }));
   }
@@ -9912,7 +9917,8 @@ function sstVialCargaUI() {
       msg.textContent = 'Error: ' + (e.message || e);
     } finally { btn.disabled = false; btn.textContent = prev; }
   };
-  box.append(pstEl('span', null, 'Traer los eventos de un día:'), inp, btn, msg);
+  box.append(pstEl('span', null, 'Se llena solo cada madrugada (02:00 a 06:50) y completa los últimos días. Adelantar un día:'),
+    inp, btn, msg);
   return box;
 }
 

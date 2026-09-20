@@ -6,7 +6,9 @@
 -- velocidad este mes?". Esto lo guarda.
 --
 -- Qué se guarda: SOLO la conducta de manejo, no todos los eventos del bus:
---   · exceso de velocidad REAL  (Speed > RoadSpeed de la vía, como en el visor)
+--   · exceso de velocidad REAL     (Speed > RoadSpeed, el límite de esa vía; lo marca SONAR)
+--   · pasar del UMBRAL de la empresa (60 km/h por defecto, en eventos_bus_config) aunque la vía
+--     permita más: en servicio urbano con pasajeros de pie eso ya es riesgo
 --   · conducir con la puerta abierta
 -- (los pasos por geocerca y los avisos de itinerario NO se guardan: son miles y ya se auditan
 --  en despachos_sonar; aquí interesa el riesgo).
@@ -38,6 +40,7 @@ create table if not exists public.eventos_bus (
   exceso_kmh       numeric generated always as (
                      case when velocidad is not null and limite is not null and limite > 0
                           then velocidad - limite end) stored,
+  sobre_umbral     boolean not null default false,  -- pasó del umbral (60 km/h) aunque la vía permitiera más
   direccion        text,
   lat              numeric,
   lon              numeric,
@@ -54,7 +57,20 @@ create index if not exists eventos_bus_fecha_idx     on public.eventos_bus (fech
 create index if not exists eventos_bus_cedula_idx    on public.eventos_bus (conductor_cedula);
 create index if not exists eventos_bus_movil_idx     on public.eventos_bus (movil);
 create index if not exists eventos_bus_tipo_idx      on public.eventos_bus (tipo, fecha desc);
+create index if not exists eventos_bus_umbral_idx    on public.eventos_bus (fecha desc) where sobre_umbral;
 comment on table public.eventos_bus is 'Excesos de velocidad y puertas abiertas en marcha, con el conductor que iba manejando (sql/81).';
+
+-- 1.b) Lo que se considera riesgo, configurable sin tocar código -----------------------------
+-- `umbral_kmh`: velocidad que ya es riesgo POR SÍ SOLA en servicio urbano (60 por defecto),
+-- aunque la vía permita más. `dias_backfill`: cuántos días atrás se revisa solo, sin que nadie
+-- toque nada, para que el histórico se complete y se repare si una noche falla.
+create table if not exists public.eventos_bus_config (
+  id             int primary key default 1 check (id = 1),
+  umbral_kmh     numeric not null default 60,
+  dias_backfill  int     not null default 7,
+  actualizado_en timestamptz not null default now()
+);
+insert into public.eventos_bus_config (id) values (1) on conflict (id) do nothing;
 
 -- 2) Control del barrido: qué móvil de qué día ya se trajo ------------------------------------
 create table if not exists public.eventos_bus_sync (
@@ -68,8 +84,17 @@ create table if not exists public.eventos_bus_sync (
 );
 
 -- 3) Permisos: auditoría de la operación (admin y auditor) ------------------------------------
-alter table public.eventos_bus      enable row level security;
-alter table public.eventos_bus_sync enable row level security;
+alter table public.eventos_bus        enable row level security;
+alter table public.eventos_bus_sync   enable row level security;
+alter table public.eventos_bus_config enable row level security;
+
+drop policy if exists eventos_bus_config_admin on public.eventos_bus_config;
+create policy eventos_bus_config_admin on public.eventos_bus_config
+  for all to authenticated
+  using ((select public.es_admin()) or (select public.es_auditor()))
+  with check ((select public.es_admin()));
+revoke all on public.eventos_bus_config from public, anon;
+grant select, update on public.eventos_bus_config to authenticated;
 
 drop policy if exists eventos_bus_ver on public.eventos_bus;
 create policy eventos_bus_ver on public.eventos_bus
@@ -127,20 +152,31 @@ declare
   v_mid text; v_movil text; v_body text; v_resp text; v_xml xml; v_status text;
   v_ini text; v_fin text;
   v_n int; v_tot int := 0; v_mov int := 0; v_err int := 0; v_pend int;
+  v_umbral numeric;
 begin
+  -- Un solo barrido a la vez: si la corrida anterior se está demorando, esta no la pisa.
+  if not pg_try_advisory_lock(hashtext('eventos_bus_core')) then
+    return jsonb_build_object('ok', true, 'saltado', true, 'motivo', 'ya hay un barrido corriendo');
+  end if;
+
+  select coalesce(umbral_kmh, 60) into v_umbral from public.eventos_bus_config where id = 1;
+  v_umbral := coalesce(v_umbral, 60);
   select decrypted_secret into v_url from vault.decrypted_secrets where name = 'SONAR_URL';
   select decrypted_secret into v_usr from vault.decrypted_secrets where name = 'SONAR_USER';
   select decrypted_secret into v_pwd from vault.decrypted_secrets where name = 'SONAR_PASSWORD';
   select decrypted_secret into v_ns  from vault.decrypted_secrets where name = 'SONAR_NAMESPACE';
   select regexp_replace(decrypted_secret, '/[^/]+$', '') into v_sa
     from vault.decrypted_secrets where name = 'SONAR_SOAPACTION';
-  if v_url is null then return jsonb_build_object('ok', false, 'error', 'Falta SONAR_URL en el Vault'); end if;
+  if v_url is null then
+    perform pg_advisory_unlock(hashtext('eventos_bus_core'));
+    return jsonb_build_object('ok', false, 'error', 'Falta SONAR_URL en el Vault');
+  end if;
 
   -- El día en hora de Colombia, convertido a UTC (SONAR pide UTC)
   v_ini := to_char((p_fecha::timestamp at time zone 'America/Bogota') at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS');
   v_fin := to_char(((p_fecha + 1)::timestamp at time zone 'America/Bogota') at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS');
 
-  perform set_config('http.timeout_msec', '55000', true); -- el V2 tarda más que el V1
+  perform set_config('http.timeout_msec', '30000', true); -- un móvil colgado no se come la corrida
 
   for v_mid, v_movil in
     select k.mid, k.movil
@@ -184,21 +220,31 @@ begin
           nullif((xpath('/x:TrackerEventV2/x:Longitude/text()', n, array[array['x', v_ns]]))[1]::text, '')::numeric as lon
         from unnest(xpath('//x:TrackerEventV2', v_xml, array[array['x', v_ns]])) as n
       ), riesgo as (
-        -- Solo la conducta de manejo: exceso REAL contra el límite de la vía, o puerta abierta
+        -- Conducta de manejo, por tres caminos:
+        --   · puerta abierta en marcha
+        --   · exceso REAL contra el límite de esa vía (lo que marca SONAR)
+        --   · pasar del umbral de la empresa (60 km/h) aunque la vía permita más: en servicio
+        --     urbano con pasajeros de pie eso ya es riesgo, y es lo que se le explica al conductor
         select c.*,
-          case when c.evento ilike '%puerta%' then 'puerta' else 'exceso' end as tipo
+          case when c.evento ilike '%puerta%' then 'puerta'
+               when c.limite is not null and c.limite > 0 and c.velocidad > c.limite then 'exceso'
+               else 'velocidad' end as tipo,
+          (c.velocidad is not null and c.velocidad > v_umbral) as sobre_umbral
         from crudo c
         where c.evento ilike '%puerta%'
            or (c.velocidad is not null and c.limite is not null and c.limite > 0 and c.velocidad > c.limite)
+           or (c.velocidad is not null and c.velocidad > v_umbral)
       )
       insert into public.eventos_bus
-        (fecha, ocurrido_en, mid, movil, tipo, evento, velocidad, limite, direccion, lat, lon,
-         itl_id, ruta, conductor, conductor_cedula, conductor_codigo)
+        (fecha, ocurrido_en, mid, movil, tipo, evento, velocidad, limite, sobre_umbral,
+         direccion, lat, lon, itl_id, ruta, conductor, conductor_cedula, conductor_codigo)
       select
         (r.ocurrido_en at time zone 'America/Bogota')::date,
         r.ocurrido_en, v_mid,
         coalesce(v.conductor_movil, v_movil),
-        r.tipo, coalesce(r.evento, 'Exceso de velocidad'), r.velocidad, r.limite, r.direccion, r.lat, r.lon,
+        r.tipo,
+        coalesce(r.evento, case when r.tipo = 'velocidad' then 'Velocidad alta' else 'Exceso de velocidad' end),
+        r.velocidad, r.limite, coalesce(r.sobre_umbral, false), r.direccion, r.lat, r.lon,
         v.itl_id, v.ruta, v.conductor, cs.cedula, cs.codigo
       from riesgo r
       -- El viaje real que estaba corriendo en ese momento (de ahí sale el conductor)
@@ -243,21 +289,46 @@ begin
   where not exists (select 1 from public.eventos_bus_sync s
                     where s.fecha = p_fecha and s.mid = k.mid and s.ok);
 
+  perform pg_advisory_unlock(hashtext('eventos_bus_core'));
   return jsonb_build_object('ok', true, 'fecha', p_fecha, 'moviles', v_mov,
-                            'eventos', v_tot, 'fallidos', v_err, 'pendientes', v_pend);
+                            'eventos', v_tot, 'fallidos', v_err, 'pendientes', v_pend,
+                            'umbral_kmh', v_umbral);
 end $$;
 revoke all on function public.eventos_bus_core(date, int) from public, anon, authenticated;
 
 -- 5) Barrido automático del día anterior (lotes pequeños, se salta lo ya traído) --------------
+-- Sin intervención humana: cada corrida busca el día MÁS RECIENTE que aún tenga carros sin
+-- revisar (desde ayer hacia atrás, hasta `dias_backfill`) y lo trabaja. Así:
+--   · el día de ayer se completa en las primeras corridas de la madrugada,
+--   · si una noche falla SONAR o se cae la conexión, la noche siguiente lo recupera solo,
+--   · al aplicar este archivo, los días anteriores se llenan solos (no hay que tocar botones).
 create or replace function public.eventos_bus_nocturno()
 returns jsonb
 language plpgsql
 security definer
 set search_path = public, extensions
 as $$
-declare v_ayer date := (now() at time zone 'America/Bogota')::date - 1;
+declare
+  v_hoy   date := (now() at time zone 'America/Bogota')::date;
+  v_dias  int;
+  v_f     date;
+  v_pend  int;
 begin
-  return public.eventos_bus_core(v_ayer, 60);
+  select coalesce(dias_backfill, 7) into v_dias from public.eventos_bus_config where id = 1;
+  v_dias := greatest(coalesce(v_dias, 7), 1);
+  for v_f in
+    select d::date from generate_series(v_hoy - v_dias, v_hoy - 1, interval '1 day') g(d)
+    order by d desc
+  loop
+    select count(1) into v_pend
+    from public.eventos_bus_trackers() k
+    where not exists (select 1 from public.eventos_bus_sync s
+                      where s.fecha = v_f and s.mid = k.mid and s.ok);
+    if v_pend > 0 then
+      return public.eventos_bus_core(v_f, 60);
+    end if;
+  end loop;
+  return jsonb_build_object('ok', true, 'al_dia', true, 'revisado_hasta', v_hoy - 1);
 end $$;
 revoke all on function public.eventos_bus_nocturno() from public, anon, authenticated;
 
@@ -304,16 +375,18 @@ begin
   if not (public.es_admin() or public.es_auditor()) then
     return jsonb_build_object('ok', false, 'error', 'Solo el administrador y los auditores ven los eventos.');
   end if;
-  select coalesce(jsonb_agg(x order by n_exc desc, n_pue desc), '[]'::jsonb) into v_items
+  select coalesce(jsonb_agg(x order by n_rap desc, n_exc desc, n_pue desc), '[]'::jsonb) into v_items
   from (
     select
       count(1) filter (where e.tipo = 'exceso') as n_exc,
+      count(1) filter (where e.sobre_umbral)    as n_rap,
       count(1) filter (where e.tipo = 'puerta') as n_pue,
       jsonb_build_object(
       'conductor', coalesce(e.conductor, '(sin viaje asociado)'),
       'cedula',    e.conductor_cedula,
       'codigo',    e.conductor_codigo,
       'excesos',   count(1) filter (where e.tipo = 'exceso'),
+      'rapidos',   count(1) filter (where e.sobre_umbral),
       'puertas',   count(1) filter (where e.tipo = 'puerta'),
       'peor_exceso', max(e.exceso_kmh) filter (where e.tipo = 'exceso'),
       'vel_max',   max(e.velocidad),
@@ -327,7 +400,8 @@ begin
   ) s;
   select count(distinct fecha) into v_dias from public.eventos_bus where fecha between p_desde and p_hasta;
   return jsonb_build_object('ok', true, 'desde', p_desde, 'hasta', p_hasta,
-                            'dias_con_datos', v_dias, 'items', v_items);
+                            'dias_con_datos', v_dias, 'items', v_items,
+                            'umbral_kmh', (select umbral_kmh from public.eventos_bus_config where id = 1));
 end $$;
 revoke all on function public.eventos_bus_resumen(date, date) from public, anon;
 grant execute on function public.eventos_bus_resumen(date, date) to authenticated;
@@ -348,6 +422,7 @@ as $$
       'hasta',        (select max(fecha) from public.eventos_bus),
       'ultima_carga', (select max(sincronizado_en) from public.eventos_bus_sync),
       'dias',         (select count(distinct fecha) from public.eventos_bus_sync where ok),
+      'umbral_kmh', (select umbral_kmh from public.eventos_bus_config where id = 1),
       'carros',     (select count(1) from public.eventos_bus_trackers()),
       'revisados_ayer', (select count(1) from public.eventos_bus_sync s
                           where s.fecha = (now() at time zone 'America/Bogota')::date - 1 and s.ok),
