@@ -33,7 +33,7 @@ create table if not exists public.eventos_bus (
   ocurrido_en      timestamptz not null,          -- momento exacto del evento
   mid              text        not null,          -- tracker en SONAR
   movil            text,                          -- número interno del bus
-  tipo             text        not null,          -- 'exceso' | 'puerta'
+  tipo             text        not null,          -- 'exceso' | 'velocidad' | 'puerta'
   evento           text,                          -- texto tal como lo manda SONAR
   velocidad        numeric,                       -- km/h del bus
   limite           numeric,                       -- km/h de la vía (RoadSpeed)
@@ -220,19 +220,24 @@ begin
           nullif((xpath('/x:TrackerEventV2/x:Longitude/text()', n, array[array['x', v_ns]]))[1]::text, '')::numeric as lon
         from unnest(xpath('//x:TrackerEventV2', v_xml, array[array['x', v_ns]])) as n
       ), riesgo as (
-        -- Conducta de manejo, por tres caminos:
-        --   · puerta abierta en marcha
-        --   · exceso REAL contra el límite de esa vía (lo que marca SONAR)
-        --   · pasar del umbral de la empresa (60 km/h) aunque la vía permita más: en servicio
-        --     urbano con pasajeros de pie eso ya es riesgo, y es lo que se le explica al conductor
+        -- Conducta de manejo, por tres caminos. OJO con lo que NO entra:
+        --   · las aperturas y cierres normales de puerta (pasan en cada parada, son cientos al
+        --     día): solo interesa "conduciendo con PUERTA ABIERTA";
+        --   · los reportes periódicos de posición cuya velocidad supera por poco el RoadSpeed
+        --     (ej. 24 en una vía de 20): eso no es un exceso marcado por SONAR, es ruido.
+        -- Se guarda:
+        --   · puerta abierta en marcha,
+        --   · el evento de EXCESO que marca SONAR (con la velocidad y el límite de la vía),
+        --   · cualquier lectura que pase del umbral de la empresa (60 km/h), venga del evento
+        --     que venga: en servicio urbano con pasajeros de pie eso ya es riesgo.
         select c.*,
-          case when c.evento ilike '%puerta%' then 'puerta'
-               when c.limite is not null and c.limite > 0 and c.velocidad > c.limite then 'exceso'
+          case when c.evento ilike '%puerta abierta%' then 'puerta'
+               when c.evento ilike '%exceso%'        then 'exceso'
                else 'velocidad' end as tipo,
           (c.velocidad is not null and c.velocidad > v_umbral) as sobre_umbral
         from crudo c
-        where c.evento ilike '%puerta%'
-           or (c.velocidad is not null and c.limite is not null and c.limite > 0 and c.velocidad > c.limite)
+        where c.evento ilike '%puerta abierta%'
+           or c.evento ilike '%exceso%'
            or (c.velocidad is not null and c.velocidad > v_umbral)
       )
       insert into public.eventos_bus
