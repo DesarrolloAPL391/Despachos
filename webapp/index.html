@@ -125,6 +125,7 @@
             <button id="dsonar-btn" class="btn" hidden>📡 Despachos SONAR</button>
             <button id="sonarfull-btn" class="btn" hidden>📥 Traer TODO de SONAR</button>
             <button id="import-btn" class="btn" hidden>📥 Importar</button>
+            <button id="sin-sync-btn" class="btn" hidden>🔄 Traer siniestros</button>
             <button id="export-btn" class="btn" hidden>📊 Descargar Excel</button>
             <button id="recon-btn" class="btn" hidden>🔍 Conciliar SONAR</button>
             <button id="del-day-btn" class="btn btn-danger" hidden>🗑️ Borrar día</button>
@@ -530,20 +531,31 @@
             <h2 id="pst-title">📊 Estadísticas sociodemográficas</h2>
             <span id="pst-sub" class="cump-subtitle"></span>
             <span class="spacer"></span>
-            <label class="cump-fl">Estado
-              <select id="pst-estado">
-                <option value="ACTIVO" selected>Activos</option>
-                <option value="INACTIVO">Inactivos</option>
-                <option value="">Todos</option>
-              </select></label>
-            <label class="cump-fl">Tipo
-              <select id="pst-tipo">
-                <option value="">Todos</option>
-                <option value="CONDUCTOR">Conductores</option>
-                <option value="ADMINISTRATIVO">Administrativos</option>
-              </select></label>
-            <label class="cump-fl">Área
-              <select id="pst-area"><option value="">Todas</option></select></label>
+            <span id="pst-fl-perfil" class="pst-fl-set">
+              <label class="cump-fl">Estado
+                <select id="pst-estado">
+                  <option value="ACTIVO" selected>Activos</option>
+                  <option value="INACTIVO">Inactivos</option>
+                  <option value="">Todos</option>
+                </select></label>
+              <label class="cump-fl">Tipo
+                <select id="pst-tipo">
+                  <option value="">Todos</option>
+                  <option value="CONDUCTOR">Conductores</option>
+                  <option value="ADMINISTRATIVO">Administrativos</option>
+                </select></label>
+              <label class="cump-fl">Área
+                <select id="pst-area"><option value="">Todas</option></select></label>
+            </span>
+            <!-- Filtros de las estadísticas de SINIESTROS (misma pantalla, otro tema) -->
+            <span id="pst-fl-sin" class="pst-fl-set" hidden>
+              <label class="cump-fl">Año
+                <select id="sst-anio"><option value="">Todos</option></select></label>
+              <label class="cump-fl">Gravedad
+                <select id="sst-gravedad"><option value="">Todas</option></select></label>
+              <label class="cump-fl">Responsable
+                <select id="sst-resp"><option value="">Todos</option></select></label>
+            </span>
             <button id="pst-recargar" class="btn" title="Volver a leer los datos">↻</button>
             <button id="pst-excel" class="btn">⬇️ Excel</button>
             <button id="pst-close" class="btn">← Volver</button>

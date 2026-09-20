@@ -164,8 +164,8 @@ function visibleTables() {
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
-  // Gestión Humana: solo las dos tablas del módulo (la RLS no le devuelve nada más)
-  if (isGestionHumana()) return ['perfilsociodemografico', 'perfil_vinculaciones'];
+  // Gestión Humana: las dos tablas del módulo + Siniestros (la RLS no le devuelve nada más)
+  if (isGestionHumana()) return ['perfilsociodemografico', 'perfil_vinculaciones', 'siniestros'];
   // Afiliado: ve TODAS las tablas de despacho en VIVO y SOLO LECTURA — la vista general
   // "Despachos" + las tablas de puesto con datos (RLS ahora le muestra todos los vehículos,
   // no solo los suyos). Mapa y Pasajeros se agregan aparte como acciones del menú.
@@ -552,6 +552,7 @@ function buildSidebar() {
   const TBL_GROUP = {
     ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
     restricciones_rutas: 'restr',
+    siniestros: 'sin',
     horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin', tablas_despacho: 'admin',
     perfilsociodemografico: 'th', perfil_vinculaciones: 'th',
   };
@@ -594,6 +595,15 @@ function buildSidebar() {
   const gCat = addNavGroup(nav, '🗃️', 'Catálogos', 'cat');
   for (const name of vis) { if (TBL_GROUP[name] === 'cat') addTableBtn(gCat, name); }
 
+  // 🚨 Siniestros (admin y Gestión Humana): lo que reporta la app de AppSheet, ya en el sistema
+  if (isTalentoHumano()) {
+    const gSin = addNavGroup(nav, '🚨', 'Siniestros', 'sin');
+    for (const name of vis) { if (TBL_GROUP[name] === 'sin') addTableBtn(gSin, name); }
+    // Estadísticas de siniestros: un tema por entrada (cuándo pasan, conductores, costos…)
+    const gSs = addNavGroup(gSin, '📊', 'Estadísticas', 'sinstats');
+    SST_BLOQUES.forEach((b) => addNavAction(gSs, b.icon, b.label, () => openSiniestrosStats(b.key), 'nav-sst-' + b.key));
+  }
+
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
   const gTh = addNavGroup(nav, '👥', 'Talento humano', 'th');
   for (const name of vis) { if (TBL_GROUP[name] === 'th') addTableBtn(gTh, name); }
@@ -634,6 +644,7 @@ function buildSidebar() {
   const ajo = $('nav-jor'); if (ajo) ajo.classList.toggle('active', currentView === 'jornada');
   const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
   PST_BLOQUES.forEach((b) => { const e = $('nav-pst-' + b.key); if (e) e.classList.toggle('active', currentView === 'perfilstats' && (_pst.bloque || 'resumen') === b.key); });
+  SST_BLOQUES.forEach((b) => { const e = $('nav-sst-' + b.key); if (e) e.classList.toggle('active', currentView === 'sinstats' && (_sst.bloque || 'resumen') === b.key); });
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   // Submenús: ocultar los grupos que quedaron vacíos (según el rol) y abrir el que tiene la opción activa
@@ -820,6 +831,7 @@ function selectTable(name) {
   // Borrar día: solo admin, en las tablas de despacho (Despachos general + tablas de puesto).
   // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
+  const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !isTalentoHumano();
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
@@ -2006,7 +2018,13 @@ function renderTable(cfg, rows, count, diaSel = false) {
         tr.appendChild(td); continue;
       }
       const val = c.calc ? c.calc(row) : c.path ? getPath(row, c.path) : row[c.key];
-      if (current === 'perfilsociodemografico' && c.key === 'nombre' && val) {
+      if (current === 'siniestros' && c.key === 'fecha' && val) {
+        // La fecha abre el REPORTE COMPLETO del siniestro
+        const b = Object.assign(document.createElement('button'),
+          { className: 'pf-link', textContent: fmt(val), title: 'Ver el reporte completo' });
+        b.onclick = () => openSiniestro(row);
+        td.appendChild(b);
+      } else if (current === 'perfilsociodemografico' && c.key === 'nombre' && val) {
         // El nombre abre la FICHA completa de la persona (todo el detalle ordenado)
         const b = Object.assign(document.createElement('button'),
           { className: 'pf-link', textContent: fmt(val), title: 'Ver la ficha completa' });
@@ -6965,6 +6983,304 @@ function perfilActCard(s, per, m) {
 }
 
 
+
+// ===================================================================================
+// 🚨 SINIESTROS DE VEHÍCULOS (sql/79 + sql/80) — ADMINISTRADORES Y GESTIÓN HUMANA
+// Los reportes se hacen en AppSheet y caen en una hoja de Google publicada como CSV.
+// Se toca "Traer siniestros": la app lee ese CSV, lo interpreta y lo guarda en Supabase
+// (tabla `siniestros`). El enlace NO está en este código: vive en la base (tabla
+// siniestros_fuente), que solo leen el administrador y Gestión Humana.
+// ===================================================================================
+
+// Encabezado del CSV (ya normalizado con normH) -> columna de la tabla
+const SIN_COLS = {
+  'key': 'key',
+  'mes del reporte del siniestro': 'mes_reporte',
+  'placa': 'placa',
+  'no. int.': 'numero_interno',
+  'fecha del siniestro': 'fecha',
+  'ruta': 'ruta',
+  'afiliados': 'afiliado',
+  'id. conductor': 'conductor_cedula',
+  'codigo del conductor': 'conductor_codigo',
+  'nombre conductor': 'conductor_nombre',
+  'nro. de contacto': 'conductor_celular',
+  'fecha ingreso': 'conductor_fecha_ingreso',
+  'gravedad del siniestro': 'gravedad',
+  'tipo de lesion': 'tipo_lesion',
+  'monto en texto': 'monto_texto',
+  'usuario app': 'usuario_app',
+  'anexo video': 'video',
+  'observaciones': 'observaciones',
+  'coordenadas': 'coordenadas',
+  'hora y fecha de accion usuario': 'reportado_en',
+  'placas del tercero afectado': 'tercero_placa',
+  'nombre del tercero afectado': 'tercero_nombre',
+  'tipo de identificacion': 'tercero_tipo_id',
+  'de que ciudad esla cedula': 'tercero_ciudad_cedula',
+  'numero de cedula tercero afectado': 'tercero_cedula',
+  'telefono tercero afectado': 'tercero_telefono',
+  'telefono tercerafectado': 'tercero_telefono2',
+  'correo tercer afectado': 'tercero_correo',
+  'aseguradora tercer afectado': 'tercero_aseguradora',
+  'descripcion danos tercer afectado': 'tercero_danos',
+  'descripcion lesiones': 'lesiones',
+  'descripcion danos empresa': 'danos_empresa',
+  'firma firma tercer afectado': 'tercero_firma',
+  'firma conductor': 'firma_conductor',
+  'estado inicio': 'estado_inicio',
+  'usuario logistica': 'usuario_logistica',
+  'categorizacion del incidente': 'categorizacion',
+  'autorizacion de tratamiento de datos': 'autorizacion_datos',
+  'foto de documentacion primera cara': 'doc_cara1',
+  'foto de documentacion segunda cara': 'doc_cara2',
+  'version conductor audio': 'audio_conductor',
+  'version tercero audio': 'audio_tercero',
+  'version asistentea audio': 'audio_asistente',
+  'lugar de la asistencia reportada por el conductor': 'lugar',
+  'observaciones administrador de asistencia': 'observaciones_asistencia',
+  'estado siniestro administrativo': 'estado',
+  'descripcion': 'causa',
+  'norma': 'norma',
+  'hipotesis': 'hipotesis',
+  'factor interviniente en el siniestro de transito': 'factor',
+  'correo asistente': 'correo_asistente',
+  'correo afiliado': 'correo_afiliado',
+  'telefono afiliado': 'telefono_afiliado',
+};
+// Estos encabezados son larguísimos en la hoja: se reconocen por el comienzo
+const SIN_COLS_INICIO = [
+  ['responsabilidad del conductor', 'responsabilidad'],
+  ['tipo de conciliacion', 'tipo_conciliacion'],
+  ['monto relacionado', 'monto'],
+];
+
+// Lee un CSV COMPLETO (soporta comas, comillas y saltos de línea dentro de una celda,
+// que es lo que trae la hoja de siniestros en las observaciones).
+function csvAFilas(texto) {
+  const filas = []; let fila = []; let campo = ''; let enComillas = false;
+  const t = String(texto || '').replace(/^﻿/, '');
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (enComillas) {
+      if (c === '"') { if (t[i + 1] === '"') { campo += '"'; i++; } else enComillas = false; }
+      else campo += c;
+    } else if (c === '"') enComillas = true;
+    else if (c === ',') { fila.push(campo); campo = ''; }
+    else if (c === '\n') { fila.push(campo); filas.push(fila); fila = []; campo = ''; }
+    else if (c === '\r') { /* se ignora: el salto lo marca \n */ }
+    else campo += c;
+  }
+  if (campo !== '' || fila.length) { fila.push(campo); filas.push(fila); }
+  return filas;
+}
+// "12/09/2026" -> "2026-09-12"   (vacío si no es una fecha)
+function sinFecha(v) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(String(v || '').trim());
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '';
+}
+// "12/09/2026 14:35:02" -> fecha y hora (se guarda como hora de Colombia)
+function sinFechaHora(v) {
+  const s = String(v || '').trim();
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  if (!m) return '';
+  return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}T${m[4].padStart(2, '0')}:${m[5]}:${m[6] || '00'}-05:00`;
+}
+const sinNum = (v) => {
+  const s = String(v || '').replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.');
+  return s && !isNaN(Number(s)) ? String(Number(s)) : '';
+};
+
+// Convierte el CSV en las filas que entiende la base
+function sinArmarFilas(texto) {
+  const crudo = csvAFilas(texto);
+  if (!crudo.length) return [];
+  const cab = crudo[0].map(normH);
+  const fotos = []; // [{col, obs}] por número de foto
+  cab.forEach((h, i) => {
+    const mf = /^foto prueba(\d+)$/.exec(h);
+    if (mf) fotos.push({ n: Number(mf[1]), col: i, obs: cab.indexOf(`observacion foto ${mf[1]}`) });
+  });
+  const salida = [];
+  for (let i = 1; i < crudo.length; i++) {
+    const r = crudo[i];
+    if (!r || !r.some((c) => String(c || '').trim() !== '')) continue; // fila vacía
+    const o = { fotos: [], datos_origen: {} };
+    cab.forEach((h, idx) => {
+      const v = (r[idx] == null ? '' : String(r[idx])).trim();
+      if (crudo[0][idx]) o.datos_origen[crudo[0][idx]] = v;   // se guarda TODO, con su nombre original
+      let k = SIN_COLS[h];
+      if (!k) { const ini = SIN_COLS_INICIO.find(([p]) => h.startsWith(p)); if (ini) k = ini[1]; }
+      if (!k) return;
+      if (k === 'fecha' || k === 'conductor_fecha_ingreso') o[k] = sinFecha(v);
+      else if (k === 'reportado_en') o[k] = sinFechaHora(v);
+      else if (k === 'monto') o[k] = sinNum(v);
+      else o[k] = v;
+    });
+    fotos.sort((a, b) => a.n - b.n).forEach((f) => {
+      const ruta = (r[f.col] || '').trim();
+      const obs = f.obs >= 0 ? (r[f.obs] || '').trim() : '';
+      if (ruta || obs) o.fotos.push({ n: f.n, ruta, observacion: obs });
+    });
+    if (String(o.key || '').trim()) salida.push(o);
+  }
+  return salida;
+}
+
+// Botón "🔄 Traer siniestros": lee la hoja y actualiza la tabla
+async function sincronizarSiniestros() {
+  if (!isTalentoHumano()) { toast('Solo un administrador o Gestión Humana puede traer los siniestros.', 'err'); return; }
+  const btn = $('sin-sync-btn'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Leyendo la hoja…';
+  try {
+    const { data: est, error: e1 } = await sb.rpc('siniestros_estado');
+    if (e1) throw e1;
+    const url = est?.url || '';
+    if (!url || url.startsWith('PEGAR_AQUI')) {
+      toast('Falta configurar el enlace de la hoja (tabla siniestros_fuente).', 'err'); return;
+    }
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('La hoja respondió ' + resp.status);
+    const filas = sinArmarFilas(await resp.text());
+    if (!filas.length) { toast('La hoja no trajo filas.', 'err'); return; }
+    let nuevos = 0, actualizados = 0;
+    const LOTE = 60;   // lotes pequeños: cada fila pesa ~8 KB por las observaciones y las fotos
+    for (let i = 0; i < filas.length; i += LOTE) {
+      btn.textContent = `⏳ Guardando ${Math.min(i + LOTE, filas.length)} de ${filas.length}…`;
+      const { data, error } = await sb.rpc('siniestros_cargar', { p_filas: filas.slice(i, i + LOTE) });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo guardar');
+      nuevos += data.nuevos || 0; actualizados += data.actualizados || 0;
+    }
+    toast(`Listo: ${nuevos} siniestro(s) nuevo(s) y ${actualizados} actualizado(s).`, 'ok');
+    if (current === 'siniestros') loadData();
+  } catch (e) {
+    toast('No se pudieron traer los siniestros: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+
+// ---- Ficha del siniestro: el reporte completo, ordenado ----
+let _sinRow = null;
+function sinModal() {
+  let m = $('sin-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'sin-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🚨 Siniestro</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+// Bloque de datos: solo pinta lo que tiene valor
+function sinBloque(titulo, filas) {
+  const con = filas.filter(([, v]) => v != null && String(v).trim() !== '' && String(v).trim() !== '—');
+  if (!con.length) return '';
+  return `<section class="pf-sec"><h4>${titulo}</h4><dl>${con.map(([k, v]) =>
+    `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl></section>`;
+}
+function sinFotosHtml(s) {
+  const fotos = Array.isArray(s.fotos) ? s.fotos : [];
+  const extra = [['Documento (cara 1)', s.doc_cara1], ['Documento (cara 2)', s.doc_cara2],
+    ['Firma del conductor', s.firma_conductor], ['Firma del tercero', s.tercero_firma],
+    ['Video', s.video], ['Audio del conductor', s.audio_conductor],
+    ['Audio del tercero', s.audio_tercero], ['Audio del asistente', s.audio_asistente]]
+    .filter(([, v]) => v && String(v).trim());
+  if (!fotos.length && !extra.length) return '';
+  const item = (nombre, ruta, obs) => {
+    const esLink = /^https?:\/\//i.test(String(ruta || ''));
+    const cuerpo = esLink ? `<a href="${esc(ruta)}" target="_blank" rel="noopener">abrir</a>` : `<span class="sin-arch">${esc(ruta)}</span>`;
+    return `<li><b>${esc(nombre)}</b> ${cuerpo}${obs ? `<div class="muted">${esc(obs)}</div>` : ''}</li>`;
+  };
+  return `<section class="pf-sec sin-adj"><h4>📎 Adjuntos del reporte (${fotos.length + extra.length})</h4>
+    <ul>${fotos.map((f) => item(`Foto ${f.n}`, f.ruta, f.observacion)).join('')}
+    ${extra.map(([n, v]) => item(n, v, '')).join('')}</ul>
+    <p class="muted">Los archivos están todavía en AppSheet; quedan guardados con su nombre y su observación. Cuando migremos las fotos a la app se verán aquí.</p></section>`;
+}
+function openSiniestro(s) {
+  if (!isTalentoHumano()) return;
+  _sinRow = s;
+  const m = sinModal(), body = m.querySelector('.pf-body');
+  const chips = [
+    s.gravedad ? `<span class="chip ${s.gravedad === 'HERIDO' ? 'chip-red' : 'chip-gray'}">${esc(s.gravedad)}</span>` : '',
+    s.categorizacion ? `<span class="chip ${s.categorizacion === 'GRAVE' ? 'chip-red' : s.categorizacion === 'MODERADO' ? 'chip-amber' : 'chip-blue'}">${esc(s.categorizacion)}</span>` : '',
+    s.responsabilidad ? `<span class="chip ${s.responsabilidad === 'SI' ? 'chip-amber' : s.responsabilidad === 'NO' ? 'chip-green' : 'chip-gray'}">Responsable: ${esc(s.responsabilidad)}</span>` : '',
+    s.estado ? `<span class="chip ${s.estado === 'CERRADO' ? 'chip-green' : 'chip-violet'}">${esc(s.estado)}</span>` : '',
+  ].filter(Boolean).join(' ');
+  const coord = String(s.coordenadas || '').trim();
+  const mapa = /-?\d+\.\d+/.test(coord)
+    ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(coord)}" target="_blank" rel="noopener">📍 ver en el mapa</a>` : esc(coord);
+  const wa = (tel) => {
+    const t = String(tel || '').replace(/\D/g, '');
+    return t.length === 10 ? `${esc(tel)} <a href="https://wa.me/57${t}" target="_blank" rel="noopener" title="WhatsApp">💬</a>` : esc(tel || '');
+  };
+  m.querySelector('h3').textContent = `🚨 Siniestro del ${fechaLegible(s.fecha || '')}`;
+  body.innerHTML = `
+    <header class="pf-top">
+      <div class="pf-av cond">${esc(s.numero_interno || '—')}</div>
+      <div class="pf-idt">
+        <h2>${esc(s.placa || 'sin placa')}${s.ruta ? ` · ruta ${esc(s.ruta)}` : ''}</h2>
+        <div class="pf-sub">${esc(fechaLegible(s.fecha || ''))}${s.reportado_en ? ` · reportado ${esc(fmtFechaHora(s.reportado_en))}` : ''}</div>
+        <div class="pf-chips">${chips}</div>
+      </div>
+    </header>
+    <div class="pf-secs">
+      ${sinBloque('🚌 Vehículo y ruta', [['Móvil', esc(s.numero_interno || '')], ['Placa', esc(s.placa || '')],
+        ['Ruta', esc(s.ruta || '')], ['Afiliado', esc(s.afiliado || '')],
+        ['Correo del afiliado', esc(s.correo_afiliado || '')], ['Teléfono del afiliado', wa(s.telefono_afiliado)]])}
+      ${sinBloque('🧑‍✈️ Conductor', [['Nombre', s.conductor_nombre
+        ? `<button type="button" class="pf-link" data-percedula="${esc(s.conductor_cedula || '')}" data-percodigo="${esc(s.conductor_codigo || '')}"
+             title="Ver la ficha de la persona">${esc(s.conductor_nombre)}</button>` : ''], ['Código', esc(s.conductor_codigo || '')],
+        ['Cédula', esc(s.conductor_cedula || '')], ['Celular', wa(s.conductor_celular)],
+        ['Ingresó a la empresa', esc(fechaLegible(s.conductor_fecha_ingreso || ''))]])}
+      ${sinBloque('💥 Qué pasó', [['Causa probable', esc(s.causa || '')], ['Norma', esc(s.norma || '')],
+        ['Hipótesis', esc(s.hipotesis || '')], ['Factor', esc(s.factor || '')],
+        ['Tipo de lesión', esc(s.tipo_lesion || '')], ['Lugar', esc(s.lugar || '')], ['Ubicación', mapa],
+        ['Daños de la empresa', esc(s.danos_empresa || '')], ['Lesiones', esc(s.lesiones || '')],
+        ['Observaciones', esc(s.observaciones || '')]])}
+      ${sinBloque('🚗 Tercero afectado', [['Nombre', esc(s.tercero_nombre || '')], ['Placa', esc(s.tercero_placa || '')],
+        ['Identificación', [s.tercero_tipo_id, s.tercero_cedula].filter(Boolean).map(esc).join(' ')],
+        ['Expedida en', esc(s.tercero_ciudad_cedula || '')], ['Teléfono', wa(s.tercero_telefono)],
+        ['Otro teléfono', esc(s.tercero_telefono2 || '')], ['Correo', esc(s.tercero_correo || '')],
+        ['Aseguradora', esc(s.tercero_aseguradora || '')], ['Daños', esc(s.tercero_danos || '')]])}
+      ${sinBloque('📋 Gestión', [['Estado del reporte', esc(s.estado_inicio || '')],
+        ['Estado administrativo', esc(s.estado || '')], ['Tipo de conciliación', esc(s.tipo_conciliacion || '')],
+        ['Monto', s.monto ? '$ ' + Number(s.monto).toLocaleString('es-CO') : ''],
+        ['Monto en texto', esc(s.monto_texto || '')],
+        ['Reportó en la app', esc(s.usuario_app || '')], ['Usuario de logística', esc(s.usuario_logistica || '')],
+        ['Correo del asistente', esc(s.correo_asistente || '')],
+        ['Observaciones de asistencia', esc(s.observaciones_asistencia || '')],
+        ['Autorización de datos', esc(s.autorizacion_datos || '')], ['Mes del reporte', esc(s.mes_reporte || '')]])}
+      ${sinFotosHtml(s)}
+    </div>`;
+  // El nombre del conductor abre su ficha en el perfil sociodemográfico
+  body.querySelectorAll('[data-percedula]').forEach((b) => {
+    b.onclick = () => sinAbrirPersona(b.dataset.percedula, b.dataset.percodigo);
+  });
+  m.hidden = false;
+}
+// Del siniestro a la persona: busca por cédula y, si no está, por el código del conductor
+async function sinAbrirPersona(cedula, codigo) {
+  const ced = String(cedula || '').trim();
+  showBusy('Buscando en el perfil…');
+  try {
+    let data = null;
+    if (ced) ({ data } = await sb.from('perfilsociodemografico').select('*').eq('cedula', ced).maybeSingle());
+    if (!data && codigo) {
+      ({ data } = await sb.from('perfilsociodemografico').select('*').eq('codigo', String(codigo).trim()).maybeSingle());
+    }
+    if (!data) { toast('Ese conductor no está en el perfil sociodemográfico.', 'err'); return; }
+    openPerfilFicha(data);
+  } catch (e) {
+    toast('No se pudo abrir la ficha: ' + (e.message || e), 'err');
+  } finally { hideBusy(); }
+}
+
 // ===================================================================================
 // 🪪 FICHA DE PERSONA (Perfil sociodemográfico)
 // La tabla muestra lo básico; la ficha muestra TODA la hoja de vida ordenada por
@@ -7046,7 +7362,26 @@ function pfHistorialHtml(hist) {
   }).join('')}</ol></section>`;
 }
 
-function pfRender(row, hist) {
+// 🚨 Los siniestros de esa persona (cruce por cédula con la tabla de siniestros)
+function pfSiniestrosHtml(sin) {
+  if (!sin || !sin.length) return '';
+  const conResp = sin.filter((s) => s.responsabilidad === 'SI').length;
+  const heridos = sin.filter((s) => s.gravedad === 'HERIDO').length;
+  const monto = sin.reduce((tt, s) => tt + Number(s.monto || 0), 0);
+  const resumen = [`${sin.length} siniestro(s)`, conResp ? `${conResp} con responsabilidad` : '',
+    heridos ? `${heridos} con heridos` : '', monto ? `$ ${Math.round(monto).toLocaleString('es-CO')} reconocidos` : '']
+    .filter(Boolean).join(' · ');
+  return `<section class="pf-sec pf-sin"><h4>🚨 Siniestros del conductor</h4>
+    <div class="muted pf-sin-res">${esc(resumen)}</div>
+    <ul>${sin.map((s) => `<li><button type="button" class="pf-link" data-sinkey="${esc(s.key)}">
+        ${esc(fechaLegible(s.fecha || ''))}</button>
+        <span class="muted">móvil ${esc(s.numero_interno || '—')} · ${esc(s.placa || '')}${s.ruta ? ' · ruta ' + esc(s.ruta) : ''}</span>
+        ${s.gravedad ? `<span class="chip ${s.gravedad === 'HERIDO' ? 'chip-red' : 'chip-gray'}">${esc(s.gravedad)}</span>` : ''}
+        ${s.responsabilidad === 'SI' ? '<span class="chip chip-amber">responsable</span>' : ''}
+        ${Number(s.monto || 0) ? `<span class="chip chip-blue">$ ${Math.round(Number(s.monto)).toLocaleString('es-CO')}</span>` : ''}
+      </li>`).join('')}</ul></section>`;
+}
+function pfRender(row, hist, sin) {
   const m = pfModal(), body = m.querySelector('.pf-body');
   const iniciales = String(row.nombre || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('');
   const edad = edadPerfil(row), anios = antiguedadPerfil(row);
@@ -7093,9 +7428,27 @@ function pfRender(row, hist) {
     ${kpis ? `<div class="pf-kpis">${kpis}</div>` : ''}
     ${avisos}
     <div class="pf-secs">${pfSeccionesHtml(row)}</div>
+    ${pfSiniestrosHtml(sin)}
     ${pfHistorialHtml(hist)}`;
+  // Cada siniestro de la lista abre su reporte completo
+  body.querySelectorAll('[data-sinkey]').forEach((b) => { b.onclick = () => sinAbrirPorKey(b.dataset.sinkey); });
 }
 
+// Los siniestros de la persona. La cédula del reporte viene de otra app: se prueba tal cual,
+// y si no aparece, por el código del conductor (lo que sí comparten las dos fuentes).
+async function pfLeerSiniestros(row) {
+  const ced = String(row.cedula || '').trim();
+  if (!ced) return [];
+  const COLS = 'key,fecha,placa,numero_interno,ruta,gravedad,responsabilidad,categorizacion,monto,estado';
+  try {
+    let { data } = await sb.from('siniestros').select(COLS).eq('conductor_cedula', ced).order('fecha', { ascending: false });
+    if ((!data || !data.length) && row.codigo) {
+      ({ data } = await sb.from('siniestros').select(COLS).eq('conductor_codigo', String(row.codigo).trim())
+        .order('fecha', { ascending: false }));
+    }
+    return data || [];
+  } catch (e) { return []; } // si el rol no ve siniestros, la ficha sigue funcionando igual
+}
 async function openPerfilFicha(row) {
   if (!isTalentoHumano()) return;
   _pfRow = row;
@@ -7103,10 +7456,12 @@ async function openPerfilFicha(row) {
   m.querySelector('.pf-body').innerHTML = '<div class="loading">Cargando…</div>';
   m.hidden = false;
   try {
-    // La fila de la tabla ya trae todo (select *); solo falta el historial de la persona.
-    const { data: hist } = await sb.from('perfil_vinculaciones').select('*')
-      .eq('cedula', row.cedula).order('fecha_ingreso', { ascending: false });
-    pfRender(row, hist || []);
+    // La fila de la tabla ya trae todo (select *); faltan el historial y los siniestros del conductor.
+    const [{ data: hist }, sin] = await Promise.all([
+      sb.from('perfil_vinculaciones').select('*').eq('cedula', row.cedula).order('fecha_ingreso', { ascending: false }),
+      pfLeerSiniestros(row),
+    ]);
+    pfRender(row, hist || [], sin);
   } catch (e) {
     m.querySelector('.pf-body').innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
   }
@@ -8302,11 +8657,10 @@ const PST_BLOQUES = [
   { key: 'calidad', icon: '🧹', label: 'Calidad de datos' },
 ];
 const _pst = { personas: null, vinc: null, tablas: [] };
-async function openPerfilStats(bloque) {
-  if (!isTalentoHumano()) return;
-  _pst.bloque = bloque || 'resumen';
+// La pantalla de estadísticas la comparten el perfil sociodemográfico y los siniestros:
+// esto deja el lienzo listo (cierra lo demás y muestra la vista). Cada módulo pone sus filtros.
+function statsPrepararVista() {
   if (mapaFlotante) cerrarMapaFlotante();
-  currentView = 'perfilstats';
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   ['table-view', 'map-view', 'cump-view', 'rutas-view', 'malla-view', 'laureles-view', 'integradas-view', 'pasajeros-view',
@@ -8317,6 +8671,13 @@ async function openPerfilStats(bloque) {
   document.getElementById('app').classList.remove('view-map');
   $('perfilstats-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+}
+async function openPerfilStats(bloque) {
+  if (!isTalentoHumano()) return;
+  _pst.bloque = bloque || 'resumen';
+  currentView = 'perfilstats';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = false; $('pst-fl-sin').hidden = true;
   $('nav-pst-' + (_pst.bloque || 'resumen'))?.classList.add('active');
   buildBottomNav();
   const b = PST_BLOQUES.find((x) => x.key === _pst.bloque) || PST_BLOQUES[0];
@@ -8484,8 +8845,12 @@ function pstTablaHtml({ cab, filas, quienesPorFila }, titulo) {
   t.appendChild(tb);
   return t;
 }
-// ¿La lista son personas (con cédula) y no un conteo suelto?
-function pstHayPersonas(arr) { return Array.isArray(arr) && arr.length > 0 && arr[0] && typeof arr[0] === 'object' && 'cedula' in arr[0]; }
+// ¿Hay detalle detrás del número? Puede ser una lista de personas (con cédula) o de siniestros.
+function pstHayPersonas(arr) {
+  return Array.isArray(arr) && arr.length > 0 && arr[0] && typeof arr[0] === 'object'
+    && ('cedula' in arr[0] || esFilaSiniestro(arr[0]));
+}
+const esFilaSiniestro = (o) => !!o && typeof o === 'object' && 'key' in o && 'placa' in o;
 // Barras horizontales de UNA serie: largo = cantidad; valor y % al final de la barra
 function pstBarras(titulo, conteo, opts = {}) {
   const { items, sin, total } = conteo;
@@ -8916,6 +9281,8 @@ function pstPersonasModal() {
   return m;
 }
 function pstVerPersonas(titulo, personas, opts = {}) {
+  // Si lo que hay detrás del número son siniestros, se muestra la lista de reportes
+  if (personas && personas.length && esFilaSiniestro(personas[0])) return sinVerLista(titulo, personas);
   let lista = (personas || []).filter((p) => p && (p.cedula || p.nombre));
   // Sin fecha de por medio, en orden alfabético (más fácil de buscar)
   if (!opts.fecha) lista = lista.slice().sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
@@ -9048,9 +9415,413 @@ async function exportarPerfilStats() {
     toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
   } finally { btn.disabled = false; btn.textContent = prev; }
 }
+
+// ===================================================================================
+// 📊 ESTADÍSTICAS DE SINIESTROS — comparten pantalla con las del perfil sociodemográfico.
+// Cada tema es una entrada del submenú 🚨 Siniestros → 📊 Estadísticas. Todo número lleva al
+// detalle: la lista de reportes que hay detrás y, de ahí, a la ficha completa del siniestro.
+// El conductor se cruza por CÉDULA con el Perfil sociodemográfico, así se sabe quién es,
+// si sigue activo, su cargo y su antigüedad (y quién quedó fuera del perfil).
+// ===================================================================================
+const SST_BLOQUES = [
+  { key: 'resumen', icon: '📊', label: 'Resumen de siniestros' },
+  { key: 'tiempo', icon: '📅', label: 'Por año y por mes' },
+  { key: 'conductores', icon: '🧑‍✈️', label: 'Conductores' },
+  { key: 'vehiculos', icon: '🚌', label: 'Vehículos y rutas' },
+  { key: 'causas', icon: '💥', label: 'Causas y gravedad' },
+  { key: 'costos', icon: '💰', label: 'Costos y conciliación' },
+];
+const _sst = { rows: null, personas: null, bloque: 'resumen', porCedula: null, porCodigo: null };
+const SST_COLS = 'key,fecha,placa,numero_interno,ruta,afiliado,conductor_cedula,conductor_codigo,'
+  + 'conductor_nombre,conductor_celular,gravedad,responsabilidad,tipo_conciliacion,tipo_lesion,'
+  + 'monto,categorizacion,estado,causa,factor,lugar,reportado_en';
+// Cédula comparable: los dos lados vienen de archivos distintos (AppSheet y el CSV de nómina)
+const sinCed = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+/, '');
+const sstMonto = (n) => '$ ' + Math.round(Number(n || 0)).toLocaleString('es-CO');
+
+async function openSiniestrosStats(bloque) {
+  if (!isTalentoHumano()) return;
+  _sst.bloque = bloque || 'resumen';
+  currentView = 'sinstats';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = false;
+  $('nav-sst-' + (_sst.bloque || 'resumen'))?.classList.add('active');
+  buildBottomNav();
+  const b = SST_BLOQUES.find((x) => x.key === _sst.bloque) || SST_BLOQUES[0];
+  const tit = $('pst-title'); if (tit) tit.textContent = `🚨 ${b.label}`;
+  if (!_sst.rows) await cargarSiniestrosStats(); else renderSiniestrosStats();
+}
+async function cargarSiniestrosStats() {
+  const body = $('pst-body');
+  body.innerHTML = '<div class="loading">Leyendo los siniestros…</div>';
+  const leerTodo = async (tabla, cols, orden) => {
+    const out = [];
+    for (let desde = 0; desde < 50000; desde += 1000) {
+      const { data, error } = await sb.from(tabla).select(cols).order(orden).range(desde, desde + 999);
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  };
+  try {
+    // El perfil se lee solo para ponerle cara al conductor (quién es, si sigue activo, su cargo)
+    const [rows, personas] = await Promise.all([
+      leerTodo('siniestros', SST_COLS, 'key'),
+      leerTodo('perfilsociodemografico', 'id,cedula,nombre,codigo,celular,tipo,estado,cargo,area,fecha_ingreso,fecha_retiro', 'id'),
+    ]);
+    _sst.rows = rows; _sst.personas = personas;
+    _sst.porCedula = new Map();
+    _sst.porCodigo = new Map();
+    for (const p of personas) {
+      const c = sinCed(p.cedula); if (c && !_sst.porCedula.has(c)) _sst.porCedula.set(c, p);
+      const k = String(p.codigo || '').trim(); if (k && !_sst.porCodigo.has(k)) _sst.porCodigo.set(k, p);
+    }
+    // Los filtros se arman con lo que realmente trajo la hoja (conserva lo elegido)
+    const llenar = (id, valores, primero) => {
+      const sel = $(id), prev = sel.value;
+      sel.innerHTML = `<option value="">${primero}</option>`;
+      valores.forEach((v) => sel.appendChild(Object.assign(document.createElement('option'), { value: v, textContent: v })));
+      if (valores.includes(prev)) sel.value = prev;
+    };
+    const anios = [...new Set(rows.map((s) => String(s.fecha || '').slice(0, 4)).filter((a) => /^\d{4}$/.test(a)))].sort().reverse();
+    llenar('sst-anio', anios, 'Todos');
+    llenar('sst-gravedad', [...new Set(rows.map((s) => s.gravedad).filter(Boolean))].sort(), 'Todas');
+    llenar('sst-resp', [...new Set(rows.map((s) => s.responsabilidad).filter(Boolean))].sort(), 'Todos');
+    renderSiniestrosStats();
+  } catch (e) {
+    body.innerHTML = '';
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudieron leer los siniestros: ' + (e.message || e)));
+  }
+}
+// La persona del perfil que hay detrás del conductor del reporte (por cédula, si no por código)
+function sstPersona(s) {
+  const c = sinCed(s.conductor_cedula);
+  if (c && _sst.porCedula.has(c)) return _sst.porCedula.get(c);
+  const k = String(s.conductor_codigo || '').trim();
+  return k && _sst.porCodigo.has(k) ? _sst.porCodigo.get(k) : null;
+}
+// Agrupa los reportes por conductor y los cruza con el perfil
+function sstPorConductor(R) {
+  const m = new Map();
+  for (const s of R) {
+    const ced = sinCed(s.conductor_cedula);
+    const k = ced || `n:${String(s.conductor_nombre || '').trim().toUpperCase()}` || 'sin';
+    if (!m.has(k)) m.set(k, { ced, nombre: s.conductor_nombre, codigo: s.conductor_codigo, celular: s.conductor_celular, rows: [] });
+    m.get(k).rows.push(s);
+  }
+  return [...m.values()].map((g) => {
+    const p = sstPersona({ conductor_cedula: g.ced, conductor_codigo: g.codigo });
+    return {
+      ...g, p, n: g.rows.length,
+      resp: g.rows.filter((s) => s.responsabilidad === 'SI').length,
+      heridos: g.rows.filter((s) => s.gravedad === 'HERIDO').length,
+      monto: g.rows.reduce((t, s) => t + Number(s.monto || 0), 0),
+      ultimo: g.rows.reduce((mx, s) => (String(s.fecha || '') > mx ? String(s.fecha) : mx), ''),
+    };
+  }).sort((a, b) => b.n - a.n || b.monto - a.monto || String(a.nombre || '').localeCompare(String(b.nombre || '')));
+}
+// El conductor como "persona" para las listas: si está en el perfil se abre su ficha completa
+function sstComoPersona(g) {
+  if (g.p) return { ...g.p, _sin: g.n };
+  return { cedula: g.ced || '—', nombre: g.nombre || '(sin nombre en el reporte)', codigo: g.codigo || '',
+    celular: g.celular || '', cargo: 'CONDUCTOR', estado: 'NO ESTÁ EN EL PERFIL', _sin: g.n };
+}
+// Tarjeta que es solo una tabla (rankings y costos, donde la gráfica no aporta)
+function sstTarjetaTabla(titulo, nota, tabla, ancha = true) {
+  const card = pstEl('section', 'pst-card' + (ancha ? ' pst-ancha' : ''));
+  const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
+  tt.appendChild(pstEl('h4', null, titulo));
+  if (nota) tt.appendChild(pstEl('div', 'pst-nota', nota));
+  head.appendChild(tt);
+  const cuerpo = pstEl('div', 'pst-card-b pst-tabla-wrap');
+  cuerpo.appendChild(pstTablaHtml(tabla, titulo));
+  card.append(head, cuerpo);
+  _pst.tablas.push({ titulo, nota, ...tabla });
+  return card;
+}
+function renderSiniestrosStats() {
+  const body = $('pst-body'); if (!_sst.rows) return;
+  const anio = $('sst-anio').value, grav = $('sst-gravedad').value, resp = $('sst-resp').value;
+  const R = _sst.rows.filter((s) => (!anio || String(s.fecha || '').slice(0, 4) === anio)
+    && (!grav || s.gravedad === grav) && (!resp || s.responsabilidad === resp));
+  _pst.tablas = [];
+  _pst.filtro = [anio ? `Año ${anio}` : 'Todos los años', grav || 'Toda gravedad',
+    resp ? `Responsable: ${resp}` : 'Toda responsabilidad'].join(' · ');
+  _sst.filtro = _pst.filtro;
+  $('pst-sub').textContent = _pst.filtro;
+  const bAct = SST_BLOQUES.find((x) => x.key === (_sst.bloque || 'resumen')) || SST_BLOQUES[0];
+  const tit = $('pst-title'); if (tit) tit.textContent = `🚨 ${bAct.label}`;
+  body.innerHTML = '';
+
+  // Pestañas (los mismos temas del submenú)
+  const tabs = pstEl('div', 'pst-tabs');
+  SST_BLOQUES.forEach((b) => {
+    const t = pstEl('button', 'pst-tab' + (b.key === (_sst.bloque || 'resumen') ? ' on' : ''), `${b.icon} ${b.label}`);
+    t.type = 'button';
+    t.onclick = () => { _sst.bloque = b.key; renderSiniestrosStats(); };
+    tabs.appendChild(t);
+  });
+  body.appendChild(tabs);
+  if (!R.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay siniestros con estos filtros.')); return; }
+
+  // ---- Indicadores ----
+  const conResp = R.filter((s) => s.responsabilidad === 'SI');
+  const heridos = R.filter((s) => s.gravedad === 'HERIDO');
+  const conMonto = R.filter((s) => Number(s.monto || 0) > 0);
+  const montoTotal = R.reduce((t, s) => t + Number(s.monto || 0), 0);
+  const grupos = sstPorConductor(R);
+  const enPerfil = grupos.filter((g) => g.p).length;
+  const moviles = new Set(R.map((s) => String(s.numero_interno || '').trim()).filter(Boolean));
+  const fechas = R.map((s) => String(s.fecha || '')).filter((f) => /^\d{4}-\d{2}/.test(f)).sort();
+  const meses = new Set(fechas.map((f) => f.slice(0, 7)));
+  const prom = meses.size ? (R.length / meses.size) : 0;
+  const kpis = pstEl('div', 'pst-kpis');
+  kpis.append(
+    pstTile('Siniestros', pstNum(R.length), fechas.length ? `del ${fechaLegible(fechas[0])} al ${fechaLegible(fechas[fechas.length - 1])}` : '', true, R),
+    pstTile('Con responsabilidad del conductor', `${pstPct(conResp.length, R.length)}%`, `${pstNum(conResp.length)} de ${pstNum(R.length)} reportes`, false, conResp),
+    pstTile('Con heridos', pstNum(heridos.length), `${pstPct(heridos.length, R.length)}% de los reportes`, false, heridos),
+    pstTile('Costo reconocido', sstMonto(montoTotal), `${pstNum(conMonto.length)} reporte(s) con monto`, false, conMonto),
+    pstTile('Conductores involucrados', pstNum(grupos.length), `${pstNum(enPerfil)} están en el perfil · ${pstNum(grupos.length - enPerfil)} no`, false, grupos.map(sstComoPersona)),
+    pstTile('Promedio por mes', prom.toLocaleString('es-CO', { maximumFractionDigits: 1 }), `${pstNum(moviles.size)} vehículos distintos · ${meses.size} mes(es) con reportes`),
+  );
+  body.appendChild(kpis);
+
+  const B = _sst.bloque || 'resumen';
+  const ver = (k) => B === 'resumen' || B === k;
+  const seccion = (titulo) => { body.appendChild(pstEl('h3', 'pst-sec', titulo)); const g = pstEl('div', 'pst-grid'); body.appendChild(g); return g; };
+  let g;
+
+  // ---- Por año y por mes ----
+  if (ver('tiempo')) {
+    g = seccion('📅 Cuándo pasan');
+    g.appendChild(pstBarras('Siniestros por año', pstContar(R, (s) => (/^\d{4}/.test(String(s.fecha || '')) ? String(s.fecha).slice(0, 4) : null),
+      { orden: [...new Set(_sst.rows.map((s) => String(s.fecha || '').slice(0, 4)))].sort() })));
+    g.appendChild(pstBarras('Siniestros por mes' + (anio ? ` (${anio})` : ' (todos los años juntos)'),
+      pstContar(R, (s) => { const m = Number(String(s.fecha || '').slice(5, 7)); return m >= 1 && m <= 12 ? PST_MESES[m - 1] : null; },
+        { orden: PST_MESES })));
+    g.appendChild(pstBarras('Día de la semana', pstContar(R, (s) => {
+      const f = String(s.fecha || ''); if (!/^\d{4}-\d{2}-\d{2}/.test(f)) return null;
+      const d = pstDiaSemana(f.slice(0, 4), f.slice(5, 7), f.slice(8, 10));
+      return d ? d.charAt(0).toUpperCase() + d.slice(1) : null;
+    }, { orden: PST_DIAS.map((d) => d.charAt(0).toUpperCase() + d.slice(1)) })));
+    // Matriz año × mes: la foto completa de la accidentalidad
+    const anios = [...new Set(R.map((s) => String(s.fecha || '').slice(0, 4)).filter((a) => /^\d{4}$/.test(a)))].sort();
+    const filas = anios.map((a) => {
+      const delAnio = R.filter((s) => String(s.fecha || '').startsWith(a));
+      const porMes = PST_MESES.map((_, i) => delAnio.filter((s) => Number(String(s.fecha).slice(5, 7)) === i + 1).length);
+      return [a, ...porMes, delAnio.length];
+    });
+    if (anios.length) {
+      g.appendChild(sstTarjetaTabla('Año por mes', 'Cada fila abre los siniestros de ese año.',
+        { cab: ['Año', ...PST_MESES.map((m) => m.slice(0, 3)), 'Total'], filas,
+          quienesPorFila: anios.map((a) => R.filter((s) => String(s.fecha || '').startsWith(a))) }));
+    }
+  }
+
+  // ---- Conductores (el cruce con el perfil) ----
+  if (ver('conductores')) {
+    g = seccion('🧑‍✈️ Conductores');
+    const TOP = 25;
+    const top = grupos.slice(0, TOP);
+    g.appendChild(sstTarjetaTabla(`Conductores con más siniestros (top ${Math.min(TOP, grupos.length)})`,
+      `${pstNum(grupos.length)} conductor(es) en total. Toca una fila para ver sus reportes.`,
+      { cab: ['Conductor', 'Cédula', 'Siniestros', 'Con responsabilidad', 'Con heridos', 'Costo', 'Estado en el perfil', 'Último siniestro'],
+        filas: top.map((x) => [x.p?.nombre || x.nombre || '(sin nombre)', x.ced || '—', x.n, x.resp, x.heridos,
+          x.monto ? sstMonto(x.monto) : '—', x.p ? x.p.estado || '—' : 'No está en el perfil',
+          x.ultimo ? fechaLegible(x.ultimo) : '—']),
+        quienesPorFila: top.map((x) => x.rows) }));
+    // Reincidencia: cuántos conductores tienen 1, 2, 3-4, 5 o más
+    // Reincidencia y estado: aquí lo que hay detrás de cada barra son PERSONAS, no reportes
+    const rango = (n) => (n >= 5 ? '5 o más siniestros' : n >= 3 ? '3 a 4 siniestros' : n === 2 ? '2 siniestros' : '1 siniestro');
+    const comoPersonas = grupos.map(sstComoPersona);
+    g.appendChild(pstBarras('Reincidencia (conductores)', pstContar(comoPersonas, (p) => rango(p._sin),
+      { orden: ['1 siniestro', '2 siniestros', '3 a 4 siniestros', '5 o más siniestros'] }),
+    { nota: 'Cuántos conductores tienen uno, dos o más siniestros.' }));
+    g.appendChild(pstBarras('¿Sigue en la empresa?', pstContar(comoPersonas,
+      (p) => (p.estado === 'NO ESTÁ EN EL PERFIL' ? 'No está en el perfil' : p.estado === 'ACTIVO' ? 'Activo' : 'Inactivo'),
+      { orden: ['Activo', 'Inactivo', 'No está en el perfil'] }),
+    { nota: 'Cruce por cédula con el perfil sociodemográfico.' }));
+    const sinPerfil = grupos.filter((x) => !x.p);
+    if (sinPerfil.length) {
+      g.appendChild(sstTarjetaTabla('Conductores del reporte que no están en el perfil',
+        'Cédulas que vienen en el siniestro y no aparecen en el perfil sociodemográfico: hay que revisarlas.',
+        { cab: ['Conductor', 'Cédula', 'Código', 'Siniestros', 'Último siniestro'],
+          filas: sinPerfil.map((x) => [x.nombre || '(sin nombre)', x.ced || '—', x.codigo || '—', x.n, x.ultimo ? fechaLegible(x.ultimo) : '—']),
+          quienesPorFila: sinPerfil.map((x) => x.rows) }));
+    }
+  }
+
+  // ---- Vehículos y rutas ----
+  if (ver('vehiculos')) {
+    g = seccion('🚌 Vehículos y rutas');
+    g.appendChild(pstBarras('Móviles con más siniestros', pstContar(R, (s) => (s.numero_interno ? `Móvil ${s.numero_interno}` : null), { top: 15 })));
+    g.appendChild(pstBarras('Rutas', pstContar(R, (s) => s.ruta, { top: 15 })));
+    g.appendChild(pstBarras('Afiliados', pstContar(R, (s) => s.afiliado, { top: 12 }), { ancha: true }));
+  }
+
+  // ---- Causas y gravedad ----
+  if (ver('causas')) {
+    g = seccion('💥 Qué pasó');
+    g.appendChild(pstBarras('Gravedad', pstContar(R, (s) => s.gravedad)));
+    g.appendChild(pstBarras('Responsabilidad del conductor', pstContar(R, (s) => s.responsabilidad)));
+    g.appendChild(pstBarras('Categorización', pstContar(R, (s) => s.categorizacion, { orden: ['LEVE', 'MODERADO', 'GRAVE'] })));
+    g.appendChild(pstBarras('Tipo de lesión o daño', pstContar(R, (s) => s.tipo_lesion, { top: 10 })));
+    g.appendChild(pstBarras('Causa probable', pstContar(R, (s) => s.causa, { top: 12 }), { ancha: true }));
+    g.appendChild(pstBarras('Factor', pstContar(R, (s) => s.factor)));
+    g.appendChild(pstBarras('Estado del reporte', pstContar(R, (s) => s.estado)));
+  }
+
+  // ---- Costos ----
+  if (ver('costos')) {
+    g = seccion('💰 Costos y conciliación');
+    const anios = [...new Set(R.map((s) => String(s.fecha || '').slice(0, 4)).filter((a) => /^\d{4}$/.test(a)))].sort();
+    g.appendChild(sstTarjetaTabla('Costo por año', 'Solo cuenta lo que tiene monto registrado en el reporte.',
+      { cab: ['Año', 'Siniestros', 'Con monto', 'Costo total', 'Promedio'],
+        filas: anios.map((a) => {
+          const d = R.filter((s) => String(s.fecha || '').startsWith(a));
+          const cm = d.filter((s) => Number(s.monto || 0) > 0);
+          const tot = d.reduce((t, s) => t + Number(s.monto || 0), 0);
+          return [a, d.length, cm.length, sstMonto(tot), cm.length ? sstMonto(tot / cm.length) : '—'];
+        }),
+        quienesPorFila: anios.map((a) => R.filter((s) => String(s.fecha || '').startsWith(a))) }, false));
+    const tipos = [...new Set(R.map((s) => s.tipo_conciliacion).filter(Boolean))];
+    g.appendChild(sstTarjetaTabla('Tipo de conciliación',
+      'Cómo se resolvió el siniestro y cuánto costó cada forma.',
+      { cab: ['Tipo de conciliación', 'Siniestros', 'Costo total'],
+        filas: tipos.map((tp) => {
+          const d = R.filter((s) => s.tipo_conciliacion === tp);
+          return [tp, d.length, sstMonto(d.reduce((t, s) => t + Number(s.monto || 0), 0))];
+        }).sort((a, b) => b[1] - a[1]),
+        quienesPorFila: tipos.map((tp) => R.filter((s) => s.tipo_conciliacion === tp)) }, false));
+    const caros = conMonto.slice().sort((a, b) => Number(b.monto) - Number(a.monto)).slice(0, 15);
+    if (caros.length) {
+      g.appendChild(sstTarjetaTabla('Los 15 siniestros más costosos', 'Toca una fila para abrir el reporte.',
+        { cab: ['Fecha', 'Móvil', 'Placa', 'Conductor', 'Monto', 'Conciliación'],
+          filas: caros.map((s) => [fechaLegible(s.fecha), s.numero_interno || '—', s.placa || '—',
+            s.conductor_nombre || '—', sstMonto(s.monto), s.tipo_conciliacion || '—']),
+          quienesPorFila: caros.map((s) => [s]) }));
+    }
+  }
+}
+async function exportarSiniestrosStats() {
+  if (!_pst.tablas.length) { toast('No hay estadísticas para exportar.', 'err'); return; }
+  const btn = $('pst-excel'); const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [['Estadísticas de siniestros — Autobuses El Poblado'], [`Filtro: ${_sst.filtro || ''}`],
+      [`Generado: ${fmtFechaHora(new Date())}`], []];
+    for (const t of _pst.tablas) {
+      aoa.push([t.titulo]); if (t.nota) aoa.push([t.nota]);
+      aoa.push(t.cab); t.filas.forEach((f) => aoa.push(f)); aoa.push([]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 40 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 20 }, { wch: 16 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Siniestros');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `Estadisticas_siniestros_${hoyServidor()}.xlsx`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---- Lista de reportes detrás de un número (el detalle de cada dato) ----
+let _sinLista = { titulo: '', filas: [] };
+function sinListaModal() {
+  let m = $('sinl-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'sinl-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pstp-card">
+    <div class="modal-head"><h3></h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pstp-sub"></div>
+    <div class="pstp-body"></div>
+    <div class="modal-foot"><button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.querySelector('[data-excel]').onclick = () => sinExportarLista(_sinLista.titulo, _sinLista.filas);
+  document.body.appendChild(m);
+  return m;
+}
+function sinVerLista(titulo, filas) {
+  const lista = (filas || []).slice().sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+  _sinLista = { titulo, filas: lista };
+  const m = sinListaModal();
+  m.querySelector('h3').textContent = `🚨 ${titulo}`;
+  m.querySelector('.pstp-sub').textContent = `${pstNum(lista.length)} siniestro(s) · toca uno para ver el reporte completo`;
+  const body = m.querySelector('.pstp-body');
+  body.innerHTML = '';
+  if (!lista.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay siniestros en este grupo.')); m.hidden = false; return; }
+  const tabla = pstEl('table', 'pst-tabla pstp-tabla');
+  const cab = ['Fecha', 'Móvil', 'Placa', 'Ruta', 'Conductor', 'Gravedad', 'Responsable', 'Monto'];
+  const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  const thead = pstEl('thead'); thead.appendChild(tr); tabla.appendChild(thead);
+  const tb = pstEl('tbody');
+  for (const s of lista) {
+    const r = pstEl('tr');
+    [fechaLegible(s.fecha), s.numero_interno || '—', s.placa || '—', s.ruta || '—',
+      s.conductor_nombre || '—', s.gravedad || '—', s.responsabilidad || '—',
+      Number(s.monto || 0) ? sstMonto(s.monto) : '—'].forEach((v, i) => r.appendChild(pstEl('td', i === 4 ? 'pstp-nom' : null, v)));
+    r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Abrir el reporte completo';
+    const abrir = () => sinAbrirPorKey(s.key);
+    r.addEventListener('click', abrir);
+    r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+    tb.appendChild(r);
+  }
+  tabla.appendChild(tb);
+  body.appendChild(tabla);
+  m.hidden = false;
+}
+// Abre la ficha del siniestro desde una lista (hay que traer la fila completa)
+async function sinAbrirPorKey(key) {
+  if (!key) return;
+  showBusy('Abriendo el reporte…');
+  try {
+    const { data, error } = await sb.from('siniestros').select('*').eq('key', key).single();
+    if (error) throw error;
+    openSiniestro(data);
+  } catch (e) {
+    toast('No se pudo abrir el reporte: ' + (e.message || e), 'err');
+  } finally { hideBusy(); }
+}
+async function sinExportarLista(titulo, filas) {
+  if (!filas || !filas.length) { toast('No hay siniestros para exportar.', 'err'); return; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [[titulo], [`${filas.length} siniestro(s) · ${_sst.filtro || ''}`], [`Generado: ${fmtFechaHora(new Date())}`], [],
+      ['Fecha', 'Móvil', 'Placa', 'Ruta', 'Afiliado', 'Conductor', 'Cédula', 'Código', 'Gravedad',
+        'Responsable', 'Categorización', 'Tipo de lesión', 'Causa', 'Monto', 'Conciliación', 'Estado']];
+    filas.forEach((s) => aoa.push([s.fecha ? celdaFechaXlsx(s.fecha) : '', s.numero_interno || '', s.placa || '',
+      s.ruta || '', s.afiliado || '', s.conductor_nombre || '', s.conductor_cedula || '', s.conductor_codigo || '',
+      s.gravedad || '', s.responsabilidad || '', s.categorizacion || '', s.tipo_lesion || '', s.causa || '',
+      Number(s.monto || 0) || '', s.tipo_conciliacion || '', s.estado || '']));
+    const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+    ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 9 }, { wch: 10 }, { wch: 26 }, { wch: 30 }, { wch: 12 }, { wch: 8 },
+      { wch: 13 }, { wch: 12 }, { wch: 14 }, { wch: 22 }, { wch: 30 }, { wch: 12 }, { wch: 16 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Siniestros');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${String(titulo).replace(/[^\wáéíóúñÁÉÍÓÚÑ ]+/g, ' ').trim().replace(/\s+/g, '_')}_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  }
+}
+
 ['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
-$('pst-recargar')?.addEventListener('click', cargarPerfilStats);
-$('pst-excel')?.addEventListener('click', exportarPerfilStats);
+['sst-anio', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
+$('pst-recargar')?.addEventListener('click', () => (currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
+$('pst-excel')?.addEventListener('click', () => (currentView === 'sinstats' ? exportarSiniestrosStats() : exportarPerfilStats()));
 $('pst-close')?.addEventListener('click', cerrarPerfilStats);
 window.addEventListener('resize', () => {
   clearTimeout(_pst.rz);
@@ -13179,6 +13950,7 @@ $('sonarfull-btn').addEventListener('click', async () => {
 });
 
 // ---------- Administración de accesos (solo admin) ----------
+$('sin-sync-btn')?.addEventListener('click', sincronizarSiniestros);
 $('perfil-new-btn').addEventListener('click', async () => {
   const rolIn = (prompt('Rol del acceso (despachador / auditor / admin / gestion_humana):', 'despachador') || '').trim().toLowerCase();
   if (!rolIn) return;

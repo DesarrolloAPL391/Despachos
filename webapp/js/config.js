@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v259';
+export const APP_VERSION = 'v260';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -25,6 +25,7 @@ const NOVEDADES = [
 export const TABLE_ORDER = [
   'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'tablas_despacho', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios', 'perfilsociodemografico', 'perfil_vinculaciones',
+  'siniestros',
 ];
 
 // Listas unificadas del PERFIL SOCIODEMOGRÁFICO. Las usan el formulario del admin y el link público
@@ -928,6 +929,64 @@ export const TABLES = {
       { key: 'adjuntos', label: 'Adjuntos AppSheet (rutas)' },
     ],
     fields: PERFIL_FIELDS,
+  },
+  // Siniestros de vehículos (sql/79). Vienen de AppSheet -> hoja de Google; la app los trae
+  // con el botón "🔄 Traer siniestros". Aquí no se editan: se consultan, filtran y descargan.
+  siniestros: {
+    label: 'Siniestros',
+    icon: '🚨',
+    readonly: true,
+    pk: 'key',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['placa', 'numero_interno', 'conductor_nombre', 'conductor_codigo', 'conductor_cedula',
+      'tercero_nombre', 'tercero_placa', 'ruta', 'afiliado', 'lugar'],
+    defaultOrder: { col: 'fecha', asc: false },
+    filters: [
+      { col: 'gravedad', label: 'Gravedad', options: ['SOLO DAÑOS', 'HERIDO'], chips: true },
+      { col: 'responsabilidad', label: 'Responsable', options: ['SI', 'NO', 'POR DEFINIR'], chips: true },
+      { col: 'categorizacion', label: 'Categoría', options: ['LEVE', 'MODERADO', 'GRAVE'], chips: true },
+      { col: 'estado', label: 'Estado', options: ['ABIERTO', 'CERRADO'], chips: true },
+      { col: 'fecha', label: 'Fecha', type: 'daterange' },
+    ],
+    columns: [
+      { key: 'fecha', label: 'Fecha', m: true },
+      { key: 'numero_interno', label: 'Móvil', m: true },
+      { key: 'placa', label: 'Placa', m: true },
+      { key: 'ruta', label: 'Ruta' },
+      { key: 'conductor_nombre', label: 'Conductor', m: true },
+      { key: 'gravedad', label: 'Gravedad', badge: true, m: true },
+      { key: 'responsabilidad', label: 'Responsable', badge: true },
+      { key: 'categorizacion', label: 'Categoría', badge: true },
+      { key: 'tipo_lesion', label: 'Tipo de lesión' },
+      { key: 'estado', label: 'Estado', badge: true },
+      { key: 'monto', label: 'Monto' },
+    ],
+    exportCols: [
+      { key: 'key', label: 'KEY' }, { key: 'fecha', label: 'Fecha del siniestro' },
+      { key: 'mes_reporte', label: 'Mes del reporte' }, { key: 'numero_interno', label: 'Móvil' },
+      { key: 'placa', label: 'Placa' }, { key: 'ruta', label: 'Ruta' }, { key: 'afiliado', label: 'Afiliado' },
+      { key: 'conductor_codigo', label: 'Código conductor' }, { key: 'conductor_cedula', label: 'Cédula conductor' },
+      { key: 'conductor_nombre', label: 'Conductor' }, { key: 'conductor_celular', label: 'Celular conductor' },
+      { key: 'conductor_fecha_ingreso', label: 'Ingreso del conductor' },
+      { key: 'gravedad', label: 'Gravedad' }, { key: 'responsabilidad', label: 'Responsabilidad del conductor' },
+      { key: 'categorizacion', label: 'Categorización' }, { key: 'tipo_lesion', label: 'Tipo de lesión' },
+      { key: 'tipo_conciliacion', label: 'Tipo de conciliación' }, { key: 'monto', label: 'Monto' },
+      { key: 'monto_texto', label: 'Monto en texto' }, { key: 'estado', label: 'Estado administrativo' },
+      { key: 'estado_inicio', label: 'Estado inicio' }, { key: 'causa', label: 'Causa probable' },
+      { key: 'norma', label: 'Norma' }, { key: 'hipotesis', label: 'Hipótesis' }, { key: 'factor', label: 'Factor' },
+      { key: 'lugar', label: 'Lugar reportado' }, { key: 'coordenadas', label: 'Coordenadas' },
+      { key: 'observaciones', label: 'Observaciones' }, { key: 'danos_empresa', label: 'Daños de la empresa' },
+      { key: 'lesiones', label: 'Descripción de lesiones' },
+      { key: 'tercero_nombre', label: 'Tercero afectado' }, { key: 'tercero_placa', label: 'Placa del tercero' },
+      { key: 'tercero_cedula', label: 'Cédula del tercero' }, { key: 'tercero_telefono', label: 'Teléfono del tercero' },
+      { key: 'tercero_correo', label: 'Correo del tercero' }, { key: 'tercero_aseguradora', label: 'Aseguradora del tercero' },
+      { key: 'tercero_danos', label: 'Daños del tercero' },
+      { key: 'usuario_app', label: 'Reportó (app)' }, { key: 'usuario_logistica', label: 'Usuario logística' },
+      { key: 'autorizacion_datos', label: 'Autorización de datos' },
+      { key: 'reportado_en', label: 'Reportado el', dt: true },
+    ],
+    fields: [],
   },
   // Historial de vinculaciones (ingresos / retiros / reingresos) de cada persona. Solo lectura: se
   // alimenta solo al crear, retirar o reintegrar desde el Perfil. `datos_origen` = fila original del CSV.
