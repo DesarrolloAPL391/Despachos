@@ -177,7 +177,7 @@ function visibleTables() {
   // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
   // de puesto donde tiene despachos de sus rutas (así audita TODO lo suyo, esté en la vista
   // general o en cualquier tabla de puesto).
-  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'restricciones_rutas', ...(CTX?.auditTables || [])];
+  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'restricciones_rutas', 'eventos_bus', ...(CTX?.auditTables || [])];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -552,7 +552,7 @@ function buildSidebar() {
   const TBL_GROUP = {
     ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
     restricciones_rutas: 'restr',
-    siniestros: 'sin',
+    siniestros: 'vial', eventos_bus: 'vial',
     horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin', tablas_despacho: 'admin',
     perfilsociodemografico: 'th', perfil_vinculaciones: 'th',
   };
@@ -595,14 +595,21 @@ function buildSidebar() {
   const gCat = addNavGroup(nav, '🗃️', 'Catálogos', 'cat');
   for (const name of vis) { if (TBL_GROUP[name] === 'cat') addTableBtn(gCat, name); }
 
-  // 🚨 Siniestros (admin y Gestión Humana): lo que reporta la app de AppSheet, ya en el sistema
-  if (isTalentoHumano()) {
-    const gSin = addNavGroup(nav, '🚨', 'Siniestros', 'sin');
-    for (const name of vis) { if (TBL_GROUP[name] === 'sin') addTableBtn(gSin, name); }
-    // Estadísticas de siniestros: un tema por entrada (cuándo pasan, conductores, costos…)
-    const gSs = addNavGroup(gSin, '📊', 'Estadísticas', 'sinstats');
-    SST_BLOQUES.filter((b) => !b.soloOperacion || isAdmin() || isAuditor())
-      .forEach((b) => addNavAction(gSs, b.icon, b.label, () => openSiniestrosStats(b.key), 'nav-sst-' + b.key));
+  // 🛡️ Seguridad vial: todo lo que es riesgo en la vía junto — los siniestros que se reportan en
+  // la app de AppSheet y la conducción que mide el GPS (excesos de velocidad y puertas abiertas).
+  if (isTalentoHumano() || isAuditor()) {
+    const gVial = addNavGroup(nav, '🛡️', 'Seguridad vial', 'vial');
+    for (const name of vis) { if (TBL_GROUP[name] === 'vial' && name !== 'eventos_bus') addTableBtn(gVial, name); }
+    // La misma tabla de conducción, abierta por lo que se quiere mirar
+    if (vis.includes('eventos_bus')) {
+      addNavAction(gVial, '🚦', 'Excesos de velocidad', () => abrirConduccion('VELOCIDAD'), 'nav-evb-vel');
+      addNavAction(gVial, '🚪', 'Puertas abiertas', () => abrirConduccion('PUERTA ABIERTA'), 'nav-evb-pue');
+    }
+    if (isTalentoHumano()) {
+      const gSs = addNavGroup(gVial, '📊', 'Estadísticas', 'vialstats');
+      SST_BLOQUES.filter((b) => !b.soloOperacion || isAdmin() || isAuditor())
+        .forEach((b) => addNavAction(gSs, b.icon, b.label, () => openSiniestrosStats(b.key), 'nav-sst-' + b.key));
+    }
   }
 
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
@@ -646,6 +653,9 @@ function buildSidebar() {
   const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
   PST_BLOQUES.forEach((b) => { const e = $('nav-pst-' + b.key); if (e) e.classList.toggle('active', currentView === 'perfilstats' && (_pst.bloque || 'resumen') === b.key); });
   SST_BLOQUES.forEach((b) => { const e = $('nav-sst-' + b.key); if (e) e.classList.toggle('active', currentView === 'sinstats' && (_sst.bloque || 'resumen') === b.key); });
+  const enConduccion = current === 'eventos_bus' && currentView === 'tabla';
+  const aVel = $('nav-evb-vel'); if (aVel) aVel.classList.toggle('active', enConduccion && filters.categoria === 'VELOCIDAD');
+  const aPue = $('nav-evb-pue'); if (aPue) aPue.classList.toggle('active', enConduccion && filters.categoria === 'PUERTA ABIERTA');
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   // Submenús: ocultar los grupos que quedaron vacíos (según el rol) y abrir el que tiene la opción activa
@@ -776,7 +786,7 @@ $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList
 $('scrim').addEventListener('click', closeMenu);
 $('app-ver').textContent = APP_VERSION;
 
-function selectTable(name) {
+function selectTable(name, filtroInicial) {
   // salir de la vista de mapa si estaba activa
   currentView = 'tabla';
   cerrarRecorridoBus();
@@ -796,7 +806,7 @@ function selectTable(name) {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
-  current = name; page = 0; term = ''; filters = {}; $('search').value = '';
+  current = name; page = 0; term = ''; filters = filtroInicial ? { ...filtroInicial } : {}; $('search').value = '';
   // Si la tabla tiene filtro de fecha (calendario), arranca mostrando el DÍA ACTUAL
   // (no "todas las fechas"): así se ve el día completo y nunca topa el límite de filas.
   const fDate = (TABLES[name].filters || []).find((f) => f.type === 'date');
@@ -7135,6 +7145,11 @@ function sinArmarFilas(texto) {
     if (String(o.key || '').trim()) salida.push(o);
   }
   return salida;
+}
+
+// Abre la tabla de conducción ya filtrada por lo que se quiere mirar (velocidad o puertas)
+function abrirConduccion(categoria) {
+  selectTable('eventos_bus', categoria ? { categoria } : null);
 }
 
 // Botón "🔄 Traer siniestros": lee la hoja y actualiza la tabla

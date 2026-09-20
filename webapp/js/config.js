@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v268';
+export const APP_VERSION = 'v269';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -26,6 +26,7 @@ export const TABLE_ORDER = [
   'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'tablas_despacho', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios', 'perfilsociodemografico', 'perfil_vinculaciones',
   'siniestros',
+  'eventos_bus',
 ];
 
 // Listas unificadas del PERFIL SOCIODEMOGRÁFICO. Las usan el formulario del admin y el link público
@@ -986,6 +987,50 @@ export const TABLES = {
       { key: 'usuario_app', label: 'Reportó (app)' }, { key: 'usuario_logistica', label: 'Usuario logística' },
       { key: 'autorizacion_datos', label: 'Autorización de datos' },
       { key: 'reportado_en', label: 'Reportado el', dt: true },
+    ],
+    fields: [],
+  },
+  // Eventos de conducción (sql/81-84): excesos de velocidad y puertas abiertas en marcha, con el
+  // conductor que iba manejando. Los trae solo el barrido nocturno desde SONAR: aquí se consultan.
+  eventos_bus: {
+    label: 'Conducción',
+    icon: '🚦',
+    readonly: true,
+    pk: 'id',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['movil', 'conductor', 'conductor_cedula', 'ruta', 'direccion', 'evento'],
+    defaultOrder: { col: 'ocurrido_en', asc: false },
+    filters: [
+      { col: 'categoria', label: 'Tipo', chips: true, options: [
+        { value: 'VELOCIDAD', label: '🚦 Velocidad' }, { value: 'PUERTA ABIERTA', label: '🚪 Puerta abierta' }] },
+      { col: 'tipo', label: 'Detalle', chips: true, options: [
+        { value: 'velocidad', label: 'Más de 60 km/h' }, { value: 'exceso', label: 'Exceso del límite de la vía' },
+        { value: 'puerta', label: 'Rodando con puerta abierta' }] },
+      { col: 'fecha', label: 'Fecha', type: 'daterange' },
+    ],
+    columns: [
+      { key: 'ocurrido_en', label: 'Cuándo', dt: true, m: true },
+      { key: 'movil', label: 'Móvil', m: true },
+      { key: 'conductor', label: 'Conductor', m: true },
+      { key: 'categoria', label: 'Tipo', badge: true, m: true },
+      { key: 'evento', label: 'Evento' },
+      { key: 'velocidad', label: 'Velocidad' },
+      { key: 'limite', label: 'Límite vía' },
+      { key: 'exceso_kmh', label: 'Sobre el límite' },
+      { key: 'ruta', label: 'Ruta' },
+      { key: 'direccion', label: 'Dónde' },
+    ],
+    exportCols: [
+      { key: 'fecha', label: 'Fecha' }, { key: 'ocurrido_en', label: 'Fecha y hora', dt: true },
+      { key: 'movil', label: 'Móvil' }, { key: 'mid', label: 'Tracker' },
+      { key: 'categoria', label: 'Tipo' }, { key: 'tipo', label: 'Detalle' },
+      { key: 'evento', label: 'Evento SONAR' },
+      { key: 'velocidad', label: 'Velocidad (km/h)' }, { key: 'limite', label: 'Límite de la vía' },
+      { key: 'exceso_kmh', label: 'Km/h sobre el límite' }, { key: 'sobre_umbral', label: 'Pasó del umbral' },
+      { key: 'conductor', label: 'Conductor' }, { key: 'conductor_cedula', label: 'Cédula' },
+      { key: 'conductor_codigo', label: 'Código' }, { key: 'ruta', label: 'Ruta' },
+      { key: 'direccion', label: 'Dónde' }, { key: 'lat', label: 'Latitud' }, { key: 'lon', label: 'Longitud' },
     ],
     fields: [],
   },
