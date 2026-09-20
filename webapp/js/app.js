@@ -9978,7 +9978,8 @@ async function sstMapaRender(cont, anio) {
   cuerpo.append(chips, zona);
   card.append(head, cuerpo);
   cont.appendChild(card);
-  const tabla = pstEl('div'); cont.appendChild(tabla);
+  const tabla = pstEl('div', 'pst-ancha'); cont.appendChild(tabla);
+  const vehiculos = pstEl('div', 'pst-ancha'); cont.appendChild(vehiculos);
 
   const opciones = [{ v: null, t: 'Las dos' }, { v: 'VELOCIDAD', t: SST_MAPA_NOMBRE.VELOCIDAD },
                     { v: 'PUERTA ABIERTA', t: SST_MAPA_NOMBRE['PUERTA ABIERTA'] }];
@@ -10024,16 +10025,17 @@ async function sstMapaRender(cont, anio) {
         'No hay eventos con coordenada en este periodo. El barrido corre de madrugada (02:00 a 06:50).'));
       return;
     }
-    sstMapaPintar(zona, pts);
-    tabla.appendChild(sstMapaTop(pts));
+    sstMapaPintar(zona, pts, { desde, hasta });
+    tabla.appendChild(sstMapaTop(pts, { desde, hasta }));
   };
 
   pintarChips();
   await cargar();
+  sstMapaVehiculos(vehiculos, desde, hasta);   // no cambia con el chip: va aparte
 }
 
 // El mapa: círculos de área proporcional, con anillo blanco para que se despeguen del fondo
-function sstMapaPintar(zona, pts) {
+function sstMapaPintar(zona, pts, ctx) {
   const el = pstEl('div', 'vial-mapa'); zona.appendChild(el);
   zona.appendChild(sstMapaLeyenda(pts));
   if (_sstMapa.map) { try { _sstMapa.map.remove(); } catch (_) { /* ya no existía */ } _sstMapa.map = null; }
@@ -10049,7 +10051,7 @@ function sstMapaPintar(zona, pts) {
       radius: r, color: '#fff', weight: 2, fillColor: col, fillOpacity: 0.82,
     }).addTo(map);
     m.bindTooltip(`${sstMapaSitio(p)} — ${pstNum(p.veces)} vez(ces)`, { direction: 'top' });
-    m.bindPopup(sstMapaPopup(p));
+    m.bindPopup(sstMapaPopup(p, ctx));
     _sstMapa.marcas.push(m);
   });
   try { map.fitBounds(L.latLngBounds(pts.map((p) => [p.lat, p.lon])).pad(0.15)); } catch (_) { /* un solo punto */ }
@@ -10058,21 +10060,32 @@ function sstMapaPintar(zona, pts) {
 
 function sstMapaSitio(p) { return p.direccion || `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`; }
 
-function sstMapaPopup(p) {
-  const fila = (k, v) => (v == null || v === '' ? '' : `<div><b>${esc(k)}:</b> ${esc(String(v))}</div>`);
-  const col = SST_MAPA_COLOR[p.categoria] || '#374151';
-  return '<div class="vial-pop">'
-    + `<div class="vial-pop-t">${esc(sstMapaSitio(p))}</div>`
-    + `<div class="vial-pop-c" style="color:${col}">${esc(SST_MAPA_NOMBRE[p.categoria] || p.categoria || '')}</div>`
-    + fila('Veces', pstNum(p.veces))
-    + fila('Días distintos', pstNum(p.dias))
-    + fila('Conductores', pstNum(p.conductores))
-    + fila('Vehículos', pstNum(p.moviles))
-    + fila('Velocidad máxima', p.vel_max != null ? `${p.vel_max} km/h` : null)
-    + fila('Quien más se repite', p.conductor_top)
-    + fila('Ruta', p.ruta)
-    + fila('Última vez', p.ultimo ? fechaLegible(p.ultimo) : null)
-    + '</div>';
+function sstMapaPopup(p, ctx) {
+  const d = pstEl('div', 'vial-pop');
+  d.appendChild(pstEl('div', 'vial-pop-t', sstMapaSitio(p)));
+  const c = pstEl('div', 'vial-pop-c', SST_MAPA_NOMBRE[p.categoria] || p.categoria || '');
+  c.style.color = SST_MAPA_COLOR[p.categoria] || '#374151';
+  d.appendChild(c);
+  const fila = (k, v) => {
+    if (v == null || v === '') return;
+    const f = pstEl('div'); f.appendChild(pstEl('b', null, k + ': '));
+    f.appendChild(document.createTextNode(String(v))); d.appendChild(f);
+  };
+  fila('Veces', pstNum(p.veces));
+  fila('Días distintos', pstNum(p.dias));
+  fila('Conductores', pstNum(p.conductores));
+  fila('Vehículos', pstNum(p.moviles));
+  fila('Velocidad máxima', p.vel_max != null ? `${p.vel_max} km/h` : null);
+  fila('Quien más se repite', p.conductor_top);
+  fila('Ruta', p.ruta);
+  fila('Última vez', p.ultimo ? fechaLegible(p.ultimo) : null);
+  // Cada punto se puede abrir: quién, cuándo y a qué velocidad pasó por aquí
+  const b = pstEl('button', 'btn btn-sm vial-pop-b', '👁️ Ver los eventos de este punto');
+  b.type = 'button';
+  b.onclick = () => evbVerDetalle(sstMapaSitio(p),
+    { desde: ctx.desde, hasta: ctx.hasta, categoria: p.categoria, lat: p.lat, lon: p.lon });
+  d.appendChild(b);
+  return d;
 }
 
 function sstMapaLeyenda(pts) {
@@ -10089,9 +10102,9 @@ function sstMapaLeyenda(pts) {
 }
 
 // Los puntos negros, en tabla: se puede ordenar la intervención y llevarla a la charla
-function sstMapaTop(pts) {
+function sstMapaTop(pts, ctx) {
   const top = pts.slice(0, 15);
-  const cab = ['Dónde', 'Conducta', 'Veces', 'Días', 'Conductores', 'Vehículos', 'Vel. máx', 'Última vez'];
+  const cab = ['Dónde', 'Conducta', 'Veces', 'Días', 'Conductores', 'Vehículos', 'Vel. máx', 'Última vez', ''];
   const filas = top.map((p) => [sstMapaSitio(p), SST_MAPA_NOMBRE[p.categoria] || p.categoria || '—',
     Number(p.veces || 0), Number(p.dias || 0), Number(p.conductores || 0), Number(p.moviles || 0),
     p.vel_max != null ? `${p.vel_max} km/h` : '—', p.ultimo ? fechaLegible(p.ultimo) : '—']);
@@ -10117,13 +10130,191 @@ function sstMapaTop(pts) {
       m.openPopup();
       _sstMapa.map.getContainer().scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
+    // El ojo abre el detalle sin tener que ir al mapa
+    const ver = pstEl('button', 'btn btn-sm', '👁️');
+    ver.type = 'button'; ver.title = 'Ver los eventos de este punto';
+    ver.onclick = (ev) => {
+      ev.stopPropagation();
+      evbVerDetalle(sstMapaSitio(top[i]),
+        { desde: ctx.desde, hasta: ctx.hasta, categoria: top[i].categoria, lat: top[i].lat, lon: top[i].lon });
+    };
+    const tdv = pstEl('td'); tdv.appendChild(ver); r.appendChild(tdv);
     r.addEventListener('click', ir);
     r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ir(); } });
     tb.appendChild(r);
   });
   t.appendChild(tb); cuerpo.appendChild(t); card.append(head, cuerpo);
+  _pst.tablas = _pst.tablas.filter((t) => t.titulo !== titulo);
   _pst.tablas.push({ titulo, nota, cab, filas });
   return card;
+}
+
+// ---- El detalle que hay detrás de cada número (punto del mapa, vehículo o conductor) ----
+// Los eventos no se bajan con la pantalla: se piden solo cuando alguien abre un número, y con
+// tope, para que un año de histórico no se convierta en una descarga de millones de filas.
+let _evbLista = { titulo: '', filas: [] };
+function evbListaModal() {
+  let m = $('evb-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'evb-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pstp-card">
+    <div class="modal-head"><h3></h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pstp-sub"></div>
+    <div class="pstp-body"></div>
+    <div class="modal-foot"><button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.querySelector('[data-excel]').onclick = () => evbExportar(_evbLista.titulo, _evbLista.filas);
+  document.body.appendChild(m);
+  return m;
+}
+
+async function evbVerDetalle(titulo, f) {
+  const m = evbListaModal();
+  m.querySelector('h3').textContent = `🚦 ${titulo}`;
+  m.querySelector('.pstp-sub').textContent = '';
+  const body = m.querySelector('.pstp-body');
+  body.innerHTML = '<div class="loading">Leyendo los eventos…</div>';
+  m.hidden = false;
+  let res = null;
+  try {
+    const { data, error } = await sb.rpc('eventos_bus_detalle', {
+      p_desde: f.desde, p_hasta: f.hasta, p_categoria: f.categoria || null,
+      p_lat: f.lat == null ? null : f.lat, p_lon: f.lon == null ? null : f.lon,
+      p_movil: f.movil || null, p_cedula: f.cedula || null, p_limite: 300,
+    });
+    if (error) throw error;
+    res = data;
+  } catch (e) {
+    const txt = String(e.message || e);
+    body.innerHTML = '';
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudo leer el detalle: ' + txt
+      + (/eventos_bus_detalle/.test(txt) ? ' — falta ejecutar sql/87.' : '')));
+    return;
+  }
+  if (!res || !res.ok) {
+    body.innerHTML = '';
+    body.appendChild(pstEl('div', 'cump-empty', (res && res.error) || 'No tienes permiso para ver los eventos.'));
+    return;
+  }
+  const filas = res.items || [];
+  _evbLista = { titulo, filas };
+  m.querySelector('.pstp-sub').textContent = res.total > filas.length
+    ? `${pstNum(res.total)} lectura(s) · se muestran las ${pstNum(filas.length)} más recientes`
+    : `${pstNum(filas.length)} lectura(s) del GPS`;
+  body.innerHTML = '';
+  if (!filas.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay eventos aquí en este periodo.')); return; }
+  const tabla = pstEl('table', 'pst-tabla pstp-tabla');
+  const cab = ['Cuándo', 'Móvil', 'Conductor', 'Ruta', 'Qué pasó', 'Velocidad', 'Límite vía', 'Sobre la vía', 'Dónde'];
+  const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  const thead = pstEl('thead'); thead.appendChild(tr); tabla.appendChild(thead);
+  const tb = pstEl('tbody');
+  filas.forEach((e) => {
+    const r = pstEl('tr');
+    r.appendChild(pstEl('td', null, evbCuando(e.cuando)));
+    r.appendChild(pstEl('td', null, e.movil || '—'));
+    r.appendChild(pstEl('td', 'pstp-nom', e.conductor || '(sin viaje asociado)'));
+    r.appendChild(pstEl('td', null, e.ruta || '—'));
+    r.appendChild(pstEl('td', null, e.evento || '—'));
+    // La velocidad se marca cuando pasa del umbral de la empresa: es la regla interna
+    const tdv = pstEl('td', e.sobre_umbral ? 'evb-alta' : null, e.velocidad != null ? `${e.velocidad} km/h` : '—');
+    r.appendChild(tdv);
+    r.appendChild(pstEl('td', null, e.limite ? `${e.limite} km/h` : '—'));
+    r.appendChild(pstEl('td', e.sobre_via ? 'evb-alta' : null, e.sobre_via ? `+${e.sobre_via}` : '—'));
+    r.appendChild(pstEl('td', null, e.direccion || '—'));
+    tb.appendChild(r);
+  });
+  tabla.appendChild(tb);
+  body.appendChild(tabla);
+}
+
+function evbCuando(s) {
+  const t = String(s || '');
+  if (!/^\d{4}-\d{2}-\d{2}/.test(t)) return t || '—';
+  return `${t.slice(8, 10)}/${t.slice(5, 7)}/${t.slice(0, 4)} ${t.slice(11, 16)}`;
+}
+
+async function evbExportar(titulo, filas) {
+  if (!filas || !filas.length) { toast('No hay eventos para exportar.', 'err'); return; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [[titulo], [`${filas.length} lectura(s) del GPS`], [`Generado: ${fmtFechaHora(new Date())}`], [],
+      ['Cuándo', 'Móvil', 'Conductor', 'Cédula', 'Ruta', 'Qué pasó', 'Velocidad', 'Límite vía',
+        'Sobre la vía', 'Más de 60', 'Dónde', 'Latitud', 'Longitud']];
+    filas.forEach((e) => aoa.push([e.cuando ? celdaFechaXlsx(e.cuando) : '', e.movil || '', e.conductor || '',
+      e.conductor_cedula || '', e.ruta || '', e.evento || '', e.velocidad ?? '', e.limite ?? '',
+      e.sobre_via ?? '', e.sobre_umbral ? 'SI' : 'NO', e.direccion || '', e.lat ?? '', e.lon ?? '']));
+    const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+    ws['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 30 }, { wch: 12 }, { wch: 10 }, { wch: 24 }, { wch: 10 },
+      { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 40 }, { wch: 11 }, { wch: 11 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Conducción');
+    XLSX.writeFile(wb, `conduccion_${hoyServidor()}.xlsx`);
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  }
+}
+
+// ---- Top de vehículos: con qué carros se anda pasando de lo reglamentario ----
+async function sstMapaVehiculos(cont, desde, hasta) {
+  cont.innerHTML = '';
+  cont.appendChild(pstEl('div', 'loading', 'Armando el top de vehículos…'));
+  let res = null;
+  try {
+    const { data, error } = await sb.rpc('eventos_bus_vehiculos', { p_desde: desde, p_hasta: hasta });
+    if (error) throw error;
+    res = data;
+  } catch (e) {
+    const txt = String(e.message || e);
+    cont.innerHTML = '';
+    cont.appendChild(pstEl('div', 'cump-empty', 'No se pudo leer el top de vehículos: ' + txt
+      + (/eventos_bus_vehiculos/.test(txt) ? ' — falta ejecutar sql/87.' : '')));
+    return;
+  }
+  cont.innerHTML = '';
+  if (!res || !res.ok) {
+    cont.appendChild(pstEl('div', 'cump-empty', (res && res.error) || 'No tienes permiso para ver los eventos.'));
+    return;
+  }
+  const items = res.items || [];
+  if (!items.length) { cont.appendChild(pstEl('div', 'cump-empty', 'Ningún vehículo con eventos en este periodo.')); return; }
+  const umbral = Number(res.umbral_kmh || 60);
+  const top = items.slice(0, 20);
+  const titulo = 'Vehículos que más se pasan de lo reglamentario';
+  const nota = `"Pasó el límite de la vía" compara la velocidad contra el límite que SONAR da para esa calle.`
+    + ` "Más de ${umbral} km/h" es la regla interna de la empresa. Toca un móvil para ver sus eventos uno por uno.`;
+  const cab = ['Móvil', 'Pasó el límite de la vía', `Más de ${umbral} km/h`, 'Puerta abierta',
+    'Vel. máx', 'Mayor exceso', 'Días', 'Conductores', 'Ruta', 'Última vez'];
+  const filas = top.map((v) => [v.movil || '—', Number(v.sobre_via || 0), Number(v.sobre_umbral || 0),
+    Number(v.puertas || 0), v.vel_max != null ? `${v.vel_max} km/h` : '—',
+    v.sobre_max != null && v.sobre_max > 0 ? `+${v.sobre_max} km/h` : '—',
+    Number(v.dias || 0), Number(v.conductores || 0), v.ruta || '—',
+    v.ultimo ? fechaLegible(v.ultimo) : '—']);
+  const card = pstEl('section', 'pst-card pst-ancha');
+  const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
+  tt.appendChild(pstEl('h4', null, titulo)); tt.appendChild(pstEl('div', 'pst-nota', nota));
+  head.appendChild(tt);
+  const cuerpo = pstEl('div', 'pst-card-b pst-tabla-wrap');
+  const tabla = pstEl('table', 'pst-tabla');
+  const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  const thead = pstEl('thead'); thead.appendChild(tr); tabla.appendChild(thead);
+  const tb = pstEl('tbody');
+  filas.forEach((f, i) => {
+    const r = pstEl('tr');
+    f.forEach((v) => r.appendChild(pstEl('td', null, typeof v === 'number' ? pstNum(v) : v)));
+    r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Ver los eventos de este vehículo';
+    const abrir = () => evbVerDetalle(`Móvil ${top[i].movil}`, { desde, hasta, movil: top[i].movil });
+    r.addEventListener('click', abrir);
+    r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+    tb.appendChild(r);
+  });
+  tabla.appendChild(tb); cuerpo.appendChild(tabla); card.append(head, cuerpo);
+  _pst.tablas = _pst.tablas.filter((t) => t.titulo !== titulo);
+  _pst.tablas.push({ titulo, nota, cab, filas });
+  cont.appendChild(card);
 }
 
 async function exportarSiniestrosStats() {

@@ -2587,3 +2587,5 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .vial-pop { font-size: 13px; line-height: 1.5; min-width: 190px; }
 .vial-pop-t { font-weight: 700; margin-bottom: 2px; }
 .vial-pop-c { font-weight: 600; margin-bottom: 6px; }
+.vial-pop-b { margin-top: 8px; width: 100%; }
+.evb-alta { color: #b91c1c; font-weight: 700; }
