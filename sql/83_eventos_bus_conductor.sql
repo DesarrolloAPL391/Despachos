@@ -223,7 +223,9 @@ end $$;
 revoke all on function public.eventos_bus_core(date, int) from public, anon, authenticated;
 
 -- 3) Volver a resolver el conductor de lo YA guardado (no hay que bajar nada de SONAR) --------
-create or replace function public.eventos_bus_reasignar(p_desde date, p_hasta date)
+-- Núcleo SIN guard de rol, para poder correrlo también desde el SQL Editor (donde la sesión es
+-- `postgres` y no hay usuario de la app, así que es_admin() da falso) y desde pg_cron.
+create or replace function public.eventos_bus_reasignar_core(p_desde date, p_hasta date)
 returns jsonb
 language plpgsql
 security definer
@@ -231,9 +233,6 @@ set search_path = public
 as $$
 declare v_n int;
 begin
-  if not public.es_admin() then
-    return jsonb_build_object('ok', false, 'error', 'Solo el administrador puede reasignar.');
-  end if;
   with pendientes as (
     select e.id, x.itl_id, x.ruta, x.conductor, cs.cedula, cs.codigo
     from public.eventos_bus e
@@ -256,6 +255,21 @@ begin
     'sin_conductor', (select count(1) from public.eventos_bus
                        where fecha between p_desde and p_hasta and conductor is null),
     'total', (select count(1) from public.eventos_bus where fecha between p_desde and p_hasta));
+end $$;
+revoke all on function public.eventos_bus_reasignar_core(date, date) from public, anon, authenticated;
+
+-- El que llama la app (con sesión de administrador)
+create or replace function public.eventos_bus_reasignar(p_desde date, p_hasta date)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.es_admin() then
+    return jsonb_build_object('ok', false, 'error', 'Solo el administrador puede reasignar.');
+  end if;
+  return public.eventos_bus_reasignar_core(p_desde, p_hasta);
 end $$;
 revoke all on function public.eventos_bus_reasignar(date, date) from public, anon;
 grant execute on function public.eventos_bus_reasignar(date, date) to authenticated;
