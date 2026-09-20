@@ -601,7 +601,8 @@ function buildSidebar() {
     for (const name of vis) { if (TBL_GROUP[name] === 'sin') addTableBtn(gSin, name); }
     // Estadísticas de siniestros: un tema por entrada (cuándo pasan, conductores, costos…)
     const gSs = addNavGroup(gSin, '📊', 'Estadísticas', 'sinstats');
-    SST_BLOQUES.forEach((b) => addNavAction(gSs, b.icon, b.label, () => openSiniestrosStats(b.key), 'nav-sst-' + b.key));
+    SST_BLOQUES.filter((b) => !b.soloOperacion || isAdmin() || isAuditor())
+      .forEach((b) => addNavAction(gSs, b.icon, b.label, () => openSiniestrosStats(b.key), 'nav-sst-' + b.key));
   }
 
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
@@ -9472,6 +9473,7 @@ const SST_BLOQUES = [
   { key: 'vehiculos', icon: '🚌', label: 'Vehículos y rutas' },
   { key: 'causas', icon: '💥', label: 'Causas y gravedad' },
   { key: 'costos', icon: '💰', label: 'Costos y conciliación' },
+  { key: 'vial', icon: '🛡️', label: 'Seguridad vial (conducción)', soloOperacion: true },
 ];
 const _sst = { rows: null, personas: null, bloque: 'resumen', porCedula: null, porCodigo: null };
 const SST_COLS = 'key,fecha,placa,numero_interno,ruta,afiliado,conductor_cedula,conductor_codigo,'
@@ -9623,7 +9625,7 @@ function renderSiniestrosStats() {
 
   // Pestañas (los mismos temas del submenú)
   const tabs = pstEl('div', 'pst-tabs');
-  SST_BLOQUES.forEach((b) => {
+  SST_BLOQUES.filter((b) => !b.soloOperacion || isAdmin() || isAuditor()).forEach((b) => {
     const t = pstEl('button', 'pst-tab' + (b.key === (_sst.bloque || 'resumen') ? ' on' : ''), `${b.icon} ${b.label}`);
     t.type = 'button';
     t.onclick = () => { _sst.bloque = b.key; renderSiniestrosStats(); };
@@ -9754,6 +9756,14 @@ function renderSiniestrosStats() {
     g.appendChild(pstBarras('Estado del reporte', pstContar(R, (s) => s.estado)));
   }
 
+  // ---- Seguridad vial: la conducción, cruzada con los siniestros ----
+  if (B === 'vial') {
+    body.appendChild(pstEl('h3', 'pst-sec', '🛡️ Conducción y siniestros'));
+    const cv = pstEl('div', 'pst-grid'); body.appendChild(cv);
+    sstVialRender(cv, R, anio);
+    return; // este tema trae sus datos aparte; no comparte tarjetas con los demás
+  }
+
   // ---- Costos ----
   if (ver('costos')) {
     g = seccion('💰 Costos y conciliación');
@@ -9786,6 +9796,122 @@ function renderSiniestrosStats() {
     }
   }
 }
+// ---- 🛡️ Seguridad vial: la conducción (sql/81) cruzada con los siniestros ----
+// Los eventos de riesgo (exceso de velocidad real y puerta abierta en marcha) se guardan cada
+// madrugada desde SONAR con el conductor que iba manejando. Aquí se juntan con los siniestros
+// del mismo periodo, por cédula: quién arriesga y a quién se le están volviendo choques.
+function sstVialPeriodo(anio) {
+  if (anio) return [`${anio}-01-01`, `${anio}-12-31`];
+  const hoy = hoyServidor();
+  const d = new Date(hoy + 'T12:00:00'); d.setMonth(d.getMonth() - 12);
+  return [d.toISOString().slice(0, 10), hoy];
+}
+async function sstVialRender(cont, R, anio) {
+  const [desde, hasta] = sstVialPeriodo(anio);
+  cont.innerHTML = '';
+  cont.appendChild(pstEl('div', 'loading', 'Leyendo los eventos de conducción…'));
+  let res = null, est = null;
+  try {
+    const [r1, r2] = await Promise.all([
+      sb.rpc('eventos_bus_resumen', { p_desde: desde, p_hasta: hasta }),
+      sb.rpc('eventos_bus_estado'),
+    ]);
+    res = r1.data; est = r2.data;
+    if (r1.error) throw r1.error;
+  } catch (e) {
+    cont.innerHTML = '';
+    cont.appendChild(pstEl('div', 'cump-empty', 'No se pudieron leer los eventos: ' + (e.message || e)));
+    return;
+  }
+  cont.innerHTML = '';
+  if (!res?.ok) {
+    cont.appendChild(pstEl('div', 'cump-empty',
+      res?.error || 'Los eventos de conducción los consultan el administrador y los auditores.'));
+    return;
+  }
+  const items = res.items || [];
+  // Estado del histórico: hasta qué día está cargado (el cron lo llena de madrugada)
+  const estTxt = est?.ok
+    ? (est.total
+      ? `Histórico del ${fechaLegible(est.desde)} al ${fechaLegible(est.hasta)} · ${pstNum(est.total)} eventos guardados`
+      : 'Todavía no hay histórico guardado: el barrido corre de madrugada (02:00 a 06:00).')
+    : '';
+  const cab = pstEl('div', 'pst-nota', `Periodo: ${fechaLegible(desde)} a ${fechaLegible(hasta)}${estTxt ? ' · ' + estTxt : ''}`);
+  cont.appendChild(cab);
+  if (isAdmin()) cont.appendChild(sstVialCargaUI());
+  if (!items.length) {
+    cont.appendChild(pstEl('div', 'cump-empty',
+      'No hay eventos de conducción guardados en este periodo. Si acabas de aplicar sql/81, usa "Traer un día" o espera al barrido de la madrugada.'));
+    return;
+  }
+  // Siniestros del periodo por cédula, para cruzarlos con la conducción
+  const sinPorCed = new Map();
+  for (const s of R) {
+    const f = String(s.fecha || '');
+    if (f < desde || f > hasta) continue;
+    const c = sinCed(s.conductor_cedula); if (!c) continue;
+    if (!sinPorCed.has(c)) sinPorCed.set(c, []);
+    sinPorCed.get(c).push(s);
+  }
+  const filas = [], quienes = [];
+  for (const it of items) {
+    const c = sinCed(it.cedula);
+    const sus = c ? (sinPorCed.get(c) || []) : [];
+    const p = c ? _sst.porCedula.get(c) : null;
+    filas.push([it.conductor || '(sin viaje asociado)', it.cedula || '—', it.excesos || 0,
+      it.peor_exceso != null ? `+${Math.round(Number(it.peor_exceso))} km/h` : '—',
+      it.vel_max != null ? `${Math.round(Number(it.vel_max))} km/h` : '—',
+      it.puertas || 0, it.dias || 0, sus.length,
+      p ? (p.estado || '—') : (it.cedula ? 'No está en el perfil' : '—')]);
+    quienes.push(sus); // la fila abre los siniestros de ese conductor en el periodo
+  }
+  cont.appendChild(sstTarjetaTabla('Conducción de riesgo por conductor',
+    'Excesos de velocidad medidos contra el límite de cada vía y puertas abiertas en marcha, del histórico de SONAR. '
+    + 'La última columna son sus siniestros en el mismo periodo: toca la fila para verlos.',
+    { cab: ['Conductor', 'Cédula', 'Excesos', 'Peor exceso', 'Velocidad máxima', 'Puertas abiertas', 'Días con eventos', 'Siniestros', 'Estado en el perfil'],
+      filas, quienesPorFila: quienes }));
+
+  // Los que arriesgan Y además chocaron: el grupo al que hay que intervenir primero
+  const criticos = items.map((it) => {
+    const c = sinCed(it.cedula);
+    return { it, sus: c ? (sinPorCed.get(c) || []) : [] };
+  }).filter((x) => x.sus.length && (x.it.excesos || 0) > 0)
+    .sort((a, b) => b.sus.length - a.sus.length || (b.it.excesos || 0) - (a.it.excesos || 0));
+  if (criticos.length) {
+    cont.appendChild(sstTarjetaTabla('Conductores con excesos Y siniestros en el periodo',
+      'Son los casos para intervenir primero: vienen corriendo y además ya tuvieron siniestros.',
+      { cab: ['Conductor', 'Cédula', 'Excesos', 'Puertas abiertas', 'Siniestros', 'Con responsabilidad'],
+        filas: criticos.map((x) => [x.it.conductor || '(sin nombre)', x.it.cedula || '—',
+          x.it.excesos || 0, x.it.puertas || 0, x.sus.length,
+          x.sus.filter((s) => s.responsabilidad === 'SI').length]),
+        quienesPorFila: criticos.map((x) => x.sus) }));
+  }
+}
+// Caja del administrador para traer un día a mano (el resto lo hace el cron de la madrugada)
+function sstVialCargaUI() {
+  const box = pstEl('div', 'vial-carga');
+  const inp = Object.assign(document.createElement('input'), { type: 'date', className: 'vial-fecha' });
+  const ayer = new Date(); ayer.setDate(ayer.getDate() - 1);
+  inp.value = ayer.toISOString().slice(0, 10);
+  const btn = Object.assign(document.createElement('button'), { className: 'btn btn-sm', textContent: '⬇️ Traer ese día' });
+  const msg = pstEl('span', 'muted');
+  btn.onclick = async () => {
+    btn.disabled = true; const prev = btn.textContent; btn.textContent = '⏳ Consultando SONAR…';
+    msg.textContent = '';
+    try {
+      const { data, error } = await sb.rpc('eventos_bus_cargar', { p_fecha: inp.value, p_limite: 40 });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      msg.textContent = `${data.moviles} móvil(es) revisados · ${data.eventos} evento(s) guardados · ${data.pendientes} móvil(es) pendientes`;
+      if (!data.pendientes) toast('Día completo.', 'ok');
+    } catch (e) {
+      msg.textContent = 'Error: ' + (e.message || e);
+    } finally { btn.disabled = false; btn.textContent = prev; }
+  };
+  box.append(pstEl('span', null, 'Traer los eventos de un día:'), inp, btn, msg);
+  return box;
+}
+
 async function exportarSiniestrosStats() {
   if (!_pst.tablas.length) { toast('No hay estadísticas para exportar.', 'err'); return; }
   const btn = $('pst-excel'); const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';

@@ -2447,6 +2447,15 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pf-hist .muted { font-size: 12px; }
 .sin-evt-btn { margin-top: 8px; }
 
+/* Caja para traer un día de eventos de conducción (admin) */
+.vial-carga {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px dashed var(--border); border-radius: 12px;
+  background: #fff; font-size: 13px; font-weight: 700; margin-bottom: 4px;
+}
+.vial-carga .vial-fecha { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-weight: 600; }
+.vial-carga .muted { font-weight: 600; }
+
 /* Conductor que iba al volante cuando ocurrió el evento (eventos del bus) */
 .evt-cond { display: block; font-style: normal; font-size: 12px; font-weight: 700; color: var(--primary); margin-top: 2px; }
 
