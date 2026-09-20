@@ -9893,7 +9893,7 @@ async function sstVialRender(cont, R, anio) {
     const p = c ? _sst.porCedula.get(c) : null;
     filas.push([it.conductor || '(sin viaje asociado)', it.cedula || '—',
       it.rapidos || 0, it.excesos || 0,
-      it.peor_exceso != null ? `+${Math.round(Number(it.peor_exceso))} km/h` : '—',
+      Number(it.peor_exceso) > 0 ? `+${Math.round(Number(it.peor_exceso))} km/h` : '—',
       it.vel_max != null ? `${Math.round(Number(it.vel_max))} km/h` : '—',
       it.puertas || 0, it.dias || 0, sus.length,
       p ? (p.estado || '—') : (it.cedula ? 'No está en el perfil' : '—')]);
@@ -9923,7 +9923,85 @@ async function sstVialRender(cont, R, anio) {
           x.sus.filter((s) => s.responsabilidad === 'SI').length]),
         quienesPorFila: criticos.map((x) => x.sus) }));
   }
+  sstVialGraficas(cont, desde, hasta);
 }
+
+// ---- 📈 Las gráficas de la conducción: cuándo, en qué ruta y qué tan rápido ----
+// Las series vienen ya agregadas del servidor (sql/88): son unas pocas decenas de filas por
+// gráfica, no el histórico. Cada tarjeta trae su tabla (botón "Ver tabla") y por eso también
+// sale en el Excel de la pantalla.
+async function sstVialGraficas(cont, desde, hasta) {
+  const cargando = pstEl('div', 'loading pst-ancha', 'Armando las gráficas…');
+  cont.appendChild(cargando);
+  let res = null;
+  try {
+    const { data, error } = await sb.rpc('eventos_bus_series', { p_desde: desde, p_hasta: hasta });
+    if (error) throw error;
+    res = data;
+  } catch (e) {
+    const txt = String(e.message || e);
+    cargando.className = 'cump-empty pst-ancha';
+    cargando.textContent = 'No se pudieron armar las gráficas: ' + txt
+      + (/eventos_bus_series/.test(txt) ? ' — falta ejecutar sql/88.' : '');
+    return;
+  }
+  cargando.remove();
+  if (!res || !res.ok) {
+    cont.appendChild(pstEl('div', 'cump-empty pst-ancha',
+      (res && res.error) || 'No tienes permiso para ver los eventos.'));
+    return;
+  }
+  const umbral = Number(res.umbral_kmh || 60);
+  const conteo = (items) => ({ items, sin: 0, total: items.reduce((s, i) => s + i.n, 0) });
+  // pstBarras ya devuelve la tarjeta con su gráfica, su nota y su botón "Ver tabla", y de paso
+  // registra la tabla para el Excel de la pantalla. El filtro evita repetirla al recargar.
+  const grafica = (titulo, nota, items, ancha) => {
+    if (!items.length) return;
+    _pst.tablas = _pst.tablas.filter((t) => t.titulo !== titulo);
+    cont.appendChild(pstBarras(titulo, conteo(items), { nota, ancha: !!ancha }));
+  };
+
+  cont.appendChild(pstEl('h3', 'pst-sec pst-ancha', '📈 Cuándo y cómo se conduce'));
+
+  // A qué hora: se rellenan las horas sin eventos entre la primera y la última, para que el
+  // valle de la mitad del día se vea como valle y no como si no existiera.
+  const mapH = new Map((res.por_hora || []).map((x) => [Number(x.k), Number(x.n || 0)]));
+  const horas = [...mapH.keys()].sort((a, b) => a - b);
+  const hItems = [];
+  if (horas.length) {
+    for (let h = horas[0]; h <= horas[horas.length - 1]; h++) {
+      hItems.push({ k: `${String(h).padStart(2, '0')}:00`, n: mapH.get(h) || 0 });
+    }
+  }
+  grafica('A qué hora se conduce con riesgo',
+    'La hora en que empezó cada episodio, en hora de Colombia. Sirve para saber en qué turno insistir.',
+    hItems, true);
+
+  // Día de la semana, de lunes a domingo
+  const mapD = new Map((res.por_dia || []).map((x) => [Number(x.k), Number(x.n || 0)]));
+  const dItems = [1, 2, 3, 4, 5, 6, 0].map((d) => ({
+    k: PST_DIAS[d].charAt(0).toUpperCase() + PST_DIAS[d].slice(1), n: mapD.get(d) || 0,
+  })).filter((i) => i.n > 0 || mapD.size);
+  grafica('Qué día de la semana', 'Episodios de riesgo por día.', dItems);
+
+  // Mes a mes: es la gráfica que dice si la sensibilización está sirviendo
+  const mItems = (res.por_mes || []).map((x) => {
+    const a = String(x.k).slice(0, 4), m = Number(String(x.k).slice(5, 7));
+    return { k: `${PST_MESES[m - 1] || x.k} ${a}`, n: Number(x.n || 0) };
+  });
+  grafica('Mes a mes', 'Si la cifra baja, la sensibilización está sirviendo. Con un mes incompleto la comparación todavía no es justa.',
+    mItems, true);
+
+  // Rutas
+  const rItems = (res.por_ruta || []).map((x) => ({ k: String(x.k), n: Number(x.n || 0) }));
+  grafica('Rutas donde más ocurre', 'Las 15 rutas con más episodios en el periodo.', rItems);
+
+  // Qué tan rápido iban
+  const vItems = (res.por_velocidad || []).map((x) => ({ k: String(x.k), n: Number(x.n || 0) }));
+  grafica('Qué tan rápido iban', `Velocidad más alta de cada episodio. El umbral de la empresa son ${umbral} km/h.`,
+    vItems);
+}
+
 // Caja del administrador para traer un día a mano (el resto lo hace el cron de la madrugada)
 function sstVialCargaUI() {
   const box = pstEl('div', 'vial-carga');
