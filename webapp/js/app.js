@@ -9831,10 +9831,14 @@ async function sstVialRender(cont, R, anio) {
   }
   const items = res.items || [];
   // Estado del histórico: hasta qué día está cargado (el cron lo llena de madrugada)
+  const cobertura = est?.ok && est.carros
+    ? ` · Cobertura de ayer: ${pstNum(est.revisados_ayer || 0)} de ${pstNum(est.carros)} carros`
+      + (est.pendientes_ayer ? ` (${pstNum(est.pendientes_ayer)} pendientes)` : ' ✅')
+    : '';
   const estTxt = est?.ok
     ? (est.total
-      ? `Histórico del ${fechaLegible(est.desde)} al ${fechaLegible(est.hasta)} · ${pstNum(est.total)} eventos guardados`
-      : 'Todavía no hay histórico guardado: el barrido corre de madrugada (02:00 a 06:00).')
+      ? `Histórico del ${fechaLegible(est.desde)} al ${fechaLegible(est.hasta)} · ${pstNum(est.total)} eventos guardados${cobertura}`
+      : `Todavía no hay histórico guardado: el barrido corre de madrugada (02:00 a 06:50)${cobertura}`)
     : '';
   const cab = pstEl('div', 'pst-nota', `Periodo: ${fechaLegible(desde)} a ${fechaLegible(hasta)}${estTxt ? ' · ' + estTxt : ''}`);
   cont.appendChild(cab);

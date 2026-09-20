@@ -16,7 +16,12 @@
 -- conductores_sonar por nombre, para poder cruzarlo con el perfil sociodemográfico
 -- y con los siniestros (sql/79).
 --
--- Se aplica DESPUÉS de sql/13, sql/15 y sql/65 (usa SONAR, despachos_sonar y vehiculosgps).
+-- COBERTURA: se revisan TODOS los carros. La lista de trackers no sale de una sola tabla, sino
+-- de `vehiculosgps` + la foto en vivo de la flota (`ubicaciones`) + los móviles que despacharon en
+-- los últimos 60 días (`eventos_bus_trackers`), porque de aquí van a salir alertas y campañas de
+-- sensibilización: un carro que falte es un conductor que no se entera.
+--
+-- Se aplica DESPUÉS de sql/13, sql/15 y sql/65 (usa SONAR, despachos_sonar, ubicaciones y vehiculosgps).
 -- ============================================================================================
 
 -- 1) Los eventos de riesgo, uno por fila ------------------------------------------------------
@@ -82,10 +87,36 @@ grant select on public.eventos_bus      to authenticated;
 grant select on public.eventos_bus_sync to authenticated;
 revoke all on sequence public.eventos_bus_id_seq from public, anon;
 
+-- 3.b) TODOS los carros: la lista de trackers no puede salir de una sola tabla ---------------
+-- `vehiculosgps` es el maestro, pero puede tener huecos (un carro nuevo, un GPS cambiado).
+-- Se une con la foto en vivo de la flota (`ubicaciones`, que refresca SONAR cada minuto) y con
+-- los móviles que despacharon en los últimos 60 días. Así ningún carro se queda sin revisar.
+create or replace function public.eventos_bus_trackers()
+returns table (mid text, movil text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select t.mid, max(t.movil) as movil
+  from (
+    select g.tracker_id::text, g.movil::text from public.vehiculosgps g where coalesce(g.tracker_id, '') <> ''
+    union all
+    select u.mid::text, u.movil::text from public.ubicaciones u where coalesce(u.mid, '') <> ''
+    union all
+    select d.mid::text, d.movil::text from public.despachos_sonar d
+      where coalesce(d.mid, '') <> '' and d.fecha > ((now() at time zone 'America/Bogota')::date - 60)
+  ) as t(mid, movil)
+  group by t.mid;
+$$;
+-- Uso interno (el barrido y el estado, que ya son security definer): la lista de trackers no
+-- tiene por qué quedar expuesta a cualquier usuario con sesión.
+revoke all on function public.eventos_bus_trackers() from public, anon, authenticated;
+
 -- 4) NÚCLEO del barrido: trae de SONAR los eventos de una fecha para los móviles pendientes ---
 --    Sin guard de rol (lo corre pg_cron o el wrapper de admin). Va por lotes: si se corta,
 --    la siguiente corrida sigue donde quedó, porque se salta los que ya están en *_sync.
-create or replace function public.eventos_bus_core(p_fecha date, p_limite int default 40)
+create or replace function public.eventos_bus_core(p_fecha date, p_limite int default 60)
 returns jsonb
 language plpgsql
 security definer
@@ -93,7 +124,7 @@ set search_path = public, extensions
 as $$
 declare
   v_url text; v_usr text; v_pwd text; v_ns text; v_sa text;
-  v_mid text; v_body text; v_resp text; v_xml xml; v_status text;
+  v_mid text; v_movil text; v_body text; v_resp text; v_xml xml; v_status text;
   v_ini text; v_fin text;
   v_n int; v_tot int := 0; v_mov int := 0; v_err int := 0; v_pend int;
 begin
@@ -111,13 +142,12 @@ begin
 
   perform set_config('http.timeout_msec', '55000', true); -- el V2 tarda más que el V1
 
-  for v_mid in
-    select distinct g.tracker_id
-    from public.vehiculosgps g
-    where coalesce(g.tracker_id, '') <> ''
-      and not exists (select 1 from public.eventos_bus_sync s
-                      where s.fecha = p_fecha and s.mid = g.tracker_id and s.ok)
-    order by g.tracker_id
+  for v_mid, v_movil in
+    select k.mid, k.movil
+    from public.eventos_bus_trackers() k
+    where not exists (select 1 from public.eventos_bus_sync s
+                      where s.fecha = p_fecha and s.mid = k.mid and s.ok)
+    order by k.mid
     limit greatest(p_limite, 1)
   loop
     v_n := 0;
@@ -167,7 +197,7 @@ begin
       select
         (r.ocurrido_en at time zone 'America/Bogota')::date,
         r.ocurrido_en, v_mid,
-        coalesce(v.conductor_movil, (select g2.movil from public.vehiculosgps g2 where g2.tracker_id = v_mid limit 1)),
+        coalesce(v.conductor_movil, v_movil),
         r.tipo, coalesce(r.evento, 'Exceso de velocidad'), r.velocidad, r.limite, r.direccion, r.lat, r.lon,
         v.itl_id, v.ruta, v.conductor, cs.cedula, cs.codigo
       from riesgo r
@@ -209,10 +239,9 @@ begin
   end loop;
 
   select count(1) into v_pend
-  from public.vehiculosgps g
-  where coalesce(g.tracker_id, '') <> ''
-    and not exists (select 1 from public.eventos_bus_sync s
-                    where s.fecha = p_fecha and s.mid = g.tracker_id and s.ok);
+  from public.eventos_bus_trackers() k
+  where not exists (select 1 from public.eventos_bus_sync s
+                    where s.fecha = p_fecha and s.mid = k.mid and s.ok);
 
   return jsonb_build_object('ok', true, 'fecha', p_fecha, 'moviles', v_mov,
                             'eventos', v_tot, 'fallidos', v_err, 'pendientes', v_pend);
@@ -228,20 +257,21 @@ set search_path = public, extensions
 as $$
 declare v_ayer date := (now() at time zone 'America/Bogota')::date - 1;
 begin
-  return public.eventos_bus_core(v_ayer, 40);
+  return public.eventos_bus_core(v_ayer, 60);
 end $$;
 revoke all on function public.eventos_bus_nocturno() from public, anon, authenticated;
 
--- Cada 10 minutos entre las 02:00 y las 05:50 de Colombia (07:00–10:50 UTC): 24 corridas de 40
--- móviles alcanzan de sobra para la flota, y se corre DESPUÉS del sync de viajes (06:10 UTC),
--- para que el conductor de cada viaje ya esté en despachos_sonar.
+-- Cada 10 minutos entre las 02:00 y las 06:50 de Colombia (07:00–11:50 UTC): 30 corridas de 60
+-- móviles = 1.800 intentos por noche, de sobra para la flota completa (y lo que falle se
+-- reintenta en la siguiente corrida). Va DESPUÉS del sync de viajes (06:10 UTC), para que el
+-- conductor de cada viaje ya esté en despachos_sonar.
 select cron.unschedule('eventos-bus-nocturno')
   where exists (select 1 from cron.job where jobname = 'eventos-bus-nocturno');
-select cron.schedule('eventos-bus-nocturno', '*/10 7-10 * * *',
+select cron.schedule('eventos-bus-nocturno', '*/10 7-11 * * *',
                      'select public.eventos_bus_nocturno();');
 
 -- 6) Carga manual desde la app (botón del administrador) --------------------------------------
-create or replace function public.eventos_bus_cargar(p_fecha date, p_limite int default 40)
+create or replace function public.eventos_bus_cargar(p_fecha date, p_limite int default 60)
 returns jsonb
 language plpgsql
 security definer
@@ -318,11 +348,13 @@ as $$
       'hasta',        (select max(fecha) from public.eventos_bus),
       'ultima_carga', (select max(sincronizado_en) from public.eventos_bus_sync),
       'dias',         (select count(distinct fecha) from public.eventos_bus_sync where ok),
-      'pendientes_ayer', (select count(1) from public.vehiculosgps g
-                           where coalesce(g.tracker_id, '') <> ''
-                             and not exists (select 1 from public.eventos_bus_sync s
+      'carros',     (select count(1) from public.eventos_bus_trackers()),
+      'revisados_ayer', (select count(1) from public.eventos_bus_sync s
+                          where s.fecha = (now() at time zone 'America/Bogota')::date - 1 and s.ok),
+      'pendientes_ayer', (select count(1) from public.eventos_bus_trackers() k
+                           where not exists (select 1 from public.eventos_bus_sync s
                                              where s.fecha = (now() at time zone 'America/Bogota')::date - 1
-                                               and s.mid = g.tracker_id and s.ok)))
+                                               and s.mid = k.mid and s.ok)))
   end;
 $$;
 revoke all on function public.eventos_bus_estado() from public, anon;
