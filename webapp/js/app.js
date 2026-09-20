@@ -164,8 +164,9 @@ function visibleTables() {
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
-  // Gestión Humana: las dos tablas del módulo + Siniestros (la RLS no le devuelve nada más)
-  if (isGestionHumana()) return ['perfilsociodemografico', 'perfil_vinculaciones', 'siniestros'];
+  // Gestión Humana: las dos tablas del módulo + Seguridad vial completa — siniestros y la
+  // conducción que mide el GPS (sql/85), porque de ahí salen las alertas a los conductores.
+  if (isGestionHumana()) return ['perfilsociodemografico', 'perfil_vinculaciones', 'siniestros', 'eventos_bus'];
   // Afiliado: ve TODAS las tablas de despacho en VIVO y SOLO LECTURA — la vista general
   // "Despachos" + las tablas de puesto con datos (RLS ahora le muestra todos los vehículos,
   // no solo los suyos). Mapa y Pasajeros se agregan aparte como acciones del menú.
@@ -9488,7 +9489,7 @@ const SST_BLOQUES = [
   { key: 'vehiculos', icon: '🚌', label: 'Vehículos y rutas' },
   { key: 'causas', icon: '💥', label: 'Causas y gravedad' },
   { key: 'costos', icon: '💰', label: 'Costos y conciliación' },
-  { key: 'vial', icon: '🛡️', label: 'Seguridad vial (conducción)', soloOperacion: true },
+  { key: 'vial', icon: '🛡️', label: 'Seguridad vial (conducción)' },
 ];
 const _sst = { rows: null, personas: null, bloque: 'resumen', porCedula: null, porCodigo: null };
 const SST_COLS = 'key,fecha,placa,numero_interno,ruta,afiliado,conductor_cedula,conductor_codigo,'
