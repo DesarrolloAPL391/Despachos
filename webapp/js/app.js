@@ -1937,7 +1937,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
     if (hasMobile && !c.m) th.className = 'col-hide';
     head.appendChild(th);
   });
-  if ((!cfg.readonly || cfg.asistenciaMarcar) && !afiliadoSoloLectura() && (current !== 'restricciones_rutas' || puedeGestionarRestricciones())) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
+  if ((!cfg.readonly || cfg.asistenciaMarcar || cfg.fichaDetalle) && !afiliadoSoloLectura() && (current !== 'restricciones_rutas' || puedeGestionarRestricciones())) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;
@@ -2155,6 +2155,15 @@ function renderTable(cfg, rows, count, diaSel = false) {
           }
         }
       }
+      tr.appendChild(act);
+    } else if (cfg.fichaDetalle && current === 'siniestros' && isTalentoHumano()) {
+      // Siniestros: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
+      const act = document.createElement('td');
+      act.className = 'row-actions'; act.dataset.label = 'Acciones';
+      const ver = Object.assign(document.createElement('button'),
+        { className: 'act act-ver', innerHTML: '👁️', title: 'Ver el reporte completo' });
+      ver.onclick = () => openSiniestro(row);
+      act.appendChild(ver);
       tr.appendChild(act);
     } else if (cfg.asistenciaMarcar) {
       // Asistencia: botón por fila para marcar la SALIDA de una jornada abierta (sin salida aún)
@@ -7202,6 +7211,17 @@ function sinFotosHtml(s) {
     ${extra.map(([n, v]) => item(n, v, '')).join('')}</ul>
     <p class="muted">Los archivos están todavía en AppSheet; quedan guardados con su nombre y su observación. Cuando migremos las fotos a la app se verán aquí.</p></section>`;
 }
+// El reporte TAL COMO viene de la app de AppSheet: todas las columnas de la hoja, sin recortar.
+// Sirve para verificar un dato puntual que no quedó en los bloques de arriba.
+function sinTodoHtml(s) {
+  const d = s.datos_origen && typeof s.datos_origen === 'object' ? s.datos_origen : null;
+  if (!d) return '';
+  const filas = Object.entries(d).filter(([, v]) => String(v == null ? '' : v).trim() !== '');
+  if (!filas.length) return '';
+  return `<details class="pf-sec sin-todo">
+    <summary>🧾 Todos los datos del reporte (${filas.length} campos, como vienen de la app)</summary>
+    <dl>${filas.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`;
+}
 function openSiniestro(s) {
   if (!isTalentoHumano()) return;
   _sinRow = s;
@@ -7257,7 +7277,8 @@ function openSiniestro(s) {
         ['Observaciones de asistencia', esc(s.observaciones_asistencia || '')],
         ['Autorización de datos', esc(s.autorizacion_datos || '')], ['Mes del reporte', esc(s.mes_reporte || '')]])}
       ${sinFotosHtml(s)}
-    </div>`;
+    </div>
+    ${sinTodoHtml(s)}`;
   // El nombre del conductor abre su ficha en el perfil sociodemográfico
   body.querySelectorAll('[data-percedula]').forEach((b) => {
     b.onclick = () => sinAbrirPersona(b.dataset.percedula, b.dataset.percodigo);
