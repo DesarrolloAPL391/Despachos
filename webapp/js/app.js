@@ -9490,6 +9490,7 @@ const SST_BLOQUES = [
   { key: 'causas', icon: '💥', label: 'Causas y gravedad' },
   { key: 'costos', icon: '💰', label: 'Costos y conciliación' },
   { key: 'vial', icon: '🛡️', label: 'Seguridad vial (conducción)' },
+  { key: 'mapa', icon: '🗺️', label: 'Mapa de riesgo' },
 ];
 const _sst = { rows: null, personas: null, bloque: 'resumen', porCedula: null, porCodigo: null };
 const SST_COLS = 'key,fecha,placa,numero_interno,ruta,afiliado,conductor_cedula,conductor_codigo,'
@@ -9648,6 +9649,17 @@ function renderSiniestrosStats() {
     tabs.appendChild(t);
   });
   body.appendChild(tabs);
+  const B = _sst.bloque || 'resumen';
+
+  // ---- 🗺️ Mapa de riesgo: dónde ocurre ----
+  // Va antes del corte por filtros porque no sale de los siniestros sino de los eventos del
+  // GPS: aunque no haya un solo siniestro con esa gravedad, el mapa sí tiene qué mostrar.
+  if (B === 'mapa') {
+    body.appendChild(pstEl('h3', 'pst-sec', '🗺️ Dónde ocurre'));
+    const cm = pstEl('div', 'pst-grid'); body.appendChild(cm);
+    sstMapaRender(cm, anio);
+    return;
+  }
   if (!R.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay siniestros con estos filtros.')); return; }
 
   // ---- Indicadores ----
@@ -9672,7 +9684,6 @@ function renderSiniestrosStats() {
   );
   body.appendChild(kpis);
 
-  const B = _sst.bloque || 'resumen';
   const ver = (k) => B === 'resumen' || B === k;
   const seccion = (titulo) => { body.appendChild(pstEl('h3', 'pst-sec', titulo)); const g = pstEl('div', 'pst-grid'); body.appendChild(g); return g; };
   let g;
@@ -9937,6 +9948,182 @@ function sstVialCargaUI() {
   box.append(pstEl('span', null, 'Se llena solo cada madrugada (02:00 a 06:50) y completa los últimos días. Adelantar un día:'),
     inp, btn, msg);
   return box;
+}
+
+// ===================================================================================
+// 🗺️ MAPA DE RIESGO — dónde se corre y dónde se rueda con la puerta abierta
+// ===================================================================================
+// La idea es sensibilizar: un conductor discute un listado, pero no discute ver que en el
+// túnel de la 33 su bus pasó de 60 catorce veces este mes. Los puntos NO se bajan uno por
+// uno (un año de histórico son millones): la RPC eventos_bus_mapa (sql/86) los agrupa en el
+// servidor en celdas de ~110 m y devuelve las que más veces se repiten.
+// Cuenta VECES (episodios), no lecturas: tres minutos corriendo son un hecho, no ocho.
+const SST_MAPA_COLOR = { 'VELOCIDAD': '#C0392B', 'PUERTA ABIERTA': '#1F6FB2' };
+const SST_MAPA_NOMBRE = { 'VELOCIDAD': '🚦 Velocidad', 'PUERTA ABIERTA': '🚪 Puerta abierta' };
+const _sstMapa = { cat: null, map: null, marcas: [] };
+
+async function sstMapaRender(cont, anio) {
+  const [desde, hasta] = sstVialPeriodo(anio);
+  cont.innerHTML = '';
+  const card = pstEl('section', 'pst-card pst-ancha');
+  const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
+  tt.appendChild(pstEl('h4', null, 'Mapa de los puntos de riesgo'));
+  const nota = pstEl('div', 'pst-nota');
+  tt.appendChild(nota); head.appendChild(tt);
+  const cuerpo = pstEl('div', 'pst-card-b');
+
+  // Qué se mira: las dos conductas juntas o una sola
+  const chips = pstEl('div', 'vial-chips');
+  const zona = pstEl('div');
+  cuerpo.append(chips, zona);
+  card.append(head, cuerpo);
+  cont.appendChild(card);
+  const tabla = pstEl('div'); cont.appendChild(tabla);
+
+  const opciones = [{ v: null, t: 'Las dos' }, { v: 'VELOCIDAD', t: SST_MAPA_NOMBRE.VELOCIDAD },
+                    { v: 'PUERTA ABIERTA', t: SST_MAPA_NOMBRE['PUERTA ABIERTA'] }];
+  const pintarChips = () => {
+    chips.innerHTML = '';
+    opciones.forEach((o) => {
+      const b = pstEl('button', 'evt-chip' + (_sstMapa.cat === o.v ? ' evt-on' : ''), o.t);
+      b.type = 'button';
+      b.onclick = () => { if (_sstMapa.cat === o.v) return; _sstMapa.cat = o.v; pintarChips(); cargar(); };
+      chips.appendChild(b);
+    });
+  };
+
+  const cargar = async () => {
+    zona.innerHTML = ''; tabla.innerHTML = '';
+    zona.appendChild(pstEl('div', 'loading', 'Buscando dónde ocurren los eventos…'));
+    let res = null;
+    try {
+      const { data, error } = await sb.rpc('eventos_bus_mapa',
+        { p_desde: desde, p_hasta: hasta, p_categoria: _sstMapa.cat, p_limite: 600 });
+      if (error) throw error;
+      res = data;
+    } catch (e) {
+      const txt = String(e.message || e);
+      zona.innerHTML = '';
+      zona.appendChild(pstEl('div', 'cump-empty', 'No se pudo leer el mapa: ' + txt
+        + (/eventos_bus_mapa/.test(txt) ? ' — falta ejecutar sql/86.' : '')));
+      return;
+    }
+    zona.innerHTML = '';
+    if (!res || !res.ok) {
+      zona.appendChild(pstEl('div', 'cump-empty', (res && res.error) || 'No tienes permiso para ver los eventos.'));
+      return;
+    }
+    const pts = res.items || [];
+    const sinPunto = Number(res.sin_punto || 0);
+    nota.textContent = `Periodo: ${fechaLegible(desde)} a ${fechaLegible(hasta)}`
+      + ` · Cada círculo agrupa lo que pasó en unos ${res.celda_m || 110} metros a la redonda`
+      + ' · El tamaño es cuántas VECES, no cuántas lecturas'
+      + (sinPunto ? ` · ⚠️ ${pstNum(sinPunto)} evento(s) llegaron sin coordenada y no salen en el mapa` : '');
+    if (!pts.length) {
+      zona.appendChild(pstEl('div', 'cump-empty',
+        'No hay eventos con coordenada en este periodo. El barrido corre de madrugada (02:00 a 06:50).'));
+      return;
+    }
+    sstMapaPintar(zona, pts);
+    tabla.appendChild(sstMapaTop(pts));
+  };
+
+  pintarChips();
+  await cargar();
+}
+
+// El mapa: círculos de área proporcional, con anillo blanco para que se despeguen del fondo
+function sstMapaPintar(zona, pts) {
+  const el = pstEl('div', 'vial-mapa'); zona.appendChild(el);
+  zona.appendChild(sstMapaLeyenda(pts));
+  if (_sstMapa.map) { try { _sstMapa.map.remove(); } catch (_) { /* ya no existía */ } _sstMapa.map = null; }
+  const map = L.map(el, { scrollWheelZoom: true }).setView([6.244, -75.575], 12); // Medellín
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  _sstMapa.map = map; _sstMapa.marcas = [];
+  const maxV = Math.max(...pts.map((p) => Number(p.veces || 1)), 1);
+  pts.forEach((p) => {
+    const col = SST_MAPA_COLOR[p.categoria] || '#6b7280';
+    const r = 6 + 20 * Math.sqrt(Number(p.veces || 1) / maxV);   // el área crece con las veces
+    const m = L.circleMarker([p.lat, p.lon], {
+      radius: r, color: '#fff', weight: 2, fillColor: col, fillOpacity: 0.82,
+    }).addTo(map);
+    m.bindTooltip(`${sstMapaSitio(p)} — ${pstNum(p.veces)} vez(ces)`, { direction: 'top' });
+    m.bindPopup(sstMapaPopup(p));
+    _sstMapa.marcas.push(m);
+  });
+  try { map.fitBounds(L.latLngBounds(pts.map((p) => [p.lat, p.lon])).pad(0.15)); } catch (_) { /* un solo punto */ }
+  setTimeout(() => { try { map.invalidateSize(); } catch (_) { /* la vista cambió */ } }, 120);
+}
+
+function sstMapaSitio(p) { return p.direccion || `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`; }
+
+function sstMapaPopup(p) {
+  const fila = (k, v) => (v == null || v === '' ? '' : `<div><b>${esc(k)}:</b> ${esc(String(v))}</div>`);
+  const col = SST_MAPA_COLOR[p.categoria] || '#374151';
+  return '<div class="vial-pop">'
+    + `<div class="vial-pop-t">${esc(sstMapaSitio(p))}</div>`
+    + `<div class="vial-pop-c" style="color:${col}">${esc(SST_MAPA_NOMBRE[p.categoria] || p.categoria || '')}</div>`
+    + fila('Veces', pstNum(p.veces))
+    + fila('Días distintos', pstNum(p.dias))
+    + fila('Conductores', pstNum(p.conductores))
+    + fila('Vehículos', pstNum(p.moviles))
+    + fila('Velocidad máxima', p.vel_max != null ? `${p.vel_max} km/h` : null)
+    + fila('Quien más se repite', p.conductor_top)
+    + fila('Ruta', p.ruta)
+    + fila('Última vez', p.ultimo ? fechaLegible(p.ultimo) : null)
+    + '</div>';
+}
+
+function sstMapaLeyenda(pts) {
+  const cats = [...new Set(pts.map((p) => p.categoria))];
+  const l = pstEl('div', 'vial-leyenda');
+  cats.forEach((c) => {
+    const w = pstEl('span', 'vial-ley-p');
+    const d = pstEl('span', 'vial-ley-d'); d.style.background = SST_MAPA_COLOR[c] || '#6b7280';
+    w.append(d, pstEl('span', null, SST_MAPA_NOMBRE[c] || c));
+    l.appendChild(w);
+  });
+  l.appendChild(pstEl('span', 'vial-ley-n', 'El círculo crece con el número de veces · Toca un punto para ver el detalle'));
+  return l;
+}
+
+// Los puntos negros, en tabla: se puede ordenar la intervención y llevarla a la charla
+function sstMapaTop(pts) {
+  const top = pts.slice(0, 15);
+  const cab = ['Dónde', 'Conducta', 'Veces', 'Días', 'Conductores', 'Vehículos', 'Vel. máx', 'Última vez'];
+  const filas = top.map((p) => [sstMapaSitio(p), SST_MAPA_NOMBRE[p.categoria] || p.categoria || '—',
+    Number(p.veces || 0), Number(p.dias || 0), Number(p.conductores || 0), Number(p.moviles || 0),
+    p.vel_max != null ? `${p.vel_max} km/h` : '—', p.ultimo ? fechaLegible(p.ultimo) : '—']);
+  const titulo = 'Los 15 puntos donde más se repite';
+  const nota = 'Toca una fila y el mapa te lleva al punto. Estos son los sitios para señalizar y para nombrar en la charla de sensibilización.';
+  const card = pstEl('section', 'pst-card pst-ancha');
+  const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
+  tt.appendChild(pstEl('h4', null, titulo)); tt.appendChild(pstEl('div', 'pst-nota', nota));
+  head.appendChild(tt);
+  const cuerpo = pstEl('div', 'pst-card-b pst-tabla-wrap');
+  const t = pstEl('table', 'pst-tabla');
+  const thead = pstEl('thead'); const tr = pstEl('tr');
+  cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  thead.appendChild(tr); t.appendChild(thead);
+  const tb = pstEl('tbody');
+  filas.forEach((f, i) => {
+    const r = pstEl('tr');
+    f.forEach((v) => r.appendChild(pstEl('td', null, typeof v === 'number' ? pstNum(v) : v)));
+    r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Ver en el mapa';
+    const ir = () => {
+      const m = _sstMapa.marcas[i]; if (!m || !_sstMapa.map) return;
+      _sstMapa.map.setView(m.getLatLng(), 17, { animate: true });
+      m.openPopup();
+      _sstMapa.map.getContainer().scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    r.addEventListener('click', ir);
+    r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ir(); } });
+    tb.appendChild(r);
+  });
+  t.appendChild(tb); cuerpo.appendChild(t); card.append(head, cuerpo);
+  _pst.tablas.push({ titulo, nota, cab, filas });
+  return card;
 }
 
 async function exportarSiniestrosStats() {

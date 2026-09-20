@@ -2572,3 +2572,18 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .sin-adj li { margin-bottom: 6px; }
 .sin-arch { color: var(--muted); word-break: break-all; font-size: 12px; }
 #sin-modal .pf-av { font-size: 15px; letter-spacing: .5px; }
+
+/* 🗺️ Mapa de riesgo (Seguridad vial → Estadísticas) */
+.vial-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+.vial-mapa { height: 520px; min-height: 320px; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--border); background: #eef1f4; }
+@media (max-width: 760px) { .vial-mapa { height: 380px; } }
+.vial-leyenda { display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  margin-top: 10px; font-size: 13px; color: #475569; }
+.vial-ley-p { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: #334155; }
+.vial-ley-d { width: 15px; height: 15px; border-radius: 50%; border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, .25); }
+.vial-ley-n { color: #64748b; font-weight: 400; }
+.vial-pop { font-size: 13px; line-height: 1.5; min-width: 190px; }
+.vial-pop-t { font-weight: 700; margin-bottom: 2px; }
+.vial-pop-c { font-weight: 600; margin-bottom: 6px; }
