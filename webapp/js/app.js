@@ -9873,8 +9873,9 @@ async function sstVialRender(cont, R, anio) {
     quienes.push(sus); // la fila abre los siniestros de ese conductor en el periodo
   }
   cont.appendChild(sstTarjetaTabla('Conducción de riesgo por conductor',
-    `"Más de ${umbral}" son las veces que pasó del umbral de la empresa aunque la vía permitiera más; `
-    + '"Excesos" es cuando además superó el límite legal de esa vía. '
+    `"Más de ${umbral}" son las VECES que pasó del umbral de la empresa aunque la vía permitiera `
+    + 'más; "Excesos" es cuando SONAR marcó exceso contra el límite legal de esa vía. Se cuentan '
+    + 'episodios, no lecturas: tres minutos seguidos a 65 km/h son una vez, no ocho. '
     + 'La columna de siniestros son los suyos en el mismo periodo: toca la fila para verlos.',
     { cab: ['Conductor', 'Cédula', `Más de ${umbral} km/h`, 'Excesos de la vía', 'Peor exceso',
       'Velocidad máxima', 'Puertas abiertas', 'Días con eventos', 'Siniestros', 'Estado en el perfil'],
