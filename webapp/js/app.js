@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -65,6 +65,11 @@ function isDespachador() { return CTX?.rol === 'despachador'; }
 // Afiliado (dueño de vehículos): ve el MAPA, PASAJEROS y las TABLAS de despacho donde están
 // SUS carros — todo en SOLO LECTURA y filtrado (por RLS) únicamente a sus móviles.
 function isAfiliado() { return CTX?.rol === 'afiliado'; }
+// GESTIÓN HUMANA (sql/78): rol aparte que SOLO ve 👥 Talento humano (perfil sociodemográfico,
+// estadísticas, actualizaciones de datos y aspirantes a conductor). Nada de la operación.
+function isGestionHumana() { return CTX?.rol === 'gestion_humana'; }
+// Quién maneja Talento humano: el administrador y Gestión Humana (= es_talento_humano() en la base).
+function isTalentoHumano() { return isAdmin() || isGestionHumana(); }
 // Área de OPERACIONES: cuentas de rol despachador cuyo correo contiene 'operaciones' (o admin).
 // Solo ellas marcan el RESULTADO de una preventiva (aprobado/rechazado).
 function isOperaciones() { return isAdmin() || (isDespachador() && /operaciones/.test(miCorreo())); }
@@ -159,6 +164,8 @@ function visibleTables() {
     return tablasDeDespachador(PREVIEW.tablas, PREVIEW.verDespachos);
   }
   if (isAdmin()) return menuOrder();
+  // Gestión Humana: solo las dos tablas del módulo (la RLS no le devuelve nada más)
+  if (isGestionHumana()) return ['perfilsociodemografico', 'perfil_vinculaciones'];
   // Afiliado: ve TODAS las tablas de despacho en VIVO y SOLO LECTURA — la vista general
   // "Despachos" + las tablas de puesto con datos (RLS ahora le muestra todos los vehículos,
   // no solo los suyos). Mapa y Pasajeros se agregan aparte como acciones del menú.
@@ -325,6 +332,14 @@ function chipClass(v) {
   const s = String(v || '').toUpperCase().trim();
   if (s === 'TABLA') return 'chip chip-indigo';
   if (s === 'LIBRE') return 'chip chip-violet';
+  // Perfil sociodemográfico
+  if (s === 'ACTIVO' || s === 'OK') return 'chip chip-green';
+  if (s === 'POR CORREGIR' || s === 'REINGRESO') return 'chip chip-amber';
+  // Aspirantes a conductor: resultado de cada etapa
+  if (s === 'APROBADO') return 'chip chip-green';
+  if (s === 'NO APROBADO') return 'chip chip-red';
+  if (s === 'CONDUCTOR') return 'chip chip-blue';
+  if (s === 'ADMINISTRATIVO') return 'chip chip-violet';
   if (s === 'DESPACHADO' || s === 'ENABLED' || s === 'CERRADO' || s === 'ENCENDIDO' || s === 'SÍ' || s === 'SI' || s === 'INGRESO'
       || s === 'COMPLETO') return 'chip chip-green';
   if (s === 'APAGADO') return 'chip chip-gray';
@@ -538,6 +553,7 @@ function buildSidebar() {
     ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
     restricciones_rutas: 'restr',
     horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin', tablas_despacho: 'admin',
+    perfilsociodemografico: 'th', perfil_vinculaciones: 'th',
   };
   // 🚌 Despachos: la operación diaria (Despachos general + tablas de puesto + Auditoría SONAR +
   // Resumen + Asistencia) en su propio submenú, ARRIBA y ABIERTO por defecto.
@@ -546,7 +562,7 @@ function buildSidebar() {
   for (const name of vis) { if (enDespachos(name)) addTableBtn(gDe, name); }
   // acciones especiales (no son tablas), organizadas en SUBMENÚS plegables
   if (isAdmin() || CTX?.rol === 'despachador' || CTX?.rol === 'afiliado') addNavNotif(nav);
-  addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa'); // acceso rápido, fuera de grupos
+  if (!isGestionHumana()) addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa'); // acceso rápido, fuera de grupos
 
   // 🚦 Operación en vivo
   const gOp = addNavGroup(nav, '🚦', 'Operación en vivo', 'op');
@@ -572,10 +588,19 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gRe, '🚨', 'Estadísticas de restricciones', openRestrStats, 'nav-restrstats');
   if (isAdmin() || isOperaciones() || isAuditor()) addNavAction(gRe, '🔓', `Desbloqueos de documentos${DESBLOQ_PEND ? ` <span class="nav-badge">${DESBLOQ_PEND}</span>` : ''}`, openDesbloqueos, 'nav-desbloq');
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
+  if (isAdmin() || isOperaciones()) addNavAction(gRe, '🪪', `Licencias de conductores${LIC_PEND ? ` <span class="nav-badge">${LIC_PEND}</span>` : ''}`, openLicencias, 'nav-licencias');
 
   // 🗃️ Catálogos (tablas maestras: parque, conductores, vehículos GPS, itinerarios, ubicaciones)
   const gCat = addNavGroup(nav, '🗃️', 'Catálogos', 'cat');
   for (const name of vis) { if (TBL_GROUP[name] === 'cat') addTableBtn(gCat, name); }
+
+  // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
+  const gTh = addNavGroup(nav, '👥', 'Talento humano', 'th');
+  for (const name of vis) { if (TBL_GROUP[name] === 'th') addTableBtn(gTh, name); }
+  if (isTalentoHumano()) addNavAction(gTh, '📊', 'Estadísticas sociodemográficas', openPerfilStats, 'nav-perfil-stats');
+  if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
+  if (isTalentoHumano()) addNavAction(gTh, '🔗', 'Link de actualización', openPerfilLink, 'nav-perfil-link');
+  if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
 
   // ⚙️ Administración (tablas de configuración + acciones)
   const gAd = addNavGroup(nav, '⚙️', 'Administración', 'admin');
@@ -604,6 +629,7 @@ function buildSidebar() {
   const apr = $('nav-prod'); if (apr) apr.classList.toggle('active', currentView === 'productividad');
   const ajo = $('nav-jor'); if (ajo) ajo.classList.toggle('active', currentView === 'jornada');
   const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
+  const apst = $('nav-perfil-stats'); if (apst) apst.classList.toggle('active', currentView === 'perfilstats');
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   // Submenús: ocultar los grupos que quedaron vacíos (según el rol) y abrir el que tiene la opción activa
@@ -620,6 +646,7 @@ function bnLabel(label) {
   const map = {
     'Inicio y fin de labores': 'Labores', 'Parque automotor': 'Parque',
     'Horarios usuarios': 'Horarios', 'Conductores SONAR': 'Conductores',
+    'Perfil sociodemográfico': 'Perfil', 'Historial de vinculaciones': 'Historial',
     'Vehículos GPS': 'GPS', 'Ubicaciones': 'Ubic.',
   };
   if (map[label]) return map[label];
@@ -727,7 +754,7 @@ function closeMenu() { setMenu(false); }
 function cerrarPanelesFlotantes() {
   const dp = $('docp-modal'); if (dp) dp.hidden = true;
   const dm = $('doc-modal'); if (dm) dm.hidden = true;
-  ['desbloq-modal', 'docblk-modal', 'dbrev-modal', 'restrstats-modal'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+  ['desbloq-modal', 'docblk-modal', 'dbrev-modal', 'restrstats-modal', 'perfil-act-modal', 'perfil-link-modal', 'lic-modal', 'licsub-modal', 'asp-modal', 'aspdet-modal', 'asp-link-modal'].forEach((id) => { const e = $(id); if (e) e.hidden = true; });
 }
 $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList.contains('open')));
 $('scrim').addEventListener('click', closeMenu);
@@ -749,7 +776,7 @@ function selectTable(name) {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
@@ -784,7 +811,7 @@ function selectTable(name) {
   // Descargar Excel: admin y auditor pueden exportar la tabla que estén viendo
   // (Despachos, Auditoría SONAR, Resumen y sus tablas de puesto). La RLS limita las
   // filas a lo que le pertenece a cada quien y se respetan los filtros activos.
-  $('export-btn').hidden = !((isAdmin() || isAuditor()) && TABLES[name] && (TABLES[name].columns || []).length > 0);
+  $('export-btn').hidden = !((isAdmin() || isAuditor() || isGestionHumana()) && TABLES[name] && (TABLES[name].columns || []).length > 0);
   $('recon-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor())); // Conciliar SONAR: auditor/admin en Resumen
   // Borrar día: solo admin, en las tablas de despacho (Despachos general + tablas de puesto).
   // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
@@ -1943,7 +1970,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
         }
         tr.appendChild(td); continue;
       }
-      const val = c.path ? getPath(row, c.path) : row[c.key];
+      const val = c.calc ? c.calc(row) : c.path ? getPath(row, c.path) : row[c.key];
       if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
         td.innerHTML = `<a href="https://www.google.com/maps?q=${encodeURIComponent(String(val))}" target="_blank" rel="noopener" class="maps-link" title="${esc(String(val))}">📍 Ver</a>`;
       } else if (c.dt && val) {
@@ -3044,7 +3071,7 @@ $('doc-save').addEventListener('click', async () => {
 let DOC_ALERTAS = [];
 let PV_REPROG = []; // preventivas reprogramadas pendientes (rechazadas → nueva cita) para la campana 🔔
 // Contador combinado del centro de avisos 🔔 (documentos por vencer + preventivas reprogramadas)
-function avisosCount() { return (DOC_ALERTAS?.length || 0) + (PV_REPROG?.length || 0); }
+function avisosCount() { return (DOC_ALERTAS?.length || 0) + (PV_REPROG?.length || 0) + licAlertasActivas().length; }
 // Carga las preventivas reprogramadas pendientes (solo admin/despachador tienen campana)
 async function cargarPreventivasReprog() {
   if (!(isAdmin() || isDespachador())) return [];
@@ -3091,9 +3118,13 @@ async function cargarAlertasDocumentos() {
   return out;
 }
 async function refrescarAlertasDocs() {
+  // Gestión Humana no ve vehículos ni licencias: solo sus contadores de Talento humano
+  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]); buildSidebar(); return; }
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
   try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
   try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; } catch { DESBLOQ_PEND = 0; }
+  if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]);
+  await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
@@ -3106,6 +3137,33 @@ async function refrescarAlertasDocs() {
 $('doc-banner-ver') && $('doc-banner-ver').addEventListener('click', openDocPanel);
 $('doc-banner-x') && $('doc-banner-x').addEventListener('click', () => { $('doc-banner').dataset.dismiss = '1'; $('doc-banner').hidden = true; });
 
+// Sección 🪪 del panel de notificaciones: conductores habilitados en SONAR con licencia vencida / por vencer
+function licenciasPanelHtml() {
+  const todos = LIC_ALERTAS || [];
+  if (!todos.length) return '';
+  const fila = (a) => {
+    const venc = a.dias < 0;
+    const est = a.solicitud === 'PENDIENTE' ? '<span class="lic-chip rev">⏳ en revisión</span>'
+      : a.solicitud === 'RECHAZADO' ? '<span class="lic-chip rech">✖️ foto rechazada</span>' : '';
+    const btn = a.solicitud === 'PENDIENTE' ? ''
+      : `<button type="button" class="btn btn-sm lic-subir" data-dr="${esc(a.dr_id)}" data-nombre="${esc(a.nombre || '')}">📎 Subir</button>`;
+    return `<div class="lic-row"><span class="lic-dot">${venc ? '⛔' : '⚠️'}</span>`
+      + `<span class="lic-nom"><b>${esc(a.nombre || '')}</b>${a.codigo ? ` · ${esc(a.codigo)}` : ''}<br>`
+      + `<span class="muted">${esc(licDiasTxt(a.dias))} · ${esc(a.vence ? fechaLegible(a.vence) : '')}</span> ${est}</span>${btn}</div>`;
+  };
+  const activos = todos.filter((a) => a.activo);
+  const inactivos = todos.filter((a) => !a.activo); // solo le llegan al admin
+  const nVenc = activos.filter((a) => a.dias < 0).length;
+  const irRev = (isAdmin() || isOperaciones()) && LIC_PEND ? ` <button type="button" class="btn btn-sm lic-ir-rev">Revisar ${LIC_PEND} subida(s)</button>` : '';
+  let html = `<div class="docp-prev lic-sec"><div class="docp-prev-h"><span>🪪 <b>${activos.length}</b> conductor(es) con licencia vencida o por vencer`
+    + ` (${nVenc} vencida(s)) — pídeles la licencia renovada y súbela.</span>${irRev}</div>`
+    + `<div class="lic-list">${activos.map(fila).join('') || '<p class="muted">Ninguno activo.</p>'}</div>`;
+  if (inactivos.length) {
+    html += `<details class="lic-inact-det"><summary>${inactivos.length} figuran INACTIVOS en Gestión Humana pero siguen habilitados en SONAR (solo admin)</summary>`
+      + `<div class="lic-list">${inactivos.map(fila).join('')}</div></details>`;
+  }
+  return html + '</div>';
+}
 function openDocPanel() {
   const body = $('docp-body');
   // Sección superior: preventivas reprogramadas (rechazadas → deben volver)
@@ -3115,6 +3173,7 @@ function openDocPanel() {
     head = `<div class="docp-prev"><div class="docp-prev-h">🔧 <b>${PV_REPROG.length}</b> preventiva(s) reprogramada(s) — el carro fue rechazado y debe volver`
       + ` <button class="btn btn-sm docp-ir-prev">Ver en Preventivas</button></div><div class="pv-rb-list">${chips}</div></div>`;
   }
+  head += licenciasPanelHtml();
   if (!DOC_ALERTAS.length) { body.innerHTML = head + '<p class="doc-empty">Sin alertas de documentos. 👍</p>'; }
   else {
     body.innerHTML = head + DOC_ALERTAS.map((a) => {
@@ -3130,6 +3189,10 @@ function openDocPanel() {
   }
   $('docp-modal').hidden = false;
   body.querySelector('.docp-ir-prev')?.addEventListener('click', () => { $('docp-modal').hidden = true; openPreventivas(); });
+  body.querySelectorAll('.lic-subir').forEach((b) => b.addEventListener('click', () => {
+    openLicSubir(b.dataset.dr, b.dataset.nombre, () => { if (!$('docp-modal').hidden) openDocPanel(); });
+  }));
+  body.querySelector('.lic-ir-rev')?.addEventListener('click', () => { $('docp-modal').hidden = true; openLicencias(); });
   body.querySelectorAll('.docp-edit').forEach((b) => b.addEventListener('click', () => {
     const a = DOC_ALERTAS.find((x) => String(x.id) === b.dataset.id);
     if (a) { $('docp-modal').hidden = true; openDocsVehiculo(a, (a.items || []).map((i) => i.key)); }
@@ -3834,7 +3897,8 @@ async function exportarExcel() {
     // Cabeceras + filas usando las columnas visibles (resuelve rutas anidadas tipo "ruta.nombre")
     const cab = cols.map((c) => c.label || c.key || c.path);
     const aoa = [cab, ...filas.map((r) => cols.map((c) => {
-      const v = c.path ? getPath(r, c.path) : r[c.key];
+      const v = c.calc ? c.calc(r) : c.path ? getPath(r, c.path) : r[c.key];
+      if (v != null && typeof v === 'object') return JSON.stringify(v); // jsonb (ej. fila original del CSV)
       return v == null ? '' : v;
     }))];
     // .xlsx real con SheetJS (se baja de esm.sh; requiere internet, igual que la importación)
@@ -3843,6 +3907,7 @@ async function exportarExcel() {
     // Fechas → fecha REAL de Excel (dd/mm/aaaa, hora de Colombia): se ve en formato
     // colombiano y Excel la ordena/filtra como fecha (no como texto).
     filas.forEach((r, ri) => cols.forEach((c, ci) => {
+      if (c.calc) return;
       const fx = celdaFechaXlsx(c.path ? getPath(r, c.path) : r[c.key]);
       if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c: ci })] = fx;
     }));
@@ -4109,7 +4174,7 @@ async function openCumplimiento() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4376,7 +4441,7 @@ async function openRutasVivo(modo) {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('rutas-view').hidden = false;
@@ -4604,7 +4669,7 @@ async function openMalla() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -4752,6 +4817,7 @@ async function openLaureles(modo) {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  $('perfilstats-view').hidden = true;
   $('laureles-view').hidden = false;
   const h2 = document.querySelector('#laureles-view h2'); if (h2) h2.textContent = esCump ? '📊 Cumplimiento Laureles' : '🛂 Control Laureles';
   $('laur-search').hidden = esCump; // la búsqueda filtra la tabla; en cumplimiento no hay tabla
@@ -4772,7 +4838,7 @@ function cerrarLaureles() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   selectTable(current);
 }
 function _armarAutoLaur() {
@@ -5473,6 +5539,7 @@ function etiquetaUsuario(user) {
   const nombre = CTX?.nombre || user?.email || '';
   if (CTX?.rol === 'admin') return `👤 ${nombre} · Administrador`;
   if (CTX?.rol === 'auditor') return `👤 ${nombre} · 🔎 Auditor`;
+  if (CTX?.rol === 'gestion_humana') return `👤 ${nombre} · 👥 Gestión Humana`;
   if (CTX?.rol === 'afiliado') return `👤 ${nombre} · 🚗 Afiliado · ${(CTX.moviles || []).length} vehículo(s)`;
   if (CTX?.rol === 'despachador') {
     const hor = (CTX.hora_inicio || CTX.hora_fin) ? ` · 🕒 ${CTX.hora_inicio || '—'}${CTX.hora_fin ? '–' + CTX.hora_fin : ''}` : '';
@@ -5587,6 +5654,7 @@ async function avisoRestriccionND() {
   const drs = await loadDrivers();
   const drow = drs.find((d) => d.dr_id === $('nd-cond').value);
   await avisarRestriccionMovil(vr?.numero || '', drow?.nombre || '', 'nd-restrwarn');
+  avisarLicenciaConductor($('nd-cond').value, 'nd-licwarn'); // 🪪 licencia del conductor (solo alerta)
 }
 // Al elegir el móvil en Nuevo despacho, trae el conductor (mapeando por NOMBRE al conductor SONAR)
 async function traerConductorND() {
@@ -5666,6 +5734,7 @@ async function openIntegradas() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  $('perfilstats-view').hidden = true;
   $('integradas-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-integradas')?.classList.add('active');
@@ -5784,6 +5853,7 @@ async function openPasajeros() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  $('perfilstats-view').hidden = true;
   $('pasajeros-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-pasajeros')?.classList.add('active');
@@ -5805,7 +5875,7 @@ async function openPasajeros() {
   if (paxMap) { paxMap.remove(); paxMap = null; }
   $('pax-body').innerHTML = '<div class="integ-info">Elige un <b>móvil</b> y una <b>fecha</b>, y pulsa <b>Consultar</b>. Se traen del <b>ERP APL</b> los pasajeros que subieron y bajaron ese día (contador de puertas), <b>y dónde se montaron</b> (mapa).</div>';
 }
-function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true; selectTable(current); }
+function cerrarPasajeros() { if (paxMap) { paxMap.remove(); paxMap = null; } $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true; selectTable(current); }
 
 // ===== Vista "🔧 Preventivas" (admin/despachador): programación de revisión técnico-mecánica =====
 // El despachador ve la programación del bimestre y NOTIFICA al conductor por WhatsApp:
@@ -5860,7 +5930,7 @@ async function openPreventivas() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -6224,6 +6294,199 @@ $('docblk-save')?.addEventListener('click', async () => {
   });
 });
 
+// ---- 🪪 LICENCIA DEL CONDUCTOR (sql/76): SOLO ALERTA, no bloquea el despacho ----
+// La licencia sale del Perfil sociodemográfico (archivo de Gestión Humana); el conductor SONAR se cruza
+// por cédula en el servidor (licencia_estado). Vencida = rojo, vence en <=30 días = amarillo. El despachador
+// sube la foto de la licencia renovada; operaciones/admin aprueban con la nueva fecha (actualiza el perfil).
+let LIC_ALERTAS = []; // conductores habilitados en SONAR con licencia vencida / por vencer (🔔)
+let LIC_PEND = 0;     // solicitudes PENDIENTES (badge de operaciones/admin)
+async function refrescarLicencias(rebuild = true) {
+  if (isGestionHumana()) return;
+  if (isAdmin() || isDespachador()) {
+    try { const { data } = await sb.rpc('licencias_alertas'); LIC_ALERTAS = Array.isArray(data) ? data : []; } catch { LIC_ALERTAS = []; }
+  }
+  if (isAdmin() || isOperaciones()) {
+    try { const { data } = await sb.rpc('licencia_actualizaciones_pendientes_n'); LIC_PEND = data || 0; } catch { LIC_PEND = 0; }
+  }
+  if (rebuild) buildSidebar();
+}
+// Alertas que cuentan en la campana: conductores ACTIVOS sin licencia ya subida en revisión
+function licAlertasActivas() { return (LIC_ALERTAS || []).filter((a) => a.activo && a.solicitud !== 'PENDIENTE'); }
+function licDiasTxt(dias) {
+  if (dias == null) return '';
+  if (dias < 0) return `venció hace ${Math.abs(dias)} día(s)`;
+  if (dias === 0) return 'vence HOY';
+  return `vence en ${dias} día(s)`;
+}
+async function avisarLicenciaConductor(drId, boxId) {
+  const box = $(boxId); if (!box) return;
+  box.hidden = true; box.innerHTML = ''; box.className = 'field full';
+  if (!drId) return;
+  const pedido = String(drId); box.dataset.dr = pedido;
+  try {
+    const { data } = await sb.rpc('licencia_estado', { p_dr_id: pedido });
+    if (box.dataset.dr !== pedido) return; // cambiaron de conductor mientras consultaba
+    if (!data || !data.encontrado || (data.nivel !== 'vencida' && data.nivel !== 'por_vencer')) return;
+    const sol = data.solicitud;
+    const nombre = esc(data.nombre || '');
+    const fecha = data.vence ? esc(fechaLegible(data.vence)) : '';
+    const inactivo = data.activo === false ? '<br><span class="lic-inact">⚠️ Figura INACTIVO en Gestión Humana.</span>' : '';
+    const boton = `<button type="button" class="lic-subir" data-dr="${esc(pedido)}" data-nombre="${nombre}">📎 Subir licencia renovada</button>`;
+    if (sol && sol.estado === 'PENDIENTE') {
+      box.className = 'field full sonar-info licwarn lic-rev';
+      box.innerHTML = `⏳ <b>Licencia renovada en revisión</b> · ${nombre}<br>La licencia ${data.nivel === 'vencida' ? 'está vencida' : 'está por vencer'} (${fecha}). `
+        + `Ya se subió la foto y operaciones la está revisando.${inactivo}`;
+    } else if (data.nivel === 'vencida') {
+      box.className = 'field full sonar-info licwarn lic-venc';
+      box.innerHTML = `🪪 <b>LICENCIA DE CONDUCCIÓN VENCIDA</b> · ${nombre}<br>Venció el <b>${fecha}</b> (${esc(licDiasTxt(data.dias))}). `
+        + `Pídele al conductor la licencia renovada y súbela.${inactivo}`
+        + (sol && sol.estado === 'RECHAZADO' ? `<br>✖️ La foto anterior fue rechazada: <i>${esc(sol.motivo_rechazo || '')}</i>` : '')
+        + `<br>${boton}`;
+    } else {
+      box.className = 'field full sonar-info licwarn lic-prox';
+      box.innerHTML = `🪪 <b>Licencia por vencer</b> · ${nombre}<br>La licencia ${esc(licDiasTxt(data.dias))} (<b>${fecha}</b>). `
+        + `Pídele al conductor que la renueve y sube la nueva.${inactivo}`
+        + (sol && sol.estado === 'RECHAZADO' ? `<br>✖️ La foto anterior fue rechazada: <i>${esc(sol.motivo_rechazo || '')}</i>` : '')
+        + `<br>${boton}`;
+    }
+    box.hidden = false;
+  } catch (e) { /* informativo: si falla, no estorba el despacho */ }
+}
+['nd-licwarn', 's-licwarn'].forEach((id) => {
+  $(id)?.addEventListener('click', (e) => {
+    const b = e.target.closest('.lic-subir'); if (!b) return;
+    openLicSubir(b.dataset.dr, b.dataset.nombre, () => avisarLicenciaConductor(b.dataset.dr, id));
+  });
+});
+
+// Ventana para subir la foto de la licencia renovada (despachador / operaciones / admin)
+function openLicSubir(drId, nombre, after) {
+  let m = $('licsub-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'licsub-modal'; m.className = 'modal'; m.hidden = true;
+    m.innerHTML = `<div class="modal-card confirm-card">
+      <div class="modal-head"><h3>📎 Subir licencia renovada</h3><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="edit-form" style="padding:14px 20px;display:grid;gap:10px">
+        <div class="lic-sub-info"></div>
+        <label class="field full"><span>Foto o PDF de la licencia (ambas caras si es posible) *</span>
+          <input type="file" class="lic-sub-file" accept="image/*,application/pdf" capture="environment"></label>
+        <label class="field full"><span>Observación (opcional)</span>
+          <input type="text" class="lic-sub-obs" maxlength="300" placeholder="Ej: la renovó el 10/09"></label>
+        <div class="form-error lic-sub-err" hidden></div>
+      </div>
+      <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cancelar</button>
+        <button type="button" class="btn btn-primary lic-sub-save">Subir</button></div></div>`;
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    document.body.appendChild(m);
+  }
+  m.querySelector('.lic-sub-info').innerHTML = `Conductor: <b>${esc(nombre || '')}</b><br><span class="muted">Operaciones revisará la foto y actualizará la fecha de vencimiento. El despacho no se bloquea.</span>`;
+  m.querySelector('.lic-sub-file').value = ''; m.querySelector('.lic-sub-obs').value = '';
+  const err = m.querySelector('.lic-sub-err'); err.hidden = true;
+  const btn = m.querySelector('.lic-sub-save');
+  btn.onclick = async () => {
+    if (btn.dataset.busy === '1') return;
+    const file = m.querySelector('.lic-sub-file').files[0];
+    if (!file) { err.textContent = 'Adjunta la foto o el PDF de la licencia.'; err.hidden = false; return; }
+    if (file.size > 15 * 1024 * 1024) { err.textContent = 'El archivo supera 15 MB.'; err.hidden = false; return; }
+    btn.dataset.busy = '1'; btn.disabled = true; showBusy('Subiendo licencia…');
+    try {
+      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${drId}/licencia/${Date.now()}_${safe}`;
+      const up = await sb.storage.from('docs-conductores').upload(path, file, { upsert: false, contentType: file.type || undefined });
+      if (up.error) throw up.error;
+      const { error } = await sb.rpc('licencia_actualizacion_subir', {
+        p_dr_id: String(drId), p_archivo_path: path, p_archivo_nombre: file.name, p_observacion: m.querySelector('.lic-sub-obs').value.trim(),
+      });
+      if (error) throw error;
+      m.hidden = true;
+      toast('Licencia subida ✅ Operaciones la revisará', 'ok');
+      refrescarLicencias();
+      if (typeof after === 'function') after();
+    } catch (e) {
+      err.textContent = e.message || String(e); err.hidden = false;
+    } finally { hideBusy(); btn.dataset.busy = '0'; btn.disabled = false; }
+  };
+  m.hidden = false;
+}
+
+// Panel de revisión de licencias (operaciones / admin)
+let _licTab = 'PENDIENTE';
+async function openLicencias() {
+  if (!(isAdmin() || isOperaciones())) return;
+  const m = perfilModal('lic-modal', '🪪 Licencias de conductores', 'rst-card');
+  m.hidden = false;
+  closeMenu();
+  await cargarLicencias(m);
+}
+async function cargarLicencias(m) {
+  const body = m.querySelector('.pact-body');
+  const TABS = { PENDIENTE: '⏳ Pendientes', APROBADO: '✅ Aprobadas', RECHAZADO: '✖️ Rechazadas' };
+  body.innerHTML = `<div class="pact-tabs">${Object.entries(TABS).map(([t, l]) =>
+    `<button type="button" class="btn btn-sm${t === _licTab ? ' btn-primary' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
+    <div class="pact-list"><div class="loading">Cargando…</div></div>`;
+  body.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { _licTab = b.dataset.tab; cargarLicencias(m); }; });
+  const list = body.querySelector('.pact-list');
+  const { data, error } = await sb.rpc('licencia_actualizaciones_listar', { p_estado: _licTab });
+  if (error) { list.innerHTML = `<div class="rst-empty">Error: ${esc(error.message)}</div>`; return; }
+  const rows = Array.isArray(data) ? data : [];
+  if (!rows.length) { list.innerHTML = `<div class="rst-empty">${_licTab === 'PENDIENTE' ? 'No hay licencias por revisar. 👍' : 'No hay solicitudes en esta pestaña.'}</div>`; return; }
+  const CATS = ['C1', 'C2', 'C3', 'B1', 'B2', 'B3', 'A1', 'A2'];
+  list.innerHTML = '';
+  for (const r of rows) {
+    const card = document.createElement('div'); card.className = 'pact-card';
+    const pend = r.estado === 'PENDIENTE';
+    card.innerHTML = `
+      <div class="pact-head">
+        <div><b>${esc(r.conductor_nombre || '')}</b> · licencia ${r.vence_anterior ? `vencía ${esc(fechaLegible(r.vence_anterior))}` : 'sin fecha registrada'}
+          ${r.categoria_actual ? `· categoría ${esc(r.categoria_actual)}` : ''}</div>
+        <div class="muted">Subida ${esc(fmtFechaHora(r.subido_en))} por ${esc(r.subido_por || '')}${r.observacion ? ` · “${esc(r.observacion)}”` : ''}</div>
+        ${r.revisado_en ? `<div class="muted">Revisada ${esc(fmtFechaHora(r.revisado_en))} por ${esc(r.revisado_por || '')}${r.nueva_fecha ? ` · nuevo vencimiento <b>${esc(fechaLegible(r.nueva_fecha))}</b>` : ''}${r.motivo_rechazo ? ` · motivo: ${esc(r.motivo_rechazo)}` : ''}</div>` : ''}
+      </div>
+      <div class="pact-foot">
+        <button type="button" class="btn btn-sm" data-ver>🖼️ Ver licencia</button>
+        ${pend ? `<span class="spacer"></span>
+          <label class="lic-rev-f">Nuevo vencimiento * <input type="date" data-fecha></label>
+          <label class="lic-rev-f">Categoría <select data-cat><option value="">(igual)</option>${CATS.map((c) => `<option>${c}</option>`).join('')}</select></label>
+          <label class="lic-rev-f">N° licencia <input type="text" data-num maxlength="15" placeholder="(igual)"></label>
+          <button type="button" class="btn btn-sm btn-danger" data-rech>Rechazar</button>
+          <button type="button" class="btn btn-sm btn-primary" data-aprob>Aprobar</button>` : ''}
+      </div>`;
+    card.querySelector('[data-ver]').onclick = async () => {
+      const { data: u, error: e } = await sb.storage.from('docs-conductores').createSignedUrl(r.archivo_path, 600);
+      if (e || !u?.signedUrl) { toast('No se pudo abrir el archivo: ' + (e?.message || ''), 'err'); return; }
+      window.open(u.signedUrl, '_blank', 'noopener');
+    };
+    if (pend) {
+      const revisar = async (aprobar, motivo) => {
+        showBusy(aprobar ? 'Aprobando…' : 'Rechazando…');
+        try {
+          const { error: e } = await sb.rpc('licencia_actualizacion_revisar', {
+            p_id: r.id, p_aprobar: aprobar, p_nueva_fecha: aprobar ? (card.querySelector('[data-fecha]').value || null) : null,
+            p_categoria: aprobar ? card.querySelector('[data-cat]').value : null,
+            p_numero: aprobar ? card.querySelector('[data-num]').value.trim() : null, p_motivo: motivo,
+          });
+          if (e) throw e;
+          toast(aprobar ? 'Licencia aprobada: se actualizó el perfil ✅' : 'Licencia rechazada', 'ok');
+          await refrescarLicencias();
+          await cargarLicencias(m);
+        } catch (e) { toast(e.message || String(e), 'err'); } finally { hideBusy(); }
+      };
+      card.querySelector('[data-aprob]').onclick = () => {
+        if (!card.querySelector('[data-fecha]').value) { toast('Escribe la nueva fecha de vencimiento que aparece en la licencia.', 'err'); return; }
+        revisar(true, null);
+      };
+      card.querySelector('[data-rech]').onclick = () => {
+        const motivo = window.prompt('Motivo del rechazo (el despachador lo verá):', '');
+        if (motivo === null) return;
+        if (!motivo.trim()) { toast('Escribe el motivo del rechazo.', 'err'); return; }
+        revisar(false, motivo.trim());
+      };
+    }
+    list.appendChild(card);
+  }
+}
+
 // ---- Panel de DESBLOQUEOS (operaciones revisa / auditor observa) ----
 async function refrescarDesbloqPend() {
   try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; }
@@ -6490,6 +6753,713 @@ function renderRestrStats(d) {
     + `<section class="rst-sec rst-sec-wide"><h4>📈 Tendencia por mes</h4>${rstMonthly(d.por_mes)}</section>`;
 }
 $('restrstats-x')?.addEventListener('click', () => { $('restrstats-modal').hidden = true; });
+
+// ---------- 👥 Perfil sociodemográfico: link público de actualización de datos ----------
+// Los empleados llenan actualizar-datos.html (sin login) y lo que envían queda PENDIENTE en
+// perfil_actualizaciones. Aquí el admin compara "actual vs. nuevo" campo por campo y aplica los
+// marcados o rechaza (RPC perfil_actualizacion_revisar, sql/75). Nada se aplica solo.
+let PERFIL_ACT_PEND = 0; // # de actualizaciones PENDIENTES (badge del menú Talento humano)
+let _pactTab = 'PENDIENTE';
+const PERFIL_LABELS = Object.fromEntries((TABLES.perfilsociodemografico?.fields || []).map((f) => [f.key, f.label]));
+function perfilLinkUrl() { return new URL('actualizar-datos.html', location.href).href; }
+async function refrescarPerfilActPend(rebuild = true) {
+  try {
+    const { count, error } = await sb.from('perfil_actualizaciones').select('id', { count: 'exact', head: true }).eq('estado', 'PENDIENTE');
+    PERFIL_ACT_PEND = error ? 0 : (count || 0);
+  } catch { PERFIL_ACT_PEND = 0; }
+  if (rebuild) buildSidebar();
+}
+// Modal liviano (se crea una sola vez) con las clases de los demás modales
+function perfilModal(id, titulo, cardClass = '') {
+  let m = $(id);
+  if (!m) {
+    m = document.createElement('div');
+    m.id = id; m.className = 'modal'; m.hidden = true;
+    m.innerHTML = `<div class="modal-card ${cardClass}"><div class="modal-head"><h3></h3><button type="button" class="icon-btn" data-x>✕</button></div>`
+      + '<div class="pact-body"></div><div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div></div>';
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    document.body.appendChild(m);
+  }
+  m.querySelector('h3').textContent = titulo;
+  return m;
+}
+function openPerfilLink() {
+  if (!isTalentoHumano()) return;
+  const m = perfilModal('perfil-link-modal', '🔗 Link de actualización de datos', 'pact-link-card');
+  const url = perfilLinkUrl();
+  const msg = `Hola 👋 Autobuses El Poblado está actualizando la información de sus conductores y empleados. `
+    + `Por favor llena tus datos en este enlace (toma unos 5 minutos): ${url}`;
+  m.querySelector('.pact-body').innerHTML = `
+    <p>Comparte este enlace con conductores y empleados. Cada persona escribe su <b>cédula</b> y <b>fecha de nacimiento</b> y actualiza sus datos.
+      <b>Nada se cambia solo</b>: todo llega a <b>📨 Actualizaciones de datos</b> para que lo revises y lo apliques.</p>
+    <div class="pact-url"><input type="text" readonly value="${esc(url)}"><button type="button" class="btn btn-primary btn-sm" data-copy>📋 Copiar</button></div>
+    <div class="pact-share">
+      <a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">💬 Enviar por WhatsApp</a>
+      <a class="btn btn-sm" target="_blank" rel="noopener" href="${esc(url)}">👁️ Abrir el formulario</a>
+    </div>
+    <p class="muted">Por seguridad el formulario no muestra los datos que ya tenemos y no dice si una cédula existe.</p>`;
+  m.querySelector('[data-copy]').onclick = async () => {
+    try { await navigator.clipboard.writeText(url); }
+    catch { const i = m.querySelector('.pact-url input'); i.select(); document.execCommand('copy'); }
+    toast('Enlace copiado', 'ok');
+  };
+  closeMenu();
+  m.hidden = false;
+}
+async function openPerfilActualizaciones() {
+  if (!isTalentoHumano()) return;
+  const m = perfilModal('perfil-act-modal', '📨 Actualizaciones de datos', 'rst-card');
+  m.hidden = false;
+  await cargarPerfilActualizaciones(m);
+}
+async function cargarPerfilActualizaciones(m) {
+  const body = m.querySelector('.pact-body');
+  const TABS = { PENDIENTE: '⏳ Pendientes', APLICADA: '✅ Aplicadas', RECHAZADA: '✖️ Rechazadas' };
+  body.innerHTML = `<div class="pact-tabs">${Object.entries(TABS).map(([t, l]) =>
+    `<button type="button" class="btn btn-sm${t === _pactTab ? ' btn-primary' : ''}" data-tab="${t}">${l}</button>`).join('')}
+    <span class="spacer"></span><button type="button" class="btn btn-sm" data-link>🔗 Link para empleados</button></div>
+    <div class="pact-list"><div class="loading">Cargando…</div></div>`;
+  body.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { _pactTab = b.dataset.tab; cargarPerfilActualizaciones(m); }; });
+  body.querySelector('[data-link]').onclick = openPerfilLink;
+  const list = body.querySelector('.pact-list');
+  const { data: sols, error } = await sb.from('perfil_actualizaciones').select('*')
+    .eq('estado', _pactTab).order('enviado_en', { ascending: _pactTab === 'PENDIENTE' }).limit(200);
+  if (error) { list.innerHTML = `<div class="rst-empty">Error: ${esc(error.message)}</div>`; return; }
+  if (!sols.length) {
+    list.innerHTML = `<div class="rst-empty">${_pactTab === 'PENDIENTE'
+      ? 'No hay actualizaciones pendientes. Comparte el 🔗 link con los empleados.' : 'No hay solicitudes en esta pestaña.'}</div>`;
+    return;
+  }
+  // Ficha actual de cada cédula, para comparar
+  const ceds = [...new Set(sols.map((s) => s.cedula))];
+  const actuales = {};
+  for (let i = 0; i < ceds.length; i += 100) {
+    const { data } = await sb.from('perfilsociodemografico').select('*').in('cedula', ceds.slice(i, i + 100));
+    (data || []).forEach((p) => { actuales[p.cedula] = p; });
+  }
+  list.innerHTML = '';
+  for (const s of sols) list.appendChild(perfilActCard(s, actuales[s.cedula], m));
+}
+function perfilActCard(s, per, m) {
+  const card = document.createElement('div'); card.className = 'pact-card';
+  const norm = (v) => (v == null ? '' : String(v).trim().toUpperCase());
+  const corregir = new Set(String(per?.por_corregir || '').split(',').filter(Boolean));
+  const filas = Object.entries(s.datos || {}).map(([k, nuevo]) => {
+    const actual = per ? per[k] : null;
+    return { k, nuevo, actual, igual: norm(actual) === norm(nuevo) };
+  });
+  const cambios = filas.filter((f) => !f.igual).length;
+  const pend = s.estado === 'PENDIENTE';
+  const nombre = per?.nombre || s.nombre_informado || '(sin nombre)';
+  const badges = [
+    per ? `<span class="${chipClass(per.tipo)}">${esc(per.tipo)}</span> <span class="${chipClass(per.estado)}">${esc(per.estado)}</span>`
+      : `<span class="chip chip-red">No está en la base</span>${s.tipo_informado ? ` <span class="chip chip-gray">${esc(s.tipo_informado)}</span>` : ''}`,
+    per && s.identidad_ok ? '<span class="chip chip-green">✔ Fecha de nacimiento coincide</span>' : '',
+    per && !s.identidad_ok ? '<span class="chip chip-amber" title="La fecha de nacimiento enviada no coincide con la registrada (o no teníamos fecha). Verifica antes de aplicar.">⚠ Fecha de nacimiento no coincide</span>' : '',
+  ].join(' ');
+  card.innerHTML = `
+    <div class="pact-head">
+      <div><b>${esc(nombre)}</b> · CC ${esc(s.cedula)} ${badges}</div>
+      <div class="muted">Enviado ${esc(fmtFechaHora(s.enviado_en))}${s.revisado_en ? ` · revisado ${esc(fmtFechaHora(s.revisado_en))} por ${esc(s.revisado_por || '')}` : ''}</div>
+      ${!per && pend ? `<div class="muted">Para aplicarlo, primero crea a la persona con <b>+ Nuevo</b> en 👥 Perfil sociodemográfico (cédula ${esc(s.cedula)}).</div>` : ''}
+    </div>
+    <div class="pact-tabla-wrap"><table class="pact-tabla">
+      <thead><tr>${pend ? '<th><input type="checkbox" data-all title="Marcar / desmarcar todos"></th>' : ''}<th>Dato</th><th>Actual</th><th>Nuevo</th></tr></thead>
+      <tbody>${filas.map((f) => `<tr class="${f.igual ? 'pact-igual' : 'pact-cambio'}">
+        ${pend ? `<td><input type="checkbox" data-campo="${esc(f.k)}"${f.igual ? '' : ' checked'}${per ? '' : ' disabled'}></td>` : ''}
+        <td>${esc(PERFIL_LABELS[f.k] || f.k)}${corregir.has(f.k) ? ' <span class="chip chip-amber">por corregir</span>' : ''}</td>
+        <td>${esc(fmt(f.actual))}</td><td>${f.igual ? esc(fmt(f.nuevo)) : `<b>${esc(fmt(f.nuevo))}</b>`}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <div class="pact-foot">${pend
+      ? `<span class="muted">${cambios} cambio(s) de ${filas.length} dato(s)</span><span class="spacer"></span>
+         <button type="button" class="btn btn-sm btn-danger" data-rechazar>Rechazar</button>
+         <button type="button" class="btn btn-sm btn-primary" data-aplicar${per ? '' : ' disabled'}>Aplicar marcados</button>`
+      : s.estado === 'APLICADA'
+        ? `<span class="muted">Aplicados: ${esc((s.campos_aplicados || []).map((k) => PERFIL_LABELS[k] || k).join(', '))}</span>`
+        : `<span class="muted">Motivo: ${esc(s.motivo_rechazo || '—')}</span>`}</div>`;
+  if (!pend) return card;
+
+  const checks = () => [...card.querySelectorAll('input[data-campo]')];
+  const all = card.querySelector('[data-all]');
+  all.checked = checks().length > 0 && checks().every((c) => c.checked);
+  all.onchange = () => checks().forEach((c) => { if (!c.disabled) c.checked = all.checked; });
+  const revisar = async (aplicar, campos, motivo) => {
+    showBusy(aplicar ? 'Aplicando…' : 'Rechazando…');
+    try {
+      const { error } = await sb.rpc('perfil_actualizacion_revisar', { p_id: s.id, p_aplicar: aplicar, p_campos: campos, p_motivo: motivo });
+      if (error) throw error;
+      toast(aplicar ? `Datos aplicados a ${nombre}` : 'Solicitud rechazada', 'ok');
+      await refrescarPerfilActPend();
+      await cargarPerfilActualizaciones(m);
+    } catch (e) {
+      toast('No se pudo: ' + (e.message || e), 'err');
+    } finally { hideBusy(); }
+  };
+  card.querySelector('[data-aplicar]').onclick = async () => {
+    const campos = checks().filter((c) => c.checked).map((c) => c.dataset.campo);
+    if (!campos.length) { toast('Marca al menos un dato para aplicar.', 'err'); return; }
+    const ok = await confirmAction({
+      title: '¿Aplicar datos?',
+      lead: `Se actualizarán ${campos.length} dato(s) en la ficha de ${nombre}.`,
+      message: s.identidad_ok ? '' : '⚠️ La fecha de nacimiento no coincide con la registrada. Verifica que sea la misma persona.',
+      okLabel: 'Aplicar',
+    });
+    if (ok) revisar(true, campos, null);
+  };
+  card.querySelector('[data-rechazar]').onclick = async () => {
+    const motivo = window.prompt('Motivo del rechazo (opcional):', '');
+    if (motivo === null) return;
+    revisar(false, null, motivo);
+  };
+  return card;
+}
+
+// ===================================================================================
+// 🧑‍✈️ ASPIRANTES A CONDUCTOR (sql/77) — proceso de selección. SOLO ADMIN.
+// El aspirante se inscribe en trabaja-con-nosotros.html (sin login). Etapas: 📄 Documentos →
+// 🗣️ Entrevista → 🚌 Manejo → 🩺 Médicos → ✍️ Por contratar → ✅ Contratado (RPC aspirante_contratar
+// lo crea o lo reactiva en el Perfil sociodemográfico). Se puede descartar con motivo y reabrir.
+// ===================================================================================
+let ASP_NUEVOS = 0; // inscripciones que el admin aún no abre (badge del menú)
+const _asp = { rows: [], perfiles: {}, vista: 'proceso', q: '', abierto: null };
+const ASP_FIN = ['CONTRATADO', 'DESCARTADO'];
+const ASP_COLUMNAS = [...ASPIRANTE_ETAPAS.map((e) => ({ key: e.key, icon: e.icon, label: e.corto })), { key: 'POR_CONTRATAR', icon: '✍️', label: 'Por contratar' }];
+const ASP_ETAPA_LBL = Object.fromEntries([...ASP_COLUMNAS.map((c) => [c.key, `${c.icon} ${c.label}`]), ['CONTRATADO', '✅ Contratado'], ['DESCARTADO', '✖️ Descartado']]);
+const ASP_DOC_LBL = Object.fromEntries([...ASPIRANTE_LISTAS.documentos_admin, ...ASPIRANTE_LISTAS.documentos].map((d) => [d.key, d.label]));
+const ASP_ACCION = { INSCRIPCION: '📝 Se inscribió', APROBO: '✅ Aprobó', DESCARTO: '✖️ Descartado', REABRIO: '↩️ Reabierto', CONTRATO: '✍️ Contratado' };
+const ASP_COLS_LISTA = 'id,cedula,nombre,fecha_nacimiento,celular,ciudad,categoria_licencia,licencia_vencimiento,experiencia_anios,etapa,etapa_desde,visto,creado_en,motivo_descarte,etapa_descarte,contratado_en,perfil_id,adjuntos';
+
+function aspLinkUrl() { return new URL('trabaja-con-nosotros.html', location.href).href; }
+async function refrescarAspNuevos(rebuild = true) {
+  try {
+    const { count, error } = await sb.from('aspirantes').select('id', { count: 'exact', head: true })
+      .eq('visto', false).not('etapa', 'in', '(CONTRATADO,DESCARTADO)');
+    ASP_NUEVOS = error ? 0 : (count || 0);
+  } catch { ASP_NUEVOS = 0; }
+  if (rebuild) buildSidebar();
+}
+function aspDias(ts) { const d = toDate(ts); return isNaN(d) ? 0 : Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000)); }
+function aspDiasTxt(n) { return n === 0 ? 'llegó hoy' : n === 1 ? '1 día' : `${n} días`; }
+function aspEdad(fn) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(fn || '')); if (!m) return '';
+  const h = new Date(); let a = h.getFullYear() - Number(m[1]);
+  if (h.getMonth() + 1 < Number(m[2]) || (h.getMonth() + 1 === Number(m[2]) && h.getDate() < Number(m[3]))) a--;
+  return a;
+}
+const aspNombreArchivo = (n) => String(n || 'archivo').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
+
+// ---- Tablero ----
+function aspModal() {
+  let m = $('asp-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'asp-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card asp-card">
+    <div class="modal-head"><h3>🧑‍✈️ Aspirantes a conductor</h3><span class="spacer"></span><button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="asp-toolbar">
+      <div class="asp-vistas">
+        <button type="button" class="btn btn-sm" data-vista="proceso">En proceso <b data-n="proceso"></b></button>
+        <button type="button" class="btn btn-sm" data-vista="CONTRATADO">✅ Contratados <b data-n="CONTRATADO"></b></button>
+        <button type="button" class="btn btn-sm" data-vista="DESCARTADO">✖️ Descartados <b data-n="DESCARTADO"></b></button>
+      </div>
+      <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula o celular" aria-label="Buscar aspirante">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-link>🔗 Link de inscripción</button>
+      <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
+    </div>
+    <div class="asp-body"><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const v = e.target.closest('[data-vista]'); if (v) { _asp.vista = v.dataset.vista; renderAspirantes(); return; }
+    if (e.target.closest('[data-link]')) { openAspLink(); return; }
+    const x = e.target.closest('[data-excel]'); if (x) { exportarAspirantes(x); return; }
+    if (e.target.closest('[data-recargar]')) { cargarAspirantes(); return; }
+    const t = e.target.closest('[data-asp]'); if (t) openAspirante(Number(t.dataset.asp));
+  });
+  m.querySelector('.asp-q').addEventListener('input', (e) => { _asp.q = e.target.value; renderAspirantes(); });
+  document.body.appendChild(m);
+  return m;
+}
+async function openAspirantes() {
+  if (!isTalentoHumano()) return;
+  const m = aspModal();
+  m.hidden = false;
+  closeMenu();
+  await cargarAspirantes();
+}
+async function cargarAspirantes() {
+  const body = aspModal().querySelector('.asp-body');
+  if (!_asp.rows.length) body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const rows = [];
+    for (let desde = 0; ; desde += 1000) {
+      const { data, error } = await sb.from('aspirantes').select(ASP_COLS_LISTA).order('creado_en', { ascending: false }).range(desde, desde + 999);
+      if (error) throw error;
+      rows.push(...data);
+      if (data.length < 1000) break;
+    }
+    // ¿Ya estuvo en APL? Cruce por cédula con el Perfil sociodemográfico
+    const perfiles = {};
+    const ceds = [...new Set(rows.map((r) => r.cedula))];
+    for (let i = 0; i < ceds.length; i += 150) {
+      const { data } = await sb.from('perfilsociodemografico').select('cedula,estado,tipo,fecha_retiro,novedad_retiro').in('cedula', ceds.slice(i, i + 150));
+      (data || []).forEach((p) => { perfiles[p.cedula] = p; });
+    }
+    _asp.rows = rows; _asp.perfiles = perfiles;
+    renderAspirantes();
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
+  }
+}
+function renderAspirantes() {
+  const m = aspModal(); const body = m.querySelector('.asp-body');
+  const q = _asp.q.trim().toUpperCase(); const qd = q.replace(/\D/g, '');
+  const rows = _asp.rows.filter((r) => !q || String(r.nombre).includes(q)
+    || (qd.length >= 3 && (String(r.cedula).includes(qd) || String(r.celular || '').includes(qd))));
+  const porCedula = {}; _asp.rows.forEach((r) => { porCedula[r.cedula] = (porCedula[r.cedula] || 0) + 1; });
+  const enProceso = rows.filter((r) => !ASP_FIN.includes(r.etapa));
+  const cuenta = { proceso: enProceso.length, CONTRATADO: rows.filter((r) => r.etapa === 'CONTRATADO').length, DESCARTADO: rows.filter((r) => r.etapa === 'DESCARTADO').length };
+  m.querySelectorAll('[data-vista]').forEach((b) => b.classList.toggle('btn-primary', b.dataset.vista === _asp.vista));
+  m.querySelectorAll('[data-n]').forEach((s) => { s.textContent = cuenta[s.dataset.n] ? `(${cuenta[s.dataset.n]})` : ''; });
+  if (!_asp.rows.length) {
+    body.innerHTML = '<div class="asp-vacio">Aún no hay inscripciones. Comparte el <b>🔗 Link de inscripción</b> con los interesados (WhatsApp, redes, carteleras).</div>';
+    return;
+  }
+  const tarjeta = (r) => aspTarjeta(r, porCedula[r.cedula] > 1);
+  if (_asp.vista === 'proceso') {
+    body.innerHTML = `<div class="asp-tablero">${ASP_COLUMNAS.map((c) => {
+      // primero quien lleva más tiempo esperando en la etapa
+      const lista = enProceso.filter((r) => r.etapa === c.key).sort((a, b) => String(a.etapa_desde).localeCompare(String(b.etapa_desde)));
+      return `<section class="asp-col"><header class="asp-col-h"><span>${c.icon} ${esc(c.label)}</span><b>${lista.length}</b></header>
+        <div class="asp-col-b">${lista.map(tarjeta).join('') || '<div class="asp-col-vacia">Nadie en esta etapa</div>'}</div></section>`;
+    }).join('')}</div>`;
+  } else {
+    const lista = rows.filter((r) => r.etapa === _asp.vista);
+    body.innerHTML = lista.length ? `<div class="asp-lista">${lista.map(tarjeta).join('')}</div>` : '<div class="asp-vacio">No hay aspirantes aquí.</div>';
+  }
+}
+function aspTarjeta(r, variasVeces) {
+  const per = _asp.perfiles[r.cedula];
+  const venc = r.licencia_vencimiento && r.licencia_vencimiento < hoyServidor();
+  const nDocs = Object.values(r.adjuntos || {}).reduce((s, l) => s + (Array.isArray(l) ? l.length : 0), 0);
+  const chips = [
+    !r.visto && !ASP_FIN.includes(r.etapa) ? '<span class="chip chip-red">NUEVO</span>' : '',
+    per && r.etapa !== 'CONTRATADO' ? (per.estado === 'ACTIVO'
+      ? `<span class="chip chip-amber">Ya es ${esc(per.tipo)} ACTIVO</span>`
+      : `<span class="chip chip-violet">Ya trabajó en APL</span>`) : '',
+    variasVeces ? '<span class="chip chip-gray">Se inscribió varias veces</span>' : '',
+  ].filter(Boolean).join(' ');
+  let pie;
+  if (r.etapa === 'DESCARTADO') pie = `✖️ ${esc(r.motivo_descarte || '')}`;
+  else if (r.etapa === 'CONTRATADO') pie = `✅ Contratado el ${esc(fmtFechaHora(r.contratado_en).split(',')[0])}`;
+  else { const d = aspDias(r.etapa_desde); pie = `<span class="${d > 7 ? 'asp-lento' : ''}" title="Tiempo en esta etapa">⏱️ ${d === 0 ? 'Llegó hoy' : `${aspDiasTxt(d)} en la etapa`}</span>`; }
+  return `<button type="button" class="asp-tarjeta${!r.visto && !ASP_FIN.includes(r.etapa) ? ' nuevo' : ''}" data-asp="${r.id}">
+    <span class="asp-t-nom">${esc(r.nombre)}</span>
+    <span class="asp-t-l">CC ${esc(r.cedula)}${r.fecha_nacimiento ? ` · ${aspEdad(r.fecha_nacimiento)} años` : ''}${r.ciudad ? ` · ${esc(r.ciudad)}` : ''}</span>
+    <span class="asp-t-l">🪪 ${esc(r.categoria_licencia || '—')} · <span class="${venc ? 'asp-venc' : ''}">${venc ? 'vencida' : 'vence'} ${esc(fechaLegible(r.licencia_vencimiento || ''))}</span>${r.experiencia_anios != null ? ` · ${r.experiencia_anios} años de exp.` : ''}</span>
+    <span class="asp-t-l">📎 ${nDocs} doc. · ${pie}</span>
+    ${chips ? `<span class="asp-t-chips">${chips}</span>` : ''}
+  </button>`;
+}
+function openAspLink() {
+  const m = perfilModal('asp-link-modal', '🔗 Link de inscripción de aspirantes', 'pact-link-card');
+  const url = aspLinkUrl();
+  const msg = '🚌 Autobuses El Poblado busca CONDUCTORES con licencia C2 o C3. Inscríbete aquí (toma unos 10 minutos; '
+    + `ten a mano foto de tu cédula y de tu licencia): ${url}`;
+  m.querySelector('.pact-body').innerHTML = `
+    <p>Comparte este enlace con las personas interesadas en ser conductores. Llenan sus datos, suben sus documentos y aparecen en la etapa <b>📄 Documentos</b> del tablero.</p>
+    <div class="pact-url"><input type="text" readonly value="${esc(url)}"><button type="button" class="btn btn-primary btn-sm" data-copy>📋 Copiar</button></div>
+    <div class="pact-share">
+      <a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">💬 Enviar por WhatsApp</a>
+      <a class="btn btn-sm" target="_blank" rel="noopener" href="${esc(url)}">👁️ Abrir el formulario</a>
+    </div>
+    <p class="muted">El formulario no muestra nada de la base de datos. Los documentos quedan en un almacenamiento privado que solo ve el administrador.</p>`;
+  m.querySelector('[data-copy]').onclick = async () => {
+    try { await navigator.clipboard.writeText(url); }
+    catch { const i = m.querySelector('.pact-url input'); i.select(); document.execCommand('copy'); }
+    toast('Enlace copiado', 'ok');
+  };
+  m.hidden = false;
+}
+
+// ---- Ficha del aspirante ----
+function aspDetModal() {
+  let m = $('aspdet-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'aspdet-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card aspd-card">
+    <div class="modal-head"><h3></h3><span class="spacer"></span><button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="aspd-body"></div>
+    <div class="modal-foot"><button type="button" class="btn btn-sm asp-btn-peligro" data-borrar>🗑️ Eliminar aspirante</button><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.querySelector('[data-borrar]').onclick = borrarAspirante;
+  document.body.appendChild(m);
+  return m;
+}
+async function openAspirante(id) {
+  const m = aspDetModal();
+  const body = m.querySelector('.aspd-body');
+  if (m.hidden || _asp.abierto?.id !== id) {
+    m.querySelector('h3').textContent = '🧑‍✈️ Aspirante';
+    body.innerHTML = '<div class="loading">Cargando…</div>';
+  }
+  m.hidden = false;
+  try {
+    const [{ data: a, error }, { data: hist }] = await Promise.all([
+      sb.from('aspirantes').select('*').eq('id', id).single(),
+      sb.from('aspirante_historial').select('*').eq('aspirante_id', id).order('en'),
+    ]);
+    if (error) throw error;
+    _asp.abierto = a;
+    if (!a.visto) {
+      await sb.from('aspirantes').update({ visto: true }).eq('id', id);
+      a.visto = true;
+      const r = _asp.rows.find((x) => x.id === id); if (r) r.visto = true;
+      renderAspirantes();
+      refrescarAspNuevos();
+    }
+    renderAspirante(a, hist || []);
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
+  }
+}
+function aspEvalHtml(a) {
+  const n = ASPIRANTE_ETAPAS.findIndex((e) => e.key === a.etapa);
+  const et = ASPIRANTE_ETAPAS[n];
+  const ev = (a.evaluaciones || {})[et.key] || {};
+  const checks = ev.checks || {}; const campos = ev.campos || {};
+  const sig = n < ASPIRANTE_ETAPAS.length - 1 ? `${ASPIRANTE_ETAPAS[n + 1].icon} ${ASPIRANTE_ETAPAS[n + 1].corto}` : '✍️ Por contratar';
+  const OPC = [['OK', '✅ Cumple'], ['NO', '❌ No'], ['NA', 'N/A']];
+  return `<h4>${et.icon} Etapa ${n + 1} de ${ASPIRANTE_ETAPAS.length} · ${esc(et.label)}</h4>
+    <div class="aspd-checks">${et.checks.map(([k, lbl]) => `<div class="aspd-check"><span>${esc(lbl)}</span>
+      <span class="aspd-seg" data-ck="${k}" role="group" aria-label="${esc(lbl)}">${OPC.map(([v, t]) =>
+        `<button type="button" data-v="${v}" class="${checks[k] === v ? `on ${v.toLowerCase()}` : ''}" aria-pressed="${checks[k] === v}">${t}</button>`).join('')}</span></div>`).join('')}</div>
+    ${(et.campos || []).length ? `<div class="aspd-campos">${et.campos.map((c) => `<label class="aspd-f"><span>${esc(c.label)}</span>${c.type === 'enum'
+      ? `<select data-campo="${c.key}"><option value=""></option>${c.options.map((o) => `<option${campos[c.key] === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input type="${c.type === 'number' ? 'number' : 'text'}" data-campo="${c.key}" value="${esc(campos[c.key] ?? '')}"${c.type === 'number' ? ' min="0" max="100"' : ' maxlength="120"'}>`}</label>`).join('')}</div>` : ''}
+    <label class="aspd-f aspd-obs"><span>Observaciones</span><textarea data-obs rows="2" maxlength="1000">${esc(ev.observacion || '')}</textarea></label>
+    ${ev.guardado_en ? `<div class="muted">Avance guardado ${esc(fmtFechaHora(ev.guardado_en))} por ${esc(ev.guardado_por || '')}</div>` : ''}
+    ${aspDescarteHtml()}
+    <div class="aspd-acc">
+      <button type="button" class="btn btn-sm" data-guardar>💾 Guardar avance</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm asp-btn-peligro" data-descartar>✖️ Descartar</button>
+      <button type="button" class="btn btn-sm btn-primary" data-aprobar data-sig="${esc(sig)}">✅ Aprobar → ${esc(sig)}</button>
+    </div>`;
+}
+function aspDescarteHtml() {
+  return `<div class="aspd-descarte" hidden>
+      <label class="aspd-f"><span>Motivo del descarte *</span><select data-motivo><option value="">Selecciona…</option>${ASPIRANTE_LISTAS.motivos_descarte.map((o) => `<option>${esc(o)}</option>`).join('')}</select></label>
+      <label class="aspd-f"><span>Detalle</span><input type="text" data-motivo-det maxlength="200" placeholder="Opcional"></label>
+    </div>`;
+}
+function aspContratarHtml(a) {
+  const per = _asp.perfiles[a.cedula];
+  const opts = (lista, sel) => lista.map((o) => `<option${o === sel ? ' selected' : ''}>${esc(o)}</option>`).join('');
+  return `<h4>✍️ Contratar</h4>
+    <p class="muted">Aprobó las ${ASPIRANTE_ETAPAS.length} etapas. Al contratar ${per
+      ? 'se <b>reactiva</b> en el Perfil sociodemográfico como <b>REINGRESO</b> (ya trabajó en APL)'
+      : 'se <b>crea</b> en el Perfil sociodemográfico'} como <b>CONDUCTOR ACTIVO</b>, con los datos y documentos de la inscripción.</p>
+    <div class="aspd-campos">
+      <label class="aspd-f"><span>Fecha de ingreso *</span><input type="date" data-c="fecha" value="${hoyServidor()}"></label>
+      <label class="aspd-f"><span>Cargo</span><input type="text" data-c="cargo" value="CONDUCTOR" maxlength="80"></label>
+      <label class="aspd-f"><span>Tipo de contrato</span><select data-c="contrato"><option value=""></option>${opts(PERFIL_LISTAS.tipo_contrato)}</select></label>
+      <label class="aspd-f"><span>Salario</span><input type="number" data-c="salario" min="0" step="1000" value="${PST_SMMLV}"></label>
+      <label class="aspd-f"><span>Área</span><select data-c="area">${opts(PERFIL_LISTAS.area, 'OPERATIVA')}</select></label>
+      <label class="aspd-f"><span>Código</span><input type="text" data-c="codigo" maxlength="20" placeholder="Opcional"></label>
+    </div>
+    ${aspDescarteHtml()}
+    <div class="aspd-acc"><span class="spacer"></span>
+      <button type="button" class="btn btn-sm asp-btn-peligro" data-descartar>✖️ Descartar</button>
+      <button type="button" class="btn btn-sm btn-primary" data-contratar>✍️ Contratar</button>
+    </div>`;
+}
+function aspDocsHtml(a) {
+  const adj = a.adjuntos || {};
+  const tipos = [...new Set([...ASPIRANTE_LISTAS.documentos.map((d) => d.key), ...Object.keys(adj)])];
+  const filas = tipos.map((t) => {
+    const lista = Array.isArray(adj[t]) ? adj[t] : [];
+    const req = ASPIRANTE_LISTAS.documentos.find((d) => d.key === t)?.req;
+    return `<div class="aspd-doc"><span class="aspd-doc-l">${esc(ASP_DOC_LBL[t] || t)}</span><span class="aspd-doc-f">${lista.length
+      ? lista.map((f, i) => `<button type="button" class="btn btn-sm" data-ver="${esc(f.path)}" title="${esc(f.nombre || '')}">📄 ${lista.length > 1 ? `Ver ${i + 1}` : 'Ver'}</button>`).join('')
+      : `<span class="${req ? 'asp-venc' : 'muted'}">${req ? 'No lo subió' : '—'}</span>`}</span></div>`;
+  }).join('');
+  return `<h4>📎 Documentos</h4><div class="aspd-docs-l">${filas}</div>
+    <div class="aspd-subir">
+      <select data-doc-tipo aria-label="Tipo de documento">${ASPIRANTE_LISTAS.documentos_admin.map((d) => `<option value="${d.key}">${esc(d.label)}</option>`).join('')}</select>
+      <label class="btn btn-sm aspd-file">📎 Subir archivo<input type="file" data-doc-file accept="image/*,application/pdf"></label>
+    </div>`;
+}
+function aspDatosHtml(a) {
+  const d = a.datos || {};
+  return ASPIRANTE_CAMPOS.map((g) => {
+    const filas = g.campos.filter(([k]) => d[k] != null && d[k] !== '');
+    if (!filas.length) return '';
+    return `<div class="aspd-grupo"><h5>${esc(g.grupo)}</h5><dl>${filas.map(([k, l]) =>
+      `<dt>${esc(l)}</dt><dd>${esc(/^\d{4}-\d{2}-\d{2}$/.test(String(d[k])) ? fechaLegible(d[k]) : d[k])}</dd>`).join('')}</dl></div>`;
+  }).join('') || '<p class="muted">Sin datos adicionales.</p>';
+}
+function aspEvalsPreviasHtml(a) {
+  const evs = a.evaluaciones || {};
+  return ASPIRANTE_ETAPAS.filter((e) => evs[e.key]?.resultado).map((e) => {
+    const ev = evs[e.key];
+    const checks = e.checks.map(([k, l]) => {
+      const v = (ev.checks || {})[k];
+      return `<li>${v === 'OK' ? '✅' : v === 'NO' ? '❌' : v === 'NA' ? '➖' : '⬜'} ${esc(l)}</li>`;
+    }).join('');
+    const campos = (e.campos || []).filter((c) => (ev.campos || {})[c.key]).map((c) => `<li>${esc(c.label)}: <b>${esc(ev.campos[c.key])}</b></li>`).join('');
+    return `<div class="aspd-prev"><div><b>${e.icon} ${esc(e.label)}</b> <span class="${chipClass(ev.resultado)}">${esc(ev.resultado)}</span>
+      <span class="muted">${esc(fmtFechaHora(ev.en))} · ${esc(ev.por || '')}</span></div>
+      <ul>${checks}${campos}</ul>${ev.observacion ? `<div class="muted">📝 ${esc(ev.observacion)}</div>` : ''}</div>`;
+  }).join('');
+}
+function renderAspirante(a, hist) {
+  const m = aspDetModal(); const body = m.querySelector('.aspd-body');
+  m.querySelector('h3').textContent = `🧑‍✈️ ${a.nombre}`;
+  m.querySelector('[data-borrar]').hidden = a.etapa === 'CONTRATADO';
+  const d = a.datos || {};
+  const per = _asp.perfiles[a.cedula];
+  const venc = a.licencia_vencimiento && a.licencia_vencimiento < hoyServidor();
+  const orden = ['DOCUMENTOS', 'ENTREVISTA', 'MANEJO', 'MEDICOS', 'POR_CONTRATAR', 'CONTRATADO'];
+  const idx = orden.indexOf(a.etapa === 'DESCARTADO' ? (a.etapa_descarte || 'DOCUMENTOS') : a.etapa);
+  const pasos = [...ASPIRANTE_ETAPAS.map((e) => `${e.icon} ${e.corto}`), '✍️ Contratar'];
+  const wa = a.celular ? `https://wa.me/57${a.celular}?text=${encodeURIComponent('Hola, te escribimos de Autobuses El Poblado por tu inscripción como conductor.')}` : '';
+  const chips = [
+    `<span class="chip ${venc ? 'chip-red' : 'chip-blue'}">🪪 ${esc(a.categoria_licencia || '—')} · ${venc ? 'VENCIDA' : 'vence'} ${esc(fechaLegible(a.licencia_vencimiento || ''))}</span>`,
+    a.experiencia_anios != null ? `<span class="chip chip-gray">${a.experiencia_anios} años de experiencia</span>` : '',
+    d.comparendos_pendientes === 'SI' ? '<span class="chip chip-red">Dice tener comparendos pendientes</span>' : '',
+    per ? (per.estado === 'ACTIVO'
+      ? `<span class="chip chip-amber">Ya es ${esc(per.tipo)} ACTIVO en APL</span>`
+      : `<span class="chip chip-violet">Ya trabajó en APL${per.fecha_retiro ? ` · retiro ${esc(fechaLegible(per.fecha_retiro))}` : ''}${per.novedad_retiro ? ` · ${esc(per.novedad_retiro)}` : ''}</span>`)
+      : (d.trabajo_antes_apl === 'SI' ? '<span class="chip chip-amber">Dice que trabajó en APL (no está en el Perfil)</span>' : ''),
+  ].filter(Boolean).join(' ');
+
+  let accion;
+  if (ASPIRANTE_ETAPAS.some((e) => e.key === a.etapa)) accion = aspEvalHtml(a);
+  else if (a.etapa === 'POR_CONTRATAR') accion = aspContratarHtml(a);
+  else if (a.etapa === 'DESCARTADO') {
+    accion = `<h4>✖️ Descartado</h4>
+      <p>Motivo: <b>${esc(a.motivo_descarte || '—')}</b><br><span class="muted">En la etapa ${esc(ASP_ETAPA_LBL[a.etapa_descarte] || '—')}</span></p>
+      <div class="aspd-acc"><span class="spacer"></span><button type="button" class="btn btn-sm" data-reabrir>↩️ Reabrir en ${esc(ASP_ETAPA_LBL[a.etapa_descarte] || '📄 Documentos')}</button></div>`;
+  } else {
+    accion = `<h4>✅ Contratado</h4>
+      <p>El ${esc(fmtFechaHora(a.contratado_en).split(',')[0])} quedó en <b>👥 Perfil sociodemográfico</b> como <b>CONDUCTOR ACTIVO</b>, con sus datos y documentos.</p>
+      <div class="aspd-acc"><span class="spacer"></span><button type="button" class="btn btn-sm btn-primary" data-ir-perfil>Ver en el Perfil</button></div>`;
+  }
+  const previas = aspEvalsPreviasHtml(a);
+  body.innerHTML = `
+    <div class="aspd-top">
+      <div>CC <b>${esc(a.cedula)}</b>${a.fecha_nacimiento ? ` · ${aspEdad(a.fecha_nacimiento)} años` : ''}${a.ciudad ? ` · ${esc(a.ciudad)}` : ''}${d.barrio ? ` (${esc(d.barrio)})` : ''}</div>
+      <div class="aspd-contacto">📱 <b>${esc(a.celular || '—')}</b>
+        ${wa ? `<a class="btn btn-sm" target="_blank" rel="noopener" href="${esc(wa)}">💬 WhatsApp</a>` : ''}
+        ${a.celular ? `<a class="btn btn-sm" href="tel:${esc(a.celular)}">📞 Llamar</a>` : ''}
+        ${a.correo ? `<span class="muted">✉️ ${esc(a.correo)}</span>` : ''}</div>
+      <div class="muted">Inscrito ${esc(fmtFechaHora(a.creado_en))} · ${esc(ASP_ETAPA_LBL[a.etapa] || a.etapa)} (${esc(aspDiasTxt(aspDias(a.etapa_desde)))})</div>
+      <div class="aspd-chips">${chips}</div>
+    </div>
+    <ol class="aspd-pasos">${pasos.map((p, i) => {
+      const cls = i < idx ? 'hecho' : i === idx ? (a.etapa === 'DESCARTADO' ? 'descartado' : 'actual') : '';
+      return `<li class="${cls}"><span class="n">${i < idx ? '✓' : i === idx && a.etapa === 'DESCARTADO' ? '✕' : i + 1}</span><span class="t">${esc(p)}</span></li>`;
+    }).join('')}</ol>
+    <div class="aspd-grid">
+      <section class="aspd-sec aspd-accion">${accion}</section>
+      <section class="aspd-sec">${aspDocsHtml(a)}</section>
+    </div>
+    <details class="aspd-sec"><summary>📝 Datos de la inscripción</summary><div class="aspd-datos">${aspDatosHtml(a)}</div></details>
+    ${previas ? `<details class="aspd-sec"><summary>✔️ Etapas calificadas</summary>${previas}</details>` : ''}
+    <details class="aspd-sec"><summary>🕓 Historial (${hist.length})</summary><ul class="aspd-hist">${hist.map((h) =>
+      `<li><span class="muted">${esc(fmtFechaHora(h.en))}</span> ${esc(ASP_ACCION[h.accion] || h.accion)}${h.de_etapa ? ` ${esc(ASP_ETAPA_LBL[h.de_etapa] || h.de_etapa)} →` : ''} ${esc(ASP_ETAPA_LBL[h.a_etapa] || h.a_etapa || '')}${h.detalle ? ` · ${esc(h.detalle)}` : ''} <span class="muted">(${esc(h.por || '')})</span></li>`).join('')}</ul></details>`;
+
+  // Lista de chequeo: tocar marca; tocar el mismo otra vez desmarca
+  body.querySelectorAll('.aspd-seg').forEach((seg) => seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]'); if (!b) return;
+    const ya = b.classList.contains('on');
+    seg.querySelectorAll('button').forEach((x) => { x.className = ''; x.setAttribute('aria-pressed', 'false'); });
+    if (!ya) { b.className = `on ${b.dataset.v.toLowerCase()}`; b.setAttribute('aria-pressed', 'true'); }
+  }));
+  const leerEval = () => {
+    const checks = {};
+    body.querySelectorAll('.aspd-seg').forEach((s) => { const on = s.querySelector('button.on'); if (on) checks[s.dataset.ck] = on.dataset.v; });
+    const campos = {};
+    body.querySelectorAll('[data-campo]').forEach((i) => { if (i.value.trim()) campos[i.dataset.campo] = i.value.trim(); });
+    return { checks, campos, observacion: body.querySelector('[data-obs]')?.value.trim() || '' };
+  };
+  const ejecutar = async (fn, args, okMsg) => {
+    showBusy('Guardando…');
+    try {
+      const { error } = await sb.rpc(fn, args);
+      if (error) throw error;
+      toast(okMsg, 'ok');
+      await Promise.all([cargarAspirantes(), refrescarAspNuevos()]);
+      await openAspirante(a.id);
+    } catch (e) {
+      toast(e.message || String(e), 'err');
+    } finally { hideBusy(); }
+  };
+
+  body.querySelector('[data-guardar]')?.addEventListener('click', () =>
+    ejecutar('aspirante_guardar_evaluacion', { p_id: a.id, p_evaluacion: leerEval() }, 'Avance guardado'));
+  body.querySelector('[data-aprobar]')?.addEventListener('click', async (e) => {
+    const et = ASPIRANTE_ETAPAS.find((x) => x.key === a.etapa);
+    const sig = e.currentTarget.dataset.sig;
+    const ev = leerEval();
+    const no = et.checks.filter(([k]) => ev.checks[k] === 'NO').map(([, l]) => l);
+    const sin = et.checks.filter(([k]) => !ev.checks[k]).map(([, l]) => l);
+    const avisos = [no.length ? `❌ Marcado "No": ${no.join(', ')}.` : '', sin.length ? `⬜ Sin revisar: ${sin.join(', ')}.` : ''].filter(Boolean).join(' ');
+    const ok = await confirmAction({ title: '¿Aprobar la etapa?', lead: `${a.nombre} pasa a ${sig}.`, message: avisos, okLabel: 'Aprobar', danger: no.length > 0 });
+    if (ok) ejecutar('aspirante_decidir', { p_id: a.id, p_aprobar: true, p_evaluacion: ev, p_motivo: null }, `Etapa aprobada: pasa a ${sig}`);
+  });
+  body.querySelector('[data-descartar]')?.addEventListener('click', (e) => {
+    const box = body.querySelector('.aspd-descarte');
+    if (box.hidden) { box.hidden = false; e.currentTarget.textContent = '✖️ Confirmar descarte'; box.querySelector('[data-motivo]').focus(); return; }
+    const mot = box.querySelector('[data-motivo]').value;
+    const det = box.querySelector('[data-motivo-det]').value.trim();
+    if (!mot) { toast('Elige el motivo del descarte.', 'err'); box.querySelector('[data-motivo]').focus(); return; }
+    ejecutar('aspirante_decidir', {
+      p_id: a.id, p_aprobar: false, p_evaluacion: a.etapa === 'POR_CONTRATAR' ? null : leerEval(), p_motivo: det ? `${mot} · ${det.toUpperCase()}` : mot,
+    }, 'Aspirante descartado');
+  });
+  body.querySelector('[data-reabrir]')?.addEventListener('click', async () => {
+    const ok = await confirmAction({ title: '¿Reabrir aspirante?', lead: `${a.nombre} vuelve a ${ASP_ETAPA_LBL[a.etapa_descarte] || '📄 Documentos'}.`, okLabel: 'Reabrir' });
+    if (ok) ejecutar('aspirante_reabrir', { p_id: a.id }, 'Aspirante reabierto');
+  });
+  body.querySelector('[data-contratar]')?.addEventListener('click', async () => {
+    const v = (k) => body.querySelector(`[data-c="${k}"]`).value.trim();
+    if (!v('fecha')) { toast('Indica la fecha de ingreso.', 'err'); return; }
+    const ok = await confirmAction({
+      title: '¿Contratar?',
+      lead: `${a.nombre} quedará como CONDUCTOR ACTIVO en el Perfil sociodemográfico${per ? ' (REINGRESO)' : ''}, con ingreso el ${fechaLegible(v('fecha'))}.`,
+      okLabel: 'Contratar',
+    });
+    if (!ok) return;
+    ejecutar('aspirante_contratar', {
+      p_id: a.id, p_fecha_ingreso: v('fecha'), p_cargo: v('cargo'), p_tipo_contrato: v('contrato') || null,
+      p_salario: v('salario') ? Number(v('salario')) : null, p_area: v('area'), p_codigo: v('codigo') || null,
+    }, '✅ Contratado: ya está en el Perfil sociodemográfico');
+  });
+  body.querySelector('[data-ir-perfil]')?.addEventListener('click', () => {
+    $('aspdet-modal').hidden = true; aspModal().hidden = true;
+    selectTable('perfilsociodemografico');
+    $('search').value = a.cedula;
+    $('search').dispatchEvent(new Event('input'));
+  });
+  body.querySelectorAll('[data-ver]').forEach((b) => b.addEventListener('click', async () => {
+    const { data: u, error } = await sb.storage.from('aspirantes').createSignedUrl(b.dataset.ver, 600);
+    if (error || !u?.signedUrl) { toast('No se pudo abrir el archivo: ' + (error?.message || ''), 'err'); return; }
+    window.open(u.signedUrl, '_blank', 'noopener');
+  }));
+  body.querySelector('[data-doc-file]')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const tipo = body.querySelector('[data-doc-tipo]').value;
+    if (file.size > 10 * 1024 * 1024) { toast('El archivo supera 10 MB.', 'err'); e.target.value = ''; return; }
+    showBusy('Subiendo documento…');
+    try {
+      const path = `aspirante/${a.id}/${tipo}/${Date.now()}_${aspNombreArchivo(file.name)}`;
+      const ct = file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : 'image/jpeg');
+      const up = await sb.storage.from('aspirantes').upload(path, file, { upsert: false, contentType: ct });
+      if (up.error) throw up.error;
+      // se relee la lista para no pisar un documento que haya llegado mientras tanto
+      const { data: cur, error: e1 } = await sb.from('aspirantes').select('adjuntos').eq('id', a.id).single();
+      if (e1) throw e1;
+      const adj = cur.adjuntos || {};
+      adj[tipo] = [...(Array.isArray(adj[tipo]) ? adj[tipo] : []), { path, nombre: file.name, en: new Date().toISOString(), por: miCorreo() }];
+      const { error: e2 } = await sb.from('aspirantes').update({ adjuntos: adj }).eq('id', a.id);
+      if (e2) throw e2;
+      toast('Documento subido', 'ok');
+      await openAspirante(a.id);
+      cargarAspirantes();
+    } catch (er) {
+      toast('No se pudo subir: ' + (er.message || er), 'err');
+    } finally { hideBusy(); }
+  });
+}
+async function borrarAspirante() {
+  const a = _asp.abierto; if (!a || a.etapa === 'CONTRATADO') return;
+  const ok = await confirmAction({
+    title: '¿Eliminar aspirante?', lead: `Se borran la inscripción de ${a.nombre}, sus documentos y su historial.`,
+    message: 'No se puede deshacer.', okLabel: 'Eliminar', danger: true,
+  });
+  if (!ok) return;
+  showBusy('Eliminando…');
+  try {
+    const paths = Object.values(a.adjuntos || {}).flat().map((f) => f?.path).filter(Boolean);
+    // también lo que alcanzó a subir por el link pero no quedó registrado
+    for (const t of ASPIRANTE_LISTAS.documentos.map((x) => x.key)) {
+      const carpeta = `inscripciones/${a.token_subida}/${t}`;
+      const { data } = await sb.storage.from('aspirantes').list(carpeta, { limit: 50 });
+      (data || []).forEach((o) => { if (o.name) paths.push(`${carpeta}/${o.name}`); });
+    }
+    const unicos = [...new Set(paths)];
+    if (unicos.length) { const { error } = await sb.storage.from('aspirantes').remove(unicos); if (error) throw error; }
+    const { error } = await sb.from('aspirantes').delete().eq('id', a.id);
+    if (error) throw error;
+    $('aspdet-modal').hidden = true;
+    _asp.abierto = null;
+    toast('Aspirante eliminado', 'ok');
+    await Promise.all([cargarAspirantes(), refrescarAspNuevos()]);
+  } catch (e) {
+    toast('No se pudo eliminar: ' + (e.message || e), 'err');
+  } finally { hideBusy(); }
+}
+// Excel con TODO: datos de la inscripción, documentos, calificación de cada etapa y resultado
+async function exportarAspirantes(btn) {
+  const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const rows = [];
+    for (let desde = 0; ; desde += 1000) {
+      const { data, error } = await sb.from('aspirantes').select('*').order('creado_en', { ascending: false }).range(desde, desde + 999);
+      if (error) throw error;
+      rows.push(...data);
+      if (data.length < 1000) break;
+    }
+    if (!rows.length) { toast('No hay aspirantes para exportar.', 'err'); return; }
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const campos = ASPIRANTE_CAMPOS.flatMap((g) => g.campos);
+    const cab = ['Inscrito', 'Etapa', 'En la etapa desde', 'Cédula', 'Nombre', 'Fecha de nacimiento', 'Edad',
+      ...campos.map(([, l]) => l), 'Ya estuvo en APL (Perfil)', 'Documentos'];
+    ASPIRANTE_ETAPAS.forEach((e) => cab.push(`${e.corto}: resultado`, `${e.corto}: lista de chequeo`, `${e.corto}: datos`, `${e.corto}: observaciones`, `${e.corto}: calificó`, `${e.corto}: fecha`));
+    cab.push('Motivo de descarte', 'Etapa del descarte', 'Contratado en');
+    const MARCA = { OK: 'Cumple', NO: 'No cumple', NA: 'N/A' };
+    const aoa = [cab, ...rows.map((r) => {
+      const d = r.datos || {};
+      const per = _asp.perfiles[r.cedula];
+      const docs = Object.entries(r.adjuntos || {}).filter(([, l]) => Array.isArray(l) && l.length).map(([t, l]) => `${ASP_DOC_LBL[t] || t}: ${l.length}`).join(' · ');
+      const fila = [r.creado_en, ASP_ETAPA_LBL[r.etapa] || r.etapa, r.etapa_desde, r.cedula, r.nombre, r.fecha_nacimiento || '', aspEdad(r.fecha_nacimiento),
+        ...campos.map(([k]) => d[k] ?? ''), per ? `${per.tipo} ${per.estado}` : '', docs];
+      ASPIRANTE_ETAPAS.forEach((e) => {
+        const ev = (r.evaluaciones || {})[e.key] || {};
+        fila.push(ev.resultado || '',
+          e.checks.filter(([k]) => (ev.checks || {})[k]).map(([k, l]) => `${l}: ${MARCA[ev.checks[k]] || ev.checks[k]}`).join(' · '),
+          (e.campos || []).filter((c) => (ev.campos || {})[c.key]).map((c) => `${c.label}: ${ev.campos[c.key]}`).join(' · '),
+          ev.observacion || '', ev.por || '', ev.en || '');
+      });
+      fila.push(r.motivo_descarte || '', r.etapa_descarte ? (ASP_ETAPA_LBL[r.etapa_descarte] || r.etapa_descarte) : '', r.contratado_en || '');
+      return fila;
+    })];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Fechas → fecha REAL de Excel (dd/mm/aaaa, hora de Colombia)
+    aoa.slice(1).forEach((fila, ri) => fila.forEach((v, ci) => {
+      if (typeof v !== 'string') return;
+      const fx = celdaFechaXlsx(v);
+      if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c: ci })] = fx;
+    }));
+    ws['!cols'] = cab.map((h) => ({ wch: Math.min(40, Math.max(12, String(h).length + 2)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Aspirantes');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob); link.download = `Aspirantes_conductor_${hoyServidor()}.xlsx`; link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
 $('restrstats-cerrar')?.addEventListener('click', () => { $('restrstats-modal').hidden = true; });
 $('rst-consultar')?.addEventListener('click', consultarRestrStats);
 
@@ -6515,7 +7485,7 @@ async function openFrecuencia() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -6625,7 +7595,7 @@ async function openProductividad() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -6783,7 +7753,7 @@ async function openJornada() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -6974,7 +7944,7 @@ async function openTop() {
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
   $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
-  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
@@ -6985,7 +7955,7 @@ async function openTop() {
   buildBottomNav();
   consultarTop();
 }
-function cerrarTop() { $('top-view').hidden = true; selectTable(current); }
+function cerrarTop() { $('top-view').hidden = true; $('perfilstats-view').hidden = true; selectTable(current); }
 async function consultarTop() {
   const periodo = $('top-periodo').value || 'mes';
   const modo = $('top-modo')?.value || 'ruta';
@@ -7113,6 +8083,426 @@ function renderTopRuta(d) {
 }
 $('top-consultar')?.addEventListener('click', consultarTop);
 $('top-close')?.addEventListener('click', cerrarTop);
+
+// ── 📊 Estadísticas del Perfil sociodemográfico (solo admin) ──
+// Se leen las columnas NO identificables de perfilsociodemografico + perfil_vinculaciones (RLS admin)
+// y todo se calcula en el cliente: los filtros (estado / tipo / área) re-pintan al instante.
+// Gráficas en HTML/SVG propio: barras horizontales de una sola serie (color único), rotación en
+// líneas (ingresos vs retiros), tooltip por barra y "Ver tabla" en cada tarjeta.
+const PST_SMMLV = 1750905; // salario mínimo 2026 (el que tienen todos los conductores activos en la base)
+const PST_COL = { s1: '#2a78d6', s2: '#eb6834', grid: '#e1e0d9', eje: '#c3c2b7' }; // validado (dataviz)
+const _pst = { personas: null, vinc: null, tablas: [] };
+async function openPerfilStats() {
+  if (!isTalentoHumano()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'perfilstats';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  ['table-view', 'map-view', 'cump-view', 'rutas-view', 'malla-view', 'laureles-view', 'integradas-view', 'pasajeros-view',
+    'usuarios-view', 'top-view', 'preventivas-view', 'frecuencia-view', 'productividad-view', 'jornada-view']
+    .forEach((id) => { const e = $(id); if (e) e.hidden = true; });
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('perfilstats-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-perfil-stats')?.classList.add('active');
+  buildBottomNav();
+  if (!_pst.personas) await cargarPerfilStats(); else renderPerfilStats();
+}
+function cerrarPerfilStats() { $('perfilstats-view').hidden = true; selectTable(current); }
+async function cargarPerfilStats() {
+  const body = $('pst-body');
+  body.innerHTML = '<div class="loading">Leyendo el perfil sociodemográfico…</div>';
+  const COLS_P = 'tipo,estado,sexo,fecha_nacimiento,fecha_ingreso,fecha_retiro,estado_civil,escolaridad,estrato,tipo_vivienda,'
+    + 'ciudad,personas_a_cargo,tiene_hijos,convive_pareja,eps,afp,arl,tipo_sangre,uso_lentes,tipo_contrato,cargo,area,salario,'
+    + 'categoria_licencia,licencia_vencimiento,estado_restriccion,por_corregir,habeas_data_aceptado_en';
+  const leerTodo = async (tabla, cols) => {
+    const out = [];
+    for (let desde = 0; desde < 50000; desde += 1000) {
+      const { data, error } = await sb.from(tabla).select(cols).order('id').range(desde, desde + 999);
+      if (error) throw error;
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  };
+  try {
+    const [personas, vinc] = await Promise.all([
+      leerTodo('perfilsociodemografico', COLS_P),
+      leerTodo('perfil_vinculaciones', 'tipo,area,fecha_ingreso,fecha_retiro'),
+    ]);
+    _pst.personas = personas; _pst.vinc = vinc;
+    // Áreas reales para el filtro (conserva la elegida)
+    const sel = $('pst-area'), prev = sel.value;
+    const areas = [...new Set(personas.map((p) => p.area).filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">Todas</option>';
+    areas.forEach((a) => sel.appendChild(Object.assign(document.createElement('option'), { value: a, textContent: a })));
+    if (areas.includes(prev)) sel.value = prev;
+    renderPerfilStats();
+  } catch (e) {
+    body.innerHTML = '';
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudieron leer los datos: ' + (e.message || e)));
+  }
+}
+// ---- utilidades de cálculo ----
+function pstEl(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function pstAnios(desde, hasta) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(desde || '')); if (!m) return null;
+  const h = hasta ? new Date(String(hasta).slice(0, 10) + 'T12:00:00') : new Date();
+  let a = h.getFullYear() - Number(m[1]);
+  if (h.getMonth() + 1 < Number(m[2]) || (h.getMonth() + 1 === Number(m[2]) && h.getDate() < Number(m[3]))) a--;
+  return a >= 0 && a < 120 ? a : null;
+}
+const pstNum = (n) => Number(n || 0).toLocaleString('es-CO');
+const pstPct = (n, t) => (t ? Math.round((n / t) * 1000) / 10 : 0);
+// Cuenta por categoría. opts.orden = lista de categorías en orden fijo (escala ordinal);
+// opts.top = deja las N mayores y agrupa el resto en "Otros"; valor vacío = "Sin dato".
+function pstContar(rows, fn, opts = {}) {
+  const c = new Map(); let sin = 0;
+  for (const r of rows) {
+    const v = fn(r);
+    if (v == null || String(v).trim() === '') { sin++; continue; }
+    c.set(v, (c.get(v) || 0) + 1);
+  }
+  let items = [...c.entries()].map(([k, n]) => ({ k: String(k), n }));
+  if (opts.orden) {
+    const pos = (k) => { const i = opts.orden.indexOf(k); return i < 0 ? 999 : i; };
+    items.sort((a, b) => pos(a.k) - pos(b.k) || b.n - a.n);
+  } else {
+    items.sort((a, b) => b.n - a.n || a.k.localeCompare(b.k));
+  }
+  if (opts.top && items.length > opts.top) {
+    const resto = items.slice(opts.top).reduce((s, i) => s + i.n, 0);
+    items = [...items.slice(0, opts.top), { k: `Otros (${items.length - opts.top})`, n: resto, otros: true }];
+  }
+  return { items, sin, total: items.reduce((s, i) => s + i.n, 0) };
+}
+const PST_RANGOS = {
+  edad: [[0, 17, 'Menor de 18'], [18, 25, '18 a 25 años'], [26, 35, '26 a 35 años'], [36, 45, '36 a 45 años'],
+    [46, 55, '46 a 55 años'], [56, 65, '56 a 65 años'], [66, 200, 'Más de 65 años']],
+  antig: [[0, 0, 'Menos de 1 año'], [1, 2, '1 a 2 años'], [3, 5, '3 a 5 años'], [6, 10, '6 a 10 años'],
+    [11, 20, '11 a 20 años'], [21, 200, 'Más de 20 años']],
+  salario: [[0, 1, 'Hasta 1 SMMLV'], [1, 2, 'Más de 1 a 2 SMMLV'], [2, 3, 'Más de 2 a 3 SMMLV'], [3, 5, 'Más de 3 a 5 SMMLV'],
+    [5, 1e9, 'Más de 5 SMMLV']],
+};
+const pstRango = (val, rangos) => { if (val == null) return null; const r = rangos.find(([a, b]) => val >= a && val <= b); return r ? r[2] : null; };
+const pstSalRango = (s) => {
+  if (!s) return null;
+  const x = Number(s) / PST_SMMLV;
+  return x <= 1.0001 ? PST_RANGOS.salario[0][2] : x <= 2 ? PST_RANGOS.salario[1][2] : x <= 3 ? PST_RANGOS.salario[2][2]
+    : x <= 5 ? PST_RANGOS.salario[3][2] : PST_RANGOS.salario[4][2];
+};
+const PST_CAMPOS = { celular: 'Celular', emergencia_telefono1: 'Tel. emergencia 1', emergencia_telefono2: 'Tel. emergencia 2',
+  fecha_nacimiento: 'Fecha de nacimiento', salario: 'Salario', fecha_retiro: 'Fecha de retiro', tipo_sangre: 'Tipo de sangre',
+  fecha_ultimo_grado: 'Fecha último grado', licencia_vencimiento: 'Vencimiento licencia', escolaridad: 'Escolaridad',
+  licencia_expedicion: 'Expedición licencia', tipo_vivienda: 'Tipo de vivienda', estrato: 'Estrato', departamento: 'Departamento',
+  cedula: 'Cédula' };
+const PST_MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+// ---- tooltip compartido (valor primero, etiqueta después) ----
+function pstTip() {
+  let t = $('pst-tip');
+  if (!t) {
+    t = pstEl('div', 'pst-tip'); t.id = 'pst-tip'; t.hidden = true; t.setAttribute('role', 'tooltip');
+    document.body.appendChild(t);
+  }
+  return t;
+}
+function pstTipMostrar(x, y, lineas) {
+  const t = pstTip(); t.innerHTML = '';
+  for (const l of lineas) {
+    const fila = pstEl('div', 'pst-tip-row');
+    if (l.color) { const key = pstEl('span', 'pst-tip-key'); key.style.background = l.color; fila.appendChild(key); }
+    fila.appendChild(pstEl('b', null, l.valor));
+    fila.appendChild(pstEl('span', null, l.etiqueta));
+    t.appendChild(fila);
+  }
+  t.hidden = false;
+  const w = t.offsetWidth, h = t.offsetHeight;
+  t.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, x + 14)) + 'px';
+  t.style.top = Math.max(8, Math.min(window.innerHeight - h - 8, y - h - 10)) + 'px';
+}
+function pstTipOcultar() { const t = $('pst-tip'); if (t) t.hidden = true; }
+
+// ---- tarjetas ----
+// Tarjeta con título, nota, cuerpo (gráfica) y botón "Ver tabla" (equivalente accesible)
+function pstCard(titulo, nota, grafica, tabla, ancha = false) {
+  const card = pstEl('section', 'pst-card' + (ancha ? ' pst-ancha' : ''));
+  const head = pstEl('div', 'pst-card-h');
+  const tt = pstEl('div');
+  tt.appendChild(pstEl('h4', null, titulo));
+  if (nota) tt.appendChild(pstEl('div', 'pst-nota', nota));
+  const btn = pstEl('button', 'btn btn-sm pst-vt', 'Ver tabla'); btn.type = 'button';
+  head.append(tt, btn);
+  const cuerpo = pstEl('div', 'pst-card-b'); cuerpo.appendChild(grafica);
+  const tablaWrap = pstEl('div', 'pst-tabla-wrap'); tablaWrap.hidden = true; tablaWrap.appendChild(pstTablaHtml(tabla));
+  btn.onclick = () => { const ver = tablaWrap.hidden; tablaWrap.hidden = !ver; cuerpo.hidden = ver; btn.textContent = ver ? 'Ver gráfica' : 'Ver tabla'; };
+  card.append(head, cuerpo, tablaWrap);
+  _pst.tablas.push({ titulo, nota, ...tabla });
+  return card;
+}
+function pstTablaHtml({ cab, filas }) {
+  const t = pstEl('table', 'pst-tabla');
+  const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  const thead = pstEl('thead'); thead.appendChild(tr); t.appendChild(thead);
+  const tb = pstEl('tbody');
+  filas.forEach((f) => { const r = pstEl('tr'); f.forEach((v) => r.appendChild(pstEl('td', null, typeof v === 'number' ? pstNum(v) : v))); tb.appendChild(r); });
+  t.appendChild(tb);
+  return t;
+}
+// Barras horizontales de UNA serie: largo = cantidad; valor y % al final de la barra
+function pstBarras(titulo, conteo, opts = {}) {
+  const { items, sin, total } = conteo;
+  const cont = pstEl('div', 'pst-bars');
+  if (!items.length) cont.appendChild(pstEl('div', 'pst-vacio', 'Sin datos con estos filtros.'));
+  const max = Math.max(1, ...items.map((i) => i.n));
+  for (const it of items) {
+    const pct = pstPct(it.n, total);
+    const fila = pstEl('div', 'pst-bar-row'); fila.tabIndex = 0;
+    fila.setAttribute('aria-label', `${it.k}: ${pstNum(it.n)} (${pct}%)`);
+    fila.appendChild(pstEl('div', 'pst-bar-lbl', it.k));
+    // Área de la barra con espacio reservado a la derecha para el valor (que va justo en la punta)
+    const track = pstEl('div', 'pst-bar-track');
+    const ancho = Math.max(0.6, (it.n / max) * 100);
+    const bar = pstEl('div', 'pst-bar'); bar.style.width = ancho + '%';
+    bar.style.background = it.otros ? '#b9b7ae' : PST_COL.s1;
+    const val = pstEl('span', 'pst-bar-val', `${pstNum(it.n)} · ${pct}%`); val.style.left = `calc(${ancho}% + 8px)`;
+    track.append(bar, val);
+    fila.appendChild(track);
+    const lineas = [{ valor: `${pstNum(it.n)} (${pct}%)`, etiqueta: it.k }];
+    fila.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
+    fila.addEventListener('pointerleave', pstTipOcultar);
+    fila.addEventListener('focus', () => { const b = fila.getBoundingClientRect(); pstTipMostrar(b.left + b.width / 2, b.top, lineas); });
+    fila.addEventListener('blur', pstTipOcultar);
+    cont.appendChild(fila);
+  }
+  const nota = [opts.nota, `${pstNum(total)} con dato${sin ? ` · ${pstNum(sin)} sin dato` : ''}`].filter(Boolean).join(' · ');
+  const filas = items.map((i) => [i.k, i.n, `${pstPct(i.n, total)}%`]);
+  if (sin) filas.push(['Sin dato', sin, '—']);
+  return pstCard(titulo, nota, cont, { cab: ['Categoría', 'Cantidad', '%'], filas }, opts.ancha);
+}
+// Rotación por año: 2 series (ingresos / retiros) en líneas, un solo eje, crosshair + tooltip
+function pstRotacion(vinc) {
+  const anioHoy = new Date().getFullYear(), desde = 2019;
+  const anios = []; for (let a = desde; a <= anioHoy; a++) anios.push(a);
+  const ing = anios.map((a) => vinc.filter((v) => String(v.fecha_ingreso || '').startsWith(a + '-')).length);
+  const ret = anios.map((a) => vinc.filter((v) => String(v.fecha_retiro || '').startsWith(a + '-')).length);
+  const series = [{ nombre: 'Ingresos', color: PST_COL.s1, datos: ing }, { nombre: 'Retiros', color: PST_COL.s2, datos: ret }];
+  const cont = pstEl('div', 'pst-linea');
+  const leyenda = pstEl('div', 'pst-leyenda');
+  series.forEach((s) => { const k = pstEl('span', 'pst-ley'); const l = pstEl('i'); l.style.background = s.color; k.append(l, document.createTextNode(s.nombre)); leyenda.appendChild(k); });
+  const lienzo = pstEl('div', 'pst-lienzo');
+  cont.append(leyenda, lienzo);
+  const dibujar = () => {
+    const W = Math.max(280, lienzo.clientWidth || 600), H = 230, m = { t: 14, r: 44, b: 26, l: 40 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const maxV = Math.max(1, ...ing, ...ret);
+    const paso = maxV <= 50 ? 10 : maxV <= 200 ? 50 : maxV <= 500 ? 100 : 250;
+    const tope = Math.ceil(maxV / paso) * paso;
+    const x = (i) => m.l + (anios.length === 1 ? iw / 2 : (i * iw) / (anios.length - 1));
+    const y = (v) => m.t + ih - (v / tope) * ih;
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Ingresos y retiros por año');
+    const add = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); if (text != null) e.textContent = text; svg.appendChild(e); return e; };
+    for (let v = 0; v <= tope; v += paso) {
+      add('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === 0 ? PST_COL.eje : PST_COL.grid, 'stroke-width': 1 });
+      add('text', { x: m.l - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'pst-eje' }, pstNum(v));
+    }
+    anios.forEach((a, i) => add('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', class: 'pst-eje' }, a === anioHoy ? `${a}*` : String(a)));
+    for (const s of series) {
+      add('polyline', { points: s.datos.map((v, i) => `${x(i)},${y(v)}`).join(' '), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+      s.datos.forEach((v, i) => add('circle', { cx: x(i), cy: y(v), r: 4, fill: s.color, stroke: '#fff', 'stroke-width': 2 }));
+    }
+    // Etiqueta del último valor de cada serie (solo si no chocan)
+    const ultY = series.map((s) => y(s.datos[s.datos.length - 1]));
+    if (Math.abs(ultY[0] - ultY[1]) >= 14) {
+      series.forEach((s, k) => add('text', { x: x(anios.length - 1) + 8, y: ultY[k] + 4, class: 'pst-fin' }, pstNum(s.datos[s.datos.length - 1])));
+    }
+    const cruz = add('line', { x1: 0, x2: 0, y1: m.t, y2: m.t + ih, stroke: '#898781', 'stroke-width': 1, visibility: 'hidden' });
+    const zona = add('rect', { x: m.l - 10, y: m.t, width: iw + 20, height: ih, fill: 'transparent', tabindex: 0 });
+    const mostrar = (i, cx, cy) => {
+      cruz.setAttribute('x1', x(i)); cruz.setAttribute('x2', x(i)); cruz.setAttribute('visibility', 'visible');
+      pstTipMostrar(cx, cy, [
+        { valor: `${anios[i]}${anios[i] === anioHoy ? ' (hasta hoy)' : ''}`, etiqueta: '' },
+        ...series.map((s) => ({ color: s.color, valor: pstNum(s.datos[i]), etiqueta: s.nombre })),
+      ]);
+    };
+    let foco = anios.length - 1;
+    zona.addEventListener('pointermove', (e) => {
+      const r = svg.getBoundingClientRect();
+      const px = e.clientX - r.left;
+      const i = Math.max(0, Math.min(anios.length - 1, Math.round(((px - m.l) / iw) * (anios.length - 1))));
+      mostrar(i, e.clientX, e.clientY);
+    });
+    zona.addEventListener('pointerleave', () => { cruz.setAttribute('visibility', 'hidden'); pstTipOcultar(); });
+    zona.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      foco = Math.max(0, Math.min(anios.length - 1, foco + (e.key === 'ArrowRight' ? 1 : -1)));
+      const r = svg.getBoundingClientRect(); mostrar(foco, r.left + x(foco), r.top + y(Math.max(ing[foco], ret[foco])));
+    });
+    zona.addEventListener('focus', () => { const r = svg.getBoundingClientRect(); mostrar(foco, r.left + x(foco), r.top + m.t + 20); });
+    zona.addEventListener('blur', () => { cruz.setAttribute('visibility', 'hidden'); pstTipOcultar(); });
+    lienzo.innerHTML = ''; lienzo.appendChild(svg);
+  };
+  requestAnimationFrame(dibujar);
+  lienzo._redibujar = dibujar;
+  const filas = anios.map((a, i) => [a === anioHoy ? `${a} (hasta hoy)` : String(a), ing[i], ret[i], ing[i] - ret[i]]);
+  return pstCard('Rotación: ingresos y retiros por año',
+    'Historial de vinculaciones · los retiros se registran desde 2019 · * año en curso · no depende del filtro de estado',
+    cont, { cab: ['Año', 'Ingresos', 'Retiros', 'Balance'], filas }, true);
+}
+// Columnas de 12 meses (cumpleaños): una serie, valor sobre la columna
+function pstMeses(personas) {
+  const n = Array(12).fill(0);
+  personas.forEach((p) => { const m = /^\d{4}-(\d{2})/.exec(p.fecha_nacimiento || ''); if (m) n[Number(m[1]) - 1]++; });
+  const max = Math.max(1, ...n), mesHoy = new Date().getMonth();
+  const cont = pstEl('div', 'pst-cols');
+  n.forEach((v, i) => {
+    const col = pstEl('div', 'pst-col' + (i === mesHoy ? ' pst-col-hoy' : '')); col.tabIndex = 0;
+    col.setAttribute('aria-label', `${PST_MESES[i]}: ${v}`);
+    col.appendChild(pstEl('span', 'pst-col-val', pstNum(v)));
+    const barra = pstEl('div', 'pst-col-bar'); barra.style.height = Math.max(2, (v / max) * 110) + 'px'; barra.style.background = PST_COL.s1;
+    col.appendChild(barra);
+    col.appendChild(pstEl('span', 'pst-col-lbl', PST_MESES[i].slice(0, 3)));
+    const lineas = [{ valor: pstNum(v), etiqueta: `cumpleaños en ${PST_MESES[i].toLowerCase()}` }];
+    col.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
+    col.addEventListener('pointerleave', pstTipOcultar);
+    col.addEventListener('focus', () => { const b = col.getBoundingClientRect(); pstTipMostrar(b.left, b.top, lineas); });
+    col.addEventListener('blur', pstTipOcultar);
+    cont.appendChild(col);
+  });
+  return pstCard('Cumpleaños por mes', `Mes actual resaltado: ${PST_MESES[mesHoy].toLowerCase()}`, cont,
+    { cab: ['Mes', 'Cumpleaños'], filas: n.map((v, i) => [PST_MESES[i], v]) });
+}
+function pstTile(etiqueta, valor, detalle, hero = false) {
+  const t = pstEl('div', 'pst-tile' + (hero ? ' pst-hero' : ''));
+  t.appendChild(pstEl('div', 'pst-tile-l', etiqueta));
+  t.appendChild(pstEl('div', 'pst-tile-v', valor));
+  if (detalle) t.appendChild(pstEl('div', 'pst-tile-d', detalle));
+  return t;
+}
+function renderPerfilStats() {
+  const body = $('pst-body'); if (!_pst.personas) return;
+  const estado = $('pst-estado').value, tipo = $('pst-tipo').value, area = $('pst-area').value;
+  const P = _pst.personas.filter((p) => (!estado || p.estado === estado) && (!tipo || p.tipo === tipo) && (!area || p.area === area));
+  const V = _pst.vinc.filter((v) => (!tipo || v.tipo === tipo) && (!area || v.area === area));
+  _pst.tablas = [];
+  _pst.filtro = [estado ? (estado === 'ACTIVO' ? 'Activos' : 'Inactivos') : 'Todos los estados',
+    tipo ? (tipo === 'CONDUCTOR' ? 'Conductores' : 'Administrativos') : 'Conductores y administrativos', area || 'Todas las áreas'].join(' · ');
+  $('pst-sub').textContent = _pst.filtro;
+  body.innerHTML = '';
+  if (!P.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay personas con estos filtros.')); return; }
+
+  // ---- Indicadores ----
+  const edades = P.map((p) => pstAnios(p.fecha_nacimiento)).filter((v) => v != null);
+  const antig = P.map((p) => pstAnios(p.fecha_ingreso, p.estado === 'INACTIVO' ? p.fecha_retiro : null)).filter((v) => v != null);
+  const prom = (a) => (a.length ? (a.reduce((s, v) => s + v, 0) / a.length).toLocaleString('es-CO', { maximumFractionDigits: 1 }) : '—');
+  const mujeres = P.filter((p) => p.sexo === 'FEMENINO').length, conSexo = P.filter((p) => p.sexo).length;
+  const nCond = P.filter((p) => p.tipo === 'CONDUCTOR').length, nAdm = P.length - nCond;
+  const corregir = P.filter((p) => p.por_corregir).length;
+  const autorizaron = P.filter((p) => p.habeas_data_aceptado_en).length;
+  const hoy = hoyServidor();
+  const enDias = (f) => (f ? Math.round((new Date(f + 'T12:00:00') - new Date(hoy + 'T12:00:00')) / 86400000) : null);
+  const condAct = P.filter((p) => p.tipo === 'CONDUCTOR' && p.estado === 'ACTIVO');
+  const licVenc = condAct.filter((p) => { const d = enDias(p.licencia_vencimiento); return d != null && d < 0; }).length;
+  const lic90 = condAct.filter((p) => { const d = enDias(p.licencia_vencimiento); return d != null && d >= 0 && d <= 90; }).length;
+  const kpis = pstEl('div', 'pst-kpis');
+  kpis.append(
+    pstTile('Personas', pstNum(P.length), `${pstNum(nCond)} conductores · ${pstNum(nAdm)} administrativos`, true),
+    pstTile('Edad promedio', `${prom(edades)} años`, edades.length ? `de ${Math.min(...edades)} a ${Math.max(...edades)} años` : ''),
+    pstTile('Antigüedad promedio', `${prom(antig)} años`, estado === 'INACTIVO' ? 'tiempo que duraron' : 'en la empresa'),
+    pstTile('Mujeres', `${pstPct(mujeres, conSexo)}%`, `${pstNum(mujeres)} de ${pstNum(conSexo)}`),
+    pstTile('Licencias de conductores activos', licVenc ? `⛔ ${pstNum(licVenc)} vencidas` : '✅ Ninguna vencida', `🕒 ${pstNum(lic90)} vencen en 90 días`),
+    pstTile('Datos por corregir', `${pstNum(corregir)}`, `${pstPct(corregir, P.length)}% de las personas · ${pstNum(autorizaron)} autorizaron datos`),
+  );
+  body.appendChild(kpis);
+
+  const seccion = (titulo) => { body.appendChild(pstEl('h3', 'pst-sec', titulo)); const g = pstEl('div', 'pst-grid'); body.appendChild(g); return g; };
+  const L = PERFIL_LISTAS;
+  // ---- Demografía ----
+  let g = seccion('👤 Demografía');
+  g.appendChild(pstBarras('Sexo', pstContar(P, (p) => p.sexo)));
+  g.appendChild(pstBarras('Rango de edad', pstContar(P, (p) => pstRango(pstAnios(p.fecha_nacimiento), PST_RANGOS.edad), { orden: PST_RANGOS.edad.map((r) => r[2]) })));
+  g.appendChild(pstBarras('Estado civil', pstContar(P, (p) => p.estado_civil, { orden: L.estado_civil })));
+  g.appendChild(pstBarras('Escolaridad', pstContar(P, (p) => p.escolaridad, { orden: L.escolaridad })));
+  g.appendChild(pstMeses(P));
+  // ---- Familia y vivienda ----
+  g = seccion('🏠 Familia y vivienda');
+  g.appendChild(pstBarras('Estrato socioeconómico', pstContar(P, (p) => (p.estrato != null ? `Estrato ${p.estrato}` : null), { orden: [1, 2, 3, 4, 5, 6].map((n) => `Estrato ${n}`) })));
+  g.appendChild(pstBarras('Tipo de vivienda', pstContar(P, (p) => p.tipo_vivienda, { orden: L.tipo_vivienda })));
+  g.appendChild(pstBarras('Personas a cargo', pstContar(P, (p) => p.personas_a_cargo, { orden: L.personas_a_cargo })));
+  g.appendChild(pstBarras('¿Tiene hijos?', pstContar(P, (p) => p.tiene_hijos, { orden: L.si_no })));
+  g.appendChild(pstBarras('¿Tiene pareja?', pstContar(P, (p) => p.convive_pareja, { orden: L.si_no })));
+  g.appendChild(pstBarras('Municipio de residencia', pstContar(P, (p) => p.ciudad, { top: 8 })));
+  // ---- Laboral ----
+  g = seccion('💼 Laboral');
+  g.appendChild(pstBarras('Antigüedad en la empresa', pstContar(P, (p) => pstRango(pstAnios(p.fecha_ingreso, p.estado === 'INACTIVO' ? p.fecha_retiro : null), PST_RANGOS.antig), { orden: PST_RANGOS.antig.map((r) => r[2]) })));
+  g.appendChild(pstBarras('Área', pstContar(P, (p) => p.area, { top: 10 })));
+  g.appendChild(pstBarras('Cargo', pstContar(P, (p) => p.cargo, { top: 10 })));
+  g.appendChild(pstBarras('Tipo de contrato', pstContar(P, (p) => p.tipo_contrato)));
+  g.appendChild(pstBarras('Rango salarial', pstContar(P, (p) => pstSalRango(p.salario), { orden: PST_RANGOS.salario.map((r) => r[2]) }),
+    { nota: `SMMLV 2026 = $${pstNum(PST_SMMLV)}${estado !== 'ACTIVO' ? ' · en inactivos es el último salario (de otros años)' : ''}` }));
+  // ---- Salud y seguridad social ----
+  g = seccion('🩺 Salud y seguridad social');
+  g.appendChild(pstBarras('EPS', pstContar(P, (p) => p.eps)));
+  g.appendChild(pstBarras('Fondo de pensiones', pstContar(P, (p) => p.afp)));
+  g.appendChild(pstBarras('Tipo de sangre', pstContar(P, (p) => p.tipo_sangre, { orden: L.tipo_sangre })));
+  g.appendChild(pstBarras('Uso de lentes', pstContar(P, (p) => p.uso_lentes, { orden: L.si_no })));
+  // ---- Conductores ----
+  const PC = P.filter((p) => p.tipo === 'CONDUCTOR');
+  if (PC.length) {
+    g = seccion('🚌 Conductores');
+    g.appendChild(pstBarras('Categoría de licencia', pstContar(PC, (p) => p.categoria_licencia, { orden: L.categoria_licencia })));
+    g.appendChild(pstBarras('Estado de restricción', pstContar(PC, (p) => p.estado_restriccion)));
+    g.appendChild(pstBarras('Vigencia de la licencia', pstContar(PC, (p) => {
+      const d = enDias(p.licencia_vencimiento);
+      return d == null ? null : d < 0 ? 'Vencida' : d <= 30 ? 'Vence en 30 días' : d <= 90 ? 'Vence en 31 a 90 días' : d <= 365 ? 'Vence en 3 a 12 meses' : 'Vigente más de 1 año';
+    }, { orden: ['Vencida', 'Vence en 30 días', 'Vence en 31 a 90 días', 'Vence en 3 a 12 meses', 'Vigente más de 1 año'] })));
+  }
+  // ---- Rotación ----
+  g = seccion('🔄 Rotación');
+  g.appendChild(pstRotacion(V));
+  // ---- Calidad de datos ----
+  g = seccion('🧹 Calidad de datos');
+  const campos = []; P.forEach((p) => String(p.por_corregir || '').split(',').filter(Boolean).forEach((c) => campos.push(PST_CAMPOS[c] || c)));
+  g.appendChild(pstBarras('Campos por corregir', pstContar(campos, (c) => c),
+    { nota: 'Se corrigen desde la ficha o con el 🔗 link de actualización de datos' }));
+  g.appendChild(pstBarras('Estado de los datos', pstContar(P, (p) => (p.por_corregir ? 'Con datos por corregir' : 'Completos')), {}));
+}
+async function exportarPerfilStats() {
+  if (!_pst.tablas.length) { toast('No hay estadísticas para exportar.', 'err'); return; }
+  const btn = $('pst-excel'); const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [['Estadísticas sociodemográficas — Autobuses El Poblado'], [`Filtro: ${_pst.filtro}`], [`Generado: ${fmtFechaHora(new Date())}`], []];
+    for (const t of _pst.tablas) {
+      aoa.push([t.titulo]); if (t.nota) aoa.push([t.nota]);
+      aoa.push(t.cab); t.filas.forEach((f) => aoa.push(f)); aoa.push([]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 42 }, { wch: 14 }, { wch: 12 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Estadísticas');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `Estadisticas_sociodemograficas_${hoyServidor()}.xlsx`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
+$('pst-recargar')?.addEventListener('click', cargarPerfilStats);
+$('pst-excel')?.addEventListener('click', exportarPerfilStats);
+$('pst-close')?.addEventListener('click', cerrarPerfilStats);
+window.addEventListener('resize', () => {
+  clearTimeout(_pst.rz);
+  _pst.rz = setTimeout(() => { if (currentView === 'perfilstats') document.querySelectorAll('.pst-lienzo').forEach((l) => l._redibujar && l._redibujar()); }, 200);
+});
 $('top-periodo')?.addEventListener('change', onTopPeriodoChange);
 $('top-modo')?.addEventListener('change', consultarTop);
 // Desplegar/plegar los carros de una ruta (solo en modo "Por ruta")
@@ -7698,7 +9088,7 @@ async function openUsuarios() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -7721,7 +9111,7 @@ async function renderUsuarios() {
           <option value="despachador">Despachador</option>
           <option value="auditor">Auditor / Control</option>
           <option value="afiliado">Afiliado (dueño)</option>
-          ${isAdmin() ? '<option value="admin">Administrador</option>' : ''}
+          ${isAdmin() ? '<option value="gestion_humana">Gestión Humana</option><option value="admin">Administrador</option>' : ''}
         </select></label>
         <label>Nombre <b class="usr-req">*</b> <input id="usr-nombre" type="text" placeholder="Nombre y apellido" autocomplete="off" required /></label>
         <label>Correo <b class="usr-req">*</b> <input id="usr-email" type="email" placeholder="correo@dominio.com" autocomplete="off" required /></label>
@@ -7811,7 +9201,7 @@ async function crearUsuarioForm() {
   } catch (e) { toast('Error: ' + (e.message || e), 'err'); }
   finally { btn.disabled = false; }
 }
-const _ROL_BADGE = { admin: ['Admin', 'run'], auditor: ['Auditor', 'ok'], afiliado: ['Afiliado', 'inc'], despachador: ['Despachador', 'can'] };
+const _ROL_BADGE = { admin: ['Admin', 'run'], auditor: ['Auditor', 'ok'], afiliado: ['Afiliado', 'inc'], despachador: ['Despachador', 'can'], gestion_humana: ['Gestión Humana', 'ok'] };
 async function cargarUsuarios() {
   const cont = $('usr-lista'); if (!cont) return;
   const { data, error } = await sb.rpc('usuarios_listar');
@@ -8506,6 +9896,7 @@ async function updateSonarInfo() {
   const _drsR = await loadDrivers();
   const _drowR = _drsR.find((d) => d.dr_id === $('s-drv').value);
   avisarRestriccionMovil(vr.numero, _drowR?.nombre || '', 's-restrwarn'); // aviso: móvil (puesto) o conductor (despachos)
+  avisarLicenciaConductor($('s-drv').value, 's-licwarn'); // 🪪 licencia del conductor (solo alerta)
   // BLOQUEO por documento vencido. En SONAR el botón también sirve para "no realizó" (no es despacho):
   // NO deshabilitamos el botón; la caja roja avisa y el guarda de "Despachar" bloquea solo el despacho real.
   avisarBloqueoDocMovil(vr.numero, 's-docblk');
@@ -8633,6 +10024,7 @@ async function traerConductorSonar() {
     sel.value = String(dm.dr_id);
     sel._comboSync && sel._comboSync();
     setNote('sonar-info ok', `✓ Conductor traído del Resumen: ${dm.nombre || nombre}`);
+    avisarLicenciaConductor(sel.value, 's-licwarn');
     toast(`Conductor traído del Resumen: ${dm.nombre || nombre}`, 'ok');
   } else { // el conductor del resumen no está en la lista SONAR
     setNote('sonar-info warn', `⚠️ El conductor del Resumen (${nombre}) no está en la lista de SONAR. Selecciónalo manualmente.`);
@@ -8781,7 +10173,7 @@ async function despacharSinSonar() {
   } finally { hideBusy(); }
 }
 // Si el usuario elige el conductor a mano, se oculta el aviso del Resumen
-$('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n) n.hidden = true; });
+$('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n) n.hidden = true; avisarLicenciaConductor($('s-drv').value, 's-licwarn'); });
 
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');
@@ -10922,7 +12314,7 @@ async function showMapView() {
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
-  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('preventivas-view').hidden = true;
+  $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
   $('map-view').hidden = false;
@@ -11235,9 +12627,9 @@ $('sonarfull-btn').addEventListener('click', async () => {
 
 // ---------- Administración de accesos (solo admin) ----------
 $('perfil-new-btn').addEventListener('click', async () => {
-  const rolIn = (prompt('Rol del acceso (despachador / auditor / admin):', 'despachador') || '').trim().toLowerCase();
+  const rolIn = (prompt('Rol del acceso (despachador / auditor / admin / gestion_humana):', 'despachador') || '').trim().toLowerCase();
   if (!rolIn) return;
-  if (!['despachador', 'auditor', 'admin'].includes(rolIn)) { toast('Rol inválido. Usa despachador, auditor o admin.', 'err'); return; }
+  if (!['despachador', 'auditor', 'admin', 'gestion_humana'].includes(rolIn)) { toast('Rol inválido. Usa despachador, auditor, admin o gestion_humana.', 'err'); return; }
   const email = (prompt(`Correo del ${rolIn}:`) || '').trim();
   if (!email) return;
   const nombre = (prompt(`Nombre del ${rolIn}:`) || '').trim();

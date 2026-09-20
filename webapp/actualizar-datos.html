@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Actualización de datos · Autobuses El Poblado</title>
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO de actualización de datos del Perfil sociodemográfico (sql/75).
+    No lee NADA de la base: solo envía una solicitud con perfil_enviar_actualizacion (RPC anon).
+    Lo recibido queda PENDIENTE y el admin lo revisa en la app (👥 Talento humano → 📨 Actualizaciones de datos).
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 640px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; }
+    h2 { font-size: 16px; margin: 0 0 12px; display: flex; gap: 8px; align-items: center; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .full { grid-column: 1 / -1; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; font-weight: 600; color: #333; }
+    label > input, label > select, label > textarea { display: block; margin-top: 5px; }
+    label > input + .hint, label > select + .hint { display: block; margin-top: 4px; }
+    label .req { color: var(--rojo); }
+    input, select, textarea { width: 100%; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
+    input:focus, select:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+    .opciones { display: flex; gap: 8px; flex-wrap: wrap; }
+    .opciones label { flex: 1; min-width: 130px; display: flex; gap: 8px; align-items: center; border: 1px solid var(--borde); border-radius: 10px; padding: 11px 12px; font-weight: 600; cursor: pointer; }
+    .opciones input { width: auto; margin-top: 0; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); }
+    .btn:disabled { opacity: .6; cursor: wait; }
+    .btn-sec { background: #fff; color: var(--rojo); border: 1px solid var(--rojo); box-shadow: none; margin-top: 10px; }
+    .error { background: #fee2e2; color: #b91c1c; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .habeas { font-size: 13px; color: #444; line-height: 1.45; background: #fbf8f8; border-radius: 10px; padding: 12px; max-height: 180px; overflow: auto; }
+    .acepto { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; margin-top: 12px; }
+    .acepto input { width: 22px; height: 22px; flex: none; margin-top: 1px; }
+    .gracias { text-align: center; padding: 30px 18px; }
+    .gracias .ic { font-size: 54px; }
+    .pasos { display: flex; justify-content: center; gap: 6px; margin-bottom: 14px; }
+    .pasos span { width: 34px; height: 5px; border-radius: 3px; background: #e5d6d6; }
+    .pasos span.on { background: var(--rojo); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/logo.png" alt="" onerror="this.style.display='none'" />
+    <h1>Actualización de datos</h1>
+    <p>Conductores y empleados · Autobuses El Poblado</p>
+  </header>
+
+  <main>
+    <!-- Paso 1: identificación -->
+    <form id="paso1" class="card" novalidate>
+      <div class="pasos"><span class="on"></span><span></span></div>
+      <h2>🪪 ¿Quién eres?</h2>
+      <p class="hint" style="margin-top:-6px">Tus datos son confidenciales y solo los ve Gestión Humana. Toma unos 5 minutos.</p>
+      <div id="err1" class="error" hidden></div>
+      <div class="grid">
+        <label class="full">Número de cédula <span class="req">*</span>
+          <input id="cedula" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Solo números" required />
+        </label>
+        <label class="full">Fecha de nacimiento <span class="req">*</span>
+          <input id="fecha_nacimiento" type="date" required />
+        </label>
+        <label class="full">Apellidos y nombres completos <span class="req">*</span>
+          <input id="nombre" autocomplete="name" maxlength="150" required />
+        </label>
+        <div class="full">
+          <label>Eres <span class="req">*</span></label>
+          <div class="opciones" style="margin-top:5px">
+            <label><input type="radio" name="tipo" value="CONDUCTOR" /> 🚌 Conductor</label>
+            <label><input type="radio" name="tipo" value="ADMINISTRATIVO" /> 🏢 Administrativo</label>
+          </div>
+        </div>
+      </div>
+      <p></p>
+      <button class="btn" type="submit">Continuar</button>
+    </form>
+
+    <!-- Paso 2: datos -->
+    <form id="paso2" novalidate hidden>
+      <div class="card">
+        <div class="pasos"><span class="on"></span><span class="on"></span></div>
+        <h2>📱 Contacto</h2>
+        <div class="grid">
+          <label>Celular <span class="req">*</span><input data-k="celular" inputmode="tel" maxlength="13" placeholder="3001234567" required /></label>
+          <label>Teléfono fijo<input data-k="telefono" inputmode="tel" maxlength="15" /></label>
+          <label class="full">Correo electrónico<input data-k="correo" type="email" autocomplete="email" maxlength="120" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🏠 Vivienda</h2>
+        <div class="grid">
+          <label class="full">Dirección <span class="req">*</span><input data-k="direccion" maxlength="150" required /></label>
+          <label>Barrio <span class="req">*</span><input data-k="barrio" maxlength="80" required /></label>
+          <label>Municipio <span class="req">*</span><input data-k="ciudad" list="l-ciudad" maxlength="80" required /></label>
+          <label>Departamento <span class="req">*</span><select data-k="departamento" data-lista="departamento" required></select></label>
+          <label>Estrato <span class="req">*</span><select data-k="estrato" data-lista="estrato" required></select></label>
+          <label class="full">Tipo de vivienda <span class="req">*</span><select data-k="tipo_vivienda" data-lista="tipo_vivienda" required></select></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🙋 Datos personales</h2>
+        <div class="grid">
+          <label>Sexo <span class="req">*</span><select data-k="sexo" data-lista="sexo" required></select></label>
+          <label>Tipo de sangre <span class="req">*</span><select data-k="tipo_sangre" data-lista="tipo_sangre" required></select></label>
+          <label>Estado civil <span class="req">*</span><select data-k="estado_civil" data-lista="estado_civil" required></select></label>
+          <label>¿Usas lentes? <span class="req">*</span><select data-k="uso_lentes" data-lista="si_no" required></select></label>
+          <label>EPS <span class="req">*</span><select data-k="eps" data-lista="eps" required></select></label>
+          <label>Fondo de pensiones <span class="req">*</span><select data-k="afp" data-lista="afp" required></select></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🎓 Educación</h2>
+        <div class="grid">
+          <label>Nivel de estudios <span class="req">*</span><select data-k="escolaridad" data-lista="escolaridad" required></select></label>
+          <label>Último grado o título<input data-k="escolaridad_detalle" maxlength="120" placeholder="Ej: NOVENO, TÉCNICO EN MECÁNICA" /></label>
+          <label class="full">Institución educativa<input data-k="institucion_educativa" maxlength="150" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>👨‍👩‍👧 Núcleo familiar</h2>
+        <div class="grid">
+          <label class="full">Personas a cargo <span class="req">*</span><select data-k="personas_a_cargo" data-lista="personas_a_cargo" required></select></label>
+          <label>¿Tienes esposo(a) o pareja? <span class="req">*</span><select data-k="convive_pareja" data-lista="si_no" required></select></label>
+          <label data-si="convive_pareja">Edad de tu pareja<input data-k="edad_pareja" inputmode="numeric" maxlength="20" /></label>
+          <label class="full" data-si="convive_pareja">Nombre de tu pareja<input data-k="nombre_pareja" maxlength="120" /></label>
+          <label>¿Tienes hijos? <span class="req">*</span><select data-k="tiene_hijos" data-lista="si_no" required></select></label>
+          <label data-si="tiene_hijos">Edades de tus hijos (hombres)<input data-k="edades_hijos" maxlength="60" placeholder="Ej: 5 AÑOS, 12 AÑOS" /></label>
+          <label data-si="tiene_hijos">Edades de tus hijas (mujeres)<input data-k="edades_hijas" maxlength="60" placeholder="Ej: 3 AÑOS" /></label>
+          <label>Otras personas a cargo<input data-k="otros_a_cargo" maxlength="80" placeholder="Ej: MADRE, PADRE" /></label>
+          <label>Edades de esas personas<input data-k="edades_otros" maxlength="60" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🚨 Contacto de emergencia</h2>
+        <div class="grid">
+          <label class="full">Nombre <span class="req">*</span><input data-k="emergencia_nombre" maxlength="120" required /></label>
+          <label>Parentesco <span class="req">*</span><select data-k="emergencia_parentesco" data-lista="parentesco" required></select></label>
+          <label>Celular / teléfono <span class="req">*</span><input data-k="emergencia_telefono1" inputmode="tel" maxlength="13" required /></label>
+          <label>Otro teléfono<input data-k="emergencia_telefono2" inputmode="tel" maxlength="13" /></label>
+          <label>Dirección del contacto<input data-k="emergencia_direccion" maxlength="150" /></label>
+        </div>
+      </div>
+
+      <div class="card" id="bloque-licencia" hidden>
+        <h2>🚌 Licencia de conducción</h2>
+        <div class="grid">
+          <label>Categoría <span class="req">*</span><select data-k="categoria_licencia" data-lista="categoria_licencia" data-cond="1"></select></label>
+          <label>Número de licencia<input data-k="numero_licencia" inputmode="numeric" maxlength="15" /></label>
+          <label class="full">Fecha de vencimiento <span class="req">*</span><input data-k="licencia_vencimiento" type="date" data-cond="1" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🔒 Autorización de tratamiento de datos</h2>
+        <div class="habeas">
+          En cumplimiento de la Ley 1581 de 2012 y el Decreto 1377 de 2013, autorizo de manera previa, expresa e informada a
+          <b>Autobuses El Poblado</b> para recolectar, almacenar, usar y actualizar los datos personales que suministro en este
+          formulario, incluidos datos sensibles (salud, tipo de sangre y núcleo familiar), con la finalidad de gestionar la relación
+          laboral, la seguridad y salud en el trabajo, la atención de emergencias y el perfil sociodemográfico de la empresa.
+          Declaro que la información es verdadera y que tengo autorización de las personas cuyos datos registro (contacto de
+          emergencia y familiares). Sé que puedo conocer, actualizar, rectificar y solicitar la supresión de mis datos a través de
+          Gestión Humana. Suministrar datos sensibles es facultativo.
+        </div>
+        <label class="acepto"><input type="checkbox" id="acepto" /> <span>Leí y <b>acepto</b> la autorización de tratamiento de datos personales. <span class="req">*</span></span></label>
+      </div>
+
+      <div id="err2" class="error" hidden></div>
+      <button class="btn" type="submit" id="enviar">Enviar mis datos</button>
+      <button class="btn btn-sec" type="button" id="volver">← Volver</button>
+    </form>
+
+    <div id="gracias" class="card gracias" hidden>
+      <div class="ic">✅</div>
+      <h2 style="justify-content:center">¡Gracias! Recibimos tus datos</h2>
+      <p>Gestión Humana los revisará y actualizará tu información. Ya puedes cerrar esta página.</p>
+    </div>
+    <datalist id="l-ciudad"></datalist>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERFIL_LISTAS as L } from './js/config.js';
+
+    // Cliente ANÓNIMO: no usa ni toca la sesión guardada de la app (aunque haya un admin logueado)
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const $ = (id) => document.getElementById(id);
+    const p1 = $('paso1'), p2 = $('paso2');
+    let tipo = '';
+
+    // Listas desplegables (las mismas del Perfil en la app)
+    document.querySelectorAll('select[data-lista]').forEach((s) => {
+      s.innerHTML = '<option value="">Selecciona…</option>' + (L[s.dataset.lista] || [])
+        .map((o) => `<option value="${o}">${o}</option>`).join('');
+    });
+    $('l-ciudad').innerHTML = L.ciudad.map((c) => `<option value="${c}">`).join('');
+    document.querySelector('[data-k="departamento"]').value = 'ANTIOQUIA';
+
+    // Campos que dependen de un SI (pareja / hijos)
+    const toggleSi = () => document.querySelectorAll('[data-si]').forEach((el) => {
+      el.hidden = document.querySelector(`[data-k="${el.dataset.si}"]`).value !== 'SI';
+    });
+    document.querySelectorAll('[data-k="convive_pareja"], [data-k="tiene_hijos"]').forEach((s) => s.addEventListener('change', toggleSi));
+    toggleSi();
+
+    const soloDigitos = (v) => String(v || '').replace(/\D/g, '');
+    const mostrarError = (el, msg) => { el.textContent = msg; el.hidden = !msg; if (msg) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+
+    p1.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const ced = soloDigitos($('cedula').value);
+      const fn = $('fecha_nacimiento').value;
+      tipo = (document.querySelector('input[name="tipo"]:checked') || {}).value || '';
+      const anio = Number(fn.slice(0, 4));
+      if (ced.length < 5 || ced.length > 12) return mostrarError($('err1'), 'Escribe tu número de cédula (solo números).');
+      if (!fn || anio < 1930 || anio > new Date().getFullYear() - 14) return mostrarError($('err1'), 'Revisa tu fecha de nacimiento.');
+      if ($('nombre').value.trim().length < 5) return mostrarError($('err1'), 'Escribe tus apellidos y nombres completos.');
+      if (!tipo) return mostrarError($('err1'), 'Elige si eres conductor o administrativo.');
+      mostrarError($('err1'), '');
+      $('cedula').value = ced;
+      $('bloque-licencia').hidden = tipo !== 'CONDUCTOR';
+      p1.hidden = true; p2.hidden = false;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    $('volver').addEventListener('click', () => { p2.hidden = true; p1.hidden = false; window.scrollTo({ top: 0 }); });
+
+    p2.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('err2');
+      const datos = { nombre: $('nombre').value.trim().toUpperCase(), tipo };
+      let faltante = null;
+      for (const el of p2.querySelectorAll('[data-k]')) {
+        const visible = !el.closest('[hidden]');
+        const obligatorio = visible && (el.required || (el.dataset.cond && tipo === 'CONDUCTOR'));
+        let v = (el.value || '').trim();
+        if (!visible) continue;
+        if (obligatorio && !v && !faltante) faltante = el;
+        if (!v) continue;
+        if (el.type !== 'email' && el.type !== 'date' && el.tagName !== 'SELECT') v = v.toUpperCase();
+        if (el.type === 'email') v = v.toLowerCase();
+        datos[el.dataset.k] = v;
+      }
+      if (faltante) {
+        const nombreCampo = faltante.closest('label')?.childNodes[0]?.textContent.trim() || 'un campo obligatorio';
+        faltante.focus();
+        return mostrarError(err, `Falta: ${nombreCampo}.`);
+      }
+      const cel = soloDigitos(datos.celular).replace(/^57(?=3\d{9}$)/, '');
+      if (!/^3\d{9}$/.test(cel)) return mostrarError(err, 'El celular debe tener 10 dígitos y empezar por 3.');
+      datos.celular = cel;
+      for (const k of ['telefono', 'emergencia_telefono1', 'emergencia_telefono2']) {
+        if (!datos[k]) continue;
+        datos[k] = soloDigitos(datos[k]);
+        if (datos[k].length < 7) return mostrarError(err, 'Revisa los números de teléfono (mínimo 7 dígitos).');
+      }
+      if (datos.correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(datos.correo)) return mostrarError(err, 'Revisa tu correo electrónico.');
+      if (!$('acepto').checked) return mostrarError(err, 'Debes aceptar la autorización de tratamiento de datos para enviar.');
+      mostrarError(err, '');
+
+      const btn = $('enviar');
+      btn.disabled = true; btn.textContent = 'Enviando…';
+      try {
+        const { error } = await sb.rpc('perfil_enviar_actualizacion', {
+          p_cedula: $('cedula').value, p_fecha_nacimiento: $('fecha_nacimiento').value, p_datos: datos, p_acepta: true,
+        });
+        if (error) throw error;
+        p2.hidden = true; $('gracias').hidden = false;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (ex) {
+        mostrarError(err, (ex && ex.message) ? ex.message : 'No se pudo enviar. Revisa tu conexión e intenta de nuevo.');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Enviar mis datos';
+      }
+    });
+  </script>
+</body>
+</html>

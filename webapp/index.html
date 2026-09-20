@@ -523,6 +523,33 @@
           </div>
           <div id="top-body" class="integ-body"></div>
         </div>
+
+        <!-- 📊 Estadísticas del Perfil sociodemográfico (solo admin). Se calcula en el cliente. -->
+        <div id="perfilstats-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>📊 Estadísticas sociodemográficas</h2>
+            <span id="pst-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fl">Estado
+              <select id="pst-estado">
+                <option value="ACTIVO" selected>Activos</option>
+                <option value="INACTIVO">Inactivos</option>
+                <option value="">Todos</option>
+              </select></label>
+            <label class="cump-fl">Tipo
+              <select id="pst-tipo">
+                <option value="">Todos</option>
+                <option value="CONDUCTOR">Conductores</option>
+                <option value="ADMINISTRATIVO">Administrativos</option>
+              </select></label>
+            <label class="cump-fl">Área
+              <select id="pst-area"><option value="">Todas</option></select></label>
+            <button id="pst-recargar" class="btn" title="Volver a leer los datos">↻</button>
+            <button id="pst-excel" class="btn">⬇️ Excel</button>
+            <button id="pst-close" class="btn">← Volver</button>
+          </div>
+          <div id="pst-body" class="integ-body"></div>
+        </div>
       </main>
     </div>
 
@@ -641,6 +668,7 @@
         <div class="field full sonar-info" id="nd-info" hidden></div>
         <div class="field full" id="nd-restrwarn" hidden></div>
         <div class="field full" id="nd-docblk" hidden></div>
+        <div class="field full" id="nd-licwarn" hidden></div>
         <div class="field full" id="nd-docwarn" hidden></div>
         <div class="field full" id="nd-pvwarn" hidden></div>
         <label class="field"><span>Despachador (tú)</span><input id="nd-desp-name" readonly /></label>
@@ -685,6 +713,7 @@
         <div class="field full sonar-info" id="s-info" hidden></div>
         <div class="field full" id="s-restrwarn" hidden></div>
         <div class="field full" id="s-docblk" hidden></div>
+        <div class="field full" id="s-licwarn" hidden></div>
         <div class="field full" id="s-docwarn" hidden></div>
         <div class="field full" id="s-pvwarn" hidden></div>
         <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>

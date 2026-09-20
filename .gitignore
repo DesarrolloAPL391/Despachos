@@ -4,6 +4,10 @@ credenciales_despachadores.csv
 horarios_usuarios.csv
 resumen.csv
 
+# perfil sociodemográfico: bases de empleados y conductores (cédula, salario, salud)
+datos/
+APPS - *.csv
+
 # datos/exportes sueltos (descomenta si quieres ignorar todos los CSV)
 # *.csv
 

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Trabaja con nosotros · Conductor · Autobuses El Poblado</title>
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO de inscripción de ASPIRANTES A CONDUCTOR (sql/77).
+    No lee NADA de la base: aspirante_inscribir guarda la inscripción y devuelve un token temporal
+    con el que se suben los documentos (bucket privado `aspirantes`) y se registran con aspirante_adjuntar.
+    El admin lleva el proceso en la app (👥 Talento humano → 🧑‍✈️ Aspirantes a conductor).
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 640px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; }
+    h2 { font-size: 16px; margin: 0 0 12px; display: flex; gap: 8px; align-items: center; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .full { grid-column: 1 / -1; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; font-weight: 600; color: #333; }
+    label > input, label > select, label > textarea { display: block; margin-top: 5px; }
+    label > input + .hint, label > select + .hint { display: block; margin-top: 4px; }
+    label .req { color: var(--rojo); }
+    input, select, textarea { width: 100%; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
+    input:focus, select:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chips label { display: flex; gap: 7px; align-items: center; border: 1px solid var(--borde); border-radius: 999px; padding: 8px 12px; font-weight: 600; cursor: pointer; }
+    .chips input { width: 18px; height: 18px; margin-top: 0; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); }
+    .btn:disabled { opacity: .6; cursor: wait; }
+    .btn-sec { background: #fff; color: var(--rojo); border: 1px solid var(--rojo); box-shadow: none; margin-top: 10px; }
+    .error { background: #fee2e2; color: #b91c1c; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .habeas { font-size: 13px; color: #444; line-height: 1.45; background: #fbf8f8; border-radius: 10px; padding: 12px; max-height: 190px; overflow: auto; }
+    .acepto { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; margin-top: 12px; }
+    .acepto input { width: 22px; height: 22px; flex: none; margin-top: 1px; }
+    .gracias { text-align: center; padding: 30px 18px; }
+    .gracias .ic { font-size: 54px; }
+    .pasos { display: flex; justify-content: center; gap: 6px; margin-bottom: 6px; }
+    .pasos span { width: 34px; height: 5px; border-radius: 3px; background: #e5d6d6; }
+    .pasos span.on { background: var(--rojo); }
+    .paso-n { text-align: center; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+    .intro { font-size: 14px; line-height: 1.5; margin: 0 0 4px; }
+    .intro ul { margin: 8px 0 0; padding-left: 20px; }
+    /* Documentos */
+    .doc { border: 1px dashed #dcc; border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+    .doc + .doc { margin-top: 10px; }
+    .doc-h { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 14px; font-weight: 700; }
+    .doc-h .hint { font-weight: 400; }
+    .doc-add { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--rojo); color: var(--rojo); background: #fff; border-radius: 10px; padding: 9px 12px; font-size: 14px; font-weight: 700; cursor: pointer; justify-self: start; }
+    .doc-add input { display: none; }
+    .doc-files { display: grid; gap: 6px; }
+    .doc-file { display: flex; align-items: center; gap: 8px; background: #fbf8f8; border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+    .doc-file span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .doc-file button { border: 0; background: none; color: #b91c1c; font-size: 18px; cursor: pointer; padding: 0 4px; }
+    .doc-file.ok { background: #dcfce7; }
+    .progreso { font-size: 14px; color: var(--muted); text-align: center; margin: 10px 0 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/logo.png" alt="" onerror="this.style.display='none'" />
+    <h1>Trabaja con nosotros</h1>
+    <p>Inscripción de conductores · Autobuses El Poblado</p>
+  </header>
+
+  <main>
+    <!-- ===== Paso 1: datos básicos, licencia y experiencia ===== -->
+    <form id="paso1" novalidate>
+      <div class="card">
+        <div class="pasos"><span class="on"></span><span></span><span></span></div>
+        <div class="paso-n">Paso 1 de 3</div>
+        <p class="intro">¡Gracias por tu interés en ser conductor de <b>Autobuses El Poblado</b>! Llena tus datos (toma unos 10 minutos). Ten a mano:</p>
+        <ul class="intro hint" style="font-size:13px">
+          <li>Foto de tu <b>cédula</b> y de tu <b>licencia de conducción</b> (ambas caras).</li>
+          <li>Si los tienes: hoja de vida, certificados laborales y antecedentes.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>🪪 Tus datos</h2>
+        <div id="err1" class="error" hidden></div>
+        <div class="grid">
+          <label>Número de cédula <span class="req">*</span><input data-k="cedula" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Solo números" required /></label>
+          <label>Fecha de nacimiento <span class="req">*</span><input data-k="fecha_nacimiento" type="date" required /></label>
+          <label class="full">Apellidos y nombres completos <span class="req">*</span><input data-k="nombre" autocomplete="name" maxlength="150" required /></label>
+          <label>Celular <span class="req">*</span><input data-k="celular" inputmode="tel" maxlength="13" placeholder="3001234567" required /></label>
+          <label>Otro teléfono<input data-k="telefono" inputmode="tel" maxlength="15" /></label>
+          <label class="full">Correo electrónico<input data-k="correo" type="email" autocomplete="email" maxlength="120" /></label>
+          <label class="full">Dirección <span class="req">*</span><input data-k="direccion" maxlength="150" required /></label>
+          <label>Barrio <span class="req">*</span><input data-k="barrio" maxlength="80" required /></label>
+          <label>Municipio <span class="req">*</span><input data-k="ciudad" list="l-ciudad" maxlength="80" required /></label>
+          <label class="full">Departamento <span class="req">*</span><select data-k="departamento" data-lista="departamento" required></select></label>
+        </div>
+      </div>
+      <div class="card">
+        <h2>🚌 Licencia y experiencia</h2>
+        <div class="grid">
+          <label>Categoría de licencia <span class="req">*</span><select data-k="categoria_licencia" data-lista="categoria_licencia" required></select>
+            <span class="hint">Para bus se requiere C2 o C3.</span></label>
+          <label>Número de licencia<input data-k="numero_licencia" inputmode="numeric" maxlength="15" /></label>
+          <label>Fecha de expedición<input data-k="licencia_expedicion" type="date" /></label>
+          <label>Fecha de vencimiento <span class="req">*</span><input data-k="licencia_vencimiento" type="date" required /></label>
+          <label class="full">Restricciones de la licencia<input data-k="restricciones_licencia" maxlength="120" placeholder="Ej: CONDUCIR CON LENTES (si no tiene, déjalo vacío)" /></label>
+          <label>Años de experiencia en servicio público <span class="req">*</span><input data-k="experiencia_anios" type="number" inputmode="numeric" min="0" max="60" required /></label>
+          <label>¿Tienes comparendos o multas pendientes? <span class="req">*</span><select data-k="comparendos_pendientes" data-lista="si_no" required></select></label>
+          <div class="full">
+            <label>Vehículos que has conducido</label>
+            <div class="chips" id="vehiculos" style="margin-top:6px"></div>
+          </div>
+          <label>¿Has trabajado antes en Autobuses El Poblado? <span class="req">*</span><select data-k="trabajo_antes_apl" data-lista="si_no" required></select></label>
+          <label>Disponibilidad para empezar <span class="req">*</span><select data-k="disponibilidad" data-lista="disponibilidad" required></select></label>
+          <label>¿Cómo te enteraste de la vacante? <span class="req">*</span><select data-k="como_se_entero" data-lista="como_se_entero" required></select></label>
+          <label data-si="como_se_entero" data-si-valor="REFERIDO POR UN CONDUCTOR O EMPLEADO">¿Quién te refirió?<input data-k="referido_por" maxlength="120" placeholder="Nombre del conductor o empleado" /></label>
+        </div>
+      </div>
+      <button class="btn" type="submit">Continuar</button>
+    </form>
+
+    <!-- ===== Paso 2: información personal, familia, emergencia y referencias ===== -->
+    <form id="paso2" novalidate hidden>
+      <div class="card">
+        <div class="pasos"><span class="on"></span><span class="on"></span><span></span></div>
+        <div class="paso-n">Paso 2 de 3</div>
+        <h2>🙋 Información personal</h2>
+        <div class="grid">
+          <label>Sexo <span class="req">*</span><select data-k="sexo" data-lista="sexo" required></select></label>
+          <label>Estado civil <span class="req">*</span><select data-k="estado_civil" data-lista="estado_civil" required></select></label>
+          <label>Tipo de sangre <span class="hint">(opcional)</span><select data-k="tipo_sangre" data-lista="tipo_sangre"></select></label>
+          <label>¿Usas lentes? <span class="req">*</span><select data-k="uso_lentes" data-lista="si_no" required></select></label>
+          <label>EPS<select data-k="eps" data-lista="eps"></select></label>
+          <label>Fondo de pensiones<select data-k="afp" data-lista="afp"></select></label>
+          <label>Estrato <span class="req">*</span><select data-k="estrato" data-lista="estrato" required></select></label>
+          <label>Tipo de vivienda <span class="req">*</span><select data-k="tipo_vivienda" data-lista="tipo_vivienda" required></select></label>
+          <label>Nivel de estudios <span class="req">*</span><select data-k="escolaridad" data-lista="escolaridad" required></select></label>
+          <label>Último grado o título<input data-k="escolaridad_detalle" maxlength="120" placeholder="Ej: NOVENO, TÉCNICO EN MECÁNICA" /></label>
+          <label class="full">Institución educativa<input data-k="institucion_educativa" maxlength="150" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>👨‍👩‍👧 Núcleo familiar</h2>
+        <div class="grid">
+          <label class="full">Personas a cargo <span class="req">*</span><select data-k="personas_a_cargo" data-lista="personas_a_cargo" required></select></label>
+          <label>¿Tienes esposo(a) o pareja? <span class="req">*</span><select data-k="convive_pareja" data-lista="si_no" required></select></label>
+          <label data-si="convive_pareja">Edad de tu pareja<input data-k="edad_pareja" inputmode="numeric" maxlength="20" /></label>
+          <label class="full" data-si="convive_pareja">Nombre de tu pareja<input data-k="nombre_pareja" maxlength="120" /></label>
+          <label>¿Tienes hijos? <span class="req">*</span><select data-k="tiene_hijos" data-lista="si_no" required></select></label>
+          <label data-si="tiene_hijos">Edades de tus hijos (hombres)<input data-k="edades_hijos" maxlength="60" placeholder="Ej: 5 AÑOS, 12 AÑOS" /></label>
+          <label data-si="tiene_hijos">Edades de tus hijas (mujeres)<input data-k="edades_hijas" maxlength="60" placeholder="Ej: 3 AÑOS" /></label>
+          <label>Otras personas a cargo<input data-k="otros_a_cargo" maxlength="80" placeholder="Ej: MADRE, PADRE" /></label>
+          <label>Edades de esas personas<input data-k="edades_otros" maxlength="60" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🚨 Contacto de emergencia</h2>
+        <div class="grid">
+          <label class="full">Nombre <span class="req">*</span><input data-k="emergencia_nombre" maxlength="120" required /></label>
+          <label>Parentesco <span class="req">*</span><select data-k="emergencia_parentesco" data-lista="parentesco" required></select></label>
+          <label>Celular / teléfono <span class="req">*</span><input data-k="emergencia_telefono1" inputmode="tel" maxlength="13" required /></label>
+          <label>Otro teléfono<input data-k="emergencia_telefono2" inputmode="tel" maxlength="13" /></label>
+          <label>Dirección del contacto<input data-k="emergencia_direccion" maxlength="150" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>💼 Último trabajo como conductor</h2>
+        <div class="grid">
+          <label class="full">Empresa<input data-k="ref_empresa" maxlength="120" /></label>
+          <label>Cargo<input data-k="ref_cargo" maxlength="80" placeholder="Ej: CONDUCTOR DE BUS" /></label>
+          <label>Jefe inmediato<input data-k="ref_nombre_jefe" maxlength="120" /></label>
+          <label>Teléfono de la empresa o del jefe<input data-k="ref_telefono_jefe" inputmode="tel" maxlength="15" /></label>
+          <label>Motivo de retiro<input data-k="ref_motivo_retiro" maxlength="150" /></label>
+          <label>Fecha de ingreso<input data-k="ref_fecha_ingreso" type="date" /></label>
+          <label>Fecha de retiro<input data-k="ref_fecha_retiro" type="date" /></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🤝 Referencia personal</h2>
+        <div class="grid">
+          <label class="full">Nombre<input data-k="refp_nombre" maxlength="120" /></label>
+          <label>Relación<input data-k="refp_parentesco" maxlength="60" placeholder="Ej: AMIGO, VECINO" /></label>
+          <label>Teléfono<input data-k="refp_telefono" inputmode="tel" maxlength="13" /></label>
+        </div>
+      </div>
+
+      <div id="err2" class="error" hidden></div>
+      <button class="btn" type="submit">Continuar</button>
+      <button class="btn btn-sec" type="button" data-volver="paso1">← Volver</button>
+    </form>
+
+    <!-- ===== Paso 3: documentos y autorización ===== -->
+    <form id="paso3" novalidate hidden>
+      <div class="card">
+        <div class="pasos"><span class="on"></span><span class="on"></span><span class="on"></span></div>
+        <div class="paso-n">Paso 3 de 3</div>
+        <h2>📎 Documentos</h2>
+        <p class="hint" style="margin-top:-6px">Toma una foto clara (con buena luz y que se lea) o adjunta un PDF. Máximo 10 MB por archivo.</p>
+        <div id="docs"></div>
+      </div>
+
+      <div class="card">
+        <h2>🔒 Autorización de tratamiento de datos</h2>
+        <div class="habeas">
+          En cumplimiento de la Ley 1581 de 2012 y el Decreto 1377 de 2013, autorizo de manera previa, expresa e informada a
+          <b>Autobuses El Poblado</b> para recolectar, almacenar, usar, verificar y actualizar los datos personales y los documentos que
+          suministro en este formulario, incluidos datos sensibles (salud, tipo de sangre y núcleo familiar), con la finalidad de adelantar
+          el <b>proceso de selección de conductores</b>: verificar mi identidad, licencia de conducción, antecedentes (Policía, Procuraduría,
+          Contraloría, SIMIT y RUNT), experiencia y referencias; realizar entrevista, pruebas psicotécnicas, prueba de manejo, exámenes médicos
+          y visita domiciliaria; y, si soy contratado, gestionar la relación laboral. Si no soy seleccionado, mis datos podrán conservarse hasta
+          por un (1) año para tenerme en cuenta en futuras vacantes. Declaro que la información es verdadera y que tengo autorización de las
+          personas cuyos datos registro (contacto de emergencia, familiares y referencias). Sé que puedo conocer, actualizar, rectificar y
+          solicitar la supresión de mis datos a través de Gestión Humana. Suministrar datos sensibles es facultativo.
+        </div>
+        <label class="acepto"><input type="checkbox" id="acepto" /> <span>Leí y <b>acepto</b> la autorización de tratamiento de datos personales. <span class="req">*</span></span></label>
+      </div>
+
+      <div id="err3" class="error" hidden></div>
+      <button class="btn" type="submit" id="enviar">Enviar mi inscripción</button>
+      <p class="progreso" id="progreso" hidden></p>
+      <button class="btn btn-sec" type="button" data-volver="paso2" id="volver3">← Volver</button>
+    </form>
+
+    <div id="gracias" class="card gracias" hidden>
+      <div class="ic">✅</div>
+      <h2 style="justify-content:center">¡Recibimos tu inscripción!</h2>
+      <p>Gestión Humana revisará tus datos y documentos y te contactará al celular que registraste. Ya puedes cerrar esta página.</p>
+    </div>
+    <datalist id="l-ciudad"></datalist>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERFIL_LISTAS, ASPIRANTE_LISTAS } from './js/config.js';
+
+    // Cliente ANÓNIMO: no usa ni toca la sesión guardada de la app (aunque haya un admin logueado)
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const L = { ...PERFIL_LISTAS, ...ASPIRANTE_LISTAS };
+    const $ = (id) => document.getElementById(id);
+    const pasos = ['paso1', 'paso2', 'paso3'].map($);
+    const MAX_MB = 10;
+    const TIPOS_OK = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', pdf: 'application/pdf' };
+
+    // Listas desplegables (las mismas del Perfil en la app)
+    document.querySelectorAll('select[data-lista]').forEach((s) => {
+      s.innerHTML = '<option value="">Selecciona…</option>' + (L[s.dataset.lista] || [])
+        .map((o) => `<option value="${o}">${o}</option>`).join('');
+    });
+    $('l-ciudad').innerHTML = L.ciudad.map((c) => `<option value="${c}">`).join('');
+    document.querySelector('[data-k="departamento"]').value = 'ANTIOQUIA';
+    $('vehiculos').innerHTML = L.vehiculos.map((v) => `<label><input type="checkbox" value="${v}" /> ${v}</label>`).join('');
+
+    // Campos que dependen de otra respuesta (pareja, hijos, referido)
+    const toggleSi = () => document.querySelectorAll('[data-si]').forEach((el) => {
+      const val = document.querySelector(`[data-k="${el.dataset.si}"]`).value;
+      el.hidden = val !== (el.dataset.siValor || 'SI');
+    });
+    document.querySelectorAll('[data-k="convive_pareja"], [data-k="tiene_hijos"], [data-k="como_se_entero"]').forEach((s) => s.addEventListener('change', toggleSi));
+    toggleSi();
+
+    const soloDigitos = (v) => String(v || '').replace(/\D/g, '');
+    const mostrarError = (el, msg) => { el.textContent = msg; el.hidden = !msg; if (msg) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    const irA = (i) => { pasos.forEach((p, j) => { p.hidden = j !== i; }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+    document.querySelectorAll('[data-volver]').forEach((b) => b.addEventListener('click', () => irA(pasos.indexOf($(b.dataset.volver)))));
+
+    // Lee los campos visibles de un paso; devuelve el primer obligatorio vacío (o null)
+    function leerPaso(form, datos) {
+      let faltante = null;
+      for (const el of form.querySelectorAll('[data-k]')) {
+        if (el.closest('[hidden]')) continue;
+        let v = (el.value || '').trim();
+        if (el.required && !v && !faltante) faltante = el;
+        if (!v) continue;
+        if (el.type === 'email') v = v.toLowerCase();
+        else if (el.type !== 'date' && el.tagName !== 'SELECT') v = v.toUpperCase();
+        datos[el.dataset.k] = v;
+      }
+      return faltante;
+    }
+    const nombreDe = (el) => el.closest('label')?.childNodes[0]?.textContent.trim() || 'un campo obligatorio';
+    const datos = {};
+
+    $('paso1').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const err = $('err1');
+      for (const k of Object.keys(datos)) delete datos[k];
+      const falta = leerPaso($('paso1'), datos);
+      if (falta) { falta.focus(); return mostrarError(err, `Falta: ${nombreDe(falta)}.`); }
+      datos.cedula = soloDigitos(datos.cedula);
+      if (datos.cedula.length < 5 || datos.cedula.length > 12) return mostrarError(err, 'Escribe tu número de cédula (solo números).');
+      if (datos.nombre.length < 5) return mostrarError(err, 'Escribe tus apellidos y nombres completos.');
+      const hoy = new Date();
+      const fn = new Date(datos.fecha_nacimiento + 'T12:00:00');
+      const edad = hoy.getFullYear() - fn.getFullYear() - ((hoy.getMonth() < fn.getMonth() || (hoy.getMonth() === fn.getMonth() && hoy.getDate() < fn.getDate())) ? 1 : 0);
+      if (!(edad >= 18 && edad <= 80)) return mostrarError(err, 'Revisa tu fecha de nacimiento (debes ser mayor de edad).');
+      const cel = soloDigitos(datos.celular).replace(/^57(?=3\d{9}$)/, '');
+      if (!/^3\d{9}$/.test(cel)) return mostrarError(err, 'El celular debe tener 10 dígitos y empezar por 3.');
+      datos.celular = cel;
+      if (datos.telefono) datos.telefono = soloDigitos(datos.telefono);
+      if (datos.correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(datos.correo)) return mostrarError(err, 'Revisa tu correo electrónico.');
+      if (!/^\d{1,2}$/.test(datos.experiencia_anios || '')) return mostrarError(err, 'Escribe tus años de experiencia (un número).');
+      const veh = [...$('vehiculos').querySelectorAll('input:checked')].map((c) => c.value);
+      if (veh.length) datos.vehiculos_conducidos = veh.join(', ');
+      mostrarError(err, '');
+      irA(1);
+    });
+
+    $('paso2').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const err = $('err2');
+      const falta = leerPaso($('paso2'), datos);
+      if (falta) { falta.focus(); return mostrarError(err, `Falta: ${nombreDe(falta)}.`); }
+      for (const k of ['emergencia_telefono1', 'emergencia_telefono2', 'ref_telefono_jefe', 'refp_telefono']) {
+        if (!datos[k]) continue;
+        datos[k] = soloDigitos(datos[k]);
+        if (datos[k].length < 7) return mostrarError(err, 'Revisa los números de teléfono (mínimo 7 dígitos).');
+      }
+      mostrarError(err, '');
+      irA(2);
+    });
+
+    // ---- Documentos: archivos elegidos por tipo ----
+    const archivos = {}; // tipo -> [{file, subido: path|null}]
+    function pintarDocs() {
+      $('docs').innerHTML = ASPIRANTE_LISTAS.documentos.map((d) => {
+        const lista = archivos[d.key] || [];
+        return `<div class="doc">
+          <div class="doc-h"><span>${d.label} ${d.req ? '<span class="req">*</span>' : '<span class="hint">(opcional)</span>'}</span><span class="hint">${lista.length}/${d.max}</span></div>
+          <div class="doc-files">${lista.map((a, i) => `<div class="doc-file${a.registrado ? ' ok' : ''}"><span>${a.registrado ? '✅' : '📄'}${a.file.name.replace(/[<>&"]/g, '')}</span>${a.subido ? '' : `<button type="button" data-quitar="${d.key}" data-i="${i}" aria-label="Quitar">✕</button>`}</div>`).join('')}</div>
+          ${lista.length < d.max ? `<label class="doc-add">📷 Agregar foto o PDF<input type="file" accept="image/*,application/pdf" data-tipo="${d.key}" multiple /></label>` : ''}
+        </div>`;
+      }).join('');
+    }
+    $('docs').addEventListener('change', (e) => {
+      const inp = e.target.closest('input[type="file"][data-tipo]'); if (!inp) return;
+      const d = ASPIRANTE_LISTAS.documentos.find((x) => x.key === inp.dataset.tipo);
+      const lista = archivos[d.key] = archivos[d.key] || [];
+      for (const f of inp.files) {
+        if (lista.length >= d.max) break;
+        if (!tipoArchivo(f)) { mostrarError($('err3'), `"${f.name}" no es una foto ni un PDF.`); continue; }
+        if (f.size > MAX_MB * 1024 * 1024 * 3) { mostrarError($('err3'), `"${f.name}" es demasiado pesado.`); continue; }
+        lista.push({ file: f, subido: null });
+      }
+      pintarDocs();
+    });
+    $('docs').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-quitar]'); if (!b) return;
+      archivos[b.dataset.quitar].splice(Number(b.dataset.i), 1);
+      pintarDocs();
+    });
+    pintarDocs();
+
+    function tipoArchivo(f) {
+      const ext = (f.name.split('.').pop() || '').toLowerCase();
+      if (Object.values(TIPOS_OK).includes(f.type)) return f.type;
+      return TIPOS_OK[ext] || (/^image\//.test(f.type) ? 'image/jpeg' : null);
+    }
+    // Reduce fotos grandes del celular (menos datos móviles y subida más rápida)
+    async function comprimir(f) {
+      if (!/^image\/(jpeg|png|webp)$/.test(f.type) || f.size < 700 * 1024) return f;
+      try {
+        const bmp = await createImageBitmap(f);
+        const k = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
+        if (!blob || blob.size >= f.size) return f;
+        return new File([blob], f.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+      } catch { return f; }
+    }
+    const nombreSeguro = (n) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
+
+    let token = null; // se obtiene al guardar la inscripción; sirve 3 horas para subir documentos
+    $('paso3').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('err3');
+      for (const d of ASPIRANTE_LISTAS.documentos) {
+        if (d.req && !(archivos[d.key] || []).length) return mostrarError(err, `Falta adjuntar: ${d.label}.`);
+      }
+      if (!$('acepto').checked) return mostrarError(err, 'Debes aceptar la autorización de tratamiento de datos para enviar.');
+      mostrarError(err, '');
+      const btn = $('enviar'), prog = $('progreso');
+      btn.disabled = true; $('volver3').hidden = true; prog.hidden = false;
+      try {
+        if (!token) {
+          prog.textContent = 'Guardando tu inscripción…';
+          const { data, error } = await sb.rpc('aspirante_inscribir', { p_datos: datos, p_acepta: true });
+          if (error) throw error;
+          token = data.token;
+        }
+        // Cada archivo se sube y se registra de inmediato: si la conexión se cae, lo ya subido no se pierde
+        const pendientes = [];
+        for (const [tipo, lista] of Object.entries(archivos)) lista.forEach((a) => { if (!a.registrado) pendientes.push({ tipo, a }); });
+        let n = 0;
+        for (const { tipo, a } of pendientes) {
+          n++;
+          prog.textContent = `Subiendo documentos ${n} de ${pendientes.length}…`;
+          if (!a.subido) {
+            const f = await comprimir(a.file);
+            if (f.size > MAX_MB * 1024 * 1024) throw new Error(`"${a.file.name}" pesa más de ${MAX_MB} MB. Quítalo y adjunta una foto más liviana.`);
+            const path = `inscripciones/${token}/${tipo}/${Date.now()}_${n}_${nombreSeguro(f.name)}`;
+            const up = await sb.storage.from('aspirantes').upload(path, f, { upsert: false, contentType: tipoArchivo(f) });
+            if (up.error) throw new Error(`No se pudo subir "${a.file.name}". Revisa tu conexión y toca "Reintentar".`);
+            a.subido = path;
+          }
+          const { error } = await sb.rpc('aspirante_adjuntar', { p_token: token, p_archivos: [{ tipo, path: a.subido, nombre: a.file.name }] });
+          if (error) throw error;
+          a.registrado = true;
+        }
+        pasos.forEach((p) => { p.hidden = true; });
+        $('gracias').hidden = false;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (ex) {
+        pintarDocs();
+        const msg = (ex && ex.message) ? ex.message : 'No se pudo enviar. Revisa tu conexión e intenta de nuevo.';
+        mostrarError(err, token ? `Tus datos ya quedaron guardados. ${msg}` : msg);
+        btn.textContent = token ? 'Reintentar subir documentos' : 'Enviar mi inscripción';
+        if (!token) $('volver3').hidden = false;
+      } finally {
+        btn.disabled = false; prog.hidden = true;
+      }
+    });
+  </script>
+</body>
+</html>

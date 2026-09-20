@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v257';
+export const APP_VERSION = 'v258';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -24,7 +24,191 @@ const NOVEDADES = [
 
 export const TABLE_ORDER = [
   'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'tablas_despacho', 'ubicaciones', 'vehiculosgps',
-  'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios',
+  'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios', 'perfilsociodemografico', 'perfil_vinculaciones',
+];
+
+// Listas unificadas del PERFIL SOCIODEMOGRÁFICO. Las usan el formulario del admin y el link público
+// de actualización de datos (actualizar-datos.html), para que los datos no se vuelvan a desordenar.
+export const PERFIL_LISTAS = {
+  tipo: ['CONDUCTOR', 'ADMINISTRATIVO'],
+  estado: ['ACTIVO', 'INACTIVO'],
+  tipo_ingreso: ['NUEVO', 'REINGRESO', 'PROVEEDOR'],
+  tipo_contrato: ['INDEFINIDO', 'FIJO', 'APRENDIZAJE', 'OBRA O LABOR', 'PRESTACIÓN DE SERVICIOS'],
+  area: ['OPERATIVA', 'ADMINISTRATIVA', 'CONTROL', 'RUTAS', 'CONTABILIDAD', 'TALLER', 'RECURSO HUMANO', 'GERENCIA',
+    'SEGURIDAD VIAL', 'OPERACIONES', 'GESTION DE FLOTAS', 'APRENDIZ'],
+  eps: ['SURA', 'SALUD TOTAL', 'NUEVA EPS', 'SAVIA SALUD', 'SANITAS', 'COOSALUD', 'COOMEVA', 'MEDIMÁS', 'COMPENSAR',
+    'FAMISANAR', 'CAJACOPI', 'SANIDAD MILITAR', 'FAMILIAR DE COLOMBIA'],
+  afp: ['PROTECCIÓN', 'PORVENIR', 'COLPENSIONES', 'COLFONDOS', 'SKANDIA', 'NO APLICA'],
+  sexo: ['MASCULINO', 'FEMENINO'],
+  tipo_sangre: ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'],
+  estado_civil: ['SOLTERO(A)', 'UNIÓN LIBRE', 'CASADO(A)', 'SEPARADO(A)', 'DIVORCIADO(A)', 'VIUDO(A)'],
+  si_no: ['SI', 'NO'],
+  tipo_vivienda: ['ARRENDADA', 'FAMILIAR', 'PROPIA', 'COMPARTIDA'],
+  estrato: ['1', '2', '3', '4', '5', '6'],
+  departamento: ['ANTIOQUIA', 'AMAZONAS', 'ARAUCA', 'ATLÁNTICO', 'BOGOTÁ D.C.', 'BOLÍVAR', 'BOYACÁ', 'CALDAS', 'CAQUETÁ',
+    'CASANARE', 'CAUCA', 'CESAR', 'CHOCÓ', 'CÓRDOBA', 'CUNDINAMARCA', 'GUAINÍA', 'GUAVIARE', 'HUILA', 'LA GUAJIRA',
+    'MAGDALENA', 'META', 'NARIÑO', 'NORTE DE SANTANDER', 'PUTUMAYO', 'QUINDÍO', 'RISARALDA', 'SAN ANDRÉS', 'SANTANDER',
+    'SUCRE', 'TOLIMA', 'VALLE DEL CAUCA', 'VAUPÉS', 'VICHADA', 'VENEZUELA'],
+  ciudad: ['MEDELLÍN', 'BELLO', 'ITAGÜÍ', 'ENVIGADO', 'SABANETA', 'CALDAS', 'LA ESTRELLA', 'COPACABANA', 'GIRARDOTA',
+    'BARBOSA', 'SAN ANTONIO DE PRADO', 'MARINILLA', 'RIONEGRO', 'GUARNE'],
+  escolaridad: ['PRIMARIA INCOMPLETA', 'PRIMARIA', 'SECUNDARIA INCOMPLETA', 'BACHILLER', 'TÉCNICO', 'TECNÓLOGO',
+    'PROFESIONAL', 'POSGRADO'],
+  personas_a_cargo: ['NINGUNA', '1 A 3 PERSONAS', '4 A 6 PERSONAS', 'MÁS DE 6 PERSONAS'],
+  parentesco: ['CÓNYUGE/PAREJA', 'MADRE', 'PADRE', 'HERMANO(A)', 'HIJO(A)', 'NOVIO(A)', 'TÍO(A)', 'PRIMO(A)',
+    'ABUELO(A)', 'SUEGRO(A)', 'CUÑADO(A)', 'SOBRINO(A)', 'OTRO FAMILIAR', 'AMIGO(A)'],
+  categoria_licencia: ['A1', 'A2', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3'],
+  estado_restriccion: ['SIN RESTRICCION', 'RESTRINGIDO'],
+};
+const PL = PERFIL_LISTAS;
+
+// ---- 🧑‍✈️ PROCESO DE ASPIRANTES A CONDUCTOR (sql/77) ----
+// Lo usan el link público (trabaja-con-nosotros.html) y la pantalla del admin.
+export const ASPIRANTE_LISTAS = {
+  vehiculos: ['BUS', 'BUSETA', 'MICROBÚS', 'CAMIÓN', 'TAXI', 'CAMIONETA'],
+  como_se_entero: ['REFERIDO POR UN CONDUCTOR O EMPLEADO', 'REDES SOCIALES', 'PORTAL DE EMPLEO', 'AVISO EN LA EMPRESA', 'OTRO'],
+  disponibilidad: ['INMEDIATA', 'EN 15 DÍAS', 'EN 1 MES O MÁS'],
+  // Documentos que sube el aspirante (máx. 15 archivos en total, lo controla el servidor)
+  documentos: [
+    { key: 'cedula', label: 'Cédula (ambas caras)', req: true, max: 2 },
+    { key: 'licencia', label: 'Licencia de conducción (ambas caras)', req: true, max: 2 },
+    { key: 'hoja_vida', label: 'Hoja de vida', max: 2 },
+    { key: 'certificados', label: 'Certificados laborales', max: 3 },
+    { key: 'antecedentes', label: 'Antecedentes (Policía, Procuraduría, Contraloría, SIMIT)', max: 4 },
+    { key: 'otros', label: 'Otros documentos', max: 2 },
+  ],
+  // Documentos que agrega el admin durante el proceso (resultados de pruebas, exámenes, contrato)
+  documentos_admin: [
+    { key: 'antecedentes', label: 'Antecedentes consultados' },
+    { key: 'psicotecnicas', label: 'Resultado psicotécnicas' },
+    { key: 'prueba_manejo', label: 'Formato prueba de manejo' },
+    { key: 'examen_medico', label: 'Examen médico de ingreso' },
+    { key: 'visita_domiciliaria', label: 'Visita domiciliaria' },
+    { key: 'contrato', label: 'Contrato firmado' },
+    { key: 'otros', label: 'Otros documentos' },
+  ],
+  motivos_descarte: ['DOCUMENTOS INCOMPLETOS O NO VÁLIDOS', 'LICENCIA NO VÁLIDA O VENCIDA', 'ANTECEDENTES', 'MULTAS O COMPARENDOS PENDIENTES',
+    'NO APROBÓ ENTREVISTA O PSICOTÉCNICAS', 'NO APROBÓ LA PRUEBA DE MANEJO', 'NO APTO EN EXAMEN MÉDICO', 'VISITA DOMICILIARIA NO FAVORABLE',
+    'NO ASISTIÓ O NO RESPONDE', 'DESISTIÓ', 'OTRO'],
+};
+// Etapas en orden, con su lista de chequeo (cada ítem: ✅ cumple / ❌ no cumple / N/A) y datos extra
+export const ASPIRANTE_ETAPAS = [
+  { key: 'DOCUMENTOS', icon: '📄', label: 'Documentos y antecedentes', corto: 'Documentos',
+    checks: [['hoja_vida', 'Hoja de vida'], ['cedula', 'Cédula'], ['licencia', 'Licencia C2/C3 vigente (verificada en RUNT)'],
+      ['policia', 'Antecedentes Policía Nacional'], ['procuraduria', 'Antecedentes Procuraduría'], ['contraloria', 'Antecedentes Contraloría'],
+      ['simit', 'SIMIT sin multas pendientes'], ['referencias', 'Certificados y referencias laborales verificadas']] },
+  { key: 'ENTREVISTA', icon: '🗣️', label: 'Entrevista y psicotécnicas', corto: 'Entrevista',
+    checks: [['entrevista', 'Entrevista con Gestión Humana'], ['psicotecnica', 'Prueba psicotécnica'], ['psicosensometrica', 'Prueba psicosensométrica']],
+    campos: [{ key: 'entrevistador', label: 'Entrevistó', type: 'text' }, { key: 'concepto', label: 'Concepto / puntaje', type: 'text' }] },
+  { key: 'MANEJO', icon: '🚌', label: 'Prueba de manejo', corto: 'Manejo',
+    checks: [['conduccion', 'Conducción en ruta'], ['maniobras', 'Maniobras, reversa y parqueo'], ['normas', 'Normas de tránsito y trato al pasajero']],
+    campos: [{ key: 'instructor', label: 'Instructor', type: 'text' }, { key: 'movil', label: 'Móvil usado', type: 'text' },
+      { key: 'calificacion', label: 'Calificación (0 a 100)', type: 'number' }] },
+  { key: 'MEDICOS', icon: '🩺', label: 'Médicos y visita domiciliaria', corto: 'Médicos',
+    checks: [['examen_medico', 'Examen médico de ingreso'], ['visita', 'Visita domiciliaria'], ['estudio_seguridad', 'Estudio de seguridad']],
+    campos: [{ key: 'concepto_medico', label: 'Concepto médico', type: 'enum', options: ['APTO', 'APTO CON RESTRICCIONES', 'NO APTO'] }] },
+];
+// Datos de la inscripción, en el orden en que se muestran y se exportan
+export const ASPIRANTE_CAMPOS = [
+  { grupo: 'Contacto y vivienda', campos: [['celular', 'Celular'], ['telefono', 'Otro teléfono'], ['correo', 'Correo'], ['direccion', 'Dirección'],
+    ['barrio', 'Barrio'], ['ciudad', 'Municipio'], ['departamento', 'Departamento'], ['estrato', 'Estrato'], ['tipo_vivienda', 'Tipo de vivienda']] },
+  { grupo: 'Licencia y experiencia', campos: [['categoria_licencia', 'Categoría de licencia'], ['numero_licencia', 'Número de licencia'],
+    ['licencia_expedicion', 'Expedición de la licencia'], ['licencia_vencimiento', 'Vencimiento de la licencia'], ['restricciones_licencia', 'Restricciones de la licencia'],
+    ['experiencia_anios', 'Años de experiencia (servicio público)'], ['vehiculos_conducidos', 'Vehículos que ha conducido'],
+    ['comparendos_pendientes', '¿Tiene comparendos pendientes?'], ['trabajo_antes_apl', '¿Trabajó antes en APL?'], ['disponibilidad', 'Disponibilidad'],
+    ['como_se_entero', '¿Cómo se enteró?'], ['referido_por', 'Referido por']] },
+  { grupo: 'Datos personales', campos: [['sexo', 'Sexo'], ['tipo_sangre', 'Tipo de sangre'], ['estado_civil', 'Estado civil'], ['uso_lentes', '¿Usa lentes?'],
+    ['eps', 'EPS'], ['afp', 'Fondo de pensiones'], ['escolaridad', 'Escolaridad'], ['escolaridad_detalle', 'Último grado o título'],
+    ['institucion_educativa', 'Institución educativa']] },
+  { grupo: 'Núcleo familiar', campos: [['personas_a_cargo', 'Personas a cargo'], ['convive_pareja', '¿Tiene pareja?'], ['nombre_pareja', 'Nombre de la pareja'],
+    ['edad_pareja', 'Edad de la pareja'], ['tiene_hijos', '¿Tiene hijos?'], ['edades_hijos', 'Edades de los hijos'], ['edades_hijas', 'Edades de las hijas'],
+    ['otros_a_cargo', 'Otras personas a cargo'], ['edades_otros', 'Edades de otras personas a cargo']] },
+  { grupo: 'Contacto de emergencia', campos: [['emergencia_nombre', 'Nombre'], ['emergencia_parentesco', 'Parentesco'],
+    ['emergencia_telefono1', 'Teléfono 1'], ['emergencia_telefono2', 'Teléfono 2'], ['emergencia_direccion', 'Dirección']] },
+  { grupo: 'Referencias', campos: [['ref_empresa', 'Última empresa'], ['ref_cargo', 'Cargo'], ['ref_nombre_jefe', 'Jefe inmediato'],
+    ['ref_telefono_jefe', 'Teléfono del jefe'], ['ref_fecha_ingreso', 'Fecha de ingreso'], ['ref_fecha_retiro', 'Fecha de retiro'],
+    ['ref_motivo_retiro', 'Motivo de retiro'], ['refp_nombre', 'Referencia personal'], ['refp_parentesco', 'Relación'], ['refp_telefono', 'Teléfono referencia personal']] },
+];
+
+// Años cumplidos entre una fecha (YYYY-MM-DD) y otra (por defecto hoy)
+function aniosEntre(desde, hasta) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(desde || '')); if (!m) return '';
+  const h = hasta ? new Date(String(hasta).slice(0, 10) + 'T12:00:00') : new Date();
+  let a = h.getFullYear() - Number(m[1]);
+  if (h.getMonth() + 1 < Number(m[2]) || (h.getMonth() + 1 === Number(m[2]) && h.getDate() < Number(m[3]))) a--;
+  return a >= 0 && a < 120 ? a : '';
+}
+const edadPerfil = (r) => aniosEntre(r.fecha_nacimiento);
+const antiguedadPerfil = (r) => aniosEntre(r.fecha_ingreso, r.fecha_retiro);
+// Campos de la ficha del empleado (se reutilizan para exportar TODO a Excel)
+const PERFIL_FIELDS = [
+  { key: 'cedula', label: 'Cédula', type: 'text', required: true, section: 'Identificación', hint: 'Solo números. Es la llave de la persona: no se repite.' },
+  { key: 'nombre', label: 'Apellidos y nombre', type: 'text', required: true, section: 'Identificación' },
+  { key: 'tipo', label: 'Tipo de empleado', type: 'enum', options: PL.tipo, required: true, section: 'Identificación' },
+  { key: 'estado', label: 'Estado', type: 'enum', options: PL.estado, required: true, section: 'Identificación', hint: 'Al retirar a alguien: INACTIVO + fecha de retiro. Al reintegrarlo: ACTIVO + la nueva fecha de ingreso (queda en el historial).' },
+  { key: 'codigo', label: 'Código', type: 'text', section: 'Identificación' },
+  { key: 'correo', label: 'Correo electrónico', type: 'text', section: 'Identificación' },
+  { key: 'celular', label: 'Celular', type: 'text', section: 'Identificación' },
+  { key: 'telefono', label: 'Teléfono fijo', type: 'text', section: 'Identificación' },
+  { key: 'fecha_ingreso', label: 'Fecha de ingreso', type: 'date', required: true, section: 'Laboral' },
+  { key: 'fecha_retiro', label: 'Fecha de retiro', type: 'date', section: 'Laboral' },
+  { key: 'tipo_ingreso', label: 'Tipo de ingreso', type: 'enum', options: PL.tipo_ingreso, section: 'Laboral' },
+  { key: 'tipo_contrato', label: 'Tipo de contrato', type: 'enum', options: PL.tipo_contrato, section: 'Laboral' },
+  { key: 'cargo', label: 'Cargo', type: 'text', required: true, section: 'Laboral' },
+  { key: 'area', label: 'Área', type: 'enum', options: PL.area, section: 'Laboral' },
+  { key: 'salario', label: 'Salario', type: 'number', min: 0, section: 'Laboral' },
+  { key: 'centro_costos', label: 'Centro de costos', type: 'text', section: 'Laboral' },
+  { key: 'nombre_propietario', label: 'Nombre propietario (vehículo / empleador)', type: 'text', section: 'Laboral' },
+  { key: 'placa', label: 'Placa', type: 'text', section: 'Laboral' },
+  { key: 'novedad_retiro', label: 'Novedad de retiro', type: 'text', section: 'Laboral' },
+  { key: 'eps', label: 'EPS', type: 'enum', options: PL.eps, section: 'Seguridad social' },
+  { key: 'afp', label: 'Fondo de pensiones (AFP)', type: 'enum', options: PL.afp, section: 'Seguridad social' },
+  { key: 'arl', label: 'ARL', type: 'text', section: 'Seguridad social' },
+  { key: 'categoria_licencia', label: 'Categoría de licencia', type: 'enum', options: PL.categoria_licencia, section: 'Licencia y restricción', hint: 'Aplica a conductores.' },
+  { key: 'numero_licencia', label: 'Número de licencia', type: 'text', section: 'Licencia y restricción' },
+  { key: 'licencia_expedicion', label: 'Expedición de la licencia', type: 'date', section: 'Licencia y restricción' },
+  { key: 'licencia_vencimiento', label: 'Vencimiento de la licencia', type: 'date', section: 'Licencia y restricción' },
+  { key: 'restricciones_licencia', label: 'Restricciones de la licencia', type: 'text', section: 'Licencia y restricción' },
+  { key: 'estado_restriccion', label: 'Estado de restricción', type: 'enum', options: PL.estado_restriccion, section: 'Licencia y restricción' },
+  { key: 'motivo_restriccion', label: 'Motivo de la restricción', type: 'textarea', section: 'Licencia y restricción' },
+  { key: 'sexo', label: 'Sexo', type: 'enum', options: PL.sexo, section: 'Datos personales' },
+  { key: 'fecha_nacimiento', label: 'Fecha de nacimiento', type: 'date', section: 'Datos personales' },
+  { key: 'tipo_sangre', label: 'Tipo de sangre', type: 'enum', options: PL.tipo_sangre, section: 'Datos personales' },
+  { key: 'estado_civil', label: 'Estado civil', type: 'enum', options: PL.estado_civil, section: 'Datos personales' },
+  { key: 'uso_lentes', label: '¿Usa lentes?', type: 'enum', options: PL.si_no, section: 'Datos personales' },
+  { key: 'direccion', label: 'Dirección', type: 'text', section: 'Vivienda' },
+  { key: 'barrio', label: 'Barrio', type: 'text', section: 'Vivienda' },
+  { key: 'ciudad', label: 'Ciudad / municipio', type: 'text', section: 'Vivienda' },
+  { key: 'departamento', label: 'Departamento', type: 'enum', options: PL.departamento, section: 'Vivienda' },
+  { key: 'estrato', label: 'Estrato', type: 'number', min: 0, section: 'Vivienda' },
+  { key: 'tipo_vivienda', label: 'Tipo de vivienda', type: 'enum', options: PL.tipo_vivienda, section: 'Vivienda' },
+  { key: 'escolaridad', label: 'Escolaridad', type: 'enum', options: PL.escolaridad, section: 'Educación' },
+  { key: 'escolaridad_detalle', label: 'Detalle de escolaridad', type: 'text', section: 'Educación', hint: 'Último grado o título (ej. OCTAVO, TÉCNICO EN MECÁNICA).' },
+  { key: 'institucion_educativa', label: 'Institución educativa', type: 'text', section: 'Educación' },
+  { key: 'fecha_ultimo_grado', label: 'Fecha del último grado', type: 'date', section: 'Educación' },
+  { key: 'ciudad_estudio', label: 'Ciudad donde estudió', type: 'text', section: 'Educación' },
+  { key: 'departamento_estudio', label: 'Departamento donde estudió', type: 'enum', options: PL.departamento, section: 'Educación' },
+  { key: 'personas_a_cargo', label: 'Personas a cargo', type: 'enum', options: PL.personas_a_cargo, section: 'Núcleo familiar' },
+  { key: 'convive_pareja', label: '¿Tiene esposo(a) / pareja?', type: 'enum', options: PL.si_no, section: 'Núcleo familiar' },
+  { key: 'nombre_pareja', label: 'Nombre de la pareja', type: 'text', section: 'Núcleo familiar' },
+  { key: 'edad_pareja', label: 'Edad de la pareja', type: 'text', section: 'Núcleo familiar' },
+  { key: 'tiene_hijos', label: '¿Tiene hijos?', type: 'enum', options: PL.si_no, section: 'Núcleo familiar' },
+  { key: 'edades_hijos', label: 'Edades de los hijos', type: 'text', section: 'Núcleo familiar' },
+  { key: 'edades_hijas', label: 'Edades de las hijas', type: 'text', section: 'Núcleo familiar' },
+  { key: 'otros_a_cargo', label: 'Otras personas a cargo', type: 'text', section: 'Núcleo familiar' },
+  { key: 'edades_otros', label: 'Edades de otras personas a cargo', type: 'text', section: 'Núcleo familiar' },
+  { key: 'emergencia_nombre', label: 'Contacto de emergencia', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia_parentesco', label: 'Parentesco', type: 'enum', options: PL.parentesco, section: 'Contacto de emergencia' },
+  { key: 'emergencia_telefono1', label: 'Teléfono 1', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia_telefono2', label: 'Teléfono 2', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia_direccion', label: 'Dirección del contacto', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'ref_empresa', label: 'Empresa (referencia laboral)', type: 'text', section: 'Referencia laboral' },
+  { key: 'ref_cargo', label: 'Cargo desempeñado', type: 'text', section: 'Referencia laboral' },
+  { key: 'ref_telefono_jefe', label: 'Teléfono del jefe inmediato', type: 'text', section: 'Referencia laboral' },
+  { key: 'ref_fecha_ingreso', label: 'Fecha de ingreso (referencia)', type: 'date', section: 'Referencia laboral' },
+  { key: 'ref_fecha_retiro', label: 'Fecha de retiro (referencia)', type: 'date', section: 'Referencia laboral' },
+  { key: 'por_corregir', label: 'Campos por corregir', type: 'text', readOnly: true, section: 'Control de datos', hint: 'Vinieron dañados o incoherentes del archivo de origen. Cada campo sale de esta lista solo, al corregirlo y guardar.' },
+  { key: 'origen', label: 'Origen del registro', type: 'text', readOnly: true, section: 'Control de datos' },
+  { key: 'actualizado_por', label: 'Última actualización por', type: 'text', readOnly: true, section: 'Control de datos' },
 ];
 // Las tablas por puesto (laureles, etc.) se descubren solas desde la tabla `puestos`
 // y se registran en tiempo de ejecución (ver app.js). No hay que editar config por cada una.
@@ -702,6 +886,104 @@ export const TABLES = {
     searchCols: ['nombre'], defaultOrder: { col: 'nombre', asc: true },
     columns: [{ key: 'nombre', label: 'Nombre', m: true }],
     fields: [{ key: 'nombre', label: 'Nombre', type: 'text', required: true }],
+  },
+
+  // PERFIL SOCIODEMOGRÁFICO (solo admin; RLS perfil_admin, sql/75): 1 fila por persona, conductores y
+  // administrativos, activos e inactivos. "+ Nuevo" = empleado nuevo (crea su vinculación en el historial).
+  perfilsociodemografico: {
+    label: 'Perfil sociodemográfico',
+    icon: '👥',
+    pk: 'id',
+    pkEditable: false,
+    noDelete: true, // una persona no se borra: se pasa a INACTIVO (borrarla también borraría su historial)
+    select: '*',
+    searchCols: ['nombre', 'cedula', 'codigo', 'placa', 'cargo', 'celular'],
+    defaultOrder: { col: 'nombre', asc: true },
+    filters: [
+      { col: 'estado', label: 'Estado', options: PL.estado },
+      { col: 'tipo', label: 'Tipo', options: PL.tipo },
+      { col: 'calidad', label: 'Datos', options: ['POR CORREGIR', 'OK'] },
+    ],
+    columns: [
+      { key: 'cedula', label: 'Cédula', m: true },
+      { key: 'nombre', label: 'Nombre', m: true },
+      { key: 'tipo', label: 'Tipo', badge: true, m: true },
+      { key: 'estado', label: 'Estado', badge: true, m: true },
+      { key: 'cargo', label: 'Cargo' },
+      { key: 'celular', label: 'Celular' },
+      { label: 'Edad', calc: edadPerfil },
+      { label: 'Años en APL', calc: antiguedadPerfil },
+      { key: 'eps', label: 'EPS' },
+      { key: 'calidad', label: 'Datos', badge: true },
+    ],
+    // Excel: TODA la ficha (cada campo) + edad y antigüedad calculadas
+    exportCols: [
+      ...PERFIL_FIELDS.map((f) => ({ key: f.key, label: f.label })),
+      { label: 'Edad', calc: edadPerfil },
+      { label: 'Años en APL', calc: antiguedadPerfil },
+      { key: 'calidad', label: 'Calidad de datos' },
+      { key: 'habeas_data_aceptado_en', label: 'Autorizó tratamiento de datos' },
+      { key: 'actualizado_en', label: 'Actualizado en' },
+      { key: 'key_appsheet', label: 'KEY AppSheet' },
+      { key: 'adjuntos', label: 'Adjuntos AppSheet (rutas)' },
+    ],
+    fields: PERFIL_FIELDS,
+  },
+  // Historial de vinculaciones (ingresos / retiros / reingresos) de cada persona. Solo lectura: se
+  // alimenta solo al crear, retirar o reintegrar desde el Perfil. `datos_origen` = fila original del CSV.
+  perfil_vinculaciones: {
+    label: 'Historial de vinculaciones',
+    icon: '🗂️',
+    readonly: true,
+    pk: 'id',
+    pkEditable: false,
+    select: '*, per:perfilsociodemografico(nombre)',
+    searchCols: ['cedula', 'cargo', 'placa', 'key_appsheet'],
+    defaultOrder: { col: 'fecha_ingreso', asc: false },
+    filters: [
+      { col: 'estado', label: 'Estado', options: PL.estado },
+      { col: 'tipo', label: 'Tipo', options: PL.tipo },
+      { col: 'tipo_ingreso', label: 'Ingreso', options: PL.tipo_ingreso },
+    ],
+    columns: [
+      { key: 'cedula', label: 'Cédula', m: true },
+      { path: 'per.nombre', label: 'Nombre', m: true },
+      { key: 'tipo', label: 'Tipo', badge: true },
+      { key: 'tipo_ingreso', label: 'Ingreso', badge: true, m: true },
+      { key: 'fecha_ingreso', label: 'F. ingreso', m: true },
+      { key: 'fecha_retiro', label: 'F. retiro', m: true },
+      { key: 'estado', label: 'Estado', badge: true },
+      { key: 'cargo', label: 'Cargo' },
+      { key: 'origen', label: 'Origen' },
+    ],
+    exportCols: [
+      { key: 'cedula', label: 'Cédula' }, { path: 'per.nombre', label: 'Nombre' }, { key: 'tipo', label: 'Tipo' },
+      { key: 'tipo_ingreso', label: 'Tipo de ingreso' }, { key: 'fecha_ingreso', label: 'Fecha ingreso' },
+      { key: 'fecha_retiro', label: 'Fecha retiro' }, { key: 'estado', label: 'Estado' },
+      { key: 'tipo_contrato', label: 'Tipo de contrato' }, { key: 'cargo', label: 'Cargo' }, { key: 'area', label: 'Área' },
+      { key: 'salario', label: 'Salario' }, { key: 'centro_costos', label: 'Centro de costos' }, { key: 'placa', label: 'Placa' },
+      { key: 'nombre_propietario', label: 'Propietario' }, { key: 'novedad_retiro', label: 'Novedad de retiro' },
+      { key: 'origen', label: 'Origen' }, { key: 'key_appsheet', label: 'KEY AppSheet' },
+      { key: 'datos_origen', label: 'Fila original completa (CSV)' },
+    ],
+    fields: [
+      { key: 'cedula', label: 'Cédula', type: 'text' },
+      { key: 'tipo', label: 'Tipo', type: 'text' },
+      { key: 'tipo_ingreso', label: 'Tipo de ingreso', type: 'text' },
+      { key: 'fecha_ingreso', label: 'Fecha de ingreso', type: 'date' },
+      { key: 'fecha_retiro', label: 'Fecha de retiro', type: 'date' },
+      { key: 'estado', label: 'Estado', type: 'text' },
+      { key: 'tipo_contrato', label: 'Tipo de contrato', type: 'text' },
+      { key: 'cargo', label: 'Cargo', type: 'text' },
+      { key: 'area', label: 'Área', type: 'text' },
+      { key: 'salario', label: 'Salario', type: 'number' },
+      { key: 'centro_costos', label: 'Centro de costos', type: 'text' },
+      { key: 'placa', label: 'Placa', type: 'text' },
+      { key: 'nombre_propietario', label: 'Propietario', type: 'text' },
+      { key: 'novedad_retiro', label: 'Novedad de retiro', type: 'text' },
+      { key: 'origen', label: 'Origen', type: 'text' },
+      { key: 'key_appsheet', label: 'KEY AppSheet', type: 'text' },
+    ],
   },
 };
 
