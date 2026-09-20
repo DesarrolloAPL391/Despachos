@@ -7246,6 +7246,8 @@ function openSiniestro(s) {
         <h2>${esc(s.placa || 'sin placa')}${s.ruta ? ` · ruta ${esc(s.ruta)}` : ''}</h2>
         <div class="pf-sub">${esc(fechaLegible(s.fecha || ''))}${s.reportado_en ? ` · reportado ${esc(fmtFechaHora(s.reportado_en))}` : ''}</div>
         <div class="pf-chips">${chips}</div>
+        ${(isAdmin() || isAuditor()) && s.numero_interno
+    ? `<button type="button" class="btn btn-sm sin-evt-btn" data-sinevt>🔎 Eventos del bus ese día</button>` : ''}
       </div>
     </header>
     <div class="pf-secs">
@@ -7278,11 +7280,31 @@ function openSiniestro(s) {
       ${sinFotosHtml(s)}
     </div>
     ${sinTodoHtml(s)}`;
+  // Qué hacía el bus ese día: excesos de velocidad y puertas abiertas alrededor del siniestro
+  body.querySelector('[data-sinevt]')?.addEventListener('click', () => sinEventosDelBus(s));
   // El nombre del conductor abre su ficha en el perfil sociodemográfico
   body.querySelectorAll('[data-percedula]').forEach((b) => {
     b.onclick = () => sinAbrirPersona(b.dataset.percedula, b.dataset.percodigo);
   });
   m.hidden = false;
+}
+// Del siniestro a la conducta de manejo: abre los eventos del bus alrededor del choque
+// (dos horas antes y una después del reporte; si no hay hora, el día completo).
+async function sinEventosDelBus(s) {
+  if (!(isAdmin() || isAuditor())) {
+    toast('Los eventos del bus los consultan el administrador y los auditores.', 'err'); return;
+  }
+  const f = String(s.fecha || '').slice(0, 10) || hoyServidor();
+  let desde = `${f}T04:00`, hasta = `${f}T23:59`;
+  const m = /[T ](\d{2}):(\d{2})/.exec(String(s.reportado_en || ''));
+  if (m) {
+    const h = Number(m[1]);
+    desde = `${f}T${_pad2(Math.max(0, h - 2))}:${m[2]}`;
+    hasta = `${f}T${_pad2(Math.min(23, h + 1))}:${m[2]}`;
+  }
+  const evt = $('evt-modal');
+  if (evt) document.body.appendChild(evt); // que quede encima de la ficha del siniestro
+  await abrirEventosAuditor({ movil: s.numero_interno, ruta: s.ruta, fecha: f, hora: '00:00' }, [desde, hasta]);
 }
 // Del siniestro a la persona: busca por cédula y, si no está, por el código del conductor
 async function sinAbrirPersona(cedula, codigo) {
@@ -12367,7 +12389,7 @@ async function abrirEventosMovil() {
   let visto = true; try { visto = !!localStorage.getItem('tour_evt_v1'); } catch (e) {}
   if (!visto) { try { localStorage.setItem('tour_evt_v1', '1'); } catch (e) {} setTimeout(tourEventos, 450); }
 }
-async function abrirEventosAuditor(row) {
+async function abrirEventosAuditor(row, ventana) {
   _evtRow = row; _evtItems = []; _evtFiltro = 'todo';
   $('evt-veh-wrap').hidden = true; // desde una fila: el móvil viene fijo del despacho
   const movil = _evtMovil(row);
@@ -12378,13 +12400,46 @@ async function abrirEventosAuditor(row) {
   document.querySelectorAll('#evt-modal .evt-chip').forEach((c) => c.classList.toggle('evt-on', c.dataset.f === 'todo'));
   // Ventana por defecto: desde la hora del viaje hasta 3 h después (un viaje típico).
   const f = String(row.fecha || hoyServidor()).slice(0, 10);
-  const ini = _evtHora(row);
-  const fin = new Date(`${f}T${ini}:00`); fin.setHours(fin.getHours() + 3);
-  $('evt-desde').value = _evtLocal(f, ini);
-  $('evt-hasta').value = `${fin.getFullYear()}-${_pad2(fin.getMonth() + 1)}-${_pad2(fin.getDate())}T${_pad2(fin.getHours())}:${_pad2(fin.getMinutes())}`;
+  if (ventana) {
+    $('evt-desde').value = ventana[0]; $('evt-hasta').value = ventana[1];
+  } else {
+    const ini = _evtHora(row);
+    const fin = new Date(`${f}T${ini}:00`); fin.setHours(fin.getHours() + 3);
+    $('evt-desde').value = _evtLocal(f, ini);
+    $('evt-hasta').value = `${fin.getFullYear()}-${_pad2(fin.getMonth() + 1)}-${_pad2(fin.getDate())}T${_pad2(fin.getHours())}:${_pad2(fin.getMinutes())}`;
+  }
   $('evt-modal').hidden = false;
   if (!movil) { $('evt-msg').textContent = 'Este viaje no tiene móvil asignado.'; return; }
   await verEventosAuditor();
+}
+// ¿Quién iba manejando cuando pasó el evento? Los viajes reales de SONAR (despachos_sonar)
+// traen mid + hora de inicio + duración + conductor: el evento cae dentro de uno de esos tramos.
+let _evtViajes = [];
+async function _evtCargarViajes(mid, fecha) {
+  try {
+    const { data } = await sb.from('despachos_sonar')
+      .select('itl_id,fecha,mid,movil,ruta,conductor,hora_inicio,elapsed_seg')
+      .eq('mid', mid).eq('fecha', fecha).order('hora_inicio');
+    const v = (data || []).filter((x) => x.hora_inicio).map((x) => {
+      const ini = new Date(`${x.fecha}T${String(x.hora_inicio).slice(0, 8)}`).getTime();
+      return { ...x, ini, fin: ini + Math.max(Number(x.elapsed_seg || 0), 0) * 1000 };
+    }).sort((a, b) => a.ini - b.ini);
+    // Un viaje sin duración se extiende hasta que arranca el siguiente (máximo 3 h)
+    v.forEach((x, i) => {
+      const tope = i + 1 < v.length ? v[i + 1].ini : x.ini + 3 * 3600e3;
+      if (x.fin <= x.ini) x.fin = Math.min(tope, x.ini + 3 * 3600e3);
+    });
+    return v;
+  } catch (e) { return []; }
+}
+function _evtMs(e) {
+  const s = String(e.hora || '').trim();
+  const t = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
+  return isNaN(t) ? null : t;
+}
+function _evtViajeDe(e) {
+  const t = _evtMs(e); if (t == null) return null;
+  return _evtViajes.find((v) => t >= v.ini && t <= v.fin) || null;
 }
 async function verEventosAuditor() {
   if (!_evtRow) return;
@@ -12403,6 +12458,7 @@ async function verEventosAuditor() {
     if (error) { msg.textContent = 'No se pudo consultar SONAR: ' + error.message; return; }
     if (!data || !data.ok) { msg.textContent = data?.error || 'SONAR no respondió.'; return; }
     _evtItems = data.items || [];
+    _evtViajes = await _evtCargarViajes(mid, (desde || '').slice(0, 10));
     msg.textContent = '';
     pintarEventosAuditor();
   } finally {
@@ -12414,7 +12470,12 @@ function pintarEventosAuditor() {
   const geo = _evtItems.filter((e) => _evtTipo(e) === 'geo').length;
   const exc = _evtItems.filter(_evtExceso).length;
   const pue = _evtItems.filter((e) => /puerta abierta/i.test(e.evento || '')).length;
-  $('evt-resumen').textContent = `${_evtItems.length} eventos · ${geo} pasos por control · ${exc} excesos · ${pue} con puerta abierta`;
+  // Quién manejaba en los eventos de riesgo (excesos y puertas abiertas)
+  const riesgo = _evtItems.filter((e) => _evtExceso(e) || /puerta abierta/i.test(e.evento || ''));
+  const conds = [...new Set(riesgo.map((e) => _evtViajeDe(e)?.conductor).filter(Boolean))];
+  const quien = conds.length === 1 ? ` · al volante: ${conds[0]}`
+    : conds.length > 1 ? ` · ${conds.length} conductores en los eventos de riesgo` : '';
+  $('evt-resumen').textContent = `${_evtItems.length} eventos · ${geo} pasos por control · ${exc} excesos · ${pue} con puerta abierta${quien}`;
   const lista = _evtItems.filter((e) => {
     if (_evtFiltro === 'todo') return true;
     if (_evtFiltro === 'exceso') return _evtExceso(e) || _evtTipo(e) === 'exceso';
@@ -12428,10 +12489,15 @@ function pintarEventosAuditor() {
     const vel = (e.velocidad != null)
       ? `<span class="evt-vel ${ex ? 'evt-mal' : ''}">${esc(String(e.velocidad))}${e.limite ? ' / ' + esc(String(e.limite)) : ''} km/h</span>` : '';
     const hora = String(e.hora || '').slice(11, 16);
+    const vj = _evtViajeDe(e);
+    // Solo se nombra al conductor en lo que es conducta de manejo (exceso o puerta abierta)
+    const marca = ex || /puerta abierta/i.test(e.evento || '');
+    const cond = vj?.conductor && marca
+      ? `<i class="evt-cond">🧑‍✈️ ${esc(vj.conductor)}${vj.ruta ? ' · ' + esc(vj.ruta) : ''}</i>` : '';
     return `<div class="evt-it ${ex ? 'evt-it-mal' : ''}">
       <span class="evt-h">${esc(hora)}</span>
       <span class="evt-ico">${ico}</span>
-      <span class="evt-tx">${esc(e.evento || '')}${e.direccion ? `<i class="evt-dir">${esc(e.direccion)}</i>` : ''}</span>
+      <span class="evt-tx">${esc(e.evento || '')}${e.direccion ? `<i class="evt-dir">${esc(e.direccion)}</i>` : ''}${cond}</span>
       ${vel}
     </div>`;
   }).join('');

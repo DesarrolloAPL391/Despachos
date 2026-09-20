@@ -2445,6 +2445,11 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pf-hist .pf-hdot { width: 9px; height: 9px; border-radius: 50%; background: var(--border); margin: 5px 0 0 -19px; flex: 0 0 9px; }
 .pf-hist li.on .pf-hdot { background: var(--ok); }
 .pf-hist .muted { font-size: 12px; }
+.sin-evt-btn { margin-top: 8px; }
+
+/* Conductor que iba al volante cuando ocurrió el evento (eventos del bus) */
+.evt-cond { display: block; font-style: normal; font-size: 12px; font-weight: 700; color: var(--primary); margin-top: 2px; }
+
 /* 🧾 Todos los datos del reporte, tal como vienen de la app */
 .sin-todo { margin-top: 12px; }
 .sin-todo summary { cursor: pointer; font-weight: 800; font-size: 13px; color: var(--primary); }
