@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -597,7 +597,11 @@ function buildSidebar() {
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
   const gTh = addNavGroup(nav, '👥', 'Talento humano', 'th');
   for (const name of vis) { if (TBL_GROUP[name] === 'th') addTableBtn(gTh, name); }
-  if (isTalentoHumano()) addNavAction(gTh, '📊', 'Estadísticas sociodemográficas', openPerfilStats, 'nav-perfil-stats');
+  // Estadísticas: un submenú con un tema por entrada (cumpleaños, rotación, salud…)
+  if (isTalentoHumano()) {
+    const gSt = addNavGroup(gTh, '📊', 'Estadísticas', 'thstats');
+    PST_BLOQUES.forEach((b) => addNavAction(gSt, b.icon, b.label, () => openPerfilStats(b.key), 'nav-pst-' + b.key));
+  }
   if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
   if (isTalentoHumano()) addNavAction(gTh, '🔗', 'Link de actualización', openPerfilLink, 'nav-perfil-link');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
@@ -629,7 +633,7 @@ function buildSidebar() {
   const apr = $('nav-prod'); if (apr) apr.classList.toggle('active', currentView === 'productividad');
   const ajo = $('nav-jor'); if (ajo) ajo.classList.toggle('active', currentView === 'jornada');
   const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
-  const apst = $('nav-perfil-stats'); if (apst) apst.classList.toggle('active', currentView === 'perfilstats');
+  PST_BLOQUES.forEach((b) => { const e = $('nav-pst-' + b.key); if (e) e.classList.toggle('active', currentView === 'perfilstats' && (_pst.bloque || 'resumen') === b.key); });
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
   // Submenús: ocultar los grupos que quedaron vacíos (según el rol) y abrir el que tiene la opción activa
@@ -864,6 +868,10 @@ function renderFilters() {
       cont.appendChild(buildChecklistFilter(f));
       continue;
     }
+    if (f.chips) { // listas cortas (2-3 opciones): se ven mejor como pildoras que como desplegable
+      cont.appendChild(buildChipsFilter(f));
+      continue;
+    }
     const sel = document.createElement('select');
     // Las opciones pueden ser un valor suelto (se muestra "Etiqueta: valor") o un
     // objeto { value, label } cuando queremos un texto legible (ej. Auditados/Pendientes).
@@ -878,6 +886,33 @@ function renderFilters() {
     });
     cont.appendChild(sel);
   }
+}
+
+// Filtro en PILDORAS (chips: true). Una sola opcion activa; "Todos" quita el filtro.
+function buildChipsFilter(f) {
+  const wrap = document.createElement('span');
+  wrap.className = 'fchips';
+  wrap.appendChild(Object.assign(document.createElement('span'), { className: 'fchips-lbl', textContent: f.label }));
+  const grupo = document.createElement('span'); grupo.className = 'fchips-grp';
+  const opts = [{ value: '', label: 'Todos' }].concat(f.options.map((o) => (o && typeof o === 'object') ? o : { value: o, label: o }));
+  const pintar = () => grupo.querySelectorAll('.fchip').forEach((x) => {
+    const on = x.dataset.v === (filters[f.col] || '');
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', String(on));
+  });
+  opts.forEach((o) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'fchip'; b.dataset.v = o.value; b.textContent = o.label;
+    b.title = `${f.label}: ${o.label}`;
+    b.onclick = () => {
+      if (o.value) filters[f.col] = o.value; else delete filters[f.col];
+      pintar(); page = 0; loadData();
+    };
+    grupo.appendChild(b);
+  });
+  wrap.appendChild(grupo);
+  pintar();
+  return wrap;
 }
 
 // Filtro de VARIAS FECHAS sueltas. Guarda filters['col::in'] = ['YYYY-MM-DD', ...]
@@ -1971,7 +2006,13 @@ function renderTable(cfg, rows, count, diaSel = false) {
         tr.appendChild(td); continue;
       }
       const val = c.calc ? c.calc(row) : c.path ? getPath(row, c.path) : row[c.key];
-      if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
+      if (current === 'perfilsociodemografico' && c.key === 'nombre' && val) {
+        // El nombre abre la FICHA completa de la persona (todo el detalle ordenado)
+        const b = Object.assign(document.createElement('button'),
+          { className: 'pf-link', textContent: fmt(val), title: 'Ver la ficha completa' });
+        b.onclick = () => openPerfilFicha(row);
+        td.appendChild(b);
+      } else if (c.maps && val && /-?\d+\.\d+/.test(String(val))) {
         td.innerHTML = `<a href="https://www.google.com/maps?q=${encodeURIComponent(String(val))}" target="_blank" rel="noopener" class="maps-link" title="${esc(String(val))}">📍 Ver</a>`;
       } else if (c.dt && val) {
         td.textContent = fmtFechaHora(val); // fecha+hora local legible (ej. auditado el)
@@ -2062,10 +2103,19 @@ function renderTable(cfg, rows, count, diaSel = false) {
           ev.onclick = () => abrirEventosAuditor(row);
           act.appendChild(ev);
         }
+        // Ver la ficha completa de la persona (Talento humano)
+        if (current === 'perfilsociodemografico' && isTalentoHumano()) {
+          const ver = Object.assign(document.createElement('button'),
+            { className: 'act act-ver', innerHTML: '👁️', title: 'Ver la ficha completa' });
+          ver.onclick = () => openPerfilFicha(row);
+          act.appendChild(ver);
+        }
         // Editar: el admin y el auditor siempre; el despachador TAMBIÉN en su tabla de puesto
         // (la RLS lo limita a sus propias filas y a su horario). Antes solo admin/auditor
         // tenían el lápiz; el despachador ahora puede editar los campos del viaje, no solo despachar.
-        if (efIsAdmin() || efIsAuditor() || filtraComoDespachador()) {
+        // Gestión Humana edita la ficha de las personas (su RLS solo le deja Talento humano)
+        if (efIsAdmin() || efIsAuditor() || filtraComoDespachador()
+            || (isGestionHumana() && (current === 'perfilsociodemografico' || current === 'perfil_vinculaciones'))) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
           // No se edita una fecha adelantada (futura). El auditor sí audita días anteriores.
           if (esFutura) {
@@ -6914,6 +6964,154 @@ function perfilActCard(s, per, m) {
   return card;
 }
 
+
+// ===================================================================================
+// 🪪 FICHA DE PERSONA (Perfil sociodemográfico)
+// La tabla muestra lo básico; la ficha muestra TODA la hoja de vida ordenada por
+// secciones, sin abrir el formulario de edición. Se abre con el nombre o con 👁️.
+// ===================================================================================
+const PF_SEC = {
+  'Identificación': '🪪', 'Laboral': '💼', 'Seguridad social': '🏥', 'Licencia y restricción': '🚦',
+  'Datos personales': '🧍', 'Vivienda': '🏠', 'Educación': '🎓', 'Núcleo familiar': '👨‍👩‍👧',
+  'Contacto de emergencia': '🆘', 'Referencia laboral': '📞', 'Control de datos': '🗃️',
+};
+// Ya salen en el encabezado: no se repiten dentro de las secciones.
+const PF_EN_CABECERA = ['cedula', 'nombre', 'tipo', 'estado', 'cargo'];
+let _pfVacios = false;  // ver también los campos sin dato
+let _pfRow = null;
+
+function pfModal() {
+  let m = $('pf-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pf-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🪪 Ficha</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot">
+      <label class="pf-sw"><input type="checkbox" data-vacios> Ver campos sin dato</label>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-editar hidden>✏️ Editar ficha</button>
+      <button type="button" class="btn" data-x>Cerrar</button>
+    </div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.querySelector('[data-vacios]').addEventListener('change', (e) => {
+    _pfVacios = e.target.checked;
+    const secs = m.querySelector('.pf-secs');
+    if (_pfRow && secs) secs.innerHTML = pfSeccionesHtml(_pfRow);
+  });
+  m.querySelector('[data-editar]').onclick = () => { m.hidden = true; if (_pfRow) openEditor(_pfRow); };
+  document.body.appendChild(m);
+  return m;
+}
+
+// Un campo ya legible: fechas en dd/mm/aaaa, salario con separador, correo y celular enlazados.
+function pfValor(f, row) {
+  const v = row[f.key];
+  if (v == null || String(v).trim() === '') return '';
+  if (f.type === 'date') return esc(fechaLegible(v));
+  if (f.key === 'salario') return '$ ' + Number(v).toLocaleString('es-CO');
+  if (f.key === 'correo') return `<a href="mailto:${esc(v)}">${esc(v)}</a>`;
+  if (/^3\d{9}$/.test(String(v).trim())) {
+    return `${esc(v)} <a class="pf-wa" href="https://wa.me/57${String(v).trim()}" target="_blank" rel="noopener" title="Escribir por WhatsApp">💬</a>`;
+  }
+  return esc(String(v));
+}
+
+function pfSeccionesHtml(row) {
+  const campos = TABLES.perfilsociodemografico.fields;
+  const secciones = [];
+  campos.forEach((f) => { const s = f.section || 'Otros'; if (!secciones.includes(s)) secciones.push(s); });
+  return secciones.map((s) => {
+    const filas = campos.filter((f) => (f.section || 'Otros') === s && !PF_EN_CABECERA.includes(f.key))
+      .map((f) => ({ f, html: pfValor(f, row) }))
+      .filter((x) => _pfVacios || x.html !== '');
+    if (!filas.length) return '';
+    return `<section class="pf-sec"><h4>${PF_SEC[s] || '•'} ${esc(s)}</h4><dl>${filas.map((x) =>
+      `<dt>${esc(x.f.label)}</dt><dd${x.html ? '' : ' class="pf-nada"'}>${x.html || '—'}</dd>`).join('')}</dl></section>`;
+  }).join('');
+}
+
+function pfHistorialHtml(hist) {
+  if (!hist || !hist.length) return '';
+  return `<section class="pf-sec pf-hist"><h4>🗂️ Historial de vinculaciones</h4>
+    <ol>${hist.map((h) => {
+    const activo = !h.fecha_retiro;
+    return `<li class="${activo ? 'on' : ''}"><span class="pf-hdot"></span>
+        <div><b>${esc(fechaLegible(h.fecha_ingreso || ''))}</b> → ${activo ? '<b>hoy</b>' : esc(fechaLegible(h.fecha_retiro))}
+        <span class="${chipClass(h.tipo_ingreso || 'NUEVO')}">${esc(h.tipo_ingreso || 'NUEVO')}</span>
+        <div class="muted">${esc(h.cargo || '')}${h.novedad_retiro ? ' · Retiro: ' + esc(h.novedad_retiro) : ''}</div></div></li>`;
+  }).join('')}</ol></section>`;
+}
+
+function pfRender(row, hist) {
+  const m = pfModal(), body = m.querySelector('.pf-body');
+  const iniciales = String(row.nombre || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('');
+  const edad = edadPerfil(row), anios = antiguedadPerfil(row);
+  const inactivo = row.estado === 'INACTIVO';
+  const porCorregir = String(row.por_corregir || '').trim();
+  const licVence = row.licencia_vencimiento || '';
+  const licVencida = licVence && licVence < hoyServidor();
+  const licPronto = licVence && !licVencida && licVence <= new Date(Date.now() + 45 * 864e5).toISOString().slice(0, 10);
+
+  const chips = [
+    `<span class="${chipClass(row.estado)}">${esc(row.estado || '—')}</span>`,
+    `<span class="chip chip-blue">${esc(row.tipo || '—')}</span>`,
+    row.calidad === 'POR CORREGIR' ? '<span class="chip chip-amber">Datos por corregir</span>' : '',
+    row.habeas_data_aceptado_en ? '<span class="chip chip-green">Autorizó sus datos</span>' : '',
+  ].filter(Boolean).join(' ');
+
+  const kpis = [
+    edad ? { n: edad, l: 'años' } : null,
+    anios ? { n: anios, l: anios === 1 ? 'año en APL' : 'años en APL' } : null,
+    row.salario ? { n: '$' + Number(row.salario).toLocaleString('es-CO'), l: 'salario', sm: true } : null,
+    licVence ? { n: fechaLegible(licVence), l: licVencida ? 'licencia VENCIDA' : 'vence la licencia', sm: true, alerta: licVencida || licPronto } : null,
+  ].filter(Boolean).map((k) => `<div class="pf-kpi${k.alerta ? ' alerta' : ''}"><b class="${k.sm ? 'sm' : ''}">${esc(String(k.n))}</b><span>${esc(k.l)}</span></div>`).join('');
+
+  const avisos = [
+    inactivo ? `<div class="pf-aviso gris">Persona <b>INACTIVA</b>${row.fecha_retiro ? ` desde el ${esc(fechaLegible(row.fecha_retiro))}` : ''}${row.novedad_retiro ? ` · ${esc(row.novedad_retiro)}` : ''}.</div>` : '',
+    licVencida && row.tipo === 'CONDUCTOR' ? `<div class="pf-aviso rojo">🪪 La licencia está <b>vencida</b> (${esc(fechaLegible(licVence))}).</div>` : '',
+    porCorregir ? `<div class="pf-aviso ambar">📝 Campos por corregir: <b>${esc(porCorregir)}</b></div>` : '',
+  ].filter(Boolean).join('');
+
+  m.querySelector('h3').textContent = '🪪 Ficha de la persona';
+  // Editar abre el formulario de la tabla; solo tiene sentido estando en ella
+  m.querySelector('[data-editar]').hidden = !isTalentoHumano() || current !== 'perfilsociodemografico';
+  m.querySelector('[data-vacios]').checked = _pfVacios;
+  body.innerHTML = `
+    <header class="pf-top">
+      <div class="pf-av ${row.tipo === 'CONDUCTOR' ? 'cond' : 'adm'}${inactivo ? ' off' : ''}">${esc(iniciales)}</div>
+      <div class="pf-idt">
+        <h2>${esc(row.nombre || '—')}</h2>
+        <div class="pf-sub">C.C. ${esc(row.cedula || '—')}${row.codigo ? ' · Código ' + esc(row.codigo) : ''}${row.cargo ? ' · ' + esc(row.cargo) : ''}</div>
+        <div class="pf-chips">${chips}</div>
+      </div>
+      ${row.celular ? `<a class="pf-wabtn" href="https://wa.me/57${esc(String(row.celular).trim())}" target="_blank" rel="noopener">💬 ${esc(row.celular)}</a>` : ''}
+    </header>
+    ${kpis ? `<div class="pf-kpis">${kpis}</div>` : ''}
+    ${avisos}
+    <div class="pf-secs">${pfSeccionesHtml(row)}</div>
+    ${pfHistorialHtml(hist)}`;
+}
+
+async function openPerfilFicha(row) {
+  if (!isTalentoHumano()) return;
+  _pfRow = row;
+  const m = pfModal();
+  m.querySelector('.pf-body').innerHTML = '<div class="loading">Cargando…</div>';
+  m.hidden = false;
+  try {
+    // La fila de la tabla ya trae todo (select *); solo falta el historial de la persona.
+    const { data: hist } = await sb.from('perfil_vinculaciones').select('*')
+      .eq('cedula', row.cedula).order('fecha_ingreso', { ascending: false });
+    pfRender(row, hist || []);
+  } catch (e) {
+    m.querySelector('.pf-body').innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
+  }
+}
+
 // ===================================================================================
 // 🧑‍✈️ ASPIRANTES A CONDUCTOR (sql/77) — proceso de selección. SOLO ADMIN.
 // El aspirante se inscribe en trabaja-con-nosotros.html (sin login). Etapas: 📄 Documentos →
@@ -8091,9 +8289,22 @@ $('top-close')?.addEventListener('click', cerrarTop);
 // líneas (ingresos vs retiros), tooltip por barra y "Ver tabla" en cada tarjeta.
 const PST_SMMLV = 1750905; // salario mínimo 2026 (el que tienen todos los conductores activos en la base)
 const PST_COL = { s1: '#2a78d6', s2: '#eb6834', grid: '#e1e0d9', eje: '#c3c2b7' }; // validado (dataviz)
+// Temas de las estadísticas: cada uno es una entrada del menú y una pestaña de la pantalla
+const PST_BLOQUES = [
+  { key: 'resumen', icon: '📊', label: 'Resumen general' },
+  { key: 'cumple', icon: '🎂', label: 'Cumpleaños' },
+  { key: 'rotacion', icon: '🔄', label: 'Rotación de personal' },
+  { key: 'demografia', icon: '👤', label: 'Demografía' },
+  { key: 'laboral', icon: '💼', label: 'Laboral y salarios' },
+  { key: 'salud', icon: '🩺', label: 'Salud y seguridad social' },
+  { key: 'familia', icon: '🏠', label: 'Familia y vivienda' },
+  { key: 'conductores', icon: '🚌', label: 'Licencias de conductores' },
+  { key: 'calidad', icon: '🧹', label: 'Calidad de datos' },
+];
 const _pst = { personas: null, vinc: null, tablas: [] };
-async function openPerfilStats() {
+async function openPerfilStats(bloque) {
   if (!isTalentoHumano()) return;
+  _pst.bloque = bloque || 'resumen';
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'perfilstats';
   cerrarRecorridoBus();
@@ -8106,15 +8317,18 @@ async function openPerfilStats() {
   document.getElementById('app').classList.remove('view-map');
   $('perfilstats-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
-  $('nav-perfil-stats')?.classList.add('active');
+  $('nav-pst-' + (_pst.bloque || 'resumen'))?.classList.add('active');
   buildBottomNav();
+  const b = PST_BLOQUES.find((x) => x.key === _pst.bloque) || PST_BLOQUES[0];
+  const tit = $('pst-title'); if (tit) tit.textContent = `${b.icon} ${b.label}`;
   if (!_pst.personas) await cargarPerfilStats(); else renderPerfilStats();
 }
 function cerrarPerfilStats() { $('perfilstats-view').hidden = true; selectTable(current); }
 async function cargarPerfilStats() {
   const body = $('pst-body');
   body.innerHTML = '<div class="loading">Leyendo el perfil sociodemográfico…</div>';
-  const COLS_P = 'tipo,estado,sexo,fecha_nacimiento,fecha_ingreso,fecha_retiro,estado_civil,escolaridad,estrato,tipo_vivienda,'
+  // Se trae la identificación (id, cédula, nombre…) para poder mostrar QUIÉNES son en cada dato
+  const COLS_P = 'id,cedula,nombre,codigo,celular,tipo,estado,sexo,fecha_nacimiento,fecha_ingreso,fecha_retiro,estado_civil,escolaridad,estrato,tipo_vivienda,'
     + 'ciudad,personas_a_cargo,tiene_hijos,convive_pareja,eps,afp,arl,tipo_sangre,uso_lentes,tipo_contrato,cargo,area,salario,'
     + 'categoria_licencia,licencia_vencimiento,estado_restriccion,por_corregir,habeas_data_aceptado_en';
   const leerTodo = async (tabla, cols) => {
@@ -8130,9 +8344,11 @@ async function cargarPerfilStats() {
   try {
     const [personas, vinc] = await Promise.all([
       leerTodo('perfilsociodemografico', COLS_P),
-      leerTodo('perfil_vinculaciones', 'tipo,area,fecha_ingreso,fecha_retiro'),
+      leerTodo('perfil_vinculaciones', 'cedula,cargo,tipo,area,fecha_ingreso,fecha_retiro'),
     ]);
     _pst.personas = personas; _pst.vinc = vinc;
+    // Para ponerle nombre a cada movimiento de rotación (el historial guarda la cédula)
+    _pst.porCedula = new Map(personas.map((p) => [String(p.cedula || '').trim(), p]));
     // Áreas reales para el filtro (conserva la elegida)
     const sel = $('pst-area'), prev = sel.value;
     const areas = [...new Set(personas.map((p) => p.area).filter(Boolean))].sort();
@@ -8159,13 +8375,15 @@ const pstPct = (n, t) => (t ? Math.round((n / t) * 1000) / 10 : 0);
 // Cuenta por categoría. opts.orden = lista de categorías en orden fijo (escala ordinal);
 // opts.top = deja las N mayores y agrupa el resto en "Otros"; valor vacío = "Sin dato".
 function pstContar(rows, fn, opts = {}) {
-  const c = new Map(); let sin = 0;
+  const c = new Map(); let sin = 0; const sinQuienes = [];
   for (const r of rows) {
     const v = fn(r);
-    if (v == null || String(v).trim() === '') { sin++; continue; }
-    c.set(v, (c.get(v) || 0) + 1);
+    if (v == null || String(v).trim() === '') { sin++; sinQuienes.push(r); continue; }
+    const k = String(v);
+    if (!c.has(k)) c.set(k, { n: 0, quienes: [] });
+    const e = c.get(k); e.n++; e.quienes.push(r);
   }
-  let items = [...c.entries()].map(([k, n]) => ({ k: String(k), n }));
+  let items = [...c.entries()].map(([k, e]) => ({ k, n: e.n, quienes: e.quienes }));
   if (opts.orden) {
     const pos = (k) => { const i = opts.orden.indexOf(k); return i < 0 ? 999 : i; };
     items.sort((a, b) => pos(a.k) - pos(b.k) || b.n - a.n);
@@ -8173,10 +8391,11 @@ function pstContar(rows, fn, opts = {}) {
     items.sort((a, b) => b.n - a.n || a.k.localeCompare(b.k));
   }
   if (opts.top && items.length > opts.top) {
-    const resto = items.slice(opts.top).reduce((s, i) => s + i.n, 0);
-    items = [...items.slice(0, opts.top), { k: `Otros (${items.length - opts.top})`, n: resto, otros: true }];
+    const cola = items.slice(opts.top);
+    const resto = cola.reduce((s, i) => s + i.n, 0);
+    items = [...items.slice(0, opts.top), { k: `Otros (${cola.length})`, n: resto, otros: true, quienes: cola.flatMap((i) => i.quienes) }];
   }
-  return { items, sin, total: items.reduce((s, i) => s + i.n, 0) };
+  return { items, sin, sinQuienes, total: items.reduce((s, i) => s + i.n, 0) };
 }
 const PST_RANGOS = {
   edad: [[0, 17, 'Menor de 18'], [18, 25, '18 a 25 años'], [26, 35, '26 a 35 años'], [36, 45, '36 a 45 años'],
@@ -8236,21 +8455,37 @@ function pstCard(titulo, nota, grafica, tabla, ancha = false) {
   const btn = pstEl('button', 'btn btn-sm pst-vt', 'Ver tabla'); btn.type = 'button';
   head.append(tt, btn);
   const cuerpo = pstEl('div', 'pst-card-b'); cuerpo.appendChild(grafica);
-  const tablaWrap = pstEl('div', 'pst-tabla-wrap'); tablaWrap.hidden = true; tablaWrap.appendChild(pstTablaHtml(tabla));
+  const tablaWrap = pstEl('div', 'pst-tabla-wrap'); tablaWrap.hidden = true; tablaWrap.appendChild(pstTablaHtml(tabla, titulo));
   btn.onclick = () => { const ver = tablaWrap.hidden; tablaWrap.hidden = !ver; cuerpo.hidden = ver; btn.textContent = ver ? 'Ver gráfica' : 'Ver tabla'; };
   card.append(head, cuerpo, tablaWrap);
+  card._cuerpo = cuerpo;
+  card._setTabla = (t2) => { tablaWrap.innerHTML = ''; tablaWrap.appendChild(pstTablaHtml(t2, titulo)); };
   _pst.tablas.push({ titulo, nota, ...tabla });
   return card;
 }
-function pstTablaHtml({ cab, filas }) {
+function pstTablaHtml({ cab, filas, quienesPorFila }, titulo) {
   const t = pstEl('table', 'pst-tabla');
   const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
   const thead = pstEl('thead'); thead.appendChild(tr); t.appendChild(thead);
   const tb = pstEl('tbody');
-  filas.forEach((f) => { const r = pstEl('tr'); f.forEach((v) => r.appendChild(pstEl('td', null, typeof v === 'number' ? pstNum(v) : v))); tb.appendChild(r); });
+  filas.forEach((f, i) => {
+    const r = pstEl('tr');
+    f.forEach((v) => r.appendChild(pstEl('td', null, typeof v === 'number' ? pstNum(v) : v)));
+    // Cada fila lleva a las personas que hay detrás del número
+    const quienes = quienesPorFila && quienesPorFila[i];
+    if (pstHayPersonas(quienes)) {
+      r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Ver quiénes son';
+      const abrir = () => pstVerPersonas(`${titulo || 'Detalle'}: ${f[0]}`, quienes);
+      r.addEventListener('click', abrir);
+      r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+    }
+    tb.appendChild(r);
+  });
   t.appendChild(tb);
   return t;
 }
+// ¿La lista son personas (con cédula) y no un conteo suelto?
+function pstHayPersonas(arr) { return Array.isArray(arr) && arr.length > 0 && arr[0] && typeof arr[0] === 'object' && 'cedula' in arr[0]; }
 // Barras horizontales de UNA serie: largo = cantidad; valor y % al final de la barra
 function pstBarras(titulo, conteo, opts = {}) {
   const { items, sin, total } = conteo;
@@ -8270,6 +8505,13 @@ function pstBarras(titulo, conteo, opts = {}) {
     const val = pstEl('span', 'pst-bar-val', `${pstNum(it.n)} · ${pct}%`); val.style.left = `calc(${ancho}% + 8px)`;
     track.append(bar, val);
     fila.appendChild(track);
+    if (pstHayPersonas(it.quienes)) {
+      fila.classList.add('pst-clic'); fila.setAttribute('role', 'button');
+      fila.title = `Ver las ${pstNum(it.n)} personas`;
+      const abrir = () => pstVerPersonas(`${titulo}: ${it.k}`, it.quienes);
+      fila.addEventListener('click', abrir);
+      fila.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } });
+    }
     const lineas = [{ valor: `${pstNum(it.n)} (${pct}%)`, etiqueta: it.k }];
     fila.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
     fila.addEventListener('pointerleave', pstTipOcultar);
@@ -8277,87 +8519,169 @@ function pstBarras(titulo, conteo, opts = {}) {
     fila.addEventListener('blur', pstTipOcultar);
     cont.appendChild(fila);
   }
+  // Los "sin dato" también se pueden revisar uno por uno (sirve para completar la información)
+  if (sin && pstHayPersonas(conteo.sinQuienes)) {
+    const b = pstEl('button', 'pst-sindato', `Ver quiénes no tienen este dato (${pstNum(sin)})`);
+    b.type = 'button';
+    b.onclick = () => pstVerPersonas(`${titulo}: sin dato`, conteo.sinQuienes);
+    cont.appendChild(b);
+  }
   const nota = [opts.nota, `${pstNum(total)} con dato${sin ? ` · ${pstNum(sin)} sin dato` : ''}`].filter(Boolean).join(' · ');
   const filas = items.map((i) => [i.k, i.n, `${pstPct(i.n, total)}%`]);
-  if (sin) filas.push(['Sin dato', sin, '—']);
-  return pstCard(titulo, nota, cont, { cab: ['Categoría', 'Cantidad', '%'], filas }, opts.ancha);
+  const quienesPorFila = items.map((i) => i.quienes);
+  if (sin) { filas.push(['Sin dato', sin, '—']); quienesPorFila.push(conteo.sinQuienes); }
+  return pstCard(titulo, nota, cont, { cab: ['Categoría', 'Cantidad', '%'], filas, quienesPorFila }, opts.ancha);
 }
-// Rotación por año: 2 series (ingresos / retiros) en líneas, un solo eje, crosshair + tooltip
+// Rotación: ingresos y retiros. Dos vistas: POR AÑO (2019 → hoy) y POR MES (los 12 meses
+// del año elegido). Dos series en líneas, un solo eje, crosshair + tooltip. Cada punto y cada
+// fila de la tabla abren la lista de personas que entraron o salieron en ese periodo.
 function pstRotacion(vinc) {
   const anioHoy = new Date().getFullYear(), desde = 2019;
-  const anios = []; for (let a = desde; a <= anioHoy; a++) anios.push(a);
-  const ing = anios.map((a) => vinc.filter((v) => String(v.fecha_ingreso || '').startsWith(a + '-')).length);
-  const ret = anios.map((a) => vinc.filter((v) => String(v.fecha_retiro || '').startsWith(a + '-')).length);
-  const series = [{ nombre: 'Ingresos', color: PST_COL.s1, datos: ing }, { nombre: 'Retiros', color: PST_COL.s2, datos: ret }];
-  const cont = pstEl('div', 'pst-linea');
+  const aniosDisp = []; for (let a = anioHoy; a >= desde; a--) aniosDisp.push(a);
+  const st = { modo: 'anio', anio: anioHoy };
+
+  const cont = pstEl('div', 'pst-rot');
+  // Controles: por año / por mes (+ año a mirar)
+  const ctr = pstEl('div', 'pst-rot-ctr');
+  const seg = pstEl('div', 'pst-seg');
+  const bAnio = pstEl('button', 'pst-segb on', 'Por año'); bAnio.type = 'button';
+  const bMes = pstEl('button', 'pst-segb', 'Por mes'); bMes.type = 'button';
+  seg.append(bAnio, bMes);
+  const selAnio = pstEl('select', 'pst-rot-anio'); selAnio.hidden = true;
+  aniosDisp.forEach((a) => selAnio.appendChild(Object.assign(document.createElement('option'), { value: a, textContent: a })));
+  selAnio.value = String(anioHoy);
+  const lblAnio = pstEl('label', 'pst-rot-lbl', 'Año '); lblAnio.hidden = true; lblAnio.appendChild(selAnio);
+  ctr.append(seg, lblAnio);
+
   const leyenda = pstEl('div', 'pst-leyenda');
-  series.forEach((s) => { const k = pstEl('span', 'pst-ley'); const l = pstEl('i'); l.style.background = s.color; k.append(l, document.createTextNode(s.nombre)); leyenda.appendChild(k); });
   const lienzo = pstEl('div', 'pst-lienzo');
-  cont.append(leyenda, lienzo);
-  const dibujar = () => {
-    const W = Math.max(280, lienzo.clientWidth || 600), H = 230, m = { t: 14, r: 44, b: 26, l: 40 };
-    const iw = W - m.l - m.r, ih = H - m.t - m.b;
-    const maxV = Math.max(1, ...ing, ...ret);
-    const paso = maxV <= 50 ? 10 : maxV <= 200 ? 50 : maxV <= 500 ? 100 : 250;
-    const tope = Math.ceil(maxV / paso) * paso;
-    const x = (i) => m.l + (anios.length === 1 ? iw / 2 : (i * iw) / (anios.length - 1));
-    const y = (v) => m.t + ih - (v / tope) * ih;
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Ingresos y retiros por año');
-    const add = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); if (text != null) e.textContent = text; svg.appendChild(e); return e; };
-    for (let v = 0; v <= tope; v += paso) {
-      add('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === 0 ? PST_COL.eje : PST_COL.grid, 'stroke-width': 1 });
-      add('text', { x: m.l - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'pst-eje' }, pstNum(v));
+  cont.append(ctr, leyenda, lienzo);
+
+  // Datos del modo actual: etiquetas del eje + personas de cada punto
+  const calcular = () => {
+    if (st.modo === 'anio') {
+      const anios = []; for (let a = desde; a <= anioHoy; a++) anios.push(a);
+      return {
+        etiquetas: anios.map((a) => (a === anioHoy ? `${a}*` : String(a))),
+        filaLbl: anios.map((a) => (a === anioHoy ? `${a} (hasta hoy)` : String(a))),
+        pref: anios.map((a) => `${a}-`),
+        cabecera: 'Año',
+      };
     }
-    anios.forEach((a, i) => add('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', class: 'pst-eje' }, a === anioHoy ? `${a}*` : String(a)));
-    for (const s of series) {
-      add('polyline', { points: s.datos.map((v, i) => `${x(i)},${y(v)}`).join(' '), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
-      s.datos.forEach((v, i) => add('circle', { cx: x(i), cy: y(v), r: 4, fill: s.color, stroke: '#fff', 'stroke-width': 2 }));
-    }
-    // Etiqueta del último valor de cada serie (solo si no chocan)
-    const ultY = series.map((s) => y(s.datos[s.datos.length - 1]));
-    if (Math.abs(ultY[0] - ultY[1]) >= 14) {
-      series.forEach((s, k) => add('text', { x: x(anios.length - 1) + 8, y: ultY[k] + 4, class: 'pst-fin' }, pstNum(s.datos[s.datos.length - 1])));
-    }
-    const cruz = add('line', { x1: 0, x2: 0, y1: m.t, y2: m.t + ih, stroke: '#898781', 'stroke-width': 1, visibility: 'hidden' });
-    const zona = add('rect', { x: m.l - 10, y: m.t, width: iw + 20, height: ih, fill: 'transparent', tabindex: 0 });
-    const mostrar = (i, cx, cy) => {
-      cruz.setAttribute('x1', x(i)); cruz.setAttribute('x2', x(i)); cruz.setAttribute('visibility', 'visible');
-      pstTipMostrar(cx, cy, [
-        { valor: `${anios[i]}${anios[i] === anioHoy ? ' (hasta hoy)' : ''}`, etiqueta: '' },
-        ...series.map((s) => ({ color: s.color, valor: pstNum(s.datos[i]), etiqueta: s.nombre })),
-      ]);
+    const a = st.anio;
+    return {
+      etiquetas: PST_MESES.map((m) => m.slice(0, 3)),
+      filaLbl: PST_MESES.map((m) => `${m} ${a}`),
+      pref: PST_MESES.map((_, i) => `${a}-${String(i + 1).padStart(2, '0')}`),
+      cabecera: 'Mes',
     };
-    let foco = anios.length - 1;
-    zona.addEventListener('pointermove', (e) => {
-      const r = svg.getBoundingClientRect();
-      const px = e.clientX - r.left;
-      const i = Math.max(0, Math.min(anios.length - 1, Math.round(((px - m.l) / iw) * (anios.length - 1))));
-      mostrar(i, e.clientX, e.clientY);
-    });
-    zona.addEventListener('pointerleave', () => { cruz.setAttribute('visibility', 'hidden'); pstTipOcultar(); });
-    zona.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-      foco = Math.max(0, Math.min(anios.length - 1, foco + (e.key === 'ArrowRight' ? 1 : -1)));
-      const r = svg.getBoundingClientRect(); mostrar(foco, r.left + x(foco), r.top + y(Math.max(ing[foco], ret[foco])));
-    });
-    zona.addEventListener('focus', () => { const r = svg.getBoundingClientRect(); mostrar(foco, r.left + x(foco), r.top + m.t + 20); });
-    zona.addEventListener('blur', () => { cruz.setAttribute('visibility', 'hidden'); pstTipOcultar(); });
-    lienzo.innerHTML = ''; lienzo.appendChild(svg);
   };
-  requestAnimationFrame(dibujar);
-  lienzo._redibujar = dibujar;
-  const filas = anios.map((a, i) => [a === anioHoy ? `${a} (hasta hoy)` : String(a), ing[i], ret[i], ing[i] - ret[i]]);
-  return pstCard('Rotación: ingresos y retiros por año',
+  // Las personas detrás de cada punto (el historial guarda la cédula; el nombre sale del perfil)
+  const gente = (prefijo, campo) => vinc.filter((v) => String(v[campo] || '').startsWith(prefijo))
+    .map((v) => ({ ...(_pst.porCedula?.get(String(v.cedula || '').trim()) || {}), cedula: v.cedula, cargo: v.cargo, _fecha: v[campo] }));
+
+  const card = pstCard('Rotación: ingresos y retiros',
     'Historial de vinculaciones · los retiros se registran desde 2019 · * año en curso · no depende del filtro de estado',
-    cont, { cab: ['Año', 'Ingresos', 'Retiros', 'Balance'], filas }, true);
+    cont, { cab: ['Año', 'Ingresos', 'Retiros', 'Balance'], filas: [] }, true);
+
+  const pintar = () => {
+    const D = calcular();
+    const ing = D.pref.map((p) => vinc.filter((v) => String(v.fecha_ingreso || '').startsWith(p)).length);
+    const ret = D.pref.map((p) => vinc.filter((v) => String(v.fecha_retiro || '').startsWith(p)).length);
+    const series = [{ nombre: 'Ingresos', color: PST_COL.s1, datos: ing, campo: 'fecha_ingreso' },
+      { nombre: 'Retiros', color: PST_COL.s2, datos: ret, campo: 'fecha_retiro' }];
+    leyenda.innerHTML = '';
+    series.forEach((s) => { const k = pstEl('span', 'pst-ley'); const l = pstEl('i'); l.style.background = s.color; k.append(l, document.createTextNode(s.nombre)); leyenda.appendChild(k); });
+
+    const dibujar = () => {
+      const N = D.etiquetas.length;
+      const W = Math.max(280, lienzo.clientWidth || 600), H = 230, m = { t: 14, r: 44, b: 26, l: 40 };
+      const iw = W - m.l - m.r, ih = H - m.t - m.b;
+      const maxV = Math.max(1, ...ing, ...ret);
+      const paso = maxV <= 10 ? 2 : maxV <= 50 ? 10 : maxV <= 200 ? 50 : maxV <= 500 ? 100 : 250;
+      const tope = Math.ceil(maxV / paso) * paso;
+      const x = (i) => m.l + (N === 1 ? iw / 2 : (i * iw) / (N - 1));
+      const y = (v) => m.t + ih - (v / tope) * ih;
+      const NS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('role', 'img');
+      svg.setAttribute('aria-label', st.modo === 'anio' ? 'Ingresos y retiros por año' : `Ingresos y retiros por mes de ${st.anio}`);
+      const add = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v)); if (text != null) e.textContent = text; svg.appendChild(e); return e; };
+      for (let v = 0; v <= tope; v += paso) {
+        add('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), stroke: v === 0 ? PST_COL.eje : PST_COL.grid, 'stroke-width': 1 });
+        add('text', { x: m.l - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'pst-eje' }, pstNum(v));
+      }
+      D.etiquetas.forEach((e2, i) => add('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', class: 'pst-eje' }, e2));
+      for (const s of series) {
+        add('polyline', { points: s.datos.map((v, i) => `${x(i)},${y(v)}`).join(' '), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+        s.datos.forEach((v, i) => {
+          const c = add('circle', { cx: x(i), cy: y(v), r: 4, fill: s.color, stroke: '#fff', 'stroke-width': 2 });
+          if (v > 0) { // el punto abre la lista de quiénes entraron o salieron
+            c.setAttribute('r', 5); c.style.cursor = 'pointer';
+            c.addEventListener('click', () => pstVerPersonas(`${s.nombre} · ${D.filaLbl[i]}`, gente(D.pref[i], s.campo), { fecha: s.nombre === 'Ingresos' ? 'Ingresó el' : 'Se retiró el' }));
+          }
+        });
+      }
+      const ultY = series.map((s) => y(s.datos[s.datos.length - 1]));
+      if (Math.abs(ultY[0] - ultY[1]) >= 14) {
+        series.forEach((s, k) => add('text', { x: x(N - 1) + 8, y: ultY[k] + 4, class: 'pst-fin' }, pstNum(s.datos[s.datos.length - 1])));
+      }
+      const cruz = add('line', { x1: 0, x2: 0, y1: m.t, y2: m.t + ih, stroke: '#898781', 'stroke-width': 1, visibility: 'hidden' });
+      const zona = add('rect', { x: m.l - 10, y: m.t, width: iw + 20, height: ih, fill: 'transparent', tabindex: 0 });
+      const mostrar = (i, cx, cy) => {
+        cruz.setAttribute('x1', x(i)); cruz.setAttribute('x2', x(i)); cruz.setAttribute('visibility', 'visible');
+        pstTipMostrar(cx, cy, [
+          { valor: D.filaLbl[i], etiqueta: '' },
+          ...series.map((s) => ({ color: s.color, valor: pstNum(s.datos[i]), etiqueta: s.nombre })),
+        ]);
+      };
+      let foco = N - 1;
+      zona.addEventListener('pointermove', (e) => {
+        const r = svg.getBoundingClientRect();
+        const px = e.clientX - r.left;
+        const i = Math.max(0, Math.min(N - 1, Math.round(((px - m.l) / iw) * (N - 1))));
+        mostrar(i, e.clientX, e.clientY);
+      });
+      zona.addEventListener('pointerleave', () => { cruz.setAttribute('visibility', 'hidden'); pstTipOcultar(); });
+      zona.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        foco = Math.max(0, Math.min(N - 1, foco + (e.key === 'ArrowRight' ? 1 : -1)));
+        const r = svg.getBoundingClientRect(); mostrar(foco, r.left + x(foco), r.top + y(Math.max(ing[foco], ret[foco])));
+      });
+      zona.addEventListener('focus', () => { const r = svg.getBoundingClientRect(); mostrar(foco, r.left + x(foco), r.top + m.t + 20); });
+      zona.addEventListener('blur', () => { cruz.setAttribute('visibility', 'hidden'); pstTipOcultar(); });
+      lienzo.innerHTML = ''; lienzo.appendChild(svg);
+    };
+    requestAnimationFrame(dibujar);
+    lienzo._redibujar = dibujar;
+
+    // Tabla equivalente: una fila por periodo, clicable (muestra los ingresos de ese periodo)
+    const filas = D.filaLbl.map((l, i) => [l, ing[i], ret[i], ing[i] - ret[i]]);
+    const quienesPorFila = D.pref.map((p) => gente(p, 'fecha_ingreso'));
+    card._setTabla({ cab: [D.cabecera, 'Ingresos', 'Retiros', 'Balance'], filas, quienesPorFila });
+    // Lo que se lleva el Excel general
+    const guardada = _pst.tablas.find((x) => x.titulo === 'Rotación: ingresos y retiros');
+    if (guardada) { guardada.cab = [D.cabecera, 'Ingresos', 'Retiros', 'Balance']; guardada.filas = filas; }
+  };
+
+  const cambiarModo = (modo) => {
+    st.modo = modo;
+    bAnio.classList.toggle('on', modo === 'anio');
+    bMes.classList.toggle('on', modo === 'mes');
+    lblAnio.hidden = modo !== 'mes';
+    selAnio.hidden = modo !== 'mes';
+    pintar();
+  };
+  bAnio.onclick = () => cambiarModo('anio');
+  bMes.onclick = () => cambiarModo('mes');
+  selAnio.onchange = () => { st.anio = Number(selAnio.value); pintar(); };
+  pintar();
+  return card;
 }
-// Columnas de 12 meses (cumpleaños): una serie, valor sobre la columna
-function pstMeses(personas) {
-  const n = Array(12).fill(0);
-  personas.forEach((p) => { const m = /^\d{4}-(\d{2})/.exec(p.fecha_nacimiento || ''); if (m) n[Number(m[1]) - 1]++; });
+function pstMeses(personas, ancha = false) {
+  const porMes = Array.from({ length: 12 }, () => []);
+  personas.forEach((p) => { const m = /^\d{4}-(\d{2})/.exec(p.fecha_nacimiento || ''); if (m) porMes[Number(m[1]) - 1].push(p); });
+  const n = porMes.map((a) => a.length);
   const max = Math.max(1, ...n), mesHoy = new Date().getMonth();
   const cont = pstEl('div', 'pst-cols');
   n.forEach((v, i) => {
@@ -8367,6 +8691,14 @@ function pstMeses(personas) {
     const barra = pstEl('div', 'pst-col-bar'); barra.style.height = Math.max(2, (v / max) * 110) + 'px'; barra.style.background = PST_COL.s1;
     col.appendChild(barra);
     col.appendChild(pstEl('span', 'pst-col-lbl', PST_MESES[i].slice(0, 3)));
+    if (v > 0) {
+      col.classList.add('pst-clic'); col.setAttribute('role', 'button'); col.title = `Ver quiénes cumplen en ${PST_MESES[i].toLowerCase()}`;
+      const abrir = () => pstVerPersonas(`Cumpleaños de ${PST_MESES[i].toLowerCase()}`,
+        porMes[i].slice().sort((a, b) => String(a.fecha_nacimiento).slice(5) < String(b.fecha_nacimiento).slice(5) ? -1 : 1),
+        { fecha: 'Cumple el', campoFecha: 'fecha_nacimiento', soloDia: true });
+      col.addEventListener('click', abrir);
+      col.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } });
+    }
     const lineas = [{ valor: pstNum(v), etiqueta: `cumpleaños en ${PST_MESES[i].toLowerCase()}` }];
     col.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
     col.addEventListener('pointerleave', pstTipOcultar);
@@ -8374,11 +8706,17 @@ function pstMeses(personas) {
     col.addEventListener('blur', pstTipOcultar);
     cont.appendChild(col);
   });
-  return pstCard('Cumpleaños por mes', `Mes actual resaltado: ${PST_MESES[mesHoy].toLowerCase()}`, cont,
-    { cab: ['Mes', 'Cumpleaños'], filas: n.map((v, i) => [PST_MESES[i], v]) });
+  return pstCard('Cumpleaños por mes', `Mes actual resaltado: ${PST_MESES[mesHoy].toLowerCase()} · toca un mes para ver quiénes cumplen`, cont,
+    { cab: ['Mes', 'Cumpleaños'], filas: n.map((v, i) => [PST_MESES[i], v]), quienesPorFila: porMes }, ancha);
 }
-function pstTile(etiqueta, valor, detalle, hero = false) {
-  const t = pstEl('div', 'pst-tile' + (hero ? ' pst-hero' : ''));
+function pstTile(etiqueta, valor, detalle, hero = false, quienes = null) {
+  const t = pstEl('div', 'pst-tile' + (hero ? ' pst-hero' : '') + (pstHayPersonas(quienes) ? ' pst-clic' : ''));
+  if (pstHayPersonas(quienes)) {
+    t.tabIndex = 0; t.setAttribute('role', 'button'); t.title = 'Ver quiénes son';
+    const abrir = () => pstVerPersonas(etiqueta, quienes);
+    t.addEventListener('click', abrir);
+    t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } });
+  }
   t.appendChild(pstEl('div', 'pst-tile-l', etiqueta));
   t.appendChild(pstEl('div', 'pst-tile-v', valor));
   if (detalle) t.appendChild(pstEl('div', 'pst-tile-d', detalle));
@@ -8393,6 +8731,8 @@ function renderPerfilStats() {
   _pst.filtro = [estado ? (estado === 'ACTIVO' ? 'Activos' : 'Inactivos') : 'Todos los estados',
     tipo ? (tipo === 'CONDUCTOR' ? 'Conductores' : 'Administrativos') : 'Conductores y administrativos', area || 'Todas las áreas'].join(' · ');
   $('pst-sub').textContent = _pst.filtro;
+  const bAct = PST_BLOQUES.find((x) => x.key === (_pst.bloque || 'resumen')) || PST_BLOQUES[0];
+  const tit2 = $('pst-title'); if (tit2) tit2.textContent = `${bAct.icon} ${bAct.label}`;
   body.innerHTML = '';
   if (!P.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay personas con estos filtros.')); return; }
 
@@ -8400,60 +8740,133 @@ function renderPerfilStats() {
   const edades = P.map((p) => pstAnios(p.fecha_nacimiento)).filter((v) => v != null);
   const antig = P.map((p) => pstAnios(p.fecha_ingreso, p.estado === 'INACTIVO' ? p.fecha_retiro : null)).filter((v) => v != null);
   const prom = (a) => (a.length ? (a.reduce((s, v) => s + v, 0) / a.length).toLocaleString('es-CO', { maximumFractionDigits: 1 }) : '—');
-  const mujeres = P.filter((p) => p.sexo === 'FEMENINO').length, conSexo = P.filter((p) => p.sexo).length;
+  const lMujeres = P.filter((p) => p.sexo === 'FEMENINO'); const mujeres = lMujeres.length, conSexo = P.filter((p) => p.sexo).length;
   const nCond = P.filter((p) => p.tipo === 'CONDUCTOR').length, nAdm = P.length - nCond;
-  const corregir = P.filter((p) => p.por_corregir).length;
+  const lCorregir = P.filter((p) => p.por_corregir); const corregir = lCorregir.length;
   const autorizaron = P.filter((p) => p.habeas_data_aceptado_en).length;
   const hoy = hoyServidor();
   const enDias = (f) => (f ? Math.round((new Date(f + 'T12:00:00') - new Date(hoy + 'T12:00:00')) / 86400000) : null);
   const condAct = P.filter((p) => p.tipo === 'CONDUCTOR' && p.estado === 'ACTIVO');
-  const licVenc = condAct.filter((p) => { const d = enDias(p.licencia_vencimiento); return d != null && d < 0; }).length;
-  const lic90 = condAct.filter((p) => { const d = enDias(p.licencia_vencimiento); return d != null && d >= 0 && d <= 90; }).length;
+  const lLicVenc = condAct.filter((p) => { const d = enDias(p.licencia_vencimiento); return d != null && d < 0; });
+  const lLic90 = condAct.filter((p) => { const d = enDias(p.licencia_vencimiento); return d != null && d >= 0 && d <= 90; });
+  const licVenc = lLicVenc.length, lic90 = lLic90.length;
   const kpis = pstEl('div', 'pst-kpis');
   kpis.append(
-    pstTile('Personas', pstNum(P.length), `${pstNum(nCond)} conductores · ${pstNum(nAdm)} administrativos`, true),
+    pstTile('Personas', pstNum(P.length), `${pstNum(nCond)} conductores · ${pstNum(nAdm)} administrativos`, true, P),
     pstTile('Edad promedio', `${prom(edades)} años`, edades.length ? `de ${Math.min(...edades)} a ${Math.max(...edades)} años` : ''),
     pstTile('Antigüedad promedio', `${prom(antig)} años`, estado === 'INACTIVO' ? 'tiempo que duraron' : 'en la empresa'),
-    pstTile('Mujeres', `${pstPct(mujeres, conSexo)}%`, `${pstNum(mujeres)} de ${pstNum(conSexo)}`),
-    pstTile('Licencias de conductores activos', licVenc ? `⛔ ${pstNum(licVenc)} vencidas` : '✅ Ninguna vencida', `🕒 ${pstNum(lic90)} vencen en 90 días`),
-    pstTile('Datos por corregir', `${pstNum(corregir)}`, `${pstPct(corregir, P.length)}% de las personas · ${pstNum(autorizaron)} autorizaron datos`),
+    pstTile('Mujeres', `${pstPct(mujeres, conSexo)}%`, `${pstNum(mujeres)} de ${pstNum(conSexo)}`, false, lMujeres),
+    pstTile('Licencias de conductores activos', licVenc ? `⛔ ${pstNum(licVenc)} vencidas` : '✅ Ninguna vencida', `🕒 ${pstNum(lic90)} vencen en 90 días`,
+      false, [...lLicVenc, ...lLic90].map((p) => ({ ...p, _fecha: p.licencia_vencimiento }))),
+    pstTile('Datos por corregir', `${pstNum(corregir)}`, `${pstPct(corregir, P.length)}% de las personas · ${pstNum(autorizaron)} autorizaron datos`, false, lCorregir),
   );
   body.appendChild(kpis);
 
+  // ---- Secciones por tema ----
+  // Cada tema es una entrada del menú (👥 Talento humano) y una pestaña aquí arriba.
+  const B = _pst.bloque || 'resumen';
+  const ver = (k) => B === 'resumen' || B === k;
+  const tabs = pstEl('div', 'pst-tabs');
+  PST_BLOQUES.forEach((b) => {
+    const t2 = pstEl('button', 'pst-tab' + (b.key === B ? ' on' : ''), `${b.icon} ${b.label}`);
+    t2.type = 'button';
+    t2.onclick = () => { _pst.bloque = b.key; renderPerfilStats(); };
+    tabs.appendChild(t2);
+  });
+  body.insertBefore(tabs, kpis);
+
   const seccion = (titulo) => { body.appendChild(pstEl('h3', 'pst-sec', titulo)); const g = pstEl('div', 'pst-grid'); body.appendChild(g); return g; };
   const L = PERFIL_LISTAS;
+  let g;
   // ---- Demografía ----
-  let g = seccion('👤 Demografía');
-  g.appendChild(pstBarras('Sexo', pstContar(P, (p) => p.sexo)));
-  g.appendChild(pstBarras('Rango de edad', pstContar(P, (p) => pstRango(pstAnios(p.fecha_nacimiento), PST_RANGOS.edad), { orden: PST_RANGOS.edad.map((r) => r[2]) })));
-  g.appendChild(pstBarras('Estado civil', pstContar(P, (p) => p.estado_civil, { orden: L.estado_civil })));
-  g.appendChild(pstBarras('Escolaridad', pstContar(P, (p) => p.escolaridad, { orden: L.escolaridad })));
-  g.appendChild(pstMeses(P));
+  if (ver('demografia')) {
+    g = seccion('👤 Demografía');
+    g.appendChild(pstBarras('Sexo', pstContar(P, (p) => p.sexo)));
+    g.appendChild(pstBarras('Rango de edad', pstContar(P, (p) => pstRango(pstAnios(p.fecha_nacimiento), PST_RANGOS.edad), { orden: PST_RANGOS.edad.map((r) => r[2]) })));
+    g.appendChild(pstBarras('Estado civil', pstContar(P, (p) => p.estado_civil, { orden: L.estado_civil })));
+    g.appendChild(pstBarras('Escolaridad', pstContar(P, (p) => p.escolaridad, { orden: L.escolaridad })));
+    if (B === 'resumen') g.appendChild(pstMeses(P));
+  }
+  // ---- Cumpleaños ----
+  if (B === 'cumple') {
+    g = seccion('🎂 Cumpleaños');
+    g.appendChild(pstMeses(P, true));
+    const hoyMD = hoyServidor().slice(5);
+    const mesActual = hoyMD.slice(0, 2);
+    const anioHoy2 = Number(hoyServidor().slice(0, 4));
+    const nombreMes = PST_MESES[Number(mesActual) - 1];
+    const delMes = P.filter((p) => String(p.fecha_nacimiento || '').slice(5, 7) === mesActual)
+      .sort((a, b) => (String(a.fecha_nacimiento).slice(8) < String(b.fecha_nacimiento).slice(8) ? -1 : 1));
+    const cont = pstEl('div', 'pst-bars');
+    if (!delMes.length) cont.appendChild(pstEl('div', 'pst-vacio', 'Nadie cumple años este mes con estos filtros.'));
+    delMes.forEach((p) => {
+      const dia = String(p.fecha_nacimiento).slice(8, 10);
+      const esHoy = String(p.fecha_nacimiento).slice(5) === hoyMD;
+      const fila = pstEl('div', 'pst-cump-row' + (esHoy ? ' hoy' : ''));
+      fila.tabIndex = 0; fila.classList.add('pst-clic'); fila.title = 'Abrir la ficha';
+      const cal = pstEl('div', 'pst-cump-dia');
+      cal.appendChild(pstEl('b', null, dia));
+      cal.appendChild(pstEl('span', null, nombreMes.slice(0, 3).toUpperCase()));
+      fila.appendChild(cal);
+      const c = pstEl('div', 'pst-cump-c');
+      c.appendChild(pstEl('div', 'pst-cump-nom', p.nombre || p.cedula));
+      c.appendChild(pstEl('div', 'pst-cump-fec', `${pstDiaSemana(anioHoy2, mesActual, dia)} ${Number(dia)} de ${nombreMes.toLowerCase()}${pstCumpleEdad(p, anioHoy2) ? ` · cumple ${pstCumpleEdad(p, anioHoy2)} años` : ''}`));
+      c.appendChild(pstEl('div', 'pst-cump-sub', [p.cargo, p.celular].filter(Boolean).join(' · ')));
+      fila.appendChild(c);
+      if (esHoy) fila.appendChild(pstEl('span', 'chip chip-green', '¡Hoy!'));
+      const abrir = () => pstAbrirFicha(p.id);
+      fila.addEventListener('click', abrir);
+      fila.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+      cont.appendChild(fila);
+    });
+    const cardC = pstCard(`Cumpleaños de ${nombreMes.toLowerCase()} ${anioHoy2}`,
+      `${pstNum(delMes.length)} persona(s) · el día de hoy queda resaltado · toca a alguien para ver su ficha`, cont,
+      { cab: ['Día', 'Fecha', 'Nombre', 'Cargo', 'Celular'],
+        filas: delMes.map((p) => {
+          const d = String(p.fecha_nacimiento).slice(8, 10);
+          return [Number(d), `${pstDiaSemana(anioHoy2, mesActual, d)} ${Number(d)} de ${nombreMes.toLowerCase()}`, p.nombre || '', p.cargo || '', p.celular || ''];
+        }),
+        quienesPorFila: delMes.map((p) => [p]) }, true);
+    // Excel de la lista del mes (para pasársela a los administradores)
+    if (delMes.length) {
+      const bx = pstEl('button', 'btn btn-sm', '⬇️ Excel de cumpleaños');
+      bx.type = 'button';
+      bx.onclick = () => pstExportarCumple(nombreMes, anioHoy2, delMes);
+      cardC.querySelector('.pst-card-h').appendChild(bx);
+    }
+    g.appendChild(cardC);
+  }
   // ---- Familia y vivienda ----
-  g = seccion('🏠 Familia y vivienda');
-  g.appendChild(pstBarras('Estrato socioeconómico', pstContar(P, (p) => (p.estrato != null ? `Estrato ${p.estrato}` : null), { orden: [1, 2, 3, 4, 5, 6].map((n) => `Estrato ${n}`) })));
-  g.appendChild(pstBarras('Tipo de vivienda', pstContar(P, (p) => p.tipo_vivienda, { orden: L.tipo_vivienda })));
-  g.appendChild(pstBarras('Personas a cargo', pstContar(P, (p) => p.personas_a_cargo, { orden: L.personas_a_cargo })));
-  g.appendChild(pstBarras('¿Tiene hijos?', pstContar(P, (p) => p.tiene_hijos, { orden: L.si_no })));
-  g.appendChild(pstBarras('¿Tiene pareja?', pstContar(P, (p) => p.convive_pareja, { orden: L.si_no })));
-  g.appendChild(pstBarras('Municipio de residencia', pstContar(P, (p) => p.ciudad, { top: 8 })));
+  if (ver('familia')) {
+    g = seccion('🏠 Familia y vivienda');
+    g.appendChild(pstBarras('Estrato socioeconómico', pstContar(P, (p) => (p.estrato != null ? `Estrato ${p.estrato}` : null), { orden: [1, 2, 3, 4, 5, 6].map((n) => `Estrato ${n}`) })));
+    g.appendChild(pstBarras('Tipo de vivienda', pstContar(P, (p) => p.tipo_vivienda, { orden: L.tipo_vivienda })));
+    g.appendChild(pstBarras('Personas a cargo', pstContar(P, (p) => p.personas_a_cargo, { orden: L.personas_a_cargo })));
+    g.appendChild(pstBarras('¿Tiene hijos?', pstContar(P, (p) => p.tiene_hijos, { orden: L.si_no })));
+    g.appendChild(pstBarras('¿Tiene pareja?', pstContar(P, (p) => p.convive_pareja, { orden: L.si_no })));
+    g.appendChild(pstBarras('Municipio de residencia', pstContar(P, (p) => p.ciudad, { top: 8 })));
+  }
   // ---- Laboral ----
-  g = seccion('💼 Laboral');
-  g.appendChild(pstBarras('Antigüedad en la empresa', pstContar(P, (p) => pstRango(pstAnios(p.fecha_ingreso, p.estado === 'INACTIVO' ? p.fecha_retiro : null), PST_RANGOS.antig), { orden: PST_RANGOS.antig.map((r) => r[2]) })));
-  g.appendChild(pstBarras('Área', pstContar(P, (p) => p.area, { top: 10 })));
-  g.appendChild(pstBarras('Cargo', pstContar(P, (p) => p.cargo, { top: 10 })));
-  g.appendChild(pstBarras('Tipo de contrato', pstContar(P, (p) => p.tipo_contrato)));
-  g.appendChild(pstBarras('Rango salarial', pstContar(P, (p) => pstSalRango(p.salario), { orden: PST_RANGOS.salario.map((r) => r[2]) }),
-    { nota: `SMMLV 2026 = $${pstNum(PST_SMMLV)}${estado !== 'ACTIVO' ? ' · en inactivos es el último salario (de otros años)' : ''}` }));
+  if (ver('laboral')) {
+    g = seccion('💼 Laboral');
+    g.appendChild(pstBarras('Antigüedad en la empresa', pstContar(P, (p) => pstRango(pstAnios(p.fecha_ingreso, p.estado === 'INACTIVO' ? p.fecha_retiro : null), PST_RANGOS.antig), { orden: PST_RANGOS.antig.map((r) => r[2]) })));
+    g.appendChild(pstBarras('Área', pstContar(P, (p) => p.area, { top: 10 })));
+    g.appendChild(pstBarras('Cargo', pstContar(P, (p) => p.cargo, { top: 10 })));
+    g.appendChild(pstBarras('Tipo de contrato', pstContar(P, (p) => p.tipo_contrato)));
+    g.appendChild(pstBarras('Rango salarial', pstContar(P, (p) => pstSalRango(p.salario), { orden: PST_RANGOS.salario.map((r) => r[2]) }),
+      { nota: `SMMLV 2026 = $${pstNum(PST_SMMLV)}${estado !== 'ACTIVO' ? ' · en inactivos es el último salario (de otros años)' : ''}` }));
+  }
   // ---- Salud y seguridad social ----
-  g = seccion('🩺 Salud y seguridad social');
-  g.appendChild(pstBarras('EPS', pstContar(P, (p) => p.eps)));
-  g.appendChild(pstBarras('Fondo de pensiones', pstContar(P, (p) => p.afp)));
-  g.appendChild(pstBarras('Tipo de sangre', pstContar(P, (p) => p.tipo_sangre, { orden: L.tipo_sangre })));
-  g.appendChild(pstBarras('Uso de lentes', pstContar(P, (p) => p.uso_lentes, { orden: L.si_no })));
+  if (ver('salud')) {
+    g = seccion('🩺 Salud y seguridad social');
+    g.appendChild(pstBarras('EPS', pstContar(P, (p) => p.eps)));
+    g.appendChild(pstBarras('Fondo de pensiones', pstContar(P, (p) => p.afp)));
+    g.appendChild(pstBarras('Tipo de sangre', pstContar(P, (p) => p.tipo_sangre, { orden: L.tipo_sangre })));
+    g.appendChild(pstBarras('Uso de lentes', pstContar(P, (p) => p.uso_lentes, { orden: L.si_no })));
+  }
   // ---- Conductores ----
   const PC = P.filter((p) => p.tipo === 'CONDUCTOR');
-  if (PC.length) {
+  if (ver('conductores') && PC.length) {
     g = seccion('🚌 Conductores');
     g.appendChild(pstBarras('Categoría de licencia', pstContar(PC, (p) => p.categoria_licencia, { orden: L.categoria_licencia })));
     g.appendChild(pstBarras('Estado de restricción', pstContar(PC, (p) => p.estado_restriccion)));
@@ -8463,15 +8876,155 @@ function renderPerfilStats() {
     }, { orden: ['Vencida', 'Vence en 30 días', 'Vence en 31 a 90 días', 'Vence en 3 a 12 meses', 'Vigente más de 1 año'] })));
   }
   // ---- Rotación ----
-  g = seccion('🔄 Rotación');
-  g.appendChild(pstRotacion(V));
+  if (ver('rotacion')) {
+    g = seccion('🔄 Rotación');
+    g.appendChild(pstRotacion(V));
+  }
   // ---- Calidad de datos ----
-  g = seccion('🧹 Calidad de datos');
-  const campos = []; P.forEach((p) => String(p.por_corregir || '').split(',').filter(Boolean).forEach((c) => campos.push(PST_CAMPOS[c] || c)));
-  g.appendChild(pstBarras('Campos por corregir', pstContar(campos, (c) => c),
-    { nota: 'Se corrigen desde la ficha o con el 🔗 link de actualización de datos' }));
-  g.appendChild(pstBarras('Estado de los datos', pstContar(P, (p) => (p.por_corregir ? 'Con datos por corregir' : 'Completos')), {}));
+  if (ver('calidad')) {
+    g = seccion('🧹 Calidad de datos');
+    const campos = [];
+    P.forEach((p) => String(p.por_corregir || '').split(',').filter(Boolean)
+      .forEach((c) => campos.push({ ...p, _campo: PST_CAMPOS[c.trim()] || c.trim() })));
+    g.appendChild(pstBarras('Campos por corregir', pstContar(campos, (c) => c._campo),
+      { nota: 'Se corrigen desde la ficha o con el 🔗 link de actualización de datos' }));
+    g.appendChild(pstBarras('Estado de los datos', pstContar(P, (p) => (p.por_corregir ? 'Con datos por corregir' : 'Completos')), {}));
+  }
 }
+
+// ---- ¿Quiénes son? ----
+// Cualquier número de las estadísticas (una barra, una fila de la tabla, un mes de cumpleaños,
+// un punto de la rotación) abre esta lista con las personas que hay detrás. Desde aquí se
+// descarga a Excel o se abre la ficha completa de cada quien.
+let _pstLista = { titulo: '', personas: [] };
+function pstPersonasModal() {
+  let m = $('pstp-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pstp-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pstp-card">
+    <div class="modal-head"><h3></h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pstp-sub"></div>
+    <div class="pstp-body"></div>
+    <div class="modal-foot"><button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.querySelector('[data-excel]').onclick = () => pstExportarPersonas(_pstLista.titulo, _pstLista.personas);
+  document.body.appendChild(m);
+  return m;
+}
+function pstVerPersonas(titulo, personas, opts = {}) {
+  let lista = (personas || []).filter((p) => p && (p.cedula || p.nombre));
+  // Sin fecha de por medio, en orden alfabético (más fácil de buscar)
+  if (!opts.fecha) lista = lista.slice().sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || '')));
+  _pstLista = { titulo, personas: lista, opts };
+  const m = pstPersonasModal();
+  m.querySelector('h3').textContent = `👥 ${titulo}`;
+  m.querySelector('.pstp-sub').textContent = `${pstNum(lista.length)} persona(s) · toca una para ver su ficha completa`;
+  const body = m.querySelector('.pstp-body');
+  body.innerHTML = '';
+  if (!lista.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay personas en este grupo.')); m.hidden = false; return; }
+  const campoFecha = opts.campoFecha || '_fecha';
+  const conFecha = !!opts.fecha && lista.some((p) => p[campoFecha]);
+  const tabla = pstEl('table', 'pst-tabla pstp-tabla');
+  const cab = ['Nombre', 'Cédula', 'Cargo', 'Estado', 'Celular'];
+  if (conFecha) cab.splice(3, 0, opts.fecha);
+  const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  const thead = pstEl('thead'); thead.appendChild(tr); tabla.appendChild(thead);
+  const tb = pstEl('tbody');
+  for (const p of lista) {
+    const r = pstEl('tr');
+    r.appendChild(pstEl('td', 'pstp-nom', p.nombre || '(sin nombre en el perfil)'));
+    r.appendChild(pstEl('td', null, p.cedula || '—'));
+    r.appendChild(pstEl('td', null, p.cargo || '—'));
+    if (conFecha) {
+      const f = p[campoFecha] || '';
+      r.appendChild(pstEl('td', null, opts.soloDia ? String(f).slice(8, 10) + '/' + String(f).slice(5, 7) : fechaLegible(f)));
+    }
+    r.appendChild(pstEl('td', null, p.estado || '—'));
+    r.appendChild(pstEl('td', null, p.celular || '—'));
+    if (p.id) {
+      r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Abrir la ficha completa';
+      const abrir = () => pstAbrirFicha(p.id);
+      r.addEventListener('click', abrir);
+      r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+    }
+    tb.appendChild(r);
+  }
+  tabla.appendChild(tb);
+  body.appendChild(tabla);
+  m.hidden = false;
+}
+// Abre la ficha de la persona desde la lista (hay que traer la fila completa)
+async function pstAbrirFicha(id) {
+  showBusy('Abriendo ficha…');
+  try {
+    const { data, error } = await sb.from('perfilsociodemografico').select('*').eq('id', id).single();
+    if (error) throw error;
+    openPerfilFicha(data);
+  } catch (e) {
+    toast('No se pudo abrir la ficha: ' + (e.message || e), 'err');
+  } finally { hideBusy(); }
+}
+async function pstExportarPersonas(titulo, personas) {
+  if (!personas || !personas.length) { toast('No hay personas para exportar.', 'err'); return; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [[titulo], [`${personas.length} persona(s) · ${_pst.filtro || ''}`], [`Generado: ${fmtFechaHora(new Date())}`], [],
+      ['Nombre', 'Cédula', 'Código', 'Cargo', 'Área', 'Tipo', 'Estado', 'Celular', 'Fecha de ingreso', 'Fecha de retiro']];
+    personas.forEach((p) => aoa.push([p.nombre || '', p.cedula || '', p.codigo || '', p.cargo || '', p.area || '',
+      p.tipo || '', p.estado || '', p.celular || '',
+      p.fecha_ingreso ? celdaFechaXlsx(p.fecha_ingreso) : '', p.fecha_retiro ? celdaFechaXlsx(p.fecha_retiro) : '']));
+    const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+    ws['!cols'] = [{ wch: 34 }, { wch: 12 }, { wch: 8 }, { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 13 }, { wch: 13 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Personas');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${titulo.replace(/[^\wáéíóúñÁÉÍÓÚÑ ]+/g, ' ').trim().replace(/\s+/g, '_')}_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  }
+}
+
+const PST_DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+function pstDiaSemana(anio, mes, dia) { return PST_DIAS[new Date(Number(anio), Number(mes) - 1, Number(dia)).getDay()]; }
+function pstCumpleEdad(p, anio) { const y = Number(String(p.fecha_nacimiento || '').slice(0, 4)); return y ? anio - y : null; }
+// Excel de los cumpleaños del mes (la lista que se le pasa a los administradores)
+async function pstExportarCumple(nombreMes, anio, personas) {
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [[`Cumpleaños de ${nombreMes.toLowerCase()} ${anio} — Autobuses El Poblado`],
+      [`${personas.length} persona(s) · ${_pst.filtro || ''}`], [`Generado: ${fmtFechaHora(new Date())}`], [],
+      ['Día', 'Fecha', 'Nombre', 'Cédula', 'Cargo', 'Área', 'Tipo', 'Celular', 'Cumple']];
+    personas.forEach((p) => {
+      const d = String(p.fecha_nacimiento).slice(8, 10);
+      aoa.push([Number(d), `${pstDiaSemana(anio, String(p.fecha_nacimiento).slice(5, 7), d)} ${Number(d)} de ${nombreMes.toLowerCase()}`,
+        p.nombre || '', p.cedula || '', p.cargo || '', p.area || '', p.tipo || '', p.celular || '',
+        pstCumpleEdad(p, anio) ? `${pstCumpleEdad(p, anio)} años` : '']);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 6 }, { wch: 26 }, { wch: 34 }, { wch: 12 }, { wch: 24 }, { wch: 16 }, { wch: 15 }, { wch: 12 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cumpleaños');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a2 = document.createElement('a');
+    a2.href = URL.createObjectURL(blob);
+    a2.download = `Cumpleanos_${nombreMes}_${anio}.xlsx`;
+    a2.click();
+    setTimeout(() => URL.revokeObjectURL(a2.href), 4000);
+    toast('Excel de cumpleaños generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  }
+}
+
 async function exportarPerfilStats() {
   if (!_pst.tablas.length) { toast('No hay estadísticas para exportar.', 'err'); return; }
   const btn = $('pst-excel'); const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';

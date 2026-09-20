@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v258';
+export const APP_VERSION = 'v259';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -137,8 +137,8 @@ function aniosEntre(desde, hasta) {
   if (h.getMonth() + 1 < Number(m[2]) || (h.getMonth() + 1 === Number(m[2]) && h.getDate() < Number(m[3]))) a--;
   return a >= 0 && a < 120 ? a : '';
 }
-const edadPerfil = (r) => aniosEntre(r.fecha_nacimiento);
-const antiguedadPerfil = (r) => aniosEntre(r.fecha_ingreso, r.fecha_retiro);
+export const edadPerfil = (r) => aniosEntre(r.fecha_nacimiento);
+export const antiguedadPerfil = (r) => aniosEntre(r.fecha_ingreso, r.fecha_retiro);
 // Campos de la ficha del empleado (se reutilizan para exportar TODO a Excel)
 const PERFIL_FIELDS = [
   { key: 'cedula', label: 'Cédula', type: 'text', required: true, section: 'Identificación', hint: 'Solo números. Es la llave de la persona: no se repite.' },
@@ -900,9 +900,9 @@ export const TABLES = {
     searchCols: ['nombre', 'cedula', 'codigo', 'placa', 'cargo', 'celular'],
     defaultOrder: { col: 'nombre', asc: true },
     filters: [
-      { col: 'estado', label: 'Estado', options: PL.estado },
-      { col: 'tipo', label: 'Tipo', options: PL.tipo },
-      { col: 'calidad', label: 'Datos', options: ['POR CORREGIR', 'OK'] },
+      { col: 'estado', label: 'Estado', options: PL.estado, chips: true },
+      { col: 'tipo', label: 'Tipo', options: PL.tipo, chips: true },
+      { col: 'calidad', label: 'Datos', options: ['POR CORREGIR', 'OK'], chips: true },
     ],
     columns: [
       { key: 'cedula', label: 'Cédula', m: true },
@@ -941,9 +941,9 @@ export const TABLES = {
     searchCols: ['cedula', 'cargo', 'placa', 'key_appsheet'],
     defaultOrder: { col: 'fecha_ingreso', asc: false },
     filters: [
-      { col: 'estado', label: 'Estado', options: PL.estado },
-      { col: 'tipo', label: 'Tipo', options: PL.tipo },
-      { col: 'tipo_ingreso', label: 'Ingreso', options: PL.tipo_ingreso },
+      { col: 'estado', label: 'Estado', options: PL.estado, chips: true },
+      { col: 'tipo', label: 'Tipo', options: PL.tipo, chips: true },
+      { col: 'tipo_ingreso', label: 'Ingreso', options: PL.tipo_ingreso, chips: true },
     ],
     columns: [
       { key: 'cedula', label: 'Cédula', m: true },
