@@ -7208,8 +7208,7 @@ function sinFotosHtml(s) {
   };
   return `<section class="pf-sec sin-adj"><h4>📎 Adjuntos del reporte (${fotos.length + extra.length})</h4>
     <ul>${fotos.map((f) => item(`Foto ${f.n}`, f.ruta, f.observacion)).join('')}
-    ${extra.map(([n, v]) => item(n, v, '')).join('')}</ul>
-    <p class="muted">Los archivos están todavía en AppSheet; quedan guardados con su nombre y su observación. Cuando migremos las fotos a la app se verán aquí.</p></section>`;
+    ${extra.map(([n, v]) => item(n, v, '')).join('')}</ul></section>`;
 }
 // El reporte TAL COMO viene de la app de AppSheet: todas las columnas de la hoja, sin recortar.
 // Sirve para verificar un dato puntual que no quedó en los bloques de arriba.
@@ -9663,6 +9662,34 @@ function renderSiniestrosStats() {
       (p) => (p.estado === 'NO ESTÁ EN EL PERFIL' ? 'No está en el perfil' : p.estado === 'ACTIVO' ? 'Activo' : 'Inactivo'),
       { orden: ['Activo', 'Inactivo', 'No está en el perfil'] }),
     { nota: 'Cruce por cédula con el perfil sociodemográfico.' }));
+    // Mes a mes: quién fue el conductor con MÁS reportes en cada mes (y quién es)
+    const meses12 = [...new Set(R.map((s) => String(s.fecha || '').slice(0, 7)).filter((ym) => /^\d{4}-\d{2}$/.test(ym)))]
+      .sort().reverse();
+    const filasMes = [], quienesMes = [];
+    for (const ym of meses12) {
+      const delMes = R.filter((s) => String(s.fecha || '').startsWith(ym));
+      const gm = sstPorConductor(delMes);
+      const lider = gm[0]; if (!lider) continue;
+      const empatados = gm.filter((x) => x.n === lider.n).length - 1;
+      const mes = `${PST_MESES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+      if (lider.n < 2) {
+        // Ese mes nadie repitió: señalar a uno sería injusto, se dice tal cual
+        filasMes.push([mes, delMes.length, `Ninguno repitió (${gm.length} conductores, uno cada uno)`, '—', '—', '—', '—', '—']);
+        quienesMes.push(delMes);
+      } else {
+        filasMes.push([mes, delMes.length,
+          (lider.p?.nombre || lider.nombre || '(sin nombre)') + (empatados ? ` (+${empatados} empatado${empatados > 1 ? 's' : ''})` : ''),
+          lider.ced || '—', lider.n, lider.p ? (lider.p.estado || '—') : 'No está en el perfil',
+          lider.resp, lider.monto ? sstMonto(lider.monto) : '—']);
+        quienesMes.push(lider.rows);
+      }
+    }
+    if (filasMes.length) {
+      g.appendChild(sstTarjetaTabla('Conductor con más reportes, mes a mes',
+        'El conductor que más siniestros reportó en cada mes. Toca la fila para ver sus reportes de ese mes.',
+        { cab: ['Mes', 'Siniestros del mes', 'Conductor con más reportes', 'Cédula', 'Sus siniestros', 'Estado en el perfil', 'Con responsabilidad', 'Costo'],
+          filas: filasMes, quienesPorFila: quienesMes }));
+    }
     const sinPerfil = grupos.filter((x) => !x.p);
     if (sinPerfil.length) {
       g.appendChild(sstTarjetaTabla('Conductores del reporte que no están en el perfil',
