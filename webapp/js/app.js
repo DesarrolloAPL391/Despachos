@@ -625,6 +625,11 @@ function buildSidebar() {
   if (vis.includes('pqrsf')) {
     const gPq = addNavGroup(nav, '📣', 'PQRSF', 'pqrsf');
     addTableBtn(gPq, 'pqrsf');
+    const gPs = addNavGroup(gPq, '📊', 'Estadísticas', 'pqrstats');
+    PQS_BLOQUES.forEach((b) => {
+      const aviso = b.key === 'pendientes' && PQR_VENC ? ` <span class="nav-badge">${PQR_VENC}</span>` : '';
+      addNavAction(gPs, b.icon, b.label + aviso, () => openPqrsfStats(b.key), 'nav-pqs-' + b.key);
+    });
   }
 
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
@@ -668,6 +673,7 @@ function buildSidebar() {
   const atop = $('nav-top'); if (atop) atop.classList.toggle('active', currentView === 'top');
   PST_BLOQUES.forEach((b) => { const e = $('nav-pst-' + b.key); if (e) e.classList.toggle('active', currentView === 'perfilstats' && (_pst.bloque || 'resumen') === b.key); });
   SST_BLOQUES.forEach((b) => { const e = $('nav-sst-' + b.key); if (e) e.classList.toggle('active', currentView === 'sinstats' && (_sst.bloque || 'resumen') === b.key); });
+  PQS_BLOQUES.forEach((b) => { const e = $('nav-pqs-' + b.key); if (e) e.classList.toggle('active', currentView === 'pqrstats' && _pqs.bloque === b.key); });
   const enConduccion = current === 'eventos_bus' && currentView === 'tabla';
   const aVel = $('nav-evb-vel'); if (aVel) aVel.classList.toggle('active', enConduccion && filters.categoria === 'VELOCIDAD');
   const aPue = $('nav-evb-pue'); if (aPue) aPue.classList.toggle('active', enConduccion && filters.categoria === 'PUERTA ABIERTA');
@@ -7427,6 +7433,303 @@ function openPqrsf(row) {
   m.hidden = false;
 }
 
+// ===================================================================================
+// 📊 ESTADÍSTICAS DE PQRSF y bandeja de lo que falta por responder
+// ===================================================================================
+// Todo viene agregado del servidor (sql/90): la pantalla no baja las 2.589 PQRSF, pide el
+// resumen del periodo. El CUMPLIMIENTO que se muestra se calcula con las fechas —radicado,
+// fecha límite y fecha de respuesta— y no con la columna de la hoja, que se contradice
+// consigo misma (hay filas marcadas CUMPLIO que a la vez dicen SIN RESPUESTA).
+const PQS_BLOQUES = [
+  { key: 'resumen', icon: '📊', label: 'Resumen' },
+  { key: 'cumplimiento', icon: '⏱️', label: 'Cumplimiento y tiempos' },
+  { key: 'motivos', icon: '💬', label: 'Motivos y canales' },
+  { key: 'vehiculos', icon: '🚌', label: 'Vehículos y rutas' },
+  { key: 'pendientes', icon: '📥', label: 'Falta por responder' },
+];
+const _pqs = { res: null, pend: null, bloque: 'resumen', filtro: '' };
+
+function pqsPeriodo() {
+  const anio = $('pqs-anio')?.value || '';
+  const mes = anio ? ($('pqs-mes')?.value || '') : '';
+  if (anio && mes) {
+    const fin = new Date(Number(anio), Number(mes), 0);   // día 0 del mes siguiente
+    return [`${anio}-${mes}-01`, `${anio}-${mes}-${String(fin.getDate()).padStart(2, '0')}`];
+  }
+  if (anio) return [`${anio}-01-01`, `${anio}-12-31`];
+  return [null, null];   // todo el histórico
+}
+function pqsPeriodoTxt() {
+  const anio = $('pqs-anio')?.value || '';
+  const mes = anio ? ($('pqs-mes')?.value || '') : '';
+  if (anio && mes) return `${PST_MESES[Number(mes) - 1]} de ${anio}`;
+  return anio ? `Año ${anio}` : 'Todo el histórico';
+}
+
+async function openPqrsfStats(bloque) {
+  if (!puedeVerPqrsf()) return;
+  _pqs.bloque = bloque || 'resumen';
+  currentView = 'pqrstats';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = false;
+  $('nav-pqs-' + _pqs.bloque)?.classList.add('active');
+  buildBottomNav();
+  const b = PQS_BLOQUES.find((x) => x.key === _pqs.bloque) || PQS_BLOQUES[0];
+  const tit = $('pst-title'); if (tit) tit.textContent = `📣 PQRSF · ${b.label}`;
+  if (!_pqs.res) await cargarPqrsfStats(); else renderPqrsfStats();
+}
+
+async function cargarPqrsfStats() {
+  const body = $('pst-body');
+  body.innerHTML = '<div class="loading">Leyendo las PQRSF…</div>';
+  const [desde, hasta] = pqsPeriodo();
+  try {
+    const [r1, r2] = await Promise.all([
+      sb.rpc('pqrsf_resumen', { p_desde: desde, p_hasta: hasta }),
+      sb.rpc('pqrsf_pendientes', { p_limite: 500 }),
+    ]);
+    if (r1.error) throw r1.error;
+    _pqs.res = r1.data; _pqs.pend = r2.error ? null : r2.data;
+    pqsLlenarAnios();
+    renderPqrsfStats();
+  } catch (e) {
+    const txt = String(e.message || e);
+    body.innerHTML = '';
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudieron leer las PQRSF: ' + txt
+      + (/pqrsf_resumen|pqrsf_pendientes/.test(txt) ? ' — falta ejecutar sql/90.' : '')));
+  }
+}
+
+// Los años salen de lo que hay cargado; el mes solo se habilita con un año elegido
+function pqsLlenarAnios() {
+  const selA = $('pqs-anio'), selM = $('pqs-mes');
+  if (selA && selA.options.length <= 1) {
+    const k = _pqs.res?.kpi || {};
+    const a1 = Number(String(k.desde || '').slice(0, 4)) || new Date().getFullYear();
+    const a2 = Number(String(k.hasta || '').slice(0, 4)) || new Date().getFullYear();
+    for (let a = a2; a >= a1; a--) {
+      selA.appendChild(Object.assign(document.createElement('option'), { value: String(a), textContent: String(a) }));
+    }
+  }
+  if (selM && selM.options.length <= 1) {
+    PST_MESES.forEach((m, i) => selM.appendChild(Object.assign(document.createElement('option'),
+      { value: String(i + 1).padStart(2, '0'), textContent: m })));
+  }
+  if (selM) { selM.disabled = !(selA && selA.value); if (selA && !selA.value) selM.value = ''; }
+}
+
+const pqsBarras = (items) => ({ items, sin: 0, total: items.reduce((s, i) => s + i.n, 0) });
+const pqsItems = (arr, etiqueta) => (arr || []).map((x) => ({
+  k: etiqueta ? etiqueta(x) : String(x.k), n: Number(x.n || 0),
+}));
+
+function renderPqrsfStats() {
+  const body = $('pst-body'); if (!_pqs.res) return;
+  const R = _pqs.res;
+  _pst.tablas = [];
+  _pqs.filtro = pqsPeriodoTxt();
+  _pst.filtro = _pqs.filtro;
+  $('pst-sub').textContent = _pqs.filtro;
+  const bAct = PQS_BLOQUES.find((x) => x.key === _pqs.bloque) || PQS_BLOQUES[0];
+  const tit = $('pst-title'); if (tit) tit.textContent = `📣 PQRSF · ${bAct.label}`;
+  body.innerHTML = '';
+
+  const tabs = pstEl('div', 'pst-tabs');
+  PQS_BLOQUES.forEach((b) => {
+    const t = pstEl('button', 'pst-tab' + (b.key === _pqs.bloque ? ' on' : ''), `${b.icon} ${b.label}`);
+    t.type = 'button';
+    t.onclick = () => { _pqs.bloque = b.key; renderPqrsfStats(); };
+    tabs.appendChild(t);
+  });
+  body.appendChild(tabs);
+
+  const B = _pqs.bloque;
+  if (B === 'pendientes') { pqsPendientes(body); return; }
+
+  const k = R.kpi || {};
+  if (!Number(k.total || 0)) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No hay PQRSF en este periodo.'));
+    return;
+  }
+  const tot = Number(k.total || 0);
+  const respondidas = Number(k.a_tiempo || 0) + Number(k.tarde || 0);
+
+  // ---- Indicadores ----
+  const kpis = pstEl('div', 'pst-kpis');
+  kpis.append(
+    pstTile('PQRSF', pstNum(tot),
+      k.desde ? `del ${fechaLegible(k.desde)} al ${fechaLegible(k.hasta)}` : '', true),
+    pstTile('Respondidas a tiempo', `${pstPct(k.a_tiempo, respondidas)}%`,
+      `${pstNum(k.a_tiempo)} de ${pstNum(respondidas)} respondidas`),
+    pstTile('Fuera de plazo', pstNum(k.tarde), `${pstPct(k.tarde, respondidas)}% de las respondidas`),
+    pstTile('Sin respuesta', pstNum(k.sin_resp), `${pstPct(k.sin_resp, tot)}% del total`),
+    pstTile('Días en responder', k.dias_prom == null ? '—' : String(k.dias_prom),
+      k.dias_medio == null ? 'promedio' : `promedio · la mitad en ${k.dias_medio} día(s) o menos`),
+    pstTile('Quejas', pstNum(k.quejas), `${pstNum(k.felicitaciones)} felicitación(es) · ${pstNum(k.con_proceso)} con proceso`),
+  );
+  body.appendChild(kpis);
+
+  const seccion = (titulo) => { body.appendChild(pstEl('h3', 'pst-sec', titulo)); const g = pstEl('div', 'pst-grid'); body.appendChild(g); return g; };
+  const ver = (x) => B === 'resumen' || B === x;
+  let g;
+
+  if (ver('resumen')) {
+    g = seccion('📊 El panorama');
+    g.appendChild(pstBarras('Por tipo', pqsBarras(pqsItems(R.por_tipo))));
+    g.appendChild(pstBarras('Cumplimiento', pqsBarras([
+      { k: 'A tiempo', n: Number(k.a_tiempo || 0) },
+      { k: 'Fuera de plazo', n: Number(k.tarde || 0) },
+      { k: 'Sin respuesta', n: Number(k.sin_resp || 0) },
+    ]), { nota: 'Calculado con las fechas, no con la columna de la hoja.' }));
+    const meses = pqsItems(R.por_mes, (x) => {
+      const a = String(x.k).slice(0, 4), m = Number(String(x.k).slice(5, 7));
+      return `${PST_MESES[m - 1] || x.k} ${a}`;
+    });
+    if (meses.length) g.appendChild(pstBarras('Cuántas llegan cada mes', pqsBarras(meses), { ancha: true }));
+  }
+
+  if (ver('cumplimiento')) {
+    g = seccion('⏱️ Cumplimiento y tiempos');
+    g.appendChild(pstBarras('Cuánto se demoran en responder', pqsBarras(pqsItems(R.demora)),
+      { nota: 'Días entre el radicado y la respuesta del área.' }));
+    const areas = R.por_area || [];
+    if (areas.length) {
+      g.appendChild(sstTarjetaTabla('Cumplimiento por área de destino',
+        'Con cuántas responde a tiempo cada área y cuánto se demora en promedio.',
+        { cab: ['Área', 'PQRSF', 'A tiempo', '% a tiempo', 'Fuera de plazo', 'Sin respuesta', 'Días promedio'],
+          filas: areas.map((a) => [a.k, Number(a.n || 0), Number(a.a_tiempo || 0),
+            `${pstPct(a.a_tiempo, Number(a.a_tiempo || 0) + Number(a.tarde || 0))}%`,
+            Number(a.tarde || 0), Number(a.sin_resp || 0), a.dias_prom == null ? '—' : String(a.dias_prom)]) }));
+    }
+    const meses = R.por_mes || [];
+    if (meses.length) {
+      g.appendChild(sstTarjetaTabla('Cumplimiento mes a mes',
+        'Si el porcentaje a tiempo sube, el proceso está mejorando.',
+        { cab: ['Mes', 'PQRSF', 'A tiempo', 'Fuera de plazo', 'Sin respuesta', '% a tiempo'],
+          filas: meses.map((m) => {
+            const a = String(m.k).slice(0, 4), mm = Number(String(m.k).slice(5, 7));
+            const resp = Number(m.a_tiempo || 0) + Number(m.tarde || 0);
+            return [`${PST_MESES[mm - 1] || m.k} ${a}`, Number(m.n || 0), Number(m.a_tiempo || 0),
+              Number(m.tarde || 0), Number(m.sin_resp || 0), `${pstPct(m.a_tiempo, resp)}%`];
+          }) }));
+    }
+  }
+
+  if (ver('motivos')) {
+    g = seccion('💬 Por qué se quejan y por dónde llegan');
+    g.appendChild(pstBarras('Motivo', pqsBarras(pqsItems(R.por_motivo)), { ancha: true }));
+    g.appendChild(pstBarras('Medio por el que llega', pqsBarras(pqsItems(R.por_medio))));
+    const dias = (R.por_dia || []).map((d) => ({
+      k: (PST_DIAS[Number(d.k)] || '').replace(/^./, (c) => c.toUpperCase()), n: Number(d.n || 0),
+    }));
+    if (dias.length) g.appendChild(pstBarras('Día en que se radican', pqsBarras(dias)));
+  }
+
+  if (ver('vehiculos')) {
+    g = seccion('🚌 Vehículos y rutas');
+    g.appendChild(pstBarras('Rutas con más PQRSF', pqsBarras(pqsItems(R.por_ruta)), { ancha: true }));
+    const mv = R.por_movil || [];
+    if (mv.length) {
+      g.appendChild(sstTarjetaTabla('Vehículos con más PQRSF',
+        'Los 25 móviles más mencionados. "Con proceso" son las que terminaron en descargos al conductor.',
+        { cab: ['Móvil', 'PQRSF', 'Quejas', 'Con proceso', 'Última'],
+          filas: mv.map((v) => [v.k, Number(v.n || 0), Number(v.quejas || 0), Number(v.con_proceso || 0),
+            v.ultimo ? fechaLegible(v.ultimo) : '—']) }));
+    }
+  }
+}
+
+// ---- 📥 Lo que falta por responder ----
+function pqsPendientes(body) {
+  const P = _pqs.pend;
+  if (!P || !P.ok) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudo leer la bandeja de pendientes.'));
+    return;
+  }
+  const items = P.items || [];
+  const kpis = pstEl('div', 'pst-kpis');
+  kpis.append(
+    pstTile('Falta por responder', pstNum(P.total), 'sin fecha de respuesta o todavía abiertas', true),
+    pstTile('Ya vencidas', pstNum(P.vencidas), 'pasaron de la fecha límite del área'),
+    pstTile('Dentro del plazo', pstNum(Math.max(0, Number(P.total || 0) - Number(P.vencidas || 0))), 'todavía a tiempo'),
+  );
+  body.appendChild(kpis);
+  body.appendChild(pstEl('h3', 'pst-sec', '📥 De la más vencida a la más reciente'));
+  if (!items.length) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No hay PQRSF pendientes. 👏'));
+    return;
+  }
+  const g = pstEl('div', 'pst-grid'); body.appendChild(g);
+  const card = pstEl('section', 'pst-card pst-ancha');
+  const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
+  tt.appendChild(pstEl('h4', null, `Pendientes (${pstNum(items.length)}${items.length < P.total ? ' de ' + pstNum(P.total) : ''})`));
+  tt.appendChild(pstEl('div', 'pst-nota', 'Toca una fila para abrir el radicado completo. Los días en rojo son de atraso sobre la fecha límite.'));
+  head.appendChild(tt);
+  const cuerpo = pstEl('div', 'pst-card-b pst-tabla-wrap');
+  const tabla = pstEl('table', 'pst-tabla');
+  const cab = ['Atraso', 'Radicado', 'Fecha', 'Límite', 'Tipo', 'Motivo', 'Móvil', 'Ruta', 'Área de destino', 'Estado'];
+  const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  const thead = pstEl('thead'); thead.appendChild(tr); tabla.appendChild(thead);
+  const tb = pstEl('tbody');
+  const filas = [];
+  items.forEach((p) => {
+    const atraso = p.atraso == null ? null : Number(p.atraso);
+    const txtAtraso = atraso == null ? 'sin plazo' : (atraso > 0 ? `${atraso} día(s)` : 'a tiempo');
+    const fila = [txtAtraso, p.radicado || '—', p.fecha_radicado ? fechaLegible(p.fecha_radicado) : '—',
+      p.fecha_limite ? fechaLegible(p.fecha_limite) : '—', p.tipo || '—', p.motivo || '—',
+      p.numero_interno || '—', p.ruta || '—', p.responsable_destino || '—', p.estado || '—'];
+    filas.push(fila);
+    const r = pstEl('tr');
+    fila.forEach((v, i) => r.appendChild(pstEl('td', i === 0 && atraso > 0 ? 'evb-alta' : null, v)));
+    r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Abrir el radicado';
+    const abrir = () => pqsAbrirFicha(p.key);
+    r.addEventListener('click', abrir);
+    r.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+    tb.appendChild(r);
+  });
+  tabla.appendChild(tb); cuerpo.appendChild(tabla); card.append(head, cuerpo);
+  _pst.tablas.push({ titulo: 'PQRSF pendientes', nota: `Al ${fechaLegible(P.hoy)}`, cab, filas });
+  g.appendChild(card);
+}
+
+async function pqsAbrirFicha(key) {
+  if (!key) return;
+  showBusy('Abriendo el radicado…');
+  try {
+    const { data, error } = await sb.from('pqrsf').select('*').eq('key', key).single();
+    if (error) throw error;
+    openPqrsf(data);
+  } catch (e) {
+    toast('No se pudo abrir el radicado: ' + (e.message || e), 'err');
+  } finally { hideBusy(); }
+}
+
+async function exportarPqrsfStats() {
+  if (!_pst.tablas.length) { toast('No hay estadísticas para exportar.', 'err'); return; }
+  const btn = $('pst-excel'); const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [['PQRSF — Autobuses El Poblado'], [`Periodo: ${_pqs.filtro || ''}`],
+      [`Generado: ${fmtFechaHora(new Date())}`], []];
+    for (const t of _pst.tablas) {
+      aoa.push([t.titulo]); if (t.nota) aoa.push([t.nota]);
+      aoa.push(t.cab); t.filas.forEach((f) => aoa.push(f)); aoa.push([]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 34 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 24 }, { wch: 14 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'PQRSF');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })],
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `PQRSF_${hoyServidor()}.xlsx`; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Excel generado', 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
 // ---- Ficha del siniestro: el reporte completo, ordenado ----
 let _sinRow = null;
 function sinModal() {
@@ -7775,11 +8078,15 @@ async function openPerfilFicha(row) {
 // ===================================================================================
 let PQR_OK = false;     // esta cuenta puede VER las PQRSF (rol o lista de servicio al cliente)
 let PQR_EDITA = false;  // ademas puede traer la hoja
+let PQR_PEND = 0;       // PQRSF sin responder (aviso del menu)
+let PQR_VENC = 0;       // de esas, las que ya pasaron la fecha limite
 async function refrescarPqrsfAcceso(rebuild = true) {
   try {
     const { data } = await sb.rpc('pqrsf_estado');
     PQR_OK = !!(data && data.ok); PQR_EDITA = !!(data && data.puede_cargar);
-  } catch { PQR_OK = false; PQR_EDITA = false; }
+    PQR_PEND = Number((data && data.pendientes) || 0);
+    PQR_VENC = Number((data && data.vencidas) || 0);
+  } catch { PQR_OK = false; PQR_EDITA = false; PQR_PEND = 0; PQR_VENC = 0; }
   if (rebuild) buildSidebar();
 }
 let ASP_NUEVOS = 0; // inscripciones que el admin aún no abre (badge del menú)
@@ -8986,7 +9293,7 @@ async function openPerfilStats(bloque) {
   _pst.bloque = bloque || 'resumen';
   currentView = 'perfilstats';
   statsPrepararVista();
-  $('pst-fl-perfil').hidden = false; $('pst-fl-sin').hidden = true;
+  $('pst-fl-perfil').hidden = false; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
   $('nav-pst-' + (_pst.bloque || 'resumen'))?.classList.add('active');
   buildBottomNav();
   const b = PST_BLOQUES.find((x) => x.key === _pst.bloque) || PST_BLOQUES[0];
@@ -9755,7 +10062,7 @@ async function openSiniestrosStats(bloque) {
   _sst.bloque = bloque || 'resumen';
   currentView = 'sinstats';
   statsPrepararVista();
-  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = false;
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = false; $('pst-fl-pqr').hidden = true;
   $('nav-sst-' + (_sst.bloque || 'resumen'))?.classList.add('active');
   buildBottomNav();
   const b = SST_BLOQUES.find((x) => x.key === _sst.bloque) || SST_BLOQUES[0];
@@ -10784,8 +11091,15 @@ async function sinExportarLista(titulo, filas) {
 
 ['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
 ['sst-anio', 'sst-mes', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
-$('pst-recargar')?.addEventListener('click', () => (currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
-$('pst-excel')?.addEventListener('click', () => (currentView === 'sinstats' ? exportarSiniestrosStats() : exportarPerfilStats()));
+$('pst-recargar')?.addEventListener('click', () => (currentView === 'pqrstats' ? cargarPqrsfStats()
+  : currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
+$('pst-excel')?.addEventListener('click', () => (currentView === 'pqrstats' ? exportarPqrsfStats()
+  : currentView === 'sinstats' ? exportarSiniestrosStats() : exportarPerfilStats()));
+// Cambiar de año o de mes vuelve a pedir el resumen: el recorte lo hace el servidor
+['pqs-anio', 'pqs-mes'].forEach((id) => $(id)?.addEventListener('change', () => {
+  if ($('pqs-anio')) { const m = $('pqs-mes'); if (m) { m.disabled = !$('pqs-anio').value; if (!$('pqs-anio').value) m.value = ''; } }
+  cargarPqrsfStats();
+}));
 $('pst-close')?.addEventListener('click', cerrarPerfilStats);
 window.addEventListener('resize', () => {
   clearTimeout(_pst.rz);
