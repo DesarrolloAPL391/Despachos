@@ -374,6 +374,36 @@
           <div id="laur-body" class="malla-body"></div>
         </div>
 
+        <!-- Intervenciones a los equipos del bus (GPS, sensores, camaras) - sql/100.
+             El auditor cita el carro y despues cierra con lo que paso. -->
+        <div id="interv-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🛠️ Intervenciones</h2>
+            <span id="iv-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <span id="iv-rango" class="iv-rango">
+              <label class="cump-fecha-lbl">📅 <input type="date" id="iv-desde" /></label>
+              <label class="cump-fecha-lbl">a <input type="date" id="iv-hasta" /></label>
+              <select id="iv-estado" title="Filtrar por estado">
+                <option value="">Todos los estados</option>
+                <option value="PROGRAMADA">Programadas</option>
+                <option value="INGRESO">Ingresó</option>
+                <option value="NO INGRESO">No ingresó</option>
+                <option value="NO SE PRESENTO">No se presentó</option>
+                <option value="ANULADA">Anuladas</option>
+              </select>
+            </span>
+            <input type="search" id="iv-search" placeholder="Móvil, ruta, motivo…" />
+            <button id="iv-nueva" class="btn btn-primary">➕ Nueva</button>
+            <button id="iv-cargar" class="btn" title="Cargar el historico desde el archivo">⬆️ Histórico</button>
+            <input type="file" id="iv-file" accept=".csv,.txt,.xlsx,.xls" hidden />
+            <button id="iv-excel" class="btn">📊 Excel</button>
+            <button id="iv-refresh" class="btn">↻ Actualizar</button>
+            <button id="iv-close" class="btn">← Volver</button>
+          </div>
+          <div id="iv-body" class="malla-body"></div>
+        </div>
+
         <!-- Control Av. Oriental: un solo punto de paso (sql/98). Misma mecanica de Laureles. -->
         <div id="oriental-view" class="malla-view" hidden>
           <div class="toolbar cump-toolbar">

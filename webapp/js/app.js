@@ -604,6 +604,17 @@ function buildSidebar() {
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin() || isOperaciones()) addNavAction(gRe, '🪪', `Licencias de conductores${LIC_PEND ? ` <span class="nav-badge">${LIC_PEND}</span>` : ''}`, openLicencias, 'nav-licencias');
 
+  // 🛠️ Intervenciones a los equipos del bus (GPS, sensores, cámaras) — sql/100
+  if (puedeVerInterv()) {
+    const gIv = addNavGroup(nav, '🛠️', 'Intervenciones', 'interv');
+    if (puedeEditarInterv()) {
+      addNavAction(gIv, '📋', `Agenda y pendientes${IV_PEND ? ` <span class="nav-badge">${IV_PEND}</span>` : ''}`,
+        () => openInterv('agenda'), 'nav-iv-agenda');
+    }
+    addNavAction(gIv, '🗂️', 'Historico', () => openInterv('historico'), 'nav-iv-historico');
+    if (!isAfiliado()) addNavAction(gIv, '📊', 'Cumplimiento de citas', () => openInterv('tablero'), 'nav-iv-tablero');
+  }
+
   // 🗃️ Catálogos (tablas maestras: parque, conductores, vehículos GPS, itinerarios, ubicaciones)
   const gCat = addNavGroup(nav, '🗃️', 'Catálogos', 'cat');
   for (const name of vis) { if (TBL_GROUP[name] === 'cat') addTableBtn(gCat, name); }
@@ -829,7 +840,7 @@ function selectTable(name, filtroInicial) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -3248,6 +3259,7 @@ async function refrescarAlertasDocs() {
   if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]);
   await refrescarPqrsfAcceso(false);
   await refrescarPermisos(false);
+  await refrescarInterv(false);
   await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
@@ -4293,7 +4305,7 @@ async function openCumplimiento() {
   $('map-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4560,7 +4572,7 @@ async function openRutasVivo(modo) {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4788,7 +4800,7 @@ async function openMalla() {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4958,7 +4970,7 @@ async function openLaureles(modo) {
 }
 function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -5421,7 +5433,7 @@ async function openOriental(modo) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -6217,7 +6229,7 @@ async function openIntegradas() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -6332,7 +6344,7 @@ async function openPasajeros() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -6416,7 +6428,7 @@ async function openPreventivas() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -7110,6 +7122,567 @@ function avisarNovedadDesbloqueos() {
 }
 
 // ===================================================================================
+// 🛠️ INTERVENCIONES a los equipos del bus (GPS, sensores de pasajeros, cámaras) — sql/100
+// El auditor CITA el carro y después CIERRA con lo que pasó (ingresó / no ingresó / no se
+// presentó). De ahí salen la agenda del día, lo que quedó sin cerrar y el cumplimiento de las
+// citas — que es el dato que la hoja de cálculo tenía escondido: uno de cada ocho no entra.
+// Los datos del carro (placa, ruta, propietario, contacto) los pone la app desde el parque.
+// ===================================================================================
+let IV_OK = false, IV_EDITA = false, IV_PEND = 0;
+let _ivModo = 'agenda';
+const _iv = { rows: [], q: '', desde: '', hasta: '', estado: '', cargando: false };
+const IV_RESULTADOS = ['INGRESO', 'NO INGRESO', 'NO SE PRESENTO'];
+const IV_CHIP = { PROGRAMADA: 'chip-amber', INGRESO: 'chip-green', 'NO INGRESO': 'chip-red',
+  'NO SE PRESENTO': 'chip-red', ANULADA: 'chip-gray' };
+const IV_LBL = { PROGRAMADA: 'Programada', INGRESO: 'Ingresó', 'NO INGRESO': 'No ingresó',
+  'NO SE PRESENTO': 'No se presentó', ANULADA: 'Anulada' };
+
+function puedeVerInterv() { return IV_OK; }
+function puedeEditarInterv() { return IV_EDITA; }
+
+async function refrescarInterv(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('intervenciones_estado');
+    IV_OK = !!(data && data.ok);
+    IV_EDITA = !!(data && data.puede_editar);
+    IV_PEND = Number((data && data.por_cerrar) || 0);
+  } catch (e) { IV_OK = false; IV_EDITA = false; IV_PEND = 0; }
+  if (rebuild) buildSidebar();
+}
+
+const IV_COLS = 'id,fecha,hora,movil,placa,ruta,propietario,celular,correo,motivo,resultado,'
+  + 'observacion,cerrado_en,cerrado_por,anulado_en,anulado_por,nota_anulacion,revisar,origen,'
+  + 'creado_en,creado_por,creado_nombre,estado';
+
+// ---------- Abrir ----------
+async function openInterv(modo) {
+  if (!puedeVerInterv()) return;
+  _ivModo = ['agenda', 'historico', 'tablero'].includes(modo) ? modo : 'agenda';
+  if (_ivModo === 'agenda' && !puedeEditarInterv()) _ivModo = 'historico';  // el que solo mira
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'interv';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('perfilstats-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('interv-view').hidden = false;
+  const h2 = document.querySelector('#interv-view h2');
+  if (h2) h2.textContent = _ivModo === 'agenda' ? '🛠️ Intervenciones · agenda'
+    : (_ivModo === 'tablero' ? '📊 Cumplimiento de intervenciones' : '🗂️ Histórico de intervenciones');
+  const rango = $('iv-rango');
+  if (rango) rango.hidden = (_ivModo === 'agenda');
+  $('iv-search').hidden = (_ivModo === 'tablero');
+  $('iv-nueva').hidden = !puedeEditarInterv();
+  $('iv-cargar').hidden = !isAdmin();
+  $('iv-excel').hidden = (_ivModo === 'agenda');
+  if (!$('iv-desde').value) {
+    const d = new Date(); d.setMonth(d.getMonth() - 12);
+    $('iv-desde').value = d.toISOString().slice(0, 10);
+    $('iv-hasta').value = hoyServidor();
+  }
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-iv-' + _ivModo)?.classList.add('active');
+  buildBottomNav();
+  await cargarInterv();
+}
+function cerrarInterv() { $('interv-view').hidden = true; selectTable(current); }
+
+// ---------- Traer ----------
+async function cargarInterv() {
+  const body = $('iv-body');
+  if (_iv.cargando) return;
+  _iv.cargando = true;
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    let q = sb.from('intervenciones').select(IV_COLS);
+    if (_ivModo === 'agenda') {
+      // La agenda es lo de hoy en adelante MÁS todo lo que quedó sin cerrar de antes.
+      q = q.or(`fecha.gte.${hoyServidor()},estado.eq.PROGRAMADA`);
+    } else {
+      q = q.gte('fecha', $('iv-desde').value || '2015-01-01').lte('fecha', $('iv-hasta').value || hoyServidor());
+    }
+    const { data, error } = await q.order('fecha', { ascending: false }).order('hora', { ascending: true }).limit(5000);
+    if (error) throw error;
+    _iv.rows = data || [];
+    renderInterv();
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/intervenciones/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar sql/100.' : 'No se pudieron cargar las intervenciones.'}<br><small>${esc(t)}</small></div>`;
+  } finally { _iv.cargando = false; }
+}
+
+// ---------- Pintar ----------
+const ivHora = (r) => (r.hora ? String(r.hora).slice(0, 5) : '');
+const ivChip = (r) => `<span class="chip ${IV_CHIP[r.estado] || 'chip-gray'}">${IV_LBL[r.estado] || esc(r.estado || '')}</span>`;
+
+function ivFiltrar(rows) {
+  const t = (_iv.q || '').trim().toLowerCase();
+  let out = rows;
+  if (_iv.estado) out = out.filter((r) => r.estado === _iv.estado);
+  if (t) {
+    out = out.filter((r) => [r.movil, r.placa, r.ruta, r.propietario, r.motivo, r.observacion]
+      .some((v) => String(v || '').toLowerCase().includes(t)));
+  }
+  return out;
+}
+
+function ivFilaHtml(r, conCierre) {
+  const atras = r.estado === 'PROGRAMADA' && r.fecha < hoyServidor();
+  return `<tr class="iv-row${atras ? ' iv-atrasada' : ''}${r.revisar ? ' iv-revisar' : ''}" data-id="${r.id}">
+    <td class="iv-fh"><b>${esc(fechaLegible(r.fecha))}</b>${ivHora(r) ? `<small>${esc(ivHora(r))}</small>` : ''}</td>
+    <td class="iv-mov"><b>${esc(String(r.movil || '').trim())}</b>${r.placa ? `<small>${esc(r.placa)}</small>` : ''}</td>
+    <td>${esc(r.ruta || '—')}</td>
+    <td class="iv-mot">${esc(r.motivo || '')}${r.observacion ? `<small>✔️ ${esc(r.observacion)}</small>` : ''}${r.revisar ? '<small class="iv-marca">⚠️ revisar este registro</small>' : ''}</td>
+    <td>${ivChip(r)}</td>
+    <td class="iv-acc">${conCierre && puedeEditarInterv() && r.estado === 'PROGRAMADA'
+      ? `<button type="button" class="btn btn-sm btn-primary" data-iv-cerrar="${r.id}">Cerrar</button>` : ''}
+      <button type="button" class="btn btn-sm" data-iv-ficha="${r.id}">Ver</button></td>
+  </tr>`;
+}
+
+function ivTablaHtml(rows, conCierre, vacio) {
+  if (!rows.length) return `<div class="cump-empty">${vacio}</div>`;
+  return '<div class="mc-wrap"><table class="mc-tabla iv-tabla"><thead><tr>'
+    + '<th>Fecha</th><th>Móvil</th><th>Ruta</th><th>Motivo</th><th>Estado</th><th></th>'
+    + `</tr></thead><tbody>${rows.map((r) => ivFilaHtml(r, conCierre)).join('')}</tbody></table></div>`;
+}
+
+function renderInterv() {
+  const body = $('iv-body');
+  const hoy = hoyServidor();
+  const rows = ivFiltrar(_iv.rows);
+
+  if (_ivModo === 'tablero') { body.innerHTML = _ivDashHtml(rows); return; }
+
+  if (_ivModo === 'agenda') {
+    const pend = rows.filter((r) => r.estado === 'PROGRAMADA' && r.fecha < hoy);
+    const hoyR = rows.filter((r) => r.fecha === hoy);
+    const prox = rows.filter((r) => r.fecha > hoy);
+    const sub = $('iv-sub');
+    if (sub) sub.textContent = `${hoyR.length} hoy · ${pend.length} sin cerrar de antes · ${prox.length} próximas`;
+    body.innerHTML = (pend.length ? `<h3 class="iv-h">⏳ Sin cerrar de días anteriores <span class="chip chip-amber">${pend.length}</span></h3>`
+      + '<p class="iv-nota">Ya pasó la cita y nadie dijo qué ocurrió. Ciérralas para que el cumplimiento sea real.</p>'
+      + ivTablaHtml(pend.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)), true, '') : '')
+      + `<h3 class="iv-h">📅 Hoy · ${esc(fechaLegible(hoy))}</h3>`
+      + ivTablaHtml(hoyR, true, 'No hay intervenciones citadas para hoy.')
+      + (prox.length ? '<h3 class="iv-h">🔜 Próximas</h3>' + ivTablaHtml(prox.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)), true, '') : '');
+    return;
+  }
+
+  const sub = $('iv-sub');
+  if (sub) sub.textContent = `${rows.length} intervención(es)`
+    + (_iv.rows.length !== rows.length ? ` de ${_iv.rows.length}` : '');
+  body.innerHTML = ivTablaHtml(rows, true, 'No hay intervenciones en ese rango.');
+}
+
+// ---------- Indicadores ----------
+function _ivAgg(rows) {
+  const A = { total: 0, ing: 0, noIng: 0, noPres: 0, prog: 0, anul: 0, cerradas: 0,
+    porMes: {}, porRuta: {}, porMovil: {}, porTema: {}, revisar: 0 };
+  for (const r of rows) {
+    A.total++;
+    if (r.revisar) A.revisar++;
+    if (r.estado === 'ANULADA') { A.anul++; continue; }
+    if (r.estado === 'PROGRAMADA') A.prog++;
+    if (r.estado === 'INGRESO') A.ing++;
+    if (r.estado === 'NO INGRESO') A.noIng++;
+    if (r.estado === 'NO SE PRESENTO') A.noPres++;
+    if (IV_RESULTADOS.includes(r.estado)) A.cerradas++;
+    const mes = String(r.fecha || '').slice(0, 7);
+    if (mes) { A.porMes[mes] = A.porMes[mes] || { n: 0, ing: 0 }; A.porMes[mes].n++; if (r.estado === 'INGRESO') A.porMes[mes].ing++; }
+    const ru = (r.ruta || '—').trim() || '—';
+    A.porRuta[ru] = A.porRuta[ru] || { n: 0, ing: 0 }; A.porRuta[ru].n++; if (r.estado === 'INGRESO') A.porRuta[ru].ing++;
+    const mv = String(r.movil || '').trim();
+    if (mv) { A.porMovil[mv] = A.porMovil[mv] || { n: 0, noLlega: 0, ruta: ru }; A.porMovil[mv].n++;
+      if (r.estado === 'NO INGRESO' || r.estado === 'NO SE PRESENTO') A.porMovil[mv].noLlega++; }
+    const tema = _ivTema(r.motivo);
+    A.porTema[tema] = A.porTema[tema] || { n: 0, ing: 0 };
+    A.porTema[tema].n++; if (r.estado === 'INGRESO') A.porTema[tema].ing++;
+  }
+  return A;
+}
+// El motivo es texto libre (así lo escriben). Para poder medirlo se agrupa por lo que dice,
+// sin tocar el dato: el texto original queda intacto en la ficha.
+function _ivTema(motivo) {
+  const m = String(motivo || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/BARRA|SENSOR|PASAJERO|CALIBRA/.test(m)) return 'Sensores';
+  if (/CAMARA|DVR|VIDEO/.test(m)) return 'Cámaras';
+  if (/SIM|PLAN DE DATOS|OPERADOR/.test(m)) return 'SIM/datos';
+  if (/INSTALA|UNIDAD PROPIA|DESMONT|TRASLAD/.test(m)) return 'Instalación';
+  if (/PUERTA/.test(m)) return 'Puertas';
+  if (/GPS|TRANSMISION|SENAL|SEÑAL|UBICACION|PEGADO|DESACEL/.test(m)) return 'GPS';
+  return 'Otros';
+}
+function _ivBarras(obj, titulo, sub, enOrden) {
+  const items = enOrden ? Object.entries(obj) : Object.entries(obj).sort((a, b) => b[1].n - a[1].n).slice(0, 12);
+  if (!items.length) return '';
+  const max = Math.max(...items.map(([, v]) => v.n));
+  const filas = items.map(([k, v]) => {
+    const p = _pctCump(v.ing, v.n);
+    return `<div class="crow"><div class="crow-lbl">${esc(k)}</div>`
+      + `<div class="crow-track"><div class="crow-fill" style="width:${Math.round(100 * v.n / max)}%;background:${_colCump(p)}"></div></div>`
+      + `<div class="crow-val"><b>${v.n}</b> <small>${p}% entró</small></div></div>`;
+  }).join('');
+  return `<div class="cump-card"><h4>${titulo}${sub ? ` <small>${sub}</small>` : ''}</h4>${filas}</div>`;
+}
+function _ivDashHtml(rows) {
+  if (!rows.length) return '<div class="cump-empty">No hay intervenciones en ese rango.</div>';
+  const a = _ivAgg(rows);
+  const pIng = _pctCump(a.ing, a.cerradas);
+  const pCerr = _pctCump(a.cerradas, a.total - a.anul);
+  const carros = Object.keys(a.porMovil).length;
+  const hero = `<div class="cump-heros laur-heros">
+    <div class="cump-hero" style="--acc:${a.cerradas ? _colCump(pIng) : '#94a3b8'}"><div class="ch-val">${a.cerradas ? pIng + '%' : '—'}</div>`
+    + `<div class="ch-lbl">Entraron a portería</div><div class="ch-sub">${a.ing}/${a.cerradas} de las citas cerradas</div></div>
+    <div class="cump-hero" style="--acc:${_colCump(pCerr)}"><div class="ch-val">${pCerr}%</div>`
+    + `<div class="ch-lbl">Citas cerradas</div><div class="ch-sub">${a.prog} sin decir qué pasó</div></div>
+    <div class="cump-hero" style="--acc:#3b82f6"><div class="ch-val">${carros}</div>`
+    + `<div class="ch-lbl">Carros intervenidos</div><div class="ch-sub">${a.total} intervenciones</div></div>
+  </div>`;
+  const stat = (dot, lbl, n) => `<div class="cump-stat"><span class="cs-dot ${dot}"></span><span class="cs-lbl">${lbl}</span>`
+    + `<b class="cs-n">${n}</b><span class="cs-pct">${_pctCump(n, a.total)}%</span></div>`;
+  const desglose = `<div class="cump-stats"><div class="cump-stats-head"><b>${a.total}</b> intervención(es) en el rango</div>`
+    + stat('desp', 'Ingresó ✅', a.ing) + stat('perd', 'No ingresó ❌', a.noIng)
+    + stat('perd', 'No se presentó 🚫', a.noPres) + stat('inc', 'Sin cerrar ⏳', a.prog)
+    + stat('sin', 'Anuladas', a.anul) + (a.revisar ? stat('inc', 'Por revisar ⚠️', a.revisar) : '') + '</div>';
+  // Los carros que más vuelven: o el equipo no quedó bueno, o el carro no llega.
+  const top = Object.entries(a.porMovil).sort((x, y) => y[1].n - x[1].n).slice(0, 12);
+  const cardTop = `<div class="cump-card"><h4>Carros que más vuelven <small>· top 12</small></h4>`
+    + '<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Móvil</th><th>Ruta</th><th>Veces</th><th>No llegó</th></tr></thead><tbody>'
+    + top.map(([mv, v]) => `<tr><td><b>${esc(mv)}</b></td><td>${esc(v.ruta)}</td><td>${v.n}</td>`
+      + `<td>${v.noLlega ? `<span class="chip chip-red">${v.noLlega}</span>` : '—'}</td></tr>`).join('')
+    + '</tbody></table></div></div>';
+  const meses = Object.fromEntries(Object.entries(a.porMes).sort((x, y) => (x[0] < y[0] ? -1 : 1)).slice(-12));
+  return `<div class="cump-top">${hero}${desglose}</div>`
+    + `<div class="cump-grid">${_ivBarras(a.porTema, 'En qué se trabaja', '· agrupado por lo que dice el motivo')}`
+    + `${_ivBarras(a.porRuta, 'Por ruta')}</div>`
+    + `<div class="cump-grid">${_ivBarras(meses, 'Por mes', '· últimos 12', true)}${cardTop}</div>`;
+}
+
+// ---------- Ficha ----------
+function ivModal(id, titulo, cardClass) {
+  let m = $(id);
+  if (m) { m.querySelector('h3').textContent = titulo; return m; }
+  m = document.createElement('div');
+  m.id = id; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card ${cardClass || ''}">
+    <div class="modal-head"><h3></h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="iv-modal-body"></div>
+    <div class="modal-foot"><p class="error" data-err hidden></p><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button>
+      <button type="button" class="btn btn-primary" data-ok hidden></button></div></div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  m.querySelector('h3').textContent = titulo;
+  return m;
+}
+function ivFicha(id) {
+  const r = _iv.rows.find((x) => String(x.id) === String(id));
+  if (!r) return;
+  const m = ivModal('iv-ficha-modal', '🛠️ Intervención', 'perm-card');
+  const dato = (l, v) => (v ? `<div class="iv-d"><span>${l}</span><b>${esc(String(v))}</b></div>` : '');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <div class="iv-ficha-h">${ivChip(r)} <b>Móvil ${esc(String(r.movil || '').trim())}</b>
+      <span class="muted">${esc(fechaLegible(r.fecha))}${ivHora(r) ? ' · ' + esc(ivHora(r)) : ''}</span></div>
+    <div class="iv-datos">
+      ${dato('Placa', r.placa)}${dato('Ruta', r.ruta)}
+      ${dato('Propietario', r.propietario)}${dato('Celular', r.celular)}${dato('Correo', r.correo)}
+    </div>
+    <div class="iv-bloque"><span>Motivo</span><p>${esc(r.motivo || '')}</p></div>
+    ${r.observacion ? `<div class="iv-bloque"><span>Lo que se hizo</span><p>${esc(r.observacion)}</p></div>` : ''}
+    ${r.nota_anulacion ? `<div class="iv-bloque"><span>Anulada porque</span><p>${esc(r.nota_anulacion)}</p></div>` : ''}
+    <div class="iv-pie">
+      ${r.creado_por ? `Citada por ${esc(r.creado_nombre || r.creado_por)}` : ''}
+      ${r.cerrado_por ? ` · cerrada por ${esc(r.cerrado_por)}` : ''}
+      ${r.origen === 'CARGA' ? ' · viene del archivo histórico' : ''}
+    </div>
+    ${puedeEditarInterv() ? `<div class="iv-acciones">
+      ${r.estado === 'PROGRAMADA' ? `<button type="button" class="btn btn-sm btn-primary" data-iv-cerrar="${r.id}">✔️ Cerrar</button>
+        <button type="button" class="btn btn-sm" data-iv-editar="${r.id}">✏️ Corregir</button>` : ''}
+      ${r.estado !== 'ANULADA' ? `<button type="button" class="btn btn-sm btn-danger" data-iv-anular="${r.id}">🚫 Anular</button>` : ''}
+      ${isAdmin() && IV_RESULTADOS.includes(r.estado) ? `<button type="button" class="btn btn-sm" data-iv-reabrir="${r.id}">↩️ Reabrir</button>` : ''}
+    </div>` : ''}`;
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+}
+
+// ---------- Citar / corregir ----------
+async function ivFormulario(id) {
+  if (!puedeEditarInterv()) return;
+  const r = id ? _iv.rows.find((x) => String(x.id) === String(id)) : null;
+  const m = ivModal('iv-form-modal', r ? '✏️ Corregir la cita' : '➕ Nueva intervención', 'perm-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = `
+    <div class="iv-form">
+      <label class="field"><span>Móvil *</span><input id="ivf-movil" list="ivf-moviles" inputmode="numeric"
+        placeholder="N° interno" value="${esc(r ? String(r.movil || '').trim() : '')}" autocomplete="off"></label>
+      <label class="field"><span>Fecha *</span><input type="date" id="ivf-fecha" value="${esc(r ? r.fecha : hoyServidor())}"></label>
+      <label class="field"><span>Hora</span><input type="time" id="ivf-hora" value="${esc(r ? ivHora(r) : '')}"></label>
+      <datalist id="ivf-moviles"></datalist>
+      <div class="field full iv-carro" id="ivf-carro"></div>
+      <label class="field full"><span>Motivo *</span><textarea id="ivf-motivo" rows="3" list="ivf-motivos"
+        placeholder="Ej: fallas de transmisión GPS (desfase de tiempo)">${esc(r ? r.motivo : '')}</textarea></label>
+      <div class="field full iv-sug" id="ivf-sug"></div>
+    </div>`;
+  const ok = m.querySelector('[data-ok]');
+  ok.hidden = false; ok.textContent = r ? 'Guardar cambios' : 'Citar el carro';
+  const err = m.querySelector('[data-err]');
+  err.hidden = true;
+
+  // Lista de móviles del parque (para no escribir uno que no existe)
+  try {
+    const { data } = await sb.from('parque_automotor').select('numero_interno').neq('estado', 'Desvinculado').limit(2000);
+    $('ivf-moviles').innerHTML = (data || []).map((v) => `<option value="${esc(String(v.numero_interno || '').trim())}">`).join('');
+  } catch (e) { /* sin lista: se puede escribir igual */ }
+
+  // Los motivos que más se repiten, para que no nazcan 700 formas de decir lo mismo
+  const frec = {};
+  _iv.rows.forEach((x) => { const t = String(x.motivo || '').trim(); if (t) frec[t] = (frec[t] || 0) + 1; });
+  const sug = Object.entries(frec).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([t]) => t);
+  $('ivf-sug').innerHTML = sug.length ? 'Frecuentes: ' + sug.map((t) =>
+    `<button type="button" class="btn btn-sm" data-iv-sug="${esc(t)}">${esc(t.length > 42 ? t.slice(0, 42) + '…' : t)}</button>`).join(' ') : '';
+  $('ivf-sug').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-iv-sug]'); if (!b) return;
+    $('ivf-motivo').value = b.dataset.ivSug;
+  });
+
+  const pintarCarro = async () => {
+    const mv = ($('ivf-movil').value || '').trim();
+    const caja = $('ivf-carro');
+    if (!mv) { caja.innerHTML = ''; return; }
+    caja.innerHTML = '<small>Buscando el carro…</small>';
+    try {
+      const { data } = await sb.rpc('interv_vehiculo', { p_movil: mv });
+      if (!data || !data.ok) { caja.innerHTML = ''; return; }
+      caja.innerHTML = data.sin_ficha
+        ? `<small class="iv-warn">⚠️ El móvil <b>${esc(mv)}</b> no está en el parque automotor. Puedes citarlo igual, pero sin propietario ni contacto.</small>`
+        : `<b>${esc(data.placa || '')}</b> · ${esc(data.ruta || 'sin ruta')}`
+          + `${data.propietario ? ` · ${esc(data.propietario)}` : ''}`
+          + `${data.celular ? ` · 📱 ${esc(data.celular)}` : ''}`
+          + `${data.estado && data.estado !== 'Activo' ? ` · <span class="chip chip-amber">${esc(data.estado)}</span>` : ''}`;
+    } catch (e) { caja.innerHTML = ''; }
+  };
+  $('ivf-movil').addEventListener('change', pintarCarro);
+  $('ivf-movil').addEventListener('blur', pintarCarro);
+  if (r) pintarCarro();
+
+  ok.onclick = async () => {
+    const movil = ($('ivf-movil').value || '').trim();
+    const fecha = $('ivf-fecha').value;
+    const motivo = ($('ivf-motivo').value || '').trim();
+    if (!movil || !fecha || !motivo) {
+      err.textContent = 'Falta el móvil, la fecha o el motivo.'; err.hidden = false; return;
+    }
+    err.hidden = true; ok.disabled = true; ok.textContent = 'Guardando…';
+    try {
+      const { data, error } = await sb.rpc('interv_guardar', {
+        p_id: r ? r.id : null, p_movil: movil, p_fecha: fecha,
+        p_hora: $('ivf-hora').value || null, p_motivo: motivo,
+      });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo guardar.');
+      toast(r ? 'Cita corregida' : 'Carro citado', 'ok');
+      m.hidden = true;
+      $('iv-ficha-modal') && ($('iv-ficha-modal').hidden = true);
+      await cargarInterv(); refrescarInterv();
+    } catch (ex) {
+      err.textContent = ex.message || 'No se pudo guardar.'; err.hidden = false;
+    } finally { ok.disabled = false; ok.textContent = r ? 'Guardar cambios' : 'Citar el carro'; }
+  };
+  m.hidden = false;
+}
+
+// ---------- Cerrar ----------
+function ivCerrarModal(id) {
+  const r = _iv.rows.find((x) => String(x.id) === String(id));
+  if (!r || !puedeEditarInterv()) return;
+  const m = ivModal('iv-cerrar-modal', '✔️ ¿Qué pasó con esta cita?', '');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <p class="iv-cerrar-q">Móvil <b>${esc(String(r.movil || '').trim())}</b> · ${esc(fechaLegible(r.fecha))}${ivHora(r) ? ' · ' + esc(ivHora(r)) : ''}<br>
+      <span class="muted">${esc(r.motivo || '')}</span></p>
+    <div class="iv-res">
+      <button type="button" class="btn iv-res-b" data-res="INGRESO">✅ Ingresó</button>
+      <button type="button" class="btn iv-res-b" data-res="NO INGRESO">❌ No ingresó</button>
+      <button type="button" class="btn iv-res-b" data-res="NO SE PRESENTO">🚫 No se presentó</button>
+    </div>
+    <label class="field full"><span>¿Qué se hizo? (opcional)</span><textarea id="ivc-obs" rows="2"
+      placeholder="Ej: se calibraron sensores P1-P2 y quedó reportando"></textarea></label>`;
+  const err = m.querySelector('[data-err]'); err.hidden = true;
+  m.querySelector('[data-ok]').hidden = true;
+  m.querySelector('.iv-res').onclick = async (e) => {
+    const b = e.target.closest('[data-res]'); if (!b) return;
+    m.querySelectorAll('.iv-res-b').forEach((x) => { x.disabled = true; });
+    try {
+      const { data, error } = await sb.rpc('interv_cerrar', {
+        p_id: r.id, p_resultado: b.dataset.res, p_observacion: ($('ivc-obs').value || '').trim() || null,
+      });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cerrar.');
+      toast('Intervención cerrada: ' + (IV_LBL[b.dataset.res] || b.dataset.res), 'ok');
+      m.hidden = true;
+      $('iv-ficha-modal') && ($('iv-ficha-modal').hidden = true);
+      await cargarInterv(); refrescarInterv();
+    } catch (ex) {
+      err.textContent = ex.message || 'No se pudo cerrar.'; err.hidden = false;
+    } finally { m.querySelectorAll('.iv-res-b').forEach((x) => { x.disabled = false; }); }
+  };
+  m.hidden = false;
+}
+
+function ivAnularModal(id) {
+  const r = _iv.rows.find((x) => String(x.id) === String(id));
+  if (!r || !puedeEditarInterv()) return;
+  const m = ivModal('iv-anular-modal', '🚫 Anular la cita', '');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <p class="iv-cerrar-q">Móvil <b>${esc(String(r.movil || '').trim())}</b> · ${esc(fechaLegible(r.fecha))}<br>
+      <span class="muted">${esc(r.motivo || '')}</span></p>
+    <p class="iv-nota">No se borra: queda anulada, con quién lo hizo y por qué.</p>
+    <label class="field full"><span>¿Por qué se anula?</span><textarea id="iva-nota" rows="2"
+      placeholder="Ej: se citó el móvil equivocado"></textarea></label>`;
+  const ok = m.querySelector('[data-ok]');
+  ok.hidden = false; ok.textContent = 'Anular'; ok.className = 'btn btn-danger';
+  const err = m.querySelector('[data-err]'); err.hidden = true;
+  ok.onclick = async () => {
+    ok.disabled = true;
+    const hecho = await ivAnular(r.id, ($('iva-nota').value || '').trim() || null);
+    ok.disabled = false;
+    if (hecho) m.hidden = true; else { err.textContent = 'No se pudo anular.'; err.hidden = false; }
+  };
+  m.hidden = false;
+}
+async function ivAnular(id, nota) {
+  try {
+    const { data, error } = await sb.rpc('interv_anular', { p_id: Number(id), p_nota: nota || null });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo anular.');
+    toast('Intervención anulada', 'ok');
+    $('iv-ficha-modal') && ($('iv-ficha-modal').hidden = true);
+    await cargarInterv(); refrescarInterv();
+    return true;
+  } catch (e) { toast(e.message || 'No se pudo anular.', 'err'); return false; }
+}
+async function ivReabrir(id) {
+  const ok = await confirmAction({ title: 'Reabrir la intervención',
+    message: 'Se borra el resultado y vuelve a quedar PROGRAMADA, para que alguien la cierre bien.',
+    okLabel: 'Reabrir' });
+  if (!ok) return;
+  try {
+    const { data, error } = await sb.rpc('interv_reabrir', { p_id: Number(id) });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo reabrir.');
+    toast('Volvió a quedar programada', 'ok');
+    $('iv-ficha-modal') && ($('iv-ficha-modal').hidden = true);
+    await cargarInterv(); refrescarInterv();
+  } catch (e) { toast(e.message || 'No se pudo reabrir.', 'err'); }
+}
+
+// ---------- Cargar el histórico (la hoja de cálculo) ----------
+const IV_MAP_CSV = {
+  'fecha de intervencion': 'fecha', vehiculo: 'movil', hora: 'hora', usuario: 'usuario',
+  propietario: 'propietario', 'numero de celular': 'celular', 'correo propietario': 'correo',
+  motivo: 'motivo', ruta: 'ruta', 'ingreso porteria': 'porteria', 'fecha y hora': 'registrado_en',
+};
+async function ivImportar(file) {
+  if (!isAdmin()) { toast('Solo administración carga el histórico.', 'err'); return; }
+  const btn = $('iv-cargar'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Leyendo…';
+  try {
+    const filas = await parseImportFile(file, IV_MAP_CSV, 'movil');
+    const utiles = filas.filter((f) => (f.fecha || '').trim() && (f.movil || '').trim() && (f.motivo || '').trim());
+    if (!utiles.length) { toast('El archivo no trae filas reconocibles. ¿Es el de intervenciones?', 'err'); return; }
+    let n = 0, dup = 0, mal = 0, marc = 0;
+    for (let i = 0; i < utiles.length; i += 200) {
+      btn.textContent = `⏳ ${Math.min(i + 200, utiles.length)}/${utiles.length}…`;
+      const { data, error } = await sb.rpc('interv_carga', { p_filas: utiles.slice(i, i + 200) });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cargar.');
+      n += data.cargadas || 0; dup += data.repetidas || 0;
+      mal += data.descartadas || 0; marc += data.para_revisar || 0;
+    }
+    toast(`Cargadas ${n} · repetidas ${dup} · descartadas ${mal}${marc ? ` · ${marc} para revisar` : ''}`, 'ok');
+    await cargarInterv(); refrescarInterv();
+  } catch (e) {
+    toast('No se pudo cargar: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---------- Excel ----------
+async function exportIvExcel() {
+  const rows = ivFiltrar(_iv.rows);
+  if (!rows.length) { toast('No hay datos para exportar.', 'err'); return; }
+  const btn = $('iv-excel'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const head = ['Fecha', 'Hora', 'Móvil', 'Placa', 'Ruta', 'Propietario', 'Celular', 'Motivo',
+      'Tema', 'Estado', 'Qué se hizo', 'Citada por', 'Cerrada por', 'Origen'];
+    const aoa = [head].concat(rows.map((r) => [
+      r.fecha, ivHora(r), String(r.movil || '').trim(), r.placa || '', r.ruta || '',
+      r.propietario || '', r.celular || '', r.motivo || '', _ivTema(r.motivo),
+      IV_LBL[r.estado] || r.estado || '', r.observacion || '',
+      r.creado_nombre || r.creado_por || '', r.cerrado_por || '', r.origen || '']));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // La fecha como fecha de verdad: así Excel la ordena y filtra ([[excel-fechas-colombianas]]).
+    rows.forEach((r, ri) => {
+      const fx = celdaFechaXlsx(r.fecha);
+      if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c: 0 })] = fx;
+    });
+    ws['!cols'] = [{ wch: 11 }, { wch: 7 }, { wch: 8 }, { wch: 9 }, { wch: 16 }, { wch: 26 },
+      { wch: 13 }, { wch: 52 }, { wch: 20 }, { wch: 14 }, { wch: 34 }, { wch: 24 }, { wch: 24 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Intervenciones');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `intervenciones_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${rows.length} fila(s).`, 'ok');
+  } catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---------- Enganches ----------
+$('iv-body')?.addEventListener('click', (e) => {
+  const c = e.target.closest('[data-iv-cerrar]');
+  if (c) { ivCerrarModal(c.dataset.ivCerrar); return; }
+  const f = e.target.closest('[data-iv-ficha]');
+  if (f) { ivFicha(f.dataset.ivFicha); return; }
+});
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-iv-anular]'); if (a) { ivAnularModal(a.dataset.ivAnular); return; }
+  const rb = e.target.closest('[data-iv-reabrir]'); if (rb) { ivReabrir(rb.dataset.ivReabrir); return; }
+  const ed = e.target.closest('[data-iv-editar]'); if (ed) { ivFormulario(ed.dataset.ivEditar); return; }
+  const cc = e.target.closest('#iv-ficha-modal [data-iv-cerrar]');
+  if (cc) { ivCerrarModal(cc.dataset.ivCerrar); }
+});
+$('iv-close')?.addEventListener('click', cerrarInterv);
+$('iv-refresh')?.addEventListener('click', () => cargarInterv());
+$('iv-nueva')?.addEventListener('click', () => ivFormulario(null));
+$('iv-excel')?.addEventListener('click', exportIvExcel);
+$('iv-search')?.addEventListener('input', (e) => { _iv.q = e.target.value; renderInterv(); });
+$('iv-estado')?.addEventListener('change', (e) => { _iv.estado = e.target.value; renderInterv(); });
+$('iv-desde')?.addEventListener('change', () => cargarInterv());
+$('iv-hasta')?.addEventListener('change', () => cargarInterv());
+$('iv-cargar')?.addEventListener('click', () => $('iv-file').click());
+$('iv-file')?.addEventListener('change', (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (f) ivImportar(f);
+});
+
+// ===================================================================================
 // ✨ NOVEDADES — la lista de puesta en marcha de los módulos nuevos (sql/99)
 // Varios módulos nuevos NO quedan completos hasta que administración hace algo por fuera del
 // código: subir las firmas escaneadas, poner el auxilio de transporte del año, registrar las
@@ -7117,7 +7690,7 @@ function avisarNovedadDesbloqueos() {
 // en un chat; aquí se calcula con el estado real (verde/ámbar) y cada cosa trae el botón que
 // lleva a hacerla. novedades_estado() devuelve SOLO conteos y banderas: ni un nombre ni un valor.
 // ===================================================================================
-const NOV_VER = 'v288';      // sube con cada tanda: el aviso vuelve a salir una vez
+const NOV_VER = 'v290';      // sube con cada tanda: el aviso vuelve a salir una vez
 let NOV_EST = null, NOV_PEND = 0;
 
 async function novEstado() {
@@ -7214,6 +7787,22 @@ function novSecs(st) {
       itO, [`Escaneos registrados hoy: <b>${o.checkins || 0}</b>.`], acO));
   }
 
+  // 🛠️ Intervenciones ---------------------------------------------------------------------------
+  if (puedeVerInterv() && st.interv) {   // sin sql/101 aplicado no hay nada que contar
+    const v = st.interv;
+    const itV = [
+      novLi(v.historico > 0, `El histórico está cargado (${v.historico} registros del archivo)`,
+        'Carga el <b>histórico</b> de la hoja de cálculo: en 🛠️ Intervenciones → <b>⬆️ Histórico</b>, escoge el archivo y se sube solo (los repetidos no se duplican)'),
+      novLi(!v.por_cerrar, 'No hay citas viejas sin cerrar',
+        `<b>${v.por_cerrar}</b> cita(s) ya pasaron y <b>nadie dijo qué ocurrió</b>: sin eso el cumplimiento no es real`),
+    ];
+    if (v.revisar) {
+      itV.push(novLi(false, '', `<b>${v.revisar}</b> registro(s) del archivo quedaron <b>marcados para revisar</b> (fecha imposible o columnas corridas)`));
+    }
+    secs.push(novSec('🛠️', 'Intervenciones a los equipos', 'v290', 'Lo que estaba en la hoja de cálculo ahora se hace en la app: el auditor <b>cita</b> el carro (móvil, fecha, hora y motivo) y después <b>cierra</b> con lo que pasó — ingresó, no ingresó o no se presentó. Los datos del carro los pone la app desde el parque automotor. De ahí sale el dato que la hoja escondía: <b>uno de cada ocho carros citados no entra</b>.',
+      itV, [`Intervenciones registradas: <b>${v.total || 0}</b>.`], [novBtn('interv', '🛠️ Abrir Intervenciones', true)]));
+  }
+
   // 📣 PQRSF -------------------------------------------------------------------------------------
   if (puedeVerPqrsf() && visibleTables().includes('pqrsf')) {
     const q = st.pqrsf || {};
@@ -7263,6 +7852,7 @@ function novModal() {
       else if (k === 'perm') openPermisos();
       else if (k === 'pqrsf') openPqrsfStats('pendientes');
       else if (k === 'oriental') openOriental('control');
+      else if (k === 'interv') openInterv(puedeEditarInterv() ? 'agenda' : 'historico');
       else if (k === 'puestos') selectTable('puestos');
       else if (k === 'horarios') selectTable('horarios');
       return;
@@ -10578,7 +11168,7 @@ async function openFrecuencia() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
@@ -10688,7 +11278,7 @@ async function openProductividad() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -10846,7 +11436,7 @@ async function openJornada() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -11037,7 +11627,7 @@ async function openTop() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -13611,7 +14201,7 @@ async function openUsuarios() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -16881,7 +17471,7 @@ async function showMapView() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
