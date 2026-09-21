@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v274';
+export const APP_VERSION = 'v275';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -26,6 +26,7 @@ export const TABLE_ORDER = [
   'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'tablas_despacho', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios', 'perfilsociodemografico', 'perfil_vinculaciones',
   'siniestros',
+  'pqrsf',
   'eventos_bus',
 ];
 
@@ -933,6 +934,57 @@ export const TABLES = {
   },
   // Siniestros de vehículos (sql/79). Vienen de AppSheet -> hoja de Google; la app los trae
   // con el botón "🔄 Traer siniestros". Aquí no se editan: se consultan, filtran y descargan.
+  // PQRSF: lo que radican los usuarios del servicio. Se trae de la hoja publicada (sql/89) y
+  // aqui solo se consulta: la radicacion sigue en AppSheet. El cumplimiento que se muestra es
+  // el CALCULADO con las fechas, no la columna de la hoja (que se contradice consigo misma).
+  pqrsf: {
+    label: 'PQRSF',
+    icon: '📣',
+    readonly: true,
+    fichaDetalle: true,
+    pk: 'key',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['radicado', 'numero_interno', 'placa', 'ruta', 'motivo', 'descripcion',
+      'usuario_nombre', 'responsable_destino', 'conductor'],
+    defaultOrder: { col: 'fecha_radicado', asc: false },
+    filters: [
+      { col: 'tipo', label: 'Tipo', chips: true, options: [
+        { value: 'QUEJA', label: 'Queja' }, { value: 'PETICION', label: 'Petici\u00f3n' },
+        { value: 'RECLAMO', label: 'Reclamo' }, { value: 'SUGERENCIA', label: 'Sugerencia' },
+        { value: 'FELICITACIONES', label: 'Felicitaci\u00f3n' }] },
+      { col: 'cumplimiento', label: 'Cumplimiento', chips: true, options: [
+        { value: 'A TIEMPO', label: '\u2705 A tiempo' }, { value: 'FUERA DE PLAZO', label: '\u23f0 Fuera de plazo' },
+        { value: 'SIN RESPUESTA', label: '\u274c Sin respuesta' }] },
+      { col: 'estado', label: 'Estado', chips: true, options: ['ABIERTA', 'CERRADA'] },
+      { col: 'medio_recibido', label: 'Medio', options: ['TELEFONICO', 'CORREO', 'WHATSAAP', 'PAGINA WEB', 'PRESENCIAL'] },
+      { col: 'fecha_radicado', label: 'Fecha', type: 'daterange' },
+    ],
+    columns: [
+      { key: 'fecha_radicado', label: 'Radicado el', m: true },
+      { key: 'radicado', label: 'Radicado', m: true },
+      { key: 'tipo', label: 'Tipo', badge: true, m: true },
+      { key: 'motivo', label: 'Motivo', m: true },
+      { key: 'numero_interno', label: 'M\u00f3vil', m: true },
+      { key: 'ruta', label: 'Ruta' },
+      { key: 'conductor', label: 'Conductor' },
+      { key: 'responsable_destino', label: '\u00c1rea de destino' },
+      { key: 'estado', label: 'Estado', badge: true },
+      { key: 'cumplimiento', label: 'Cumplimiento', badge: true, m: true },
+      { key: 'dias_respuesta', label: 'D\u00edas' },
+      { key: 'fecha_limite', label: 'L\u00edmite' },
+      { key: 'fecha_respuesta', label: 'Respondida' },
+      { key: 'medio_recibido', label: 'Medio' },
+      { key: 'urgencia', label: 'Urgencia' },
+      { key: 'placa', label: 'Placa' },
+    ],
+    exportCols: ['fecha_radicado', 'radicado', 'tipo', 'motivo', 'urgencia', 'medio_recibido',
+      'numero_interno', 'placa', 'ruta', 'propietario', 'conductor', 'conductor_cedula',
+      'fecha_suceso', 'hora_suceso', 'direccion_suceso', 'descripcion',
+      'responsable_radicacion', 'responsable_destino', 'estado', 'fecha_limite', 'fecha_respuesta',
+      'dias_respuesta', 'cumplimiento', 'cumplimiento_origen', 'estado_envio', 'requiere_proceso',
+      'consecutivo_proceso', 'decision_final', 'estado_descargos'],
+  },
   siniestros: {
     label: 'Siniestros',
     icon: '🚨',

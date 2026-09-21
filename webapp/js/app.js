@@ -157,7 +157,13 @@ function matchItinerario(its, rutaNombre) {
 //  - admin: todas
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
-function visibleTables() {
+// PQRSF no depende del rol sino de la lista de acceso (sql/89): se agrega a lo que ya ve
+function conPqrsf(lista) {
+  if (PREVIEW) return lista;   // simulando a otro usuario: el menu se queda como el suyo
+  return PQR_OK && TABLES.pqrsf && !lista.includes('pqrsf') ? [...lista, 'pqrsf'] : lista;
+}
+function visibleTables() { return conPqrsf(visibleTablesBase()); }
+function visibleTablesBase() {
   // Vista previa (admin simulando): el menú se reduce como el del usuario simulado
   if (PREVIEW) {
     if (PREVIEW.rol === 'auditor') return ['despachos', 'despachos_sonar', 'resumen', 'restricciones_rutas', ...(PREVIEW.auditTables || [])];
@@ -613,6 +619,12 @@ function buildSidebar() {
     }
   }
 
+  // 📣 PQRSF: lo que dicen los usuarios del servicio (se radica en AppSheet, aquí se mide)
+  if (vis.includes('pqrsf')) {
+    const gPq = addNavGroup(nav, '📣', 'PQRSF', 'pqrsf');
+    addTableBtn(gPq, 'pqrsf');
+  }
+
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
   const gTh = addNavGroup(nav, '👥', 'Talento humano', 'th');
   for (const name of vis) { if (TBL_GROUP[name] === 'th') addTableBtn(gTh, name); }
@@ -844,6 +856,7 @@ function selectTable(name, filtroInicial) {
   // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
   const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !isTalentoHumano();
+  const bPqr = $('pqr-sync-btn'); if (bPqr) bPqr.hidden = name !== 'pqrsf' || !PQR_EDITA;
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
@@ -2168,13 +2181,14 @@ function renderTable(cfg, rows, count, diaSel = false) {
         }
       }
       tr.appendChild(act);
-    } else if (cfg.fichaDetalle && current === 'siniestros' && isTalentoHumano()) {
-      // Siniestros: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
+    } else if (cfg.fichaDetalle && ((current === 'siniestros' && isTalentoHumano())
+                                    || (current === 'pqrsf' && PQR_OK))) {
+      // Siniestros y PQRSF: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
       const act = document.createElement('td');
       act.className = 'row-actions'; act.dataset.label = 'Acciones';
       const ver = Object.assign(document.createElement('button'),
         { className: 'act act-ver', innerHTML: '👁️', title: 'Ver el reporte completo' });
-      ver.onclick = () => openSiniestro(row);
+      ver.onclick = () => (current === 'pqrsf' ? openPqrsf(row) : openSiniestro(row));
       act.appendChild(ver);
       tr.appendChild(act);
     } else if (cfg.asistenciaMarcar) {
@@ -3208,11 +3222,12 @@ async function cargarAlertasDocumentos() {
 }
 async function refrescarAlertasDocs() {
   // Gestión Humana no ve vehículos ni licencias: solo sus contadores de Talento humano
-  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]); buildSidebar(); return; }
+  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false)]); buildSidebar(); return; }
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
   try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
   try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; } catch { DESBLOQ_PEND = 0; }
   if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]);
+  await refrescarPqrsfAcceso(false);
   await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
@@ -7186,6 +7201,225 @@ async function sincronizarSiniestros() {
 }
 
 
+// ===================================================================================
+// 📣 PQRSF — peticiones, quejas, reclamos, sugerencias y felicitaciones
+// ===================================================================================
+// Se radican en AppSheet y viven en una hoja publicada como CSV. Aquí se leen, igual que los
+// siniestros: la app baja la hoja, interpreta cada fila y la manda a `pqrsf_cargar` (sql/89),
+// que hace upsert por la KEY de AppSheet. Volver a traer actualiza, no duplica.
+// El enlace de la hoja NO está en el código: sale de la tabla `pqrsf_fuente`, con su RLS.
+
+// Los encabezados se comparan sin acentos, sin signos y en minúsculas: así "N° VEHICULO"
+// y "TEL FIJO/ CELULAR" coinciden aunque la hoja les cambie la puntuación.
+function pqrH(h) {
+  return String(h || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+const PQR_COLS = {
+  'key': 'key',
+  'radicado pqr': 'radicado',
+  'fecha radicado': 'fecha_radicado',
+  'hora recibido': 'hora_recibido',
+  'placa vh': 'placa',
+  'n vehiculo': 'numero_interno',
+  'ruta': 'ruta',
+  'propietario del vehiculo y o administrador': 'propietario',
+  'identificacion': 'identificacion',
+  'fecha suceso': 'fecha_suceso',
+  'hora suceso': 'hora_suceso',
+  'direccion del suceso': 'direccion_suceso',
+  'descripcion del suceso': 'descripcion',
+  'nombre del usuario': 'usuario_nombre',
+  'correo electronico usuario': 'usuario_correo',
+  'tel fijo celular': 'usuario_telefono',
+  'medio de recibido': 'medio_recibido',
+  'tipo de pqrsf': 'tipo',
+  'motivo pqr': 'motivo',
+  'tipo de urgencia': 'urgencia',
+  'requiere respuesta personalizada': 'respuesta_personalizada',
+  'pruebas adjuntos': 'pruebas',
+  'responsable del proceso de radicacion': 'responsable_radicacion',
+  'responsable area de destino': 'responsable_destino',
+  'respuesta area de destino': 'respuesta',
+  'estado de la pqr': 'estado',
+  'fecha limite de respuesta del area responsable': 'fecha_limite',
+  'dia de respuesta responsable': 'fecha_respuesta',
+  'cumplimiento': 'cumplimiento_origen',
+  'estado envio': 'estado_envio',
+  'respuesta servidor': 'respuesta_servidor',
+  'requiere proceso si o no': 'requiere_proceso',
+  'revision de pqrs': 'revision',
+  'observaciones de correcion': 'observaciones_correccion',
+  'responsable descargos': 'responsable_descargos',
+  'adjuntar informe tecnico': 'informe_tecnico',
+  'fecha realizacion del proceso': 'fecha_proceso',
+  'consecutivo de proceso': 'consecutivo_proceso',
+  'desicion final': 'decision_final',
+  'estado de respuesta descargos': 'estado_descargos',
+  'observacion': 'observacion',
+  'fecha de respuesta limite': 'fecha_limite_descargos',
+  // 'mes' y 'dia de respuesta limite' se calculan de las fechas; quedan en datos_origen
+};
+const PQR_FECHAS = new Set(['fecha_radicado', 'fecha_suceso', 'fecha_limite', 'fecha_respuesta',
+  'fecha_proceso', 'fecha_limite_descargos']);
+const PQR_HORAS = new Set(['hora_recibido', 'hora_suceso']);
+const PQR_BOOL = new Set(['respuesta_personalizada', 'requiere_proceso']);
+
+// La hoja escribe el sí y el no de seis formas distintas, según quién y cuándo lo llenó
+function pqrBool(v) {
+  const s = String(v || '').trim().toLowerCase();
+  if (['si', 'sí', 'true', 'verdadero', '1', 'x'].includes(s)) return 'true';
+  if (['no', 'false', 'falso', '0'].includes(s)) return 'false';
+  return '';
+}
+// "9:05:00" o "09:05" -> "09:05:00"
+function pqrHora(v) {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(String(v || '').trim());
+  return m ? `${m[1].padStart(2, '0')}:${m[2]}:${m[3] || '00'}` : '';
+}
+
+function pqrArmarFilas(texto) {
+  const crudo = csvAFilas(texto);
+  if (!crudo.length) return [];
+  const cab = crudo[0].map(pqrH);
+  const salida = [];
+  for (let i = 1; i < crudo.length; i++) {
+    const r = crudo[i];
+    if (!r || !r.some((c) => String(c || '').trim() !== '')) continue;
+    const o = { datos_origen: {} };
+    cab.forEach((h, idx) => {
+      const v = (r[idx] == null ? '' : String(r[idx])).trim();
+      if (crudo[0][idx]) o.datos_origen[crudo[0][idx]] = v;   // la hoja completa, con su nombre
+      const k = PQR_COLS[h];
+      if (!k) return;
+      if (PQR_FECHAS.has(k)) o[k] = sinFecha(v);        // dd/mm/aaaa (y d/m/aaaa) -> aaaa-mm-dd
+      else if (PQR_HORAS.has(k)) o[k] = pqrHora(v);
+      else if (PQR_BOOL.has(k)) o[k] = pqrBool(v);
+      else o[k] = v;
+    });
+    if (String(o.key || '').trim()) salida.push(o);
+  }
+  return salida;
+}
+
+// Botón "🔄 Traer PQRSF": lee la hoja publicada y actualiza la tabla
+async function sincronizarPqrsf() {
+  const btn = $('pqr-sync-btn'); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Leyendo la hoja…'; }
+  try {
+    const { data: est, error: e1 } = await sb.rpc('pqrsf_estado');
+    if (e1) throw e1;
+    if (!est?.ok) { toast('No tienes permiso para ver las PQRSF.', 'err'); return; }
+    if (!est.puede_cargar) { toast('Tu cuenta puede consultar las PQRSF, pero no traerlas.', 'err'); return; }
+    const url = est.url || '';
+    if (!url) { toast('Falta configurar el enlace de la hoja (tabla pqrsf_fuente).', 'err'); return; }
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('La hoja respondió ' + resp.status);
+    const filas = pqrArmarFilas(await resp.text());
+    if (!filas.length) { toast('La hoja no trajo filas.', 'err'); return; }
+    let nuevos = 0, actualizados = 0;
+    const LOTE = 60;   // cada fila lleva ademas la hoja completa en datos_origen (~5 KB)
+    for (let i = 0; i < filas.length; i += LOTE) {
+      if (btn) btn.textContent = `⏳ Guardando ${Math.min(i + LOTE, filas.length)} de ${filas.length}…`;
+      const { data, error } = await sb.rpc('pqrsf_cargar', { p_filas: filas.slice(i, i + LOTE) });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo guardar');
+      nuevos += data.nuevos || 0; actualizados += data.actualizados || 0;
+    }
+    toast(`Listo: ${nuevos} PQRSF nueva(s) y ${actualizados} actualizada(s).`, 'ok');
+    if (current === 'pqrsf') loadData();
+  } catch (e) {
+    toast('No se pudieron traer las PQRSF: ' + (e.message || e), 'err');
+  } finally { if (btn) { btn.disabled = false; btn.textContent = prev; } }
+}
+
+// ---- Ficha de la PQRSF: el radicado completo, ordenado ----
+let _pqrRow = null;
+function pqrModal() {
+  let m = $('pqr-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pqr-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>📣 PQRSF</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+function openPqrsf(row) {
+  if (!row) return;
+  _pqrRow = row;
+  const m = pqrModal();
+  m.querySelector('h3').textContent = `📣 ${row.radicado || 'PQRSF'}`;
+  const body = m.querySelector('.pf-body');
+  body.innerHTML = '';
+  const bloque = (titulo, pares) => {
+    const vivos = pares.filter(([, v]) => v != null && String(v).trim() !== '');
+    if (!vivos.length) return;
+    body.appendChild(pstEl('h4', 'pf-sec', titulo));
+    const dl = pstEl('div', 'pf-grid');
+    vivos.forEach(([k, v]) => {
+      const c = pstEl('div', 'pf-item');
+      c.appendChild(pstEl('div', 'pf-k', k));
+      c.appendChild(pstEl('div', 'pf-v', String(v)));
+      dl.appendChild(c);
+    });
+    body.appendChild(dl);
+  };
+  const fl = (v) => (v ? fechaLegible(v) : '');
+  const hr = (v) => (v ? String(v).slice(0, 5) : '');
+  const sn = (v) => (v === true ? 'SÍ' : v === false ? 'NO' : '');
+
+  bloque('Radicación', [
+    ['Radicado', row.radicado], ['Fecha', fl(row.fecha_radicado)], ['Hora recibido', hr(row.hora_recibido)],
+    ['Tipo', row.tipo], ['Motivo', row.motivo], ['Urgencia', row.urgencia],
+    ['Medio', row.medio_recibido], ['Radicó', row.responsable_radicacion],
+  ]);
+  bloque('Qué pasó', [
+    ['Fecha del suceso', fl(row.fecha_suceso)], ['Hora del suceso', hr(row.hora_suceso)],
+    ['Dirección', row.direccion_suceso], ['Descripción', row.descripcion],
+  ]);
+  bloque('Vehículo', [
+    ['Móvil', row.numero_interno], ['Placa', row.placa], ['Ruta', row.ruta],
+    ['Propietario', row.propietario], ['Identificación', row.identificacion],
+    ['Conductor', row.conductor], ['Cédula', row.conductor_cedula],
+  ]);
+  bloque('Usuario', [
+    ['Nombre', row.usuario_nombre], ['Correo', row.usuario_correo], ['Teléfono', row.usuario_telefono],
+    ['Requiere respuesta personalizada', sn(row.respuesta_personalizada)],
+  ]);
+  bloque('Gestión', [
+    ['Estado', row.estado], ['Área de destino', row.responsable_destino],
+    ['Fecha límite', fl(row.fecha_limite)], ['Fecha de respuesta', fl(row.fecha_respuesta)],
+    ['Cumplimiento', row.cumplimiento],
+    ['Días en responder', row.dias_respuesta == null ? '' : `${row.dias_respuesta} día(s)`],
+    ['Estado de envío', row.estado_envio], ['Respuesta al servidor', row.respuesta_servidor],
+    ['Cumplimiento en la hoja', row.cumplimiento_origen], ['Revisión', row.revision],
+  ]);
+  bloque('Respuesta al usuario', [['Respuesta', row.respuesta]]);
+  bloque('Proceso al conductor', [
+    ['Requiere proceso', sn(row.requiere_proceso)], ['Responsable de descargos', row.responsable_descargos],
+    ['Fecha del proceso', fl(row.fecha_proceso)], ['Consecutivo', row.consecutivo_proceso],
+    ['Decisión final', row.decision_final], ['Estado de los descargos', row.estado_descargos],
+    ['Fecha límite de descargos', fl(row.fecha_limite_descargos)], ['Observación', row.observacion],
+    ['Observaciones de corrección', row.observaciones_correccion],
+  ]);
+  const adj = [row.pruebas, row.informe_tecnico].filter(Boolean);
+  if (adj.length) {
+    body.appendChild(pstEl('h4', 'pf-sec', 'Adjuntos'));
+    body.appendChild(pstEl('div', 'pst-nota',
+      'Los archivos siguen en AppSheet; aquí queda el nombre con el que se guardaron: ' + adj.join(' · ')));
+  }
+  m.hidden = false;
+}
+
 // ---- Ficha del siniestro: el reporte completo, ordenado ----
 let _sinRow = null;
 function sinModal() {
@@ -7532,6 +7766,15 @@ async function openPerfilFicha(row) {
 // 🗣️ Entrevista → 🚌 Manejo → 🩺 Médicos → ✍️ Por contratar → ✅ Contratado (RPC aspirante_contratar
 // lo crea o lo reactiva en el Perfil sociodemográfico). Se puede descartar con motivo y reabrir.
 // ===================================================================================
+let PQR_OK = false;     // esta cuenta puede VER las PQRSF (rol o lista de servicio al cliente)
+let PQR_EDITA = false;  // ademas puede traer la hoja
+async function refrescarPqrsfAcceso(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('pqrsf_estado');
+    PQR_OK = !!(data && data.ok); PQR_EDITA = !!(data && data.puede_cargar);
+  } catch { PQR_OK = false; PQR_EDITA = false; }
+  if (rebuild) buildSidebar();
+}
 let ASP_NUEVOS = 0; // inscripciones que el admin aún no abre (badge del menú)
 const _asp = { rows: [], perfiles: {}, vista: 'proceso', q: '', abierto: null };
 const ASP_FIN = ['CONTRATADO', 'DESCARTADO'];
@@ -14709,6 +14952,7 @@ $('sonarfull-btn').addEventListener('click', async () => {
 
 // ---------- Administración de accesos (solo admin) ----------
 $('sin-sync-btn')?.addEventListener('click', sincronizarSiniestros);
+$('pqr-sync-btn')?.addEventListener('click', sincronizarPqrsf);
 $('perfil-new-btn').addEventListener('click', async () => {
   const rolIn = (prompt('Rol del acceso (despachador / auditor / admin / gestion_humana):', 'despachador') || '').trim().toLowerCase();
   if (!rolIn) return;
