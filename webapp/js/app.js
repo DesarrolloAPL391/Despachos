@@ -8734,7 +8734,8 @@ async function openCertFirmas() {
   try {
     const [r1, r2, r3] = await Promise.all([
       sb.rpc('certificado_firmantes_listar'), sb.rpc('certificado_config_leer'),
-      sb.rpc('certificado_firmantes_sugerir').catch(() => ({ data: null }))]);
+      // el builder de supabase es "thenable", no una promesa: no tiene .catch
+      sb.rpc('certificado_firmantes_sugerir').then((x) => x, () => ({ data: null }))]);
     if (r1.error) throw r1.error;
     const data = r1.data;
     if (!data || !data.ok) throw new Error('falta ejecutar sql/94 o no tienes permiso');
@@ -12556,7 +12557,8 @@ async function pintarPaxMapa(paradas) {
       p.lat = g.lat; p.lon = g.lon;
       pintar(p, i);
       if (pts.length) paxMap.fitBounds(pts, { padding: [30, 30] });
-      sb.rpc('geo_cache_set', { p_dir: p.parada, p_lat: g.lat, p_lon: g.lon }).catch(() => {});
+      // guardar en la cache es "si se puede": el builder no tiene .catch, por eso el then de dos ramas
+      sb.rpc('geo_cache_set', { p_dir: p.parada, p_lat: g.lat, p_lon: g.lon }).then(() => {}, () => {});
     }
     await new Promise((res) => setTimeout(res, 220)); // cortesía con la API
   }
