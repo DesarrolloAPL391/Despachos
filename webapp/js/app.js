@@ -627,7 +627,8 @@ function buildSidebar() {
     addTableBtn(gPq, 'pqrsf');
     const gPs = addNavGroup(gPq, '📊', 'Estadísticas', 'pqrstats');
     PQS_BLOQUES.forEach((b) => {
-      const aviso = b.key === 'pendientes' && PQR_VENC ? ` <span class="nav-badge">${PQR_VENC}</span>` : '';
+      const n = PQR_VENC || PQR_SIN; // vencidas si las hay; si no, lo que falta por responder
+      const aviso = b.key === 'pendientes' && n ? ` <span class="nav-badge">${n}</span>` : '';
       addNavAction(gPs, b.icon, b.label + aviso, () => openPqrsfStats(b.key), 'nav-pqs-' + b.key);
     });
   }
@@ -7647,47 +7648,97 @@ function renderPqrsfStats() {
 }
 
 // ---- 📥 Lo que falta por responder ----
+// Son dos trabajos distintos y por eso van en dos listas: lo que nadie ha contestado (hay que
+// redactar una respuesta) y lo que YA tiene respuesta pero sigue marcado abierto (solo hay que
+// revisarlo y cerrarlo). Mezclados, el área ve un número grande y no sabe por dónde empezar.
 function pqsPendientes(body) {
   const P = _pqs.pend;
   if (!P || !P.ok) {
     body.appendChild(pstEl('div', 'cump-empty', 'No se pudo leer la bandeja de pendientes.'));
     return;
   }
-  const items = P.items || [];
+  const sin = P.items || [];
+  const cer = P.cerrar || [];
+  const nSin = Number(P.sin_responder != null ? P.sin_responder : sin.length);
+  const nCer = Number(P.falta_cerrar != null ? P.falta_cerrar : cer.length);
+  const dosListas = P.cerrar != null; // false mientras no se haya aplicado sql/92
+
   const kpis = pstEl('div', 'pst-kpis');
   kpis.append(
-    pstTile('Falta por responder', pstNum(P.total), 'sin fecha de respuesta o todavía abiertas', true),
-    pstTile('Ya vencidas', pstNum(P.vencidas), 'pasaron de la fecha límite del área'),
-    pstTile('Dentro del plazo', pstNum(Math.max(0, Number(P.total || 0) - Number(P.vencidas || 0))), 'todavía a tiempo'),
+    pstTile('Sin responder', pstNum(nSin), 'nadie le ha contestado al usuario', true),
+    pstTile('De esas, vencidas', pstNum(P.vencidas), 'ya pasaron de la fecha límite'),
+    pstTile('Falta cerrar', pstNum(nCer), 'ya respondidas, pero siguen abiertas'),
   );
   body.appendChild(kpis);
-  body.appendChild(pstEl('h3', 'pst-sec', '📥 De la más vencida a la más reciente'));
-  if (!items.length) {
-    body.appendChild(pstEl('div', 'cump-empty', 'No hay PQRSF pendientes. 👏'));
+
+  // ---- 1) Sin responder: lo urgente de verdad ----
+  body.appendChild(pstEl('h3', 'pst-sec', '✍️ Sin responder'));
+  if (!sin.length) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No hay PQRSF sin responder. 👏'));
+  } else {
+    const cab = ['Atraso', 'Radicado', 'Fecha', 'Límite', 'Tipo', 'Motivo', 'Móvil', 'Ruta', 'Área de destino', 'Estado'];
+    const filas = sin.map((p) => {
+      const a = p.atraso == null ? null : Number(p.atraso);
+      return [a == null ? 'sin plazo' : (a > 0 ? `${a} día(s)` : 'a tiempo'),
+        p.radicado || '—', p.fecha_radicado ? fechaLegible(p.fecha_radicado) : '—',
+        p.fecha_limite ? fechaLegible(p.fecha_limite) : '—', p.tipo || '—', p.motivo || '—',
+        p.numero_interno || '—', p.ruta || '—', p.responsable_destino || '—', p.estado || '—'];
+    });
+    body.appendChild(pqsTablaBandeja(
+      `Sin responder (${pstNum(sin.length)}${sin.length < nSin ? ' de ' + pstNum(nSin) : ''})`,
+      'Toca una fila para abrir el radicado y responder. Los días en rojo son de atraso sobre la fecha límite.',
+      cab, filas, sin, (p, i) => i === 0 && Number(p.atraso) > 0 ? 'evb-alta' : null));
+    _pst.tablas.push({ titulo: 'PQRSF sin responder', nota: `Al ${fechaLegible(P.hoy)}`, cab, filas });
+  }
+
+  // ---- 2) Respondidas que nadie cerró ----
+  if (!dosListas) return; // base sin sql/92: la lista de arriba ya trae todo
+  body.appendChild(pstEl('h3', 'pst-sec', '📁 Respondidas, falta cerrarlas'));
+  if (!cer.length) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No queda ninguna PQRSF respondida sin cerrar. 👏'));
     return;
   }
-  const g = pstEl('div', 'pst-grid'); body.appendChild(g);
+  const cab2 = ['Sin cerrar', 'Radicado', 'Radicada', 'Respondida', 'Cumplimiento', 'Tipo', 'Motivo', 'Móvil', 'Área de destino', ''];
+  const filas2 = cer.map((p) => [
+    p.dias_sin_cerrar == null ? '—' : `${p.dias_sin_cerrar} día(s)`,
+    p.radicado || '—', p.fecha_radicado ? fechaLegible(p.fecha_radicado) : '—',
+    p.fecha_efectiva ? fechaLegible(p.fecha_efectiva) : '—', p.cumplimiento || '—',
+    p.tipo || '—', p.motivo || '—', p.numero_interno || '—', p.responsable_destino || '—', '']);
+  body.appendChild(pqsTablaBandeja(
+    `Falta cerrar (${pstNum(cer.length)}${cer.length < nCer ? ' de ' + pstNum(nCer) : ''})`,
+    'Estas ya tienen respuesta: lo único que falta es cerrarlas. Revisa la respuesta abriendo la fila y cierra con el botón.',
+    cab2, filas2, cer, null, true));
+  _pst.tablas.push({ titulo: 'PQRSF respondidas sin cerrar', nota: `Al ${fechaLegible(P.hoy)}`,
+    cab: cab2.slice(0, -1), filas: filas2.map((f) => f.slice(0, -1)) });
+}
+
+// Arma una de las dos tablas de la bandeja. `conCerrar` pone el botón de cierre en la última celda.
+function pqsTablaBandeja(titulo, nota, cab, filas, items, claseCelda, conCerrar) {
+  const g = pstEl('div', 'pst-grid');
   const card = pstEl('section', 'pst-card pst-ancha');
   const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
-  tt.appendChild(pstEl('h4', null, `Pendientes (${pstNum(items.length)}${items.length < P.total ? ' de ' + pstNum(P.total) : ''})`));
-  tt.appendChild(pstEl('div', 'pst-nota', 'Toca una fila para abrir el radicado completo. Los días en rojo son de atraso sobre la fecha límite.'));
+  tt.appendChild(pstEl('h4', null, titulo));
+  tt.appendChild(pstEl('div', 'pst-nota', nota));
   head.appendChild(tt);
   const cuerpo = pstEl('div', 'pst-card-b pst-tabla-wrap');
   const tabla = pstEl('table', 'pst-tabla');
-  const cab = ['Atraso', 'Radicado', 'Fecha', 'Límite', 'Tipo', 'Motivo', 'Móvil', 'Ruta', 'Área de destino', 'Estado'];
   const tr = pstEl('tr'); cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
   const thead = pstEl('thead'); thead.appendChild(tr); tabla.appendChild(thead);
   const tb = pstEl('tbody');
-  const filas = [];
-  items.forEach((p) => {
-    const atraso = p.atraso == null ? null : Number(p.atraso);
-    const txtAtraso = atraso == null ? 'sin plazo' : (atraso > 0 ? `${atraso} día(s)` : 'a tiempo');
-    const fila = [txtAtraso, p.radicado || '—', p.fecha_radicado ? fechaLegible(p.fecha_radicado) : '—',
-      p.fecha_limite ? fechaLegible(p.fecha_limite) : '—', p.tipo || '—', p.motivo || '—',
-      p.numero_interno || '—', p.ruta || '—', p.responsable_destino || '—', p.estado || '—'];
-    filas.push(fila);
+  filas.forEach((fila, k) => {
+    const p = items[k];
     const r = pstEl('tr');
-    fila.forEach((v, i) => r.appendChild(pstEl('td', i === 0 && atraso > 0 ? 'evb-alta' : null, v)));
+    fila.forEach((v, i) => {
+      const td = pstEl('td', claseCelda ? claseCelda(p, i) : null, v);
+      if (conCerrar && i === fila.length - 1) {
+        td.textContent = '';
+        const b = pstEl('button', 'btn btn-sm', '✅ Cerrar');
+        b.type = 'button'; b.title = 'Dar por cerrada esta PQRSF (ya tiene respuesta)';
+        b.onclick = (e) => { e.stopPropagation(); pqsCerrar(p, b, r); };
+        td.appendChild(b);
+      }
+      r.appendChild(td);
+    });
     r.classList.add('pst-clic'); r.tabIndex = 0; r.title = 'Abrir el radicado';
     const abrir = () => pqsAbrirFicha(p.key);
     r.addEventListener('click', abrir);
@@ -7695,8 +7746,25 @@ function pqsPendientes(body) {
     tb.appendChild(r);
   });
   tabla.appendChild(tb); cuerpo.appendChild(tabla); card.append(head, cuerpo);
-  _pst.tablas.push({ titulo: 'PQRSF pendientes', nota: `Al ${fechaLegible(P.hoy)}`, cab, filas });
   g.appendChild(card);
+  return g;
+}
+
+// Cierra una PQRSF que ya tiene respuesta, sin obligar a reescribirla (sql/92).
+async function pqsCerrar(p, btn, fila) {
+  btn.disabled = true; const prev = btn.textContent; btn.textContent = '⏳';
+  try {
+    const { data, error } = await sb.rpc('pqrsf_cerrar', { p_key: p.key, p_nota: null });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo cerrar');
+    toast(`${p.radicado || 'PQRSF'} cerrada.`, 'ok');
+    fila.style.opacity = '.45'; btn.textContent = '✅ Cerrada';
+    refrescarPqrsfAcceso();
+  } catch (e) {
+    const t = String(e.message || e);
+    toast(/pqrsf_cerrar/.test(t) ? 'Para cerrar desde aquí falta ejecutar sql/92.' : 'No se pudo cerrar: ' + t, 'err');
+    btn.disabled = false; btn.textContent = prev;
+  }
 }
 
 async function pqsAbrirFicha(key) {
@@ -7809,6 +7877,34 @@ async function pqrPanelGestion(cont, row) {
     caja.append(ta, fila);
     cont.appendChild(pstEl('h4', 'pqr-h', deLaApp ? 'Corregir la respuesta' : 'Responder'));
     cont.appendChild(caja);
+
+    // Ya tiene respuesta pero sigue abierta: cerrarla no deberia obligar a redactarla de nuevo.
+    if ((row.fecha_respuesta || row.respondido_el) && String(row.estado_app || '') !== 'CERRADA') {
+      const cj = pstEl('div', 'pqr-form');
+      const bc = pstEl('button', 'btn btn-sm', '\ud83d\udcc1 Cerrar sin cambiar la respuesta');
+      bc.type = 'button';
+      const m2 = pstEl('span', 'pst-nota', 'Ya fue respondida, pero sigue marcada abierta.');
+      bc.onclick = async () => {
+        bc.disabled = true; m2.textContent = 'Cerrando\u2026';
+        try {
+          const { data, error } = await sb.rpc('pqrsf_cerrar', { p_key: row.key, p_nota: null });
+          if (error) throw error;
+          if (!data?.ok) throw new Error(data?.error || 'no se pudo cerrar');
+          toast('PQRSF cerrada.', 'ok');
+          const { data: fresca } = await sb.from('pqrsf').select('*').eq('key', row.key).single();
+          if (fresca) { _pqrRow = fresca; openPqrsf(fresca); }
+          if (current === 'pqrsf') loadData();
+          refrescarPqrsfAcceso();
+        } catch (e) {
+          const t = String(e.message || e);
+          m2.textContent = /pqrsf_cerrar/.test(t)
+            ? 'Para cerrar desde aqu\u00ed falta ejecutar sql/92.' : 'No se pudo cerrar: ' + t;
+          bc.disabled = false;
+        }
+      };
+      cj.append(bc, m2);
+      cont.appendChild(cj);
+    }
   } else {
     cont.appendChild(pstEl('div', 'pst-nota',
       F.mi_area ? `Esta PQRSF no es de tu área (${F.mi_area}), así que solo la puedes consultar.`
@@ -8213,15 +8309,19 @@ async function openPerfilFicha(row) {
 // ===================================================================================
 let PQR_OK = false;     // esta cuenta puede VER las PQRSF (rol o lista de servicio al cliente)
 let PQR_EDITA = false;  // ademas puede traer la hoja
-let PQR_PEND = 0;       // PQRSF sin responder (aviso del menu)
-let PQR_VENC = 0;       // de esas, las que ya pasaron la fecha limite
+let PQR_PEND = 0;       // todo lo abierto (sin responder + respondidas sin cerrar)
+let PQR_VENC = 0;       // sin responder Y con el plazo pasado: lo que sale en rojo en el menu
+let PQR_SIN = 0;        // sin responder (con plazo o sin el)
+let PQR_CERR = 0;       // ya respondidas pero todavia abiertas: falta cerrarlas
 async function refrescarPqrsfAcceso(rebuild = true) {
   try {
     const { data } = await sb.rpc('pqrsf_estado');
     PQR_OK = !!(data && data.ok); PQR_EDITA = !!(data && data.puede_cargar);
     PQR_PEND = Number((data && data.pendientes) || 0);
     PQR_VENC = Number((data && data.vencidas) || 0);
-  } catch { PQR_OK = false; PQR_EDITA = false; PQR_PEND = 0; PQR_VENC = 0; }
+    PQR_SIN = Number((data && data.sin_responder != null ? data.sin_responder : PQR_PEND) || 0);
+    PQR_CERR = Number((data && data.falta_cerrar) || 0);
+  } catch { PQR_OK = false; PQR_EDITA = false; PQR_PEND = 0; PQR_VENC = 0; PQR_SIN = 0; PQR_CERR = 0; }
   if (rebuild) buildSidebar();
 }
 let ASP_NUEVOS = 0; // inscripciones que el admin aún no abre (badge del menú)
