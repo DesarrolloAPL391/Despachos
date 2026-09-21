@@ -2604,3 +2604,17 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pqr-hist-h { font-size: 12px; color: #64748b; font-weight: 600; }
 .pqr-hist-t { font-size: 13px; color: #1f2937; white-space: pre-wrap; margin-top: 2px; }
 .pqr-h { margin: 18px 0 8px; font-size: 13px; color: var(--primary); letter-spacing: .2px; }
+
+/* ---- Certificado laboral: opciones + vista previa de la hoja ---- */
+.cert-card { max-width: 900px; }
+.cert-opts { display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.cert-dir { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #475569; }
+.cert-dir input { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; min-width: 210px; }
+.cert-aviso { margin: 10px 16px 0; padding: 8px 10px; border-radius: 8px;
+  background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 13px; }
+/* La vista previa imita la hoja: fondo gris, papel blanco centrado */
+.cert-prev { background: #e9ecef; padding: 22px; overflow: auto; max-height: 62vh; }
+.cert-prev .cl-hoja { background: #fff; padding: 46px 54px; margin: 0 auto; max-width: 760px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.14); }
+@media (max-width: 640px) { .cert-prev { padding: 10px; } .cert-prev .cl-hoja { padding: 24px 20px; } }

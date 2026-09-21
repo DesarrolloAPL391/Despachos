@@ -8142,6 +8142,7 @@ function pfModal() {
     <div class="modal-foot">
       <label class="pf-sw"><input type="checkbox" data-vacios> Ver campos sin dato</label>
       <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-cert hidden>📄 Certificado laboral</button>
       <button type="button" class="btn btn-sm" data-editar hidden>✏️ Editar ficha</button>
       <button type="button" class="btn" data-x>Cerrar</button>
     </div>
@@ -8153,6 +8154,7 @@ function pfModal() {
     if (_pfRow && secs) secs.innerHTML = pfSeccionesHtml(_pfRow);
   });
   m.querySelector('[data-editar]').onclick = () => { m.hidden = true; if (_pfRow) openEditor(_pfRow); };
+  m.querySelector('[data-cert]').onclick = () => { if (_pfRow) openCertificado(_pfRow); };
   document.body.appendChild(m);
   return m;
 }
@@ -8248,6 +8250,7 @@ function pfRender(row, hist, sin) {
   m.querySelector('h3').textContent = '🪪 Ficha de la persona';
   // Editar abre el formulario de la tabla; solo tiene sentido estando en ella
   m.querySelector('[data-editar]').hidden = !isTalentoHumano() || current !== 'perfilsociodemografico';
+  m.querySelector('[data-cert]').hidden = !isTalentoHumano();
   m.querySelector('[data-vacios]').checked = _pfVacios;
   body.innerHTML = `
     <header class="pf-top">
@@ -8299,6 +8302,291 @@ async function openPerfilFicha(row) {
   } catch (e) {
     m.querySelector('.pf-body').innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
   }
+}
+
+
+// ===================================================================================
+// 📄 CERTIFICADO LABORAL (sql/93) — se genera desde la ficha del perfil.
+// La redacción se ajusta sola: ACTIVO va en presente ("labora", "devenga") e INACTIVO en
+// pasado ("laboró", "devengaba"), que es justo lo que se equivocaba al copiar el de otro.
+// Los firmantes, el teléfono y los valores del año NO están en el código (repo público):
+// salen de `certificado_config`, que se llena una sola vez desde la base.
+// ===================================================================================
+let _certCfg = null;   // configuración (se lee una vez por sesión)
+let _certRow = null;   // persona del certificado abierto
+
+const CERT_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+  'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+// Cifra en letras, como se acostumbra en un certificado ("UN MILLÓN SETECIENTOS CINCUENTA MIL…").
+function numeroALetras(n) {
+  n = Math.floor(Math.abs(Number(n) || 0));
+  if (!n) return 'CERO';
+  const U = ['', 'UN', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE', 'DIEZ',
+    'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE',
+    'VEINTE', 'VEINTIUNO', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO', 'VEINTICINCO', 'VEINTISÉIS',
+    'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
+  const D = ['', '', '', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
+  const C = ['', 'CIENTO', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS',
+    'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
+  const tramo = (x) => {
+    if (x === 100) return 'CIEN';
+    const c = Math.floor(x / 100), r = x % 100;
+    let t = c ? C[c] : '';
+    if (r) {
+      const dd = Math.floor(r / 10), uu = r % 10;
+      t += (t ? ' ' : '') + (r < 30 ? U[r] : D[dd] + (uu ? ' Y ' + U[uu] : ''));
+    }
+    return t;
+  };
+  const apocope = (t) => t.replace(/UNO$/, 'ÚN'); // "VEINTIUNO MIL" no existe: es "VEINTIÚN MIL"
+  const mill = Math.floor(n / 1e6), resto = n % 1e6;
+  const miles = Math.floor(resto / 1000), unid = resto % 1000;
+  const p = [];
+  if (mill) p.push(mill === 1 ? 'UN MILLÓN' : apocope(tramo(mill)) + ' MILLONES');
+  if (miles) p.push(miles === 1 ? 'MIL' : apocope(tramo(miles)) + ' MIL');
+  if (unid) p.push(tramo(unid));
+  return p.join(' ');
+}
+
+const certPesos = (n) => '$' + Number(n || 0).toLocaleString('es-CO');
+
+// El logo, ya convertido a imagen embebida: si se imprime desde otra ventana, una ruta relativa
+// no resolvería y el certificado saldría sin membrete.
+async function certLogoDataUri() {
+  const img = await ensureLogo();
+  if (!img) return '';
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = img.naturalWidth || 300; cv.height = img.naturalHeight || 300;
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/png');
+  } catch { return ''; }
+}
+
+async function certLeerConfig() {
+  if (_certCfg) return _certCfg;
+  const { data, error } = await sb.rpc('certificado_config_leer');
+  if (error) throw error;
+  _certCfg = data || { ok: false };
+  return _certCfg;
+}
+
+// ---- El documento ----
+function certDocHtml(row, cfg, opts) {
+  const o = opts || {};
+  const inactivo = row.estado === 'INACTIVO';
+  const sexo = String(row.sexo || '').toUpperCase();
+  const trato = sexo.startsWith('F') ? 'La señora' : sexo.startsWith('M') ? 'El señor' : 'El(La) señor(a)';
+  const ido = sexo.startsWith('F') ? 'identificada' : sexo.startsWith('M') ? 'identificado' : 'identificado(a)';
+  const emp = cfg.empresa_nombre || 'AUTOBUSES EL POBLADO LAURELES S.A.';
+
+  // Verbos: en presente si sigue trabajando, en pasado si ya se retiró.
+  const v = inactivo
+    ? { labora: 'laboró', desempena: 'Desempeñó', devengando: 'devengando' }
+    : { labora: 'labora', desempena: 'Desempeña', devengando: 'devengando' };
+
+  // La fórmula "para vehículos de propiedad de…" solo aplica a quien trabaja sobre el vehículo.
+  const donde = (row.tipo === 'CONDUCTOR'
+    ? `para vehículos de propiedad de ${esc(emp)}`
+    : `en ${esc(emp)}`).replace(/\.$/, ''); // "S.A." ya trae punto: evita el "S.A.." del modelo viejo
+
+  // Salario: si coincide con el mínimo del año, se nombra como tal (es lo que pide el banco).
+  let frase = '';
+  if (o.conSalario && row.salario) {
+    const sal = Number(row.salario);
+    const esMin = cfg.smmlv && Math.abs(sal - Number(cfg.smmlv)) < 1;
+    const cifra = `${certPesos(sal)} (${numeroALetras(sal)} PESOS M/CTE)`;
+    frase = esMin
+      ? `, ${v.devengando} un <b>Salario Mínimo Mensual Legal Vigente</b> de ${cifra}`
+      : `, ${v.devengando} un salario mensual de <b>${cifra}</b>`;
+    // Auxilio de transporte: por ley lo recibe quien gana hasta 2 salarios mínimos.
+    if (o.conAuxilio && cfg.auxilio_transporte && (!cfg.smmlv || sal <= Number(cfg.smmlv) * 2)) {
+      frase += `, más auxilio de transporte de ${certPesos(cfg.auxilio_transporte)}`;
+    }
+  }
+
+  const contrato = row.tipo_contrato
+    ? ` bajo un contrato laboral a término <b>${esc(row.tipo_contrato)}</b>`
+    : '';
+
+  const hoy = new Date();
+  const fechaTexto = `${cfg.ciudad || 'Medellín'}, a los ${hoy.getDate()} días del mes de `
+    + `${CERT_MESES[hoy.getMonth()]} de ${hoy.getFullYear()}`;
+  const motivo = o.dirigidoA
+    ? `Se expide a solicitud del interesado, con destino a <b>${esc(o.dirigidoA)}</b>.`
+    : 'Se expide a solicitud del interesado.';
+
+  const firma = (nom, cargo, img) => nom
+    ? `<div class="cl-f">${img ? `<img src="${esc(img)}" alt="">` : '<div class="cl-fl"></div>'}
+         <div class="cl-fn">${esc(nom)}</div><div class="cl-fc">${esc(cargo || '')}</div></div>`
+    : '';
+
+  return `
+  <div class="cl-hoja">
+    ${o.logo ? `<div class="cl-logo"><img src="${o.logo}" alt=""></div>` : ''}
+    <div class="cl-emp">${esc(emp)}</div>
+    <div class="cl-nit">${esc(cfg.empresa_nit || '')}</div>
+
+    <div class="cl-tit">CERTIFICA QUE:</div>
+
+    <p class="cl-p">
+      ${trato} <b>${esc(row.nombre || '')}</b>, ${ido} con cédula de ciudadanía
+      No. <b>${esc(row.cedula || '')}</b>, ${v.labora} como <b>${esc(row.cargo || '')}</b> ${donde}.
+      ${v.desempena} sus labores${contrato}${frase}.
+    </p>
+
+    <div class="cl-fechas">
+      <div><span>Fecha de ingreso:</span> <b>${row.fecha_ingreso ? fechaLegible(row.fecha_ingreso) : '—'}</b></div>
+      <div><span>Fecha de retiro:</span> <b>${row.fecha_retiro ? fechaLegible(row.fecha_retiro) : (inactivo ? '—' : '')}</b></div>
+    </div>
+
+    <p class="cl-p">${fechaTexto}. ${motivo}</p>
+
+    ${cfg.telefono ? `<p class="cl-p cl-tel">Cualquier información con gusto será suministrada
+      comunicándose al ${esc(cfg.telefono)} – ${esc(cfg.ciudad || 'Medellín')}.</p>` : ''}
+    ${cfg.nota_pie ? `<p class="cl-p cl-nota">${esc(cfg.nota_pie)}</p>` : ''}
+
+    <div class="cl-firmas">
+      ${firma(cfg.firmante1_nombre, cfg.firmante1_cargo, cfg.firmante1_firma)}
+      ${firma(cfg.firmante2_nombre, cfg.firmante2_cargo, cfg.firmante2_firma)}
+    </div>
+    ${o.consecutivo ? `<div class="cl-cons">${esc(o.consecutivo)}</div>` : ''}
+  </div>`;
+}
+
+// Estilos del documento: van embebidos porque se imprime en una ventana aparte.
+const CERT_CSS = `
+  @page { size: letter; margin: 2.2cm 2.4cm; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
+  .cl-hoja { font-size: 12.5pt; line-height: 1.55; }
+  .cl-logo { text-align: center; margin-bottom: 10px; }
+  .cl-logo img { height: 74px; }
+  .cl-emp, .cl-nit, .cl-tit { text-align: center; font-weight: 700; }
+  .cl-emp { font-size: 13.5pt; }
+  .cl-nit { font-size: 12pt; margin-top: 6px; }
+  .cl-tit { margin: 54px 0 40px; letter-spacing: .5px; }
+  .cl-p { text-align: justify; margin: 0 0 22px; }
+  .cl-fechas { margin: 30px 0 34px; }
+  .cl-fechas div { margin-bottom: 12px; }
+  .cl-fechas span { display: inline-block; min-width: 160px; font-weight: 700; }
+  .cl-tel, .cl-nota { margin-top: 34px; }
+  .cl-nota { font-size: 11pt; }
+  .cl-firmas { display: flex; gap: 40px; margin-top: 80px; }
+  .cl-f { flex: 1; text-align: center; }
+  .cl-f img { height: 58px; display: block; margin: 0 auto 4px; }
+  .cl-fl { height: 58px; }
+  .cl-fn { border-top: 1px solid #000; padding-top: 6px; font-weight: 700; font-size: 11.5pt; }
+  .cl-fc { font-size: 11pt; }
+  .cl-cons { margin-top: 40px; font-size: 9.5pt; color: #444; }
+`;
+
+// ---- Pantalla: opciones + vista previa ----
+function certModal() {
+  let m = $('cert-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'cert-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card cert-card">
+    <div class="modal-head"><h3>📄 Certificado laboral</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="cert-opts">
+      <label class="pf-sw"><input type="checkbox" data-sal checked> Incluir el salario</label>
+      <label class="pf-sw"><input type="checkbox" data-aux checked> Incluir el auxilio de transporte</label>
+      <label class="cert-dir">Con destino a
+        <input type="text" data-dir placeholder="(opcional) banco, entidad…" maxlength="80">
+      </label>
+    </div>
+    <div class="cert-aviso" data-aviso hidden></div>
+    <div class="cert-prev"><div class="loading">Preparando…</div></div>
+    <div class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" data-imprimir>🖨️ Imprimir / Guardar PDF</button>
+      <button type="button" class="btn" data-x>Cerrar</button>
+    </div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.querySelectorAll('[data-sal], [data-aux]').forEach((c) => c.addEventListener('change', certPintar));
+  m.querySelector('[data-dir]').addEventListener('input', certPintar);
+  m.querySelector('[data-imprimir]').addEventListener('click', certImprimir);
+  document.body.appendChild(m);
+  return m;
+}
+
+function certOpciones() {
+  const m = certModal();
+  return {
+    conSalario: m.querySelector('[data-sal]').checked,
+    conAuxilio: m.querySelector('[data-aux]').checked,
+    dirigidoA: m.querySelector('[data-dir]').value.trim(),
+    logo: _certLogo || '',
+  };
+}
+
+let _certLogo = '';
+function certPintar() {
+  if (!_certRow || !_certCfg) return;
+  const prev = certModal().querySelector('.cert-prev');
+  prev.innerHTML = `<style>${CERT_CSS}</style>` + certDocHtml(_certRow, _certCfg, certOpciones());
+}
+
+async function openCertificado(row) {
+  if (!isTalentoHumano() || !row) return;
+  _certRow = row;
+  const m = certModal();
+  m.hidden = false;
+  const prev = m.querySelector('.cert-prev');
+  prev.innerHTML = '<div class="loading">Preparando…</div>';
+  const aviso = m.querySelector('[data-aviso]');
+  try {
+    const [cfg] = await Promise.all([certLeerConfig(), certLogoDataUri().then((d) => { _certLogo = d; })]);
+    if (!cfg || !cfg.ok) throw new Error('falta ejecutar sql/93 o no tienes permiso');
+    const falta = cfg.falta || [];
+    const LBL = { firmante1_nombre: 'quién firma', telefono: 'el teléfono de contacto',
+      smmlv: 'el salario mínimo del año', auxilio_transporte: 'el auxilio de transporte' };
+    if (falta.length) {
+      aviso.hidden = false;
+      aviso.innerHTML = `⚠️ Falta configurar ${falta.map((f) => LBL[f] || f).join(', ')}. `
+        + 'El certificado sale igual, pero sin esos datos.';
+    } else { aviso.hidden = true; }
+    if (!row.salario) {
+      m.querySelector('[data-sal]').checked = false;
+      m.querySelector('[data-sal]').disabled = true;
+    } else {
+      m.querySelector('[data-sal]').disabled = false;
+    }
+    certPintar();
+  } catch (e) {
+    const t = String(e.message || e);
+    prev.innerHTML = `<div class="rst-empty">No se pudo preparar el certificado: ${esc(t)}</div>`;
+  }
+}
+
+// Imprimir: primero se registra (para que el documento salga con su consecutivo), luego se abre.
+async function certImprimir() {
+  if (!_certRow || !_certCfg) return;
+  const m = certModal(), btn = m.querySelector('[data-imprimir]');
+  const o = certOpciones();
+  btn.disabled = true; const prev = btn.textContent; btn.textContent = '⏳ Generando…';
+  try {
+    let consecutivo = '';
+    try {
+      const { data } = await sb.rpc('certificado_registrar', {
+        p_cedula: _certRow.cedula, p_con_salario: o.conSalario, p_dirigido_a: o.dirigidoA || null });
+      if (data?.ok) consecutivo = data.consecutivo || '';
+    } catch { /* si la bitácora falla, el certificado se imprime igual */ }
+
+    const w = window.open('', '_blank');
+    if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
+      + `<title>Certificado laboral${consecutivo ? ' ' + consecutivo : ''}</title>`
+      + `<style>${CERT_CSS}</style></head><body>`
+      + certDocHtml(_certRow, _certCfg, { ...o, consecutivo })
+      + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
+    w.document.close();
+  } catch (e) {
+    toast('No se pudo generar: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
 }
 
 // ===================================================================================
