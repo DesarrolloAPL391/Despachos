@@ -91,8 +91,8 @@ as $$
       'falta', (select coalesce(jsonb_agg(f), '[]'::jsonb) from (
                   select 'firmante1_nombre' as f where coalesce(c.firmante1_nombre, '') = ''
                   union all select 'telefono' where coalesce(c.telefono, '') = ''
-                  union all select 'smmlv' where c.smmlv is null
-                  union all select 'auxilio_transporte' where c.auxilio_transporte is null) s))
+                  union all select 'smmlv' where coalesce(c.smmlv, 0) = 0
+                  union all select 'auxilio_transporte' where coalesce(c.auxilio_transporte, 0) = 0) s))
       from public.certificado_config c where c.id = 1)
   end;
 $$;
