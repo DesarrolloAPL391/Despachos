@@ -2671,3 +2671,7 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .cf-hist { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
 .cf-hist h4 { margin: 0 0 8px; font-size: 13px; color: var(--primary); }
 .cf-hist-it { font-size: 12.5px; color: #475569; padding: 3px 0; }
+
+.cf-datos { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.cf-datos h4 { margin: 0 0 10px; font-size: 13px; color: var(--primary); }
+.cf-datos-g { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 16px; }

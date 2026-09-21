@@ -8666,7 +8666,7 @@ const CF_ROLES = [
   { rol: 'GERENTE', icono: '👔', titulo: 'Gerente General', cargo: 'Gerente General' },
   { rol: 'GESTION_HUMANA', icono: '🧾', titulo: 'Gestión Humana', cargo: 'Coordinador de Gestión Humana' },
 ];
-const _cf = { datos: null, edit: {}, src: {} }; // edit = lo que se está tocando; src = la foto sin procesar
+const _cf = { datos: null, cfg: null, edit: {}, src: {} }; // edit = lo que se está tocando; src = la foto sin procesar
 
 // Deja el trazo y vuelve transparente el papel; después recorta el sobrante.
 // `umbral` es qué tan claro tiene que ser un punto para considerarlo fondo (0-255).
@@ -8732,10 +8732,12 @@ async function openCertFirmas() {
   const body = m.querySelector('.cf-body');
   body.innerHTML = '<div class="loading">Cargando…</div>';
   try {
-    const { data, error } = await sb.rpc('certificado_firmantes_listar');
-    if (error) throw error;
+    const [r1, r2] = await Promise.all([
+      sb.rpc('certificado_firmantes_listar'), sb.rpc('certificado_config_leer')]);
+    if (r1.error) throw r1.error;
+    const data = r1.data;
     if (!data || !data.ok) throw new Error('falta ejecutar sql/94 o no tienes permiso');
-    _cf.datos = data; _cf.edit = {}; _cf.src = {};
+    _cf.datos = data; _cf.cfg = (r2.data && r2.data.ok) ? r2.data : {}; _cf.edit = {}; _cf.src = {};
     CF_ROLES.forEach((r) => {
       const v = (data.vigentes || {})[r.rol] || null;
       _cf.edit[r.rol] = {
@@ -8766,8 +8768,10 @@ function cfRender() {
       la nueva, y el certificado se actualiza solo.</div>
     ${puede ? '' : '<div class="cert-bloqueo">Puedes consultarlas, pero solo administración las cambia.</div>'}
     <div class="cf-grid">${CF_ROLES.map((r) => cfTarjetaHtml(r, puede)).join('')}</div>
+    ${cfDatosHtml(puede)}
     ${cfHistorialHtml()}`;
   CF_ROLES.forEach((r) => cfConectar(r, puede));
+  cfConectarDatos(puede);
 }
 
 function cfTarjetaHtml(r, puede) {
@@ -8816,6 +8820,55 @@ function cfTarjetaHtml(r, puede) {
       </div>
     </div>
   </section>`;
+}
+
+// Lo que cambia cada ano y hace que el certificado salga completo. Estaba solo en la base;
+// aqui lo mantiene quien expide los certificados, sin tener que pedir un SQL cada enero.
+function cfDatosHtml(puede) {
+  const c = _cf.cfg || {};
+  const campo = (k, etiqueta, valor, tipo, nota) => `<label class="cf-l">${esc(etiqueta)}
+      <input type="${tipo}" data-cfg="${k}" value="${valor == null ? '' : esc(String(valor))}"
+        ${puede ? '' : 'disabled'}>${nota ? `<span class="pst-nota">${esc(nota)}</span>` : ''}</label>`;
+  return `<div class="cf-datos">
+    <h4>Datos que salen en el certificado</h4>
+    <div class="cf-datos-g">
+      ${campo('telefono', 'Tel\u00e9fono de contacto', c.telefono, 'text', 'El que se imprime en "cualquier informaci\u00f3n\u2026"')}
+      ${campo('ciudad', 'Ciudad', c.ciudad, 'text')}
+      ${campo('anio_valores', 'A\u00f1o de estos valores', c.anio_valores, 'number')}
+      ${campo('smmlv', 'Salario m\u00ednimo del a\u00f1o', c.smmlv, 'number', 'Si el sueldo coincide, se nombra como "salario m\u00ednimo legal vigente".')}
+      ${campo('auxilio_transporte', 'Auxilio de transporte', c.auxilio_transporte, 'number', 'Solo se imprime para quien gana hasta 2 salarios m\u00ednimos.')}
+    </div>
+    ${puede ? `<div class="cf-btns">
+      <button type="button" class="btn btn-primary btn-sm" data-cfg-guardar>\ud83d\udcbe Guardar estos datos</button>
+      <span class="pst-nota" data-cfg-msg></span></div>` : ''}
+  </div>`;
+}
+
+function cfConectarDatos(puede) {
+  if (!puede) return;
+  const m = cfModal();
+  const btn = m.querySelector('[data-cfg-guardar]');
+  if (!btn) return;
+  const msg = m.querySelector('[data-cfg-msg]');
+  btn.addEventListener('click', async () => {
+    const p = {};
+    m.querySelectorAll('[data-cfg]').forEach((el) => {
+      const v = el.value.trim();
+      if (v !== '') p[el.dataset.cfg] = el.type === 'number' ? Number(v) : v;
+    });
+    btn.disabled = true; msg.textContent = 'Guardando\u2026';
+    try {
+      const { data, error } = await sb.rpc('certificado_config_guardar', { p });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo guardar');
+      toast('Datos del certificado guardados.', 'ok');
+      _certCfg = null;              // el certificado vuelve a leerlos
+      await openCertFirmas();
+    } catch (e) {
+      msg.textContent = 'No se pudo guardar: ' + (e.message || e);
+      btn.disabled = false;
+    }
+  });
 }
 
 function cfHistorialHtml() {
