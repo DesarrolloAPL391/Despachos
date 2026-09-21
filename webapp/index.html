@@ -551,10 +551,16 @@
             <span id="pst-fl-sin" class="pst-fl-set" hidden>
               <label class="cump-fl">Año
                 <select id="sst-anio"><option value="">Todos</option></select></label>
-              <label class="cump-fl">Gravedad
-                <select id="sst-gravedad"><option value="">Todas</option></select></label>
-              <label class="cump-fl">Responsable
-                <select id="sst-resp"><option value="">Todos</option></select></label>
+              <!-- El mes solo tiene sentido con un año elegido; se habilita al elegirlo -->
+              <label class="cump-fl">Mes
+                <select id="sst-mes" disabled><option value="">Todos</option></select></label>
+              <!-- Gravedad y responsable son del siniestro: no aplican a la conducción -->
+              <span id="pst-fl-sin2" class="pst-fl-set">
+                <label class="cump-fl">Gravedad
+                  <select id="sst-gravedad"><option value="">Todas</option></select></label>
+                <label class="cump-fl">Responsable
+                  <select id="sst-resp"><option value="">Todos</option></select></label>
+              </span>
             </span>
             <button id="pst-recargar" class="btn" title="Volver a leer los datos">↻</button>
             <button id="pst-excel" class="btn">⬇️ Excel</button>

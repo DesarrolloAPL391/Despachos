@@ -9549,6 +9549,7 @@ async function cargarSiniestrosStats() {
     llenar('sst-anio', anios, 'Todos');
     llenar('sst-gravedad', [...new Set(rows.map((s) => s.gravedad).filter(Boolean))].sort(), 'Todas');
     llenar('sst-resp', [...new Set(rows.map((s) => s.responsabilidad).filter(Boolean))].sort(), 'Todos');
+    sstLlenarMeses();
     renderSiniestrosStats();
   } catch (e) {
     body.innerHTML = '';
@@ -9629,11 +9630,22 @@ function sstLideresPorPeriodo(R, corte) {
 function renderSiniestrosStats() {
   const body = $('pst-body'); if (!_sst.rows) return;
   const anio = $('sst-anio').value, grav = $('sst-gravedad').value, resp = $('sst-resp').value;
+  // El mes solo se puede elegir dentro de un año: sin año no hay periodo que recortar
+  const selMes = $('sst-mes'); if (selMes) { selMes.disabled = !anio; if (!anio) selMes.value = ''; }
+  const mes = anio && selMes ? selMes.value : '';
+  const B = _sst.bloque || 'resumen';
+  const esVial = B === 'vial' || B === 'mapa';
+  // Gravedad y responsable son del siniestro: en las pantallas de conducción estorban
+  const fl2 = $('pst-fl-sin2'); if (fl2) fl2.hidden = esVial;
   const R = _sst.rows.filter((s) => (!anio || String(s.fecha || '').slice(0, 4) === anio)
+    && (!mes || String(s.fecha || '').slice(5, 7) === mes)
     && (!grav || s.gravedad === grav) && (!resp || s.responsabilidad === resp));
   _pst.tablas = [];
-  _pst.filtro = [anio ? `Año ${anio}` : 'Todos los años', grav || 'Toda gravedad',
-    resp ? `Responsable: ${resp}` : 'Toda responsabilidad'].join(' · ');
+  const periodoTxt = anio ? (mes ? `${PST_MESES[Number(mes) - 1]} de ${anio}` : `Año ${anio}`)
+    : 'Últimos 12 meses';
+  _pst.filtro = esVial ? periodoTxt
+    : [anio ? (mes ? `${PST_MESES[Number(mes) - 1]} de ${anio}` : `Año ${anio}`) : 'Todos los años',
+      grav || 'Toda gravedad', resp ? `Responsable: ${resp}` : 'Toda responsabilidad'].join(' · ');
   _sst.filtro = _pst.filtro;
   $('pst-sub').textContent = _pst.filtro;
   const bAct = SST_BLOQUES.find((x) => x.key === (_sst.bloque || 'resumen')) || SST_BLOQUES[0];
@@ -9649,7 +9661,6 @@ function renderSiniestrosStats() {
     tabs.appendChild(t);
   });
   body.appendChild(tabs);
-  const B = _sst.bloque || 'resumen';
 
   // ---- 🗺️ Mapa de riesgo: dónde ocurre ----
   // Va antes del corte por filtros porque no sale de los siniestros sino de los eventos del
@@ -9657,7 +9668,7 @@ function renderSiniestrosStats() {
   if (B === 'mapa') {
     body.appendChild(pstEl('h3', 'pst-sec', '🗺️ Dónde ocurre'));
     const cm = pstEl('div', 'pst-grid'); body.appendChild(cm);
-    sstMapaRender(cm, anio);
+    sstMapaRender(cm, anio, mes);
     return;
   }
   if (!R.length) { body.appendChild(pstEl('div', 'cump-empty', 'No hay siniestros con estos filtros.')); return; }
@@ -9787,7 +9798,7 @@ function renderSiniestrosStats() {
   if (B === 'vial') {
     body.appendChild(pstEl('h3', 'pst-sec', '🛡️ Conducción y siniestros'));
     const cv = pstEl('div', 'pst-grid'); body.appendChild(cv);
-    sstVialRender(cv, R, anio);
+    sstVialRender(cv, R, anio, mes);
     return; // este tema trae sus datos aparte; no comparte tarjetas con los demás
   }
 
@@ -9827,14 +9838,26 @@ function renderSiniestrosStats() {
 // Los eventos de riesgo (exceso de velocidad real y puerta abierta en marcha) se guardan cada
 // madrugada desde SONAR con el conductor que iba manejando. Aquí se juntan con los siniestros
 // del mismo periodo, por cédula: quién arriesga y a quién se le están volviendo choques.
-function sstVialPeriodo(anio) {
+// Los doce meses, siempre los mismos: el año manda cuál existe y cuál no
+function sstLlenarMeses() {
+  const sel = $('sst-mes'); if (!sel || sel.options.length > 1) return;
+  PST_MESES.forEach((m, i) => sel.appendChild(Object.assign(document.createElement('option'),
+    { value: String(i + 1).padStart(2, '0'), textContent: m })));
+}
+function sstVialPeriodo(anio, mes) {
+  if (anio && mes) {
+    const m = String(mes).padStart(2, '0');
+    // El día 0 del mes siguiente es el último de este: sirve para los 30, 31 y para febrero
+    const fin = new Date(Number(anio), Number(mes), 0);
+    return [`${anio}-${m}-01`, `${anio}-${m}-${String(fin.getDate()).padStart(2, '0')}`];
+  }
   if (anio) return [`${anio}-01-01`, `${anio}-12-31`];
   const hoy = hoyServidor();
   const d = new Date(hoy + 'T12:00:00'); d.setMonth(d.getMonth() - 12);
   return [d.toISOString().slice(0, 10), hoy];
 }
-async function sstVialRender(cont, R, anio) {
-  const [desde, hasta] = sstVialPeriodo(anio);
+async function sstVialRender(cont, R, anio, mes) {
+  const [desde, hasta] = sstVialPeriodo(anio, mes);
   cont.innerHTML = '';
   cont.appendChild(pstEl('div', 'loading', 'Leyendo los eventos de conducción…'));
   let res = null, est = null;
@@ -10040,8 +10063,8 @@ const SST_MAPA_COLOR = { 'VELOCIDAD': '#C0392B', 'PUERTA ABIERTA': '#1F6FB2' };
 const SST_MAPA_NOMBRE = { 'VELOCIDAD': '🚦 Velocidad', 'PUERTA ABIERTA': '🚪 Puerta abierta' };
 const _sstMapa = { cat: null, map: null, marcas: [] };
 
-async function sstMapaRender(cont, anio) {
-  const [desde, hasta] = sstVialPeriodo(anio);
+async function sstMapaRender(cont, anio, mes) {
+  const [desde, hasta] = sstVialPeriodo(anio, mes);
   cont.innerHTML = '';
   const card = pstEl('section', 'pst-card pst-ancha');
   const head = pstEl('div', 'pst-card-h'); const tt = pstEl('div');
@@ -10510,7 +10533,7 @@ async function sinExportarLista(titulo, filas) {
 }
 
 ['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
-['sst-anio', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
+['sst-anio', 'sst-mes', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
 $('pst-recargar')?.addEventListener('click', () => (currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
 $('pst-excel')?.addEventListener('click', () => (currentView === 'sinstats' ? exportarSiniestrosStats() : exportarPerfilStats()));
 $('pst-close')?.addEventListener('click', cerrarPerfilStats);
