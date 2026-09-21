@@ -374,6 +374,37 @@
           <div id="laur-body" class="malla-body"></div>
         </div>
 
+        <!-- Procesos disciplinarios (sql/102). La etapa se calcula de las fechas. -->
+        <div id="disc-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>⚖️ Procesos disciplinarios</h2>
+            <span id="dc-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <span id="dc-rango" class="iv-rango">
+              <label class="cump-fecha-lbl">📅 <input type="date" id="dc-desde" /></label>
+              <label class="cump-fecha-lbl">a <input type="date" id="dc-hasta" /></label>
+              <select id="dc-etapa" title="Filtrar por etapa">
+                <option value="">Todas las etapas</option>
+                <option value="POR CITAR">Por citar</option>
+                <option value="CITADO">Citados</option>
+                <option value="POR DECIDIR">Por decidir</option>
+                <option value="CON SANCION">Con sanción</option>
+                <option value="SIN SANCION">Sin sanción</option>
+                <option value="REPROGRAMAR">Reprogramar</option>
+                <option value="CANCELADO">Cancelados</option>
+                <option value="ANULADO">Anulados</option>
+              </select>
+            </span>
+            <input type="search" id="dc-search" placeholder="Nombre, cédula, novedad…" />
+            <button id="dc-nuevo" class="btn btn-primary">➕ Abrir proceso</button>
+            <button id="dc-traer" class="btn" title="Traer lo nuevo de la hoja">🔄 Traer</button>
+            <button id="dc-excel" class="btn">📊 Excel</button>
+            <button id="dc-refresh" class="btn">↻ Actualizar</button>
+            <button id="dc-close" class="btn">← Volver</button>
+          </div>
+          <div id="dc-body" class="malla-body"></div>
+        </div>
+
         <!-- Intervenciones a los equipos del bus (GPS, sensores, camaras) - sql/100.
              El auditor cita el carro y despues cierra con lo que paso. -->
         <div id="interv-view" class="malla-view" hidden>

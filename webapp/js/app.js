@@ -604,6 +604,19 @@ function buildSidebar() {
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin() || isOperaciones()) addNavAction(gRe, '🪪', `Licencias de conductores${LIC_PEND ? ` <span class="nav-badge">${LIC_PEND}</span>` : ''}`, openLicencias, 'nav-licencias');
 
+  // ⚖️ Procesos disciplinarios (sql/102). El auditor no entra aquí: solo reporta el hecho.
+  if (puedeVerDisc()) {
+    const gDc = addNavGroup(nav, '⚖️', 'Disciplinarios', 'disc');
+    if (puedeGestionarDisc()) {
+      addNavAction(gDc, '📋', `Bandeja${DC_PEND ? ` <span class="nav-badge">${DC_PEND}</span>` : ''}`,
+        () => openDisc('bandeja'), 'nav-dc-bandeja');
+    }
+    addNavAction(gDc, '🗂️', 'Historico', () => openDisc('historico'), 'nav-dc-historico');
+    addNavAction(gDc, '📊', 'Medidas', () => openDisc('tablero'), 'nav-dc-tablero');
+  } else if (DC_REPORTA) {
+    addNavAction(nav, '⚖️', 'Reportar novedad', dcReportarModal, 'nav-dc-rep');
+  }
+
   // 🛠️ Intervenciones a los equipos del bus (GPS, sensores, cámaras) — sql/100
   if (puedeVerInterv()) {
     const gIv = addNavGroup(nav, '🛠️', 'Intervenciones', 'interv');
@@ -840,7 +853,7 @@ function selectTable(name, filtroInicial) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -3260,6 +3273,7 @@ async function refrescarAlertasDocs() {
   await refrescarPqrsfAcceso(false);
   await refrescarPermisos(false);
   await refrescarInterv(false);
+  await refrescarDisc(false);
   await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
@@ -4305,7 +4319,7 @@ async function openCumplimiento() {
   $('map-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4572,7 +4586,7 @@ async function openRutasVivo(modo) {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4800,7 +4814,7 @@ async function openMalla() {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4970,7 +4984,7 @@ async function openLaureles(modo) {
 }
 function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -5433,7 +5447,7 @@ async function openOriental(modo) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -6229,7 +6243,7 @@ async function openIntegradas() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -6344,7 +6358,7 @@ async function openPasajeros() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -6428,7 +6442,7 @@ async function openPreventivas() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -7122,6 +7136,721 @@ function avisarNovedadDesbloqueos() {
 }
 
 // ===================================================================================
+// ⚖️ PROCESOS DISCIPLINARIOS — sql/102
+// La hoja traía 134 columnas y 2.660 procesos, con 1.503 marcados "EN PROCESO" de los que
+// 1.467 eran de hace más de 60 días: no había 1.500 procesos vivos, había procesos sin cerrar.
+// Aquí la ETAPA se calcula de las fechas (POR CITAR → CITADO → POR DECIDIR → CON/SIN SANCIÓN),
+// así que la bandeja dice qué falta hacer en cada uno. Gestión Humana y administración lo
+// llevan; Gerencia consulta; el auditor solo reporta el hecho.
+// ===================================================================================
+let DC_OK = false, DC_GESTIONA = false, DC_REPORTA = false, DC_PEND = 0;
+let _dcModo = 'bandeja';
+const _dc = { rows: [], q: '', etapa: '', cargando: false, est: null };
+const DC_ETAPAS = ['POR CITAR', 'CITADO', 'POR DECIDIR', 'CON SANCION', 'SIN SANCION',
+  'REPROGRAMAR', 'CANCELADO', 'ANULADO'];
+const DC_LBL = { 'POR CITAR': 'Por citar', CITADO: 'Citado', 'POR DECIDIR': 'Por decidir',
+  'CON SANCION': 'Con sanción', 'SIN SANCION': 'Sin sanción', REPROGRAMAR: 'Reprogramar',
+  CANCELADO: 'Cancelado', ANULADO: 'Anulado' };
+const DC_CHIP = { 'POR CITAR': 'chip-amber', CITADO: 'chip-blue', 'POR DECIDIR': 'chip-amber',
+  'CON SANCION': 'chip-red', 'SIN SANCION': 'chip-green', REPROGRAMAR: 'chip-amber',
+  CANCELADO: 'chip-gray', ANULADO: 'chip-gray' };
+const DC_SANCIONES = ['SUSPENSIÓN AL CONTRATO DE TRABAJO', 'LLAMADO DE ATENCIÓN POR ESCRITO',
+  'NO GENERA SANCIÓN', 'TERMINACIÓN DE CONTRATO CON JUSTA CAUSA',
+  'TERMINACIÓN DE CONTRATO POR PERIODO DE PRUEBA', 'RENUNCIA VOLUNTARIA'];
+const DC_ENTREGA = ['FIRMADO', 'ILOCALIZADO', 'SE NIEGA A FIRMAR'];
+
+function puedeVerDisc() { return DC_OK; }
+function puedeGestionarDisc() { return DC_GESTIONA; }
+
+async function refrescarDisc(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('disciplinarios_estado');
+    _dc.est = (data && data.ok) ? data : null;
+    DC_OK = !!(data && data.ok && !data.reporta);       // el auditor no entra a la bandeja
+    DC_GESTIONA = !!(data && data.gestiona);
+    DC_REPORTA = !!(data && data.ok && (data.reporta || data.gestiona));
+    DC_PEND = Number((data && data.viejos) || 0);
+  } catch (e) { DC_OK = false; DC_GESTIONA = false; DC_REPORTA = false; DC_PEND = 0; }
+  if (rebuild) buildSidebar();
+}
+
+const DC_COLS = 'id,key_origen,radicado,cedula,nombre,cargo,tipo_persona,afiliado,vehiculo,ruta,placa,'
+  + 'fecha_suceso,fecha_suceso_fin,hora_suceso,novedad,reporta_correo,fecha_informe,'
+  + 'citacion_enviada,citacion_fecha,citacion_hora,citacion_responsable,citacion_estado,motivo_descargos,'
+  + 'descargo_fecha,descargo_hora_ini,descargo_hora_fin,falta,falta_grupo,sancion,sancion_dias,'
+  + 'sancion_unidad,suspension_ini,suspension_fin,sancion_respuesta,sancion_enviada,estado_hoja,'
+  + 'observacion,anulado_en,nota_anulacion,origen,creado_en,creado_por,creado_nombre,etapa';
+
+// ---------- Abrir ----------
+async function openDisc(modo) {
+  if (!puedeVerDisc()) return;
+  _dcModo = ['bandeja', 'historico', 'tablero'].includes(modo) ? modo : 'bandeja';
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'disc';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('perfilstats-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('disc-view').hidden = false;
+  const h2 = document.querySelector('#disc-view h2');
+  if (h2) h2.textContent = _dcModo === 'bandeja' ? '⚖️ Procesos disciplinarios'
+    : (_dcModo === 'tablero' ? '📊 Disciplinarios · medidas' : '🗂️ Histórico disciplinario');
+  $('dc-rango').hidden = (_dcModo !== 'historico');
+  $('dc-search').hidden = (_dcModo === 'tablero');
+  $('dc-traer').hidden = !puedeGestionarDisc();
+  $('dc-nuevo').hidden = !puedeGestionarDisc();
+  $('dc-excel').hidden = (_dcModo === 'bandeja');
+  if (!$('dc-desde').value) {
+    const d = new Date(); d.setMonth(d.getMonth() - 12);
+    $('dc-desde').value = d.toISOString().slice(0, 10);
+    $('dc-hasta').value = hoyServidor();
+  }
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-dc-' + _dcModo)?.classList.add('active');
+  buildBottomNav();
+  await cargarDisc();
+}
+function cerrarDisc() { $('disc-view').hidden = true; selectTable(current); }
+
+// ---------- Traer ----------
+async function cargarDisc() {
+  const body = $('dc-body');
+  if (_dc.cargando) return;
+  _dc.cargando = true;
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    let q = sb.from('disciplinarios').select(DC_COLS);
+    if (_dcModo === 'bandeja') {
+      q = q.in('etapa', ['POR CITAR', 'CITADO', 'POR DECIDIR', 'REPROGRAMAR']);
+    } else {
+      q = q.gte('fecha_suceso', $('dc-desde').value || '2015-01-01')
+        .lte('fecha_suceso', $('dc-hasta').value || hoyServidor());
+    }
+    const { data, error } = await q.order('fecha_suceso', { ascending: false }).limit(5000);
+    if (error) throw error;
+    _dc.rows = data || [];
+    renderDisc();
+    refrescarDisc(false);
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/disciplinarios/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar sql/102.' : 'No se pudieron cargar los procesos.'}<br><small>${esc(t)}</small></div>`;
+  } finally { _dc.cargando = false; }
+}
+
+// ---------- Pintar ----------
+const dcHora = (v) => (v ? String(v).slice(0, 5) : '');
+const dcChip = (r) => `<span class="chip ${DC_CHIP[r.etapa] || 'chip-gray'}">${DC_LBL[r.etapa] || esc(r.etapa || '')}</span>`;
+const dcDias = (f) => (f ? Math.round((Date.parse(hoyServidor()) - Date.parse(f)) / 86400000) : null);
+
+function dcFiltrar(rows) {
+  const t = (_dc.q || '').trim().toLowerCase();
+  let out = rows;
+  if (_dc.etapa) out = out.filter((r) => r.etapa === _dc.etapa);
+  if (t) {
+    out = out.filter((r) => [r.nombre, r.cedula, r.vehiculo, r.ruta, r.novedad, r.falta, r.sancion, r.afiliado]
+      .some((v) => String(v || '').toLowerCase().includes(t)));
+  }
+  return out;
+}
+
+function dcFilaHtml(r) {
+  const d = dcDias(r.fecha_suceso);
+  const viejo = d != null && d > 60 && ['POR CITAR', 'CITADO', 'POR DECIDIR', 'REPROGRAMAR'].includes(r.etapa);
+  const sig = { 'POR CITAR': 'Citar', REPROGRAMAR: 'Citar', CITADO: 'Descargos', 'POR DECIDIR': 'Decidir' }[r.etapa];
+  return `<tr class="dc-row${viejo ? ' dc-viejo' : ''}" data-id="${r.id}">
+    <td class="dc-fh"><b>${esc(fechaLegible(r.fecha_suceso))}</b>${d != null ? `<small>${d} día(s)</small>` : ''}</td>
+    <td class="dc-per"><b>${esc(r.nombre || '—')}</b><small>${esc(r.cargo || r.tipo_persona || '')}${r.vehiculo ? ' · ' + esc(r.vehiculo) : ''}${r.ruta ? ' · ' + esc(r.ruta) : ''}</small></td>
+    <td class="dc-nov">${esc(String(r.novedad || '').slice(0, 160))}${String(r.novedad || '').length > 160 ? '…' : ''}
+      ${r.falta_grupo ? `<small>⚖️ ${esc(r.falta_grupo)}</small>` : ''}
+      ${r.sancion ? `<small>📄 ${esc(r.sancion)}${r.sancion_dias ? ` · ${r.sancion_dias} ${esc((r.sancion_unidad || 'DIAS').toLowerCase())}` : ''}</small>` : ''}</td>
+    <td>${dcChip(r)}</td>
+    <td class="dc-acc">${sig && puedeGestionarDisc() ? `<button type="button" class="btn btn-sm btn-primary" data-dc-paso="${r.id}">${sig}</button>` : ''}
+      <button type="button" class="btn btn-sm" data-dc-ficha="${r.id}">Ver</button></td>
+  </tr>`;
+}
+function dcTablaHtml(rows, vacio) {
+  if (!rows.length) return `<div class="cump-empty">${vacio}</div>`;
+  return '<div class="mc-wrap"><table class="mc-tabla dc-tabla"><thead><tr>'
+    + '<th>Suceso</th><th>Persona</th><th>Novedad</th><th>Etapa</th><th></th>'
+    + `</tr></thead><tbody>${rows.map(dcFilaHtml).join('')}</tbody></table></div>`;
+}
+
+function renderDisc() {
+  const body = $('dc-body');
+  const rows = dcFiltrar(_dc.rows);
+  if (_dcModo === 'tablero') { body.innerHTML = _dcDashHtml(rows); return; }
+
+  const sub = $('dc-sub');
+  if (_dcModo === 'bandeja') {
+    const grupo = (e) => rows.filter((r) => r.etapa === e).sort((a, b) => (a.fecha_suceso < b.fecha_suceso ? -1 : 1));
+    const citar = grupo('POR CITAR').concat(grupo('REPROGRAMAR'));
+    const citados = grupo('CITADO');
+    const decidir = grupo('POR DECIDIR');
+    const abiertos = citar.length + citados.length + decidir.length;
+    const viejos = citar.concat(citados, decidir).filter((r) => (dcDias(r.fecha_suceso) || 0) > 60).length;
+    if (sub) sub.textContent = `${abiertos} proceso(s) abiertos · ${viejos} con más de 60 días`;
+    body.innerHTML = (viejos ? `<p class="dc-alerta">⏳ <b>${viejos}</b> proceso(s) llevan más de <b>60 días</b> sin moverse. `
+      + 'Los más viejos van de primeros en cada lista.</p>' : '')
+      + `<h3 class="dc-h">📨 Por citar <span class="chip chip-amber">${citar.length}</span></h3>`
+      + '<p class="dc-nota">Hay novedad reportada pero todavía no hay citación a descargos.</p>'
+      + dcTablaHtml(citar, 'Nada por citar.')
+      + `<h3 class="dc-h">📅 Citados · falta la diligencia <span class="chip chip-blue">${citados.length}</span></h3>`
+      + dcTablaHtml(citados, 'Nadie citado pendiente.')
+      + `<h3 class="dc-h">⚖️ Descargos hechos · falta decidir <span class="chip chip-amber">${decidir.length}</span></h3>`
+      + dcTablaHtml(decidir, 'Nada por decidir.');
+    return;
+  }
+  if (sub) sub.textContent = `${rows.length} proceso(s)` + (_dc.rows.length !== rows.length ? ` de ${_dc.rows.length}` : '');
+  body.innerHTML = dcTablaHtml(rows, 'No hay procesos en ese rango.');
+}
+
+// ---------- Medidas ----------
+function _dcAgg(rows) {
+  const A = { total: 0, porEtapa: {}, porFalta: {}, porSancion: {}, porMes: {}, porPersona: {},
+    dias: [], suspDias: 0, viejos: 0 };
+  for (const r of rows) {
+    A.total++;
+    const e = r.etapa || '—';
+    A.porEtapa[e] = A.porEtapa[e] || { n: 0, ing: 0 }; A.porEtapa[e].n++;
+    if (r.falta_grupo) { A.porFalta[r.falta_grupo] = A.porFalta[r.falta_grupo] || { n: 0, ing: 0 }; A.porFalta[r.falta_grupo].n++; }
+    if (r.sancion) {
+      const s = String(r.sancion).trim();
+      const corta = dcSancionCorta(s);
+      A.porSancion[corta] = A.porSancion[corta] || { n: 0, ing: 0 }; A.porSancion[corta].n++;
+      if (/SUSPENSI/i.test(s)) A.suspDias += Number(r.sancion_dias || 0);
+    }
+    const mes = String(r.fecha_suceso || '').slice(0, 7);
+    if (mes) { A.porMes[mes] = A.porMes[mes] || { n: 0, ing: 0 }; A.porMes[mes].n++; }
+    const p = String(r.cedula || '').trim();
+    if (p) { A.porPersona[p] = A.porPersona[p] || { n: 0, nombre: r.nombre, cargo: r.cargo, sanc: 0 };
+      A.porPersona[p].n++; if (r.sancion && !/NO GENERA/i.test(r.sancion)) A.porPersona[p].sanc++; }
+    if (['POR CITAR', 'CITADO', 'POR DECIDIR', 'REPROGRAMAR'].includes(r.etapa) && (dcDias(r.fecha_suceso) || 0) > 60) A.viejos++;
+    // Cuánto tardó en resolverse (del suceso a la sanción)
+    if (r.sancion_enviada && r.fecha_suceso) {
+      const dd = Math.round((Date.parse(r.sancion_enviada) - Date.parse(r.fecha_suceso)) / 86400000);
+      if (dd >= 0 && dd < 900) A.dias.push(dd);
+    }
+  }
+  A.diasProm = A.dias.length ? Math.round(A.dias.reduce((a, b) => a + b, 0) / A.dias.length) : null;
+  return A;
+}
+// En la barra del tablero caben pocas letras: el nombre largo va en la ficha, aquí el corto.
+function dcSancionCorta(s) {
+  const t = String(s || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/SUSPENSI/.test(t)) return 'Suspensión';
+  if (/LLAMADO/.test(t)) return 'Llamado de atención';
+  if (/NO GENERA/.test(t)) return 'No genera sanción';
+  if (/JUSTA CAUSA/.test(t)) return 'Terminación justa causa';
+  if (/PERIODO DE PRUEBA/.test(t)) return 'Fin periodo de prueba';
+  if (/RENUNCIA/.test(t)) return 'Renuncia voluntaria';
+  if (/TERMINACION/.test(t)) return 'Terminación de contrato';
+  return String(s || '').trim() || 'Sin definir';
+}
+function _dcDashHtml(rows) {
+  if (!rows.length) return '<div class="cump-empty">No hay procesos en ese rango.</div>';
+  const a = _dcAgg(rows);
+  const abiertos = (a.porEtapa['POR CITAR']?.n || 0) + (a.porEtapa.CITADO?.n || 0)
+    + (a.porEtapa['POR DECIDIR']?.n || 0) + (a.porEtapa.REPROGRAMAR?.n || 0);
+  const cerrados = (a.porEtapa['CON SANCION']?.n || 0) + (a.porEtapa['SIN SANCION']?.n || 0);
+  const pCerr = _pctCump(cerrados, cerrados + abiertos);
+  const hero = `<div class="cump-heros laur-heros">
+    <div class="cump-hero" style="--acc:${_colCump(pCerr)}"><div class="ch-val">${pCerr}%</div>`
+    + `<div class="ch-lbl">Procesos resueltos</div><div class="ch-sub">${cerrados} de ${cerrados + abiertos}</div></div>
+    <div class="cump-hero" style="--acc:${a.viejos ? '#dc2626' : '#16a34a'}"><div class="ch-val">${a.viejos}</div>`
+    + `<div class="ch-lbl">Represados +60 días</div><div class="ch-sub">de ${abiertos} abiertos</div></div>
+    <div class="cump-hero" style="--acc:#3b82f6"><div class="ch-val">${a.diasProm != null ? a.diasProm : '—'}</div>`
+    + `<div class="ch-lbl">Días del suceso a la sanción</div><div class="ch-sub">promedio de ${a.dias.length} procesos</div></div>
+  </div>`;
+  const stat = (dot, lbl, n) => `<div class="cump-stat"><span class="cs-dot ${dot}"></span><span class="cs-lbl">${lbl}</span>`
+    + `<b class="cs-n">${n}</b><span class="cs-pct">${_pctCump(n, a.total)}%</span></div>`;
+  const desglose = `<div class="cump-stats"><div class="cump-stats-head"><b>${a.total}</b> proceso(s) en el rango</div>`
+    + stat('inc', 'Por citar', a.porEtapa['POR CITAR']?.n || 0)
+    + stat('curso', 'Citados', a.porEtapa.CITADO?.n || 0)
+    + stat('inc', 'Por decidir', a.porEtapa['POR DECIDIR']?.n || 0)
+    + stat('perd', 'Con sanción', a.porEtapa['CON SANCION']?.n || 0)
+    + stat('desp', 'Sin sanción', a.porEtapa['SIN SANCION']?.n || 0)
+    + stat('sin', 'Cancelados', (a.porEtapa.CANCELADO?.n || 0) + (a.porEtapa.ANULADO?.n || 0)) + '</div>';
+  const barras = (obj, tit, sub, enOrden) => {
+    const items = enOrden ? Object.entries(obj) : Object.entries(obj).sort((x, y) => y[1].n - x[1].n).slice(0, 12);
+    if (!items.length) return '';
+    const max = Math.max(...items.map(([, v]) => v.n));
+    return `<div class="cump-card"><h4>${tit}${sub ? ` <small>${sub}</small>` : ''}</h4>`
+      + items.map(([k, v]) => `<div class="crow"><div class="crow-lbl">${esc(k)}</div>`
+        + `<div class="crow-track"><div class="crow-fill" style="width:${Math.round(100 * v.n / max)}%;background:#3b82f6"></div></div>`
+        + `<div class="crow-val"><b>${v.n}</b> <small>${_pctCump(v.n, a.total)}%</small></div></div>`).join('') + '</div>';
+  };
+  const rein = Object.entries(a.porPersona).filter(([, v]) => v.n > 1).sort((x, y) => y[1].n - x[1].n).slice(0, 12);
+  const cardRein = `<div class="cump-card"><h4>Reincidencia <small>· personas con más de un proceso</small></h4>`
+    + (rein.length ? '<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Persona</th><th>Cargo</th><th>Procesos</th><th>Con sanción</th></tr></thead><tbody>'
+      + rein.map(([, v]) => `<tr><td><b>${esc(v.nombre || '—')}</b></td><td>${esc(v.cargo || '')}</td>`
+        + `<td>${v.n}</td><td>${v.sanc ? `<span class="chip chip-red">${v.sanc}</span>` : '—'}</td></tr>`).join('')
+      + '</tbody></table></div>' : '<div class="cump-empty">Nadie repite en este rango.</div>') + '</div>';
+  const meses = Object.fromEntries(Object.entries(a.porMes).sort((x, y) => (x[0] < y[0] ? -1 : 1)).slice(-12));
+  return `<div class="cump-top">${hero}${desglose}</div>`
+    + `<div class="cump-grid">${barras(a.porFalta, 'Por qué se abren', '· falta agrupada')}${barras(a.porSancion, 'Sanciones aplicadas')}</div>`
+    + `<div class="cump-grid">${barras(meses, 'Por mes del suceso', '· últimos 12', true)}${cardRein}</div>`
+    + (a.suspDias ? `<p class="dc-nota">Días de suspensión sumados en el rango: <b>${a.suspDias}</b>.</p>` : '');
+}
+
+// ---------- Modales ----------
+function dcModal(id, titulo, cardClass) {
+  let m = $(id);
+  if (m) { m.querySelector('h3').textContent = titulo; return m; }
+  m = document.createElement('div');
+  m.id = id; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card ${cardClass || ''}">
+    <div class="modal-head"><h3></h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="iv-modal-body"></div>
+    <div class="modal-foot"><p class="error" data-err hidden></p><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button>
+      <button type="button" class="btn btn-primary" data-ok hidden></button></div></div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  m.querySelector('h3').textContent = titulo;
+  return m;
+}
+const dcF = (v) => (v ? fechaLegible(v) : '—');
+function dcFicha(id) {
+  const r = _dc.rows.find((x) => String(x.id) === String(id));
+  if (!r) return;
+  const m = dcModal('dc-ficha-modal', '⚖️ Proceso disciplinario', 'perm-card');
+  const dato = (l, v) => (v ? `<div class="iv-d"><span>${l}</span><b>${esc(String(v))}</b></div>` : '');
+  const linea = (l, v) => `<div class="dc-linea"><span>${l}</span><b>${esc(v)}</b></div>`;
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <div class="iv-ficha-h">${dcChip(r)} <b>${esc(r.nombre || '—')}</b>
+      <span class="muted">${esc(r.cargo || r.tipo_persona || '')}${r.radicado ? ` · radicado ${r.radicado}` : ''}</span></div>
+    <div class="iv-datos">
+      ${dato('Cédula', r.cedula)}${dato('Vehículo', r.vehiculo)}${dato('Ruta', r.ruta)}
+      ${dato('Placa', r.placa)}${dato('Afiliado', r.afiliado)}
+    </div>
+    <div class="iv-bloque"><span>El hecho · ${esc(dcF(r.fecha_suceso))}${r.hora_suceso ? ' ' + esc(dcHora(r.hora_suceso)) : ''}</span>
+      <p>${esc(r.novedad || '')}</p></div>
+    <div class="dc-linea-wrap">
+      ${linea('Citación enviada', dcF(r.citacion_enviada))}
+      ${linea('Diligencia', `${dcF(r.citacion_fecha)}${r.citacion_hora ? ' ' + dcHora(r.citacion_hora) : ''}`)}
+      ${linea('Entrega', r.citacion_estado || '—')}
+      ${linea('Descargos', `${dcF(r.descargo_fecha)}${r.descargo_hora_ini ? ' ' + dcHora(r.descargo_hora_ini) : ''}`)}
+      ${linea('Falta', r.falta || '—')}
+      ${linea('Sanción', r.sancion ? `${r.sancion}${r.sancion_dias ? ` · ${r.sancion_dias} ${(r.sancion_unidad || 'DIAS').toLowerCase()}` : ''}` : '—')}
+      ${r.suspension_ini ? linea('Suspensión', `${dcF(r.suspension_ini)} a ${dcF(r.suspension_fin)}`) : ''}
+    </div>
+    ${r.observacion ? `<div class="iv-bloque"><span>Observación</span><p>${esc(r.observacion)}</p></div>` : ''}
+    ${r.nota_anulacion ? `<div class="iv-bloque"><span>Anulado porque</span><p>${esc(r.nota_anulacion)}</p></div>` : ''}
+    <div class="iv-pie">${r.reporta_correo ? 'Reportó ' + esc(r.reporta_correo) : ''}
+      ${r.origen === 'HOJA' ? ' · viene de la hoja' : (r.origen === 'REPORTE' ? ' · reporte de auditoría' : '')}</div>
+    ${puedeGestionarDisc() && r.etapa !== 'ANULADO' ? `<div class="iv-acciones">
+      <button type="button" class="btn btn-sm btn-primary" data-dc-paso="${r.id}">➡️ Siguiente paso</button>
+      <button type="button" class="btn btn-sm" data-dc-editar="${r.id}">✏️ Corregir el hecho</button>
+      <button type="button" class="btn btn-sm btn-danger" data-dc-anular="${r.id}">🚫 Anular</button></div>` : ''}`;
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+}
+
+// El "siguiente paso" depende de dónde está el proceso: citar, descargos o decidir.
+function dcPaso(id) {
+  const r = _dc.rows.find((x) => String(x.id) === String(id));
+  if (!r || !puedeGestionarDisc()) return;
+  if (r.etapa === 'POR CITAR' || r.etapa === 'REPROGRAMAR') return dcCitar(r);
+  if (r.etapa === 'CITADO') return dcDescargos(r);
+  return dcSancionar(r);
+}
+function dcCab(r) {
+  return `<p class="iv-cerrar-q"><b>${esc(r.nombre || '—')}</b> · ${esc(r.cargo || r.tipo_persona || '')}<br>
+    <span class="muted">${esc(dcF(r.fecha_suceso))} · ${esc(String(r.novedad || '').slice(0, 120))}</span></p>`;
+}
+function dcCitar(r) {
+  const m = dcModal('dc-paso-modal', '📨 Citar a descargos', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <div class="iv-form">
+      <label class="field"><span>Fecha de la diligencia *</span><input type="date" id="dcp-fecha" value="${esc(r.citacion_fecha || '')}"></label>
+      <label class="field"><span>Hora</span><input type="time" id="dcp-hora" value="${esc(dcHora(r.citacion_hora))}"></label>
+      <label class="field"><span>Citación enviada el</span><input type="date" id="dcp-env" value="${esc(r.citacion_enviada || hoyServidor())}"></label>
+      <label class="field"><span>Quién la entrega</span><input id="dcp-resp" value="${esc(r.citacion_responsable || '')}" placeholder="Nombre o área"></label>
+      <label class="field full"><span>¿Cómo quedó la entrega?</span><select id="dcp-est">
+        <option value="">— sin confirmar —</option>
+        ${DC_ENTREGA.map((x) => `<option${r.citacion_estado === x ? ' selected' : ''}>${x}</option>`).join('')}
+      </select></label>
+    </div>`;
+  dcGuardarCon(m, 'Guardar la citación', async () => sb.rpc('disc_citar', {
+    p_id: r.id, p_fecha: $('dcp-fecha').value || null, p_hora: $('dcp-hora').value || null,
+    p_responsable: $('dcp-resp').value || null, p_estado: $('dcp-est').value || null,
+    p_enviada: $('dcp-env').value || null,
+  }), () => { if (!$('dcp-fecha').value) return 'Falta la fecha de la diligencia.'; });
+}
+function dcDescargos(r) {
+  const m = dcModal('dc-paso-modal', '📝 Registrar la diligencia de descargos', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <p class="dc-nota">Citado para el <b>${esc(dcF(r.citacion_fecha))}${r.citacion_hora ? ' ' + esc(dcHora(r.citacion_hora)) : ''}</b>.</p>
+    <div class="iv-form">
+      <label class="field"><span>Fecha de la diligencia *</span><input type="date" id="dcd-fecha" value="${esc(r.descargo_fecha || r.citacion_fecha || hoyServidor())}"></label>
+      <label class="field"><span>Hora inicio</span><input type="time" id="dcd-ini" value="${esc(dcHora(r.descargo_hora_ini))}"></label>
+      <label class="field"><span>Hora fin</span><input type="time" id="dcd-fin" value="${esc(dcHora(r.descargo_hora_fin))}"></label>
+      <label class="field full"><span>Motivo</span><input id="dcd-mot" value="${esc(r.motivo_descargos || 'Citación a Diligencia de Descargos')}"></label>
+    </div>`;
+  dcGuardarCon(m, 'Guardar los descargos', async () => sb.rpc('disc_descargos', {
+    p_id: r.id, p_fecha: $('dcd-fecha').value || null, p_hora_ini: $('dcd-ini').value || null,
+    p_hora_fin: $('dcd-fin').value || null, p_motivo: $('dcd-mot').value || null,
+  }), () => { if (!$('dcd-fecha').value) return 'Falta la fecha de la diligencia.'; });
+}
+function dcSancionar(r) {
+  const m = dcModal('dc-paso-modal', '⚖️ Decidir el proceso', 'perm-card');
+  const faltas = [...new Set(_dc.rows.map((x) => String(x.falta || '').trim()).filter(Boolean))].slice(0, 40);
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <div class="iv-form">
+      <label class="field full"><span>Falta disciplinaria</span><input id="dcs-falta" list="dcs-faltas" value="${esc(r.falta || '')}" placeholder="Como está en el RIT"></label>
+      <datalist id="dcs-faltas">${faltas.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
+      <label class="field full"><span>Sanción *</span><select id="dcs-sancion">
+        <option value="">— elige —</option>
+        ${DC_SANCIONES.map((x) => `<option${(r.sancion || '') === x ? ' selected' : ''}>${x}</option>`).join('')}
+      </select></label>
+      <label class="field"><span>Cuánto</span><input type="number" id="dcs-dias" min="0" step="1" value="${esc(r.sancion_dias == null ? '' : r.sancion_dias)}"></label>
+      <label class="field"><span>Días o meses</span><select id="dcs-uni">
+        <option value="DIAS"${(r.sancion_unidad || 'DIAS') === 'DIAS' ? ' selected' : ''}>Días</option>
+        <option value="MESES"${r.sancion_unidad === 'MESES' ? ' selected' : ''}>Meses</option>
+      </select></label>
+      <label class="field"><span>Suspensión desde</span><input type="date" id="dcs-ini" value="${esc(r.suspension_ini || '')}"></label>
+      <label class="field"><span>Hasta</span><input type="date" id="dcs-fin" value="${esc(r.suspension_fin || '')}"></label>
+    </div>
+    <p class="dc-nota">Si la decisión es que no hay falta, elige <b>NO GENERA SANCIÓN</b>: el proceso queda cerrado igual.</p>`;
+  dcGuardarCon(m, 'Guardar la decisión', async () => sb.rpc('disc_sancionar', {
+    p_id: r.id, p_falta: $('dcs-falta').value || null, p_sancion: $('dcs-sancion').value || null,
+    p_dias: $('dcs-dias').value ? Number($('dcs-dias').value) : null,
+    p_unidad: $('dcs-uni').value || null, p_ini: $('dcs-ini').value || null,
+    p_fin: $('dcs-fin').value || null, p_enviada: null,
+  }), () => { if (!$('dcs-sancion').value) return 'Elige qué sanción se aplica.'; });
+}
+
+// Abrir un proceso nuevo (o corregir el hecho)
+async function dcFormulario(id) {
+  if (!puedeGestionarDisc()) return;
+  const r = id ? _dc.rows.find((x) => String(x.id) === String(id)) : null;
+  const m = dcModal('dc-form-modal', r ? '✏️ Corregir el hecho' : '➕ Abrir proceso disciplinario', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <div class="iv-form">
+      <label class="field"><span>Cédula *</span><input id="dcf-ced" inputmode="numeric" value="${esc(r ? r.cedula : '')}" ${r ? 'readonly' : ''}></label>
+      <label class="field"><span>Fecha del suceso *</span><input type="date" id="dcf-fecha" max="${hoyServidor()}" value="${esc(r ? r.fecha_suceso : hoyServidor())}"></label>
+      <label class="field"><span>Hora</span><input type="time" id="dcf-hora" value="${esc(dcHora(r && r.hora_suceso))}"></label>
+      <div class="field full iv-carro" id="dcf-quien"></div>
+      <label class="field"><span>Vehículo</span><input id="dcf-veh" value="${esc(r ? (r.vehiculo || '') : '')}"></label>
+      <label class="field"><span>Ruta</span><input id="dcf-ruta" value="${esc(r ? (r.ruta || '') : '')}"></label>
+      <label class="field full"><span>Qué pasó *</span><textarea id="dcf-nov" rows="4" placeholder="El relato del hecho, como se le va a leer a la persona en la diligencia">${esc(r ? r.novedad : '')}</textarea></label>
+      <label class="field full"><span>Observación</span><input id="dcf-obs" value="${esc(r ? (r.observacion || '') : '')}"></label>
+    </div>`;
+  const pintarQuien = async () => {
+    const ced = ($('dcf-ced').value || '').replace(/\D/g, '');
+    const caja = $('dcf-quien');
+    if (!ced) { caja.innerHTML = ''; return; }
+    caja.innerHTML = '<small>Buscando…</small>';
+    try {
+      const { data } = await sb.from('perfilsociodemografico').select('nombre,cargo,estado,tipo').eq('cedula', ced).maybeSingle();
+      caja.innerHTML = data
+        ? `<b>${esc(data.nombre || '')}</b> · ${esc(data.cargo || '')}${data.estado && data.estado !== 'ACTIVO' ? ` · <span class="chip chip-amber">${esc(data.estado)}</span>` : ''}`
+        : '<small class="iv-warn">⚠️ Esa cédula no está en el perfil de personal.</small>';
+    } catch (e) { caja.innerHTML = ''; }
+  };
+  $('dcf-ced').addEventListener('change', pintarQuien);
+  $('dcf-ced').addEventListener('blur', pintarQuien);
+  if (r) pintarQuien();
+  dcGuardarCon(m, r ? 'Guardar cambios' : 'Abrir el proceso', async () => sb.rpc('disc_guardar', {
+    p_id: r ? r.id : null, p_cedula: $('dcf-ced').value, p_fecha_suceso: $('dcf-fecha').value || null,
+    p_hora_suceso: $('dcf-hora').value || null, p_novedad: $('dcf-nov').value,
+    p_vehiculo: $('dcf-veh').value || null, p_ruta: $('dcf-ruta').value || null,
+    p_observacion: $('dcf-obs').value || null,
+  }), () => {
+    if (!($('dcf-ced').value || '').trim()) return 'Falta la cédula.';
+    if (!$('dcf-fecha').value) return 'Falta la fecha del suceso.';
+    if (!($('dcf-nov').value || '').trim()) return 'Falta el relato del hecho.';
+  });
+}
+
+// Botón de guardar compartido por todos los pasos: valida, llama, refresca y cierra.
+function dcGuardarCon(m, etiqueta, fn, validar) {
+  const ok = m.querySelector('[data-ok]');
+  const err = m.querySelector('[data-err]');
+  err.hidden = true;
+  ok.hidden = false; ok.textContent = etiqueta; ok.className = 'btn btn-primary';
+  ok.onclick = async () => {
+    const malo = validar ? validar() : null;
+    if (malo) { err.textContent = malo; err.hidden = false; return; }
+    err.hidden = true; ok.disabled = true; ok.textContent = 'Guardando…';
+    try {
+      const { data, error } = await fn();
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo guardar.');
+      toast('Listo', 'ok');
+      m.hidden = true;
+      $('dc-ficha-modal') && ($('dc-ficha-modal').hidden = true);
+      if (puedeVerDisc()) await cargarDisc();   // el auditor que reporta no lee la tabla
+    } catch (e) {
+      err.textContent = e.message || 'No se pudo guardar.'; err.hidden = false;
+    } finally { ok.disabled = false; ok.textContent = etiqueta; }
+  };
+  m.hidden = false;
+}
+
+function dcAnularModal(id) {
+  const r = _dc.rows.find((x) => String(x.id) === String(id));
+  if (!r || !puedeGestionarDisc()) return;
+  const m = dcModal('dc-anular-modal', '🚫 Anular el proceso', '');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r)
+    + '<p class="dc-nota">No se borra: queda anulado, con quién lo hizo y por qué.</p>'
+    + '<div class="iv-form"><label class="field full"><span>¿Por qué se anula?</span>'
+    + '<textarea id="dca-nota" rows="2" placeholder="Ej: el reporte no correspondía a esta persona"></textarea></label></div>';
+  const ok = m.querySelector('[data-ok]');
+  ok.hidden = false; ok.textContent = 'Anular'; ok.className = 'btn btn-danger';
+  const err = m.querySelector('[data-err]'); err.hidden = true;
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      const { data, error } = await sb.rpc('disc_anular', { p_id: r.id, p_nota: ($('dca-nota').value || '').trim() || null });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo anular.');
+      toast('Proceso anulado', 'ok');
+      m.hidden = true;
+      $('dc-ficha-modal') && ($('dc-ficha-modal').hidden = true);
+      await cargarDisc();
+    } catch (e) { err.textContent = e.message || 'No se pudo anular.'; err.hidden = false; }
+    finally { ok.disabled = false; }
+  };
+  m.hidden = false;
+}
+
+// ---------- Traer de la hoja ----------
+// Las columnas de la hoja que SÍ se usan. El resto (textos de plantilla, campos de calendario
+// repetidos, control de correo, testigos) no se trae: por eso pasamos de 134 columnas a ~32.
+const DC_MAP_CSV = {
+  key: 'key_origen', 'radicado descargos': 'radicado', cedula: 'cedula',
+  'nombre y apellido empleado': 'nombre', cargo: 'cargo', 'conductor / administrativo': 'tipo_persona',
+  afiliado: 'afiliado', vehiculo: 'vehiculo', ruta: 'ruta', placa: 'placa',
+  'fecha inicial suceso': 'fecha_suceso', 'fecha final suceso': 'fecha_suceso_fin', 'hora suceso': 'hora_suceso',
+  novedad: 'novedad', 'correo de quien envia el informe': 'reporta_correo',
+  'fecha informe tecnico/correo': 'fecha_informe',
+  'fecha elaboracion y envio citacion': 'citacion_enviada', 'fecha citacion descargos': 'citacion_fecha',
+  'hora citacion': 'citacion_hora', 'responsable de entregar citacion': 'citacion_responsable',
+  'confirmacion citacion': 'citacion_estado', 'motivo descargos': 'motivo_descargos',
+  'fecha elaboracion descargo': 'descargo_fecha', 'hora inicial': 'descargo_hora_ini',
+  'hora final': 'descargo_hora_fin',
+  'faltas disciplinarias rit/ct/cst/mi/procedimientos': 'falta', 'sancion aplicada': 'sancion',
+  'numero de dias de sancion': 'sancion_dias', 'dias/meses': 'sancion_unidad',
+  'fecha inicial suspension': 'suspension_ini', 'fecha final suspension': 'suspension_fin',
+  'fecha respuesta sancion': 'sancion_respuesta', 'fecha elaboracion y enviada sancion': 'sancion_enviada',
+  'estado del proceso': 'estado_hoja', 'observacion/peticion': 'observacion',
+};
+// dd/mm/aaaa → aaaa-mm-dd (lo que escribe la hoja). Si no cuadra, se deja vacío.
+function dcFechaIso(v) {
+  const t = String(v || '').trim();
+  if (!t) return '';
+  let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(t);
+  if (m) {
+    const d = +m[1], mes = +m[2];
+    if (d > 31 || mes > 12 || !d || !mes) return '';
+    return `${m[3]}-${String(mes).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  m = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  return m ? m[0] : '';
+}
+function dcHoraIso(v) {
+  const t = String(v || '').trim();
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(t);
+  if (!m) return '';
+  const h = +m[1]; if (h > 23) return '';
+  return `${String(h).padStart(2, '0')}:${m[2]}:${m[3] || '00'}`;
+}
+const DC_FECHAS = ['fecha_suceso', 'fecha_suceso_fin', 'fecha_informe', 'citacion_enviada',
+  'citacion_fecha', 'descargo_fecha', 'suspension_ini', 'suspension_fin', 'sancion_respuesta', 'sancion_enviada'];
+const DC_HORAS = ['hora_suceso', 'citacion_hora', 'descargo_hora_ini', 'descargo_hora_fin'];
+
+async function dcTraer() {
+  if (!puedeGestionarDisc()) { toast('Solo administración y Gestión Humana traen la hoja.', 'err'); return; }
+  const btn = $('dc-traer'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Leyendo la hoja…';
+  try {
+    const { data: est, error: e1 } = await sb.rpc('disciplinarios_estado');
+    if (e1) throw e1;
+    const url = est?.url || '';
+    if (!url || url.startsWith('PEGAR')) {
+      toast('Falta el enlace de la hoja (tabla disciplinarios_fuente).', 'err'); return;
+    }
+    const resp = await fetch(url, { cache: 'no-store' });
+    if (!resp.ok) throw new Error('La hoja respondió ' + resp.status);
+    const texto = await resp.text();
+    const crudas = dcFilasDeCsv(texto);
+    if (!crudas.length) { toast('La hoja no trajo filas.', 'err'); return; }
+    let nuevos = 0, act = 0;
+    const LOTE = 150;
+    for (let i = 0; i < crudas.length; i += LOTE) {
+      btn.textContent = `⏳ Guardando ${Math.min(i + LOTE, crudas.length)} de ${crudas.length}…`;
+      const { data, error } = await sb.rpc('disciplinarios_cargar', { p_filas: crudas.slice(i, i + LOTE) });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'no se pudo guardar');
+      nuevos += data.nuevos || 0; act += data.actualizados || 0;
+    }
+    toast(`Listo: ${nuevos} nuevo(s) y ${act} actualizado(s).`, 'ok');
+    await cargarDisc();
+  } catch (e) {
+    toast('No se pudieron traer los procesos: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// Interpreta el CSV publicado: toma solo las columnas del mapa y normaliza fechas y horas.
+// Usa csvAFilas (el parser de siniestros), NO una division por lineas: los relatos traen
+// saltos de linea dentro de las comillas — el archivo tiene 43.213 lineas para 2.661 procesos.
+function dcFilasDeCsv(texto) {
+  const crudo = csvAFilas(texto);
+  if (!crudo.length) return [];
+  const cab = crudo[0].map(normH);
+  const out = [];
+  for (let i = 1; i < crudo.length; i++) {
+    const celdas = crudo[i];
+    if (!celdas || !celdas.some((c) => String(c || '').trim() !== '')) continue;
+    const o = {};
+    cab.forEach((h, idx) => {
+      const k = DC_MAP_CSV[h]; if (!k) return;
+      o[k] = String(celdas[idx] == null ? '' : celdas[idx]).trim();
+    });
+    if (!String(o.key_origen || '').trim()) continue;
+    DC_FECHAS.forEach((k) => { o[k] = dcFechaIso(o[k]); });
+    DC_HORAS.forEach((k) => { o[k] = dcHoraIso(o[k]); });
+    o.radicado = /^\d+$/.test(String(o.radicado || '').trim()) ? String(o.radicado).trim() : '';
+    o.sancion_dias = /^\d+([.,]\d+)?$/.test(String(o.sancion_dias || '').trim())
+      ? String(o.sancion_dias).trim().replace(',', '.') : '';
+    const u = String(o.sancion_unidad || '').toUpperCase();
+    o.sancion_unidad = /MES/.test(u) ? 'MESES' : (/D/.test(u) ? 'DIAS' : '');
+    out.push(o);
+  }
+  return out;
+}
+
+// ---------- Excel ----------
+async function exportDcExcel() {
+  const rows = dcFiltrar(_dc.rows);
+  if (!rows.length) { toast('No hay datos para exportar.', 'err'); return; }
+  const btn = $('dc-excel'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const head = ['Fecha suceso', 'Hora', 'Cédula', 'Nombre', 'Cargo', 'Tipo', 'Vehículo', 'Ruta',
+      'Novedad', 'Citación', 'Entrega', 'Descargos', 'Falta', 'Falta (grupo)', 'Sanción', 'Cuánto',
+      'Suspensión desde', 'Suspensión hasta', 'Etapa', 'Días abierto'];
+    const aoa = [head].concat(rows.map((r) => [
+      r.fecha_suceso, dcHora(r.hora_suceso), r.cedula || '', r.nombre || '', r.cargo || '',
+      r.tipo_persona || '', r.vehiculo || '', r.ruta || '', r.novedad || '',
+      r.citacion_fecha || '', r.citacion_estado || '', r.descargo_fecha || '',
+      r.falta || '', r.falta_grupo || '', r.sancion || '',
+      r.sancion_dias ? `${r.sancion_dias} ${(r.sancion_unidad || 'DIAS').toLowerCase()}` : '',
+      r.suspension_ini || '', r.suspension_fin || '', DC_LBL[r.etapa] || r.etapa || '',
+      dcDias(r.fecha_suceso)]));
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // Las fechas como fecha de verdad ([[excel-fechas-colombianas]])
+    rows.forEach((r, ri) => {
+      [[0, r.fecha_suceso], [9, r.citacion_fecha], [11, r.descargo_fecha],
+        [16, r.suspension_ini], [17, r.suspension_fin]].forEach(([c, v]) => {
+        const fx = celdaFechaXlsx(v);
+        if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c })] = fx;
+      });
+    });
+    ws['!cols'] = head.map((h, i) => ({ wch: i === 8 ? 60 : Math.max(11, Math.min(26, h.length + 4)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Disciplinarios');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `disciplinarios_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${rows.length} fila(s).`, 'ok');
+  } catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---------- Enganches ----------
+$('dc-body')?.addEventListener('click', (e) => {
+  const p = e.target.closest('[data-dc-paso]'); if (p) { dcPaso(p.dataset.dcPaso); return; }
+  const f = e.target.closest('[data-dc-ficha]'); if (f) { dcFicha(f.dataset.dcFicha); }
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#dc-ficha-modal')) return;
+  const p = e.target.closest('[data-dc-paso]'); if (p) { dcPaso(p.dataset.dcPaso); return; }
+  const ed = e.target.closest('[data-dc-editar]'); if (ed) { dcFormulario(ed.dataset.dcEditar); return; }
+  const an = e.target.closest('[data-dc-anular]'); if (an) { dcAnularModal(an.dataset.dcAnular); }
+});
+$('dc-close')?.addEventListener('click', cerrarDisc);
+$('dc-refresh')?.addEventListener('click', () => cargarDisc());
+$('dc-nuevo')?.addEventListener('click', () => dcFormulario(null));
+$('dc-traer')?.addEventListener('click', dcTraer);
+$('dc-excel')?.addEventListener('click', exportDcExcel);
+$('dc-search')?.addEventListener('input', (e) => { _dc.q = e.target.value; renderDisc(); });
+$('dc-etapa')?.addEventListener('change', (e) => { _dc.etapa = e.target.value; renderDisc(); });
+$('dc-desde')?.addEventListener('change', () => cargarDisc());
+$('dc-hasta')?.addEventListener('change', () => cargarDisc());
+
+// ---------- El auditor reporta el hecho ----------
+// No entra a la bandeja ni ve sanciones: entrega el hecho y ve lo que él mismo reportó.
+async function dcReportarModal() {
+  if (!DC_REPORTA) return;
+  const m = dcModal('dc-rep-modal', '⚖️ Reportar novedad disciplinaria', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <p class="dc-nota">Esto le llega a <b>Gestión Humana</b>, que decide si abre proceso. Escribe el hecho
+      como lo viste: fecha, hora y qué pasó.</p>
+    <div class="iv-form">
+      <label class="field"><span>Cédula de la persona *</span><input id="dcr-ced" inputmode="numeric" autocomplete="off"></label>
+      <label class="field"><span>Fecha del suceso *</span><input type="date" id="dcr-fecha" max="${hoyServidor()}" value="${hoyServidor()}"></label>
+      <label class="field"><span>Hora</span><input type="time" id="dcr-hora"></label>
+      <div class="field full iv-carro" id="dcr-quien"></div>
+      <label class="field"><span>Vehículo</span><input id="dcr-veh" inputmode="numeric"></label>
+      <label class="field"><span>Ruta</span><input id="dcr-ruta"></label>
+      <label class="field full"><span>Qué pasó *</span><textarea id="dcr-nov" rows="4"
+        placeholder="Ej: no cubrió el turno de las 05:30 y no avisó"></textarea></label>
+    </div>
+    <div id="dcr-mios" class="dc-mios"></div>`;
+  const pintar = async () => {
+    const ced = ($('dcr-ced').value || '').replace(/\D/g, '');
+    const caja = $('dcr-quien');
+    if (!ced) { caja.innerHTML = ''; return; }
+    caja.innerHTML = '<small>Buscando…</small>';
+    try {
+      const { data } = await sb.from('perfilsociodemografico').select('nombre,cargo,estado').eq('cedula', ced).maybeSingle();
+      caja.innerHTML = data ? `<b>${esc(data.nombre || '')}</b> · ${esc(data.cargo || '')}`
+        : '<small class="iv-warn">⚠️ Esa cédula no está en el perfil de personal.</small>';
+    } catch (e) { caja.innerHTML = ''; }
+  };
+  $('dcr-ced').addEventListener('change', pintar);
+  $('dcr-ced').addEventListener('blur', pintar);
+  // Lo que ya reportó (para no repetir el mismo hecho dos veces)
+  try {
+    const { data } = await sb.rpc('disc_mis_reportes');
+    const items = (data && data.items) || [];
+    $('dcr-mios').innerHTML = items.length
+      ? '<h4>Lo que has reportado</h4>' + items.slice(0, 10).map((x) =>
+        `<div class="dc-mio"><b>${esc(fechaLegible(x.fecha_suceso))}</b> · ${esc(x.nombre || '')}
+          <span class="chip chip-gray">${esc(x.etapa)}</span>
+          <small>${esc(String(x.novedad || '').slice(0, 90))}</small></div>`).join('')
+      : '';
+  } catch (e) { /* sin lista no pasa nada */ }
+
+  dcGuardarCon(m, 'Enviar el reporte', async () => sb.rpc('disc_reportar', {
+    p_cedula: $('dcr-ced').value, p_fecha_suceso: $('dcr-fecha').value || null,
+    p_hora_suceso: $('dcr-hora').value || null, p_novedad: $('dcr-nov').value,
+    p_vehiculo: $('dcr-veh').value || null, p_ruta: $('dcr-ruta').value || null,
+  }), () => {
+    if (!($('dcr-ced').value || '').trim()) return 'Falta la cédula.';
+    if (!$('dcr-fecha').value) return 'Falta la fecha del suceso.';
+    if (!($('dcr-nov').value || '').trim()) return 'Cuenta qué pasó.';
+  });
+}
+
+// ===================================================================================
 // 🛠️ INTERVENCIONES a los equipos del bus (GPS, sensores de pasajeros, cámaras) — sql/100
 // El auditor CITA el carro y después CIERRA con lo que pasó (ingresó / no ingresó / no se
 // presentó). De ahí salen la agenda del día, lo que quedó sin cerrar y el cumplimiento de las
@@ -7690,7 +8419,7 @@ $('iv-file')?.addEventListener('change', (e) => {
 // en un chat; aquí se calcula con el estado real (verde/ámbar) y cada cosa trae el botón que
 // lleva a hacerla. novedades_estado() devuelve SOLO conteos y banderas: ni un nombre ni un valor.
 // ===================================================================================
-const NOV_VER = 'v290';      // sube con cada tanda: el aviso vuelve a salir una vez
+const NOV_VER = 'v291';      // sube con cada tanda: el aviso vuelve a salir una vez
 let NOV_EST = null, NOV_PEND = 0;
 
 async function novEstado() {
@@ -7787,6 +8516,23 @@ function novSecs(st) {
       itO, [`Escaneos registrados hoy: <b>${o.checkins || 0}</b>.`], acO));
   }
 
+  // ⚖️ Procesos disciplinarios --------------------------------------------------------------------
+  if (puedeVerDisc() && st.disc) {
+    const w = st.disc;
+    const itD = [
+      novLi(w.enlace, 'El enlace de la hoja está guardado',
+        'Falta pegar el <b>enlace publicado</b> de la hoja en <b>disciplinarios_fuente</b> (no va en el código: el repositorio es público)'),
+      novLi(w.total > 0, `La hoja ya está cargada (${w.total} procesos)`,
+        'Pulsa <b>🔄 Traer</b> en la pantalla de Disciplinarios para cargar la hoja por primera vez'),
+    ];
+    if (w.viejos) {
+      itD.push(novLi(false, '', `<b>${w.viejos}</b> proceso(s) abiertos llevan <b>más de 60 días</b> sin moverse`));
+    }
+    secs.push(novSec('⚖️', 'Procesos disciplinarios', 'v291', 'La hoja de 134 columnas se redujo a lo que de verdad se gestiona, y la <b>etapa se calcula</b> de las fechas: por citar → citado → por decidir → con o sin sanción. Así se ve dónde quedó frenado cada proceso, en vez de un "EN PROCESO" que no distingue entre lo que está vivo y lo que nadie cerró. El auditor puede <b>reportar el hecho</b> sin ver sanciones.',
+      itD, w.ultima_carga ? [`Última vez que se trajo la hoja: <b>${esc(fechaLegible(String(w.ultima_carga).slice(0, 10)))}</b>.`] : [],
+      [novBtn('disc', '⚖️ Abrir Disciplinarios', true)]));
+  }
+
   // 🛠️ Intervenciones ---------------------------------------------------------------------------
   if (puedeVerInterv() && st.interv) {   // sin sql/101 aplicado no hay nada que contar
     const v = st.interv;
@@ -7853,6 +8599,7 @@ function novModal() {
       else if (k === 'pqrsf') openPqrsfStats('pendientes');
       else if (k === 'oriental') openOriental('control');
       else if (k === 'interv') openInterv(puedeEditarInterv() ? 'agenda' : 'historico');
+      else if (k === 'disc') openDisc(puedeGestionarDisc() ? 'bandeja' : 'historico');
       else if (k === 'puestos') selectTable('puestos');
       else if (k === 'horarios') selectTable('horarios');
       return;
@@ -11168,7 +11915,7 @@ async function openFrecuencia() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
@@ -11278,7 +12025,7 @@ async function openProductividad() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -11436,7 +12183,7 @@ async function openJornada() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -11627,7 +12374,7 @@ async function openTop() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -14201,7 +14948,7 @@ async function openUsuarios() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -17471,7 +18218,7 @@ async function showMapView() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true; $('interv-view').hidden = true; $('disc-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;

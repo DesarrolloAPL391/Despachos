@@ -2782,3 +2782,27 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .iv-cerrar-q { margin: 0 0 12px; font-size: 14px; line-height: 1.4; }
 .iv-res { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .iv-res-b { padding: 14px 10px; font-size: 14px; font-weight: 700; }
+
+/* ⚖️ Procesos disciplinarios (sql/102). Tabla y modales con el mismo aire que Intervenciones. */
+.dc-tabla td, .dc-tabla th { vertical-align: top; text-align: left; }
+.dc-tabla .dc-fh, .dc-tabla .dc-acc { white-space: nowrap; }
+.dc-tabla small { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.dc-tabla .dc-per { min-width: 150px; }
+.dc-tabla .dc-nov { max-width: 480px; white-space: normal; line-height: 1.35; }
+.dc-tabla .dc-acc { text-align: right; }
+.dc-tabla .dc-acc .btn { margin-left: 4px; }
+.dc-tabla tr.dc-viejo td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
+.dc-h { margin: 16px 0 6px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.dc-h:first-child { margin-top: 4px; }
+.dc-nota { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
+.dc-alerta { margin: 4px 0 12px; padding: 10px 12px; border-radius: 10px; background: #fff1f2;
+  color: #9f1239; font-size: 13px; }
+.dc-linea-wrap { display: grid; gap: 4px; margin-bottom: 10px; }
+.dc-linea { display: flex; gap: 10px; align-items: baseline; font-size: 13px;
+  border-bottom: 1px dashed var(--border); padding-bottom: 3px; }
+.dc-linea span { flex: 0 0 140px; color: var(--muted); font-size: 11.5px; }
+.dc-linea b { overflow-wrap: anywhere; }
+.dc-mios { margin-top: 12px; }
+.dc-mios h4 { margin: 0 0 6px; font-size: 13px; }
+.dc-mio { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: #f8fafc; margin-bottom: 5px; }
+.dc-mio small { display: block; color: var(--muted); }
