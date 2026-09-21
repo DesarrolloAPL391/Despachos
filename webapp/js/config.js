@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v277';
+export const APP_VERSION = 'v278';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -970,6 +970,7 @@ export const TABLES = {
       { key: 'conductor', label: 'Conductor' },
       { key: 'responsable_destino', label: '\u00c1rea de destino' },
       { key: 'estado', label: 'Estado', badge: true },
+      { key: 'estado_app', label: 'En la app', badge: true },
       { key: 'cumplimiento', label: 'Cumplimiento', badge: true, m: true },
       { key: 'dias_respuesta', label: 'D\u00edas' },
       { key: 'fecha_limite', label: 'L\u00edmite' },
@@ -982,7 +983,8 @@ export const TABLES = {
       'numero_interno', 'placa', 'ruta', 'propietario', 'conductor', 'conductor_cedula',
       'fecha_suceso', 'hora_suceso', 'direccion_suceso', 'descripcion',
       'responsable_radicacion', 'responsable_destino', 'estado', 'fecha_limite', 'fecha_respuesta',
-      'dias_respuesta', 'cumplimiento', 'cumplimiento_origen', 'estado_envio', 'requiere_proceso',
+      'dias_respuesta', 'cumplimiento', 'estado_app', 'respondido_por', 'respondido_el',
+      'cumplimiento_origen', 'estado_envio', 'requiere_proceso',
       'consecutivo_proceso', 'decision_final', 'estado_descargos'],
   },
   siniestros: {

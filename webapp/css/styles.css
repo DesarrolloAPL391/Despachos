@@ -2589,3 +2589,18 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .vial-pop-c { font-weight: 600; margin-bottom: 6px; }
 .vial-pop-b { margin-top: 8px; width: 100%; }
 .evb-alta { color: #b91c1c; font-weight: 700; }
+
+/* 📣 PQRSF: panel de gestión de la ficha */
+.pqr-gestion { margin-top: 6px; }
+.pqr-resp { background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.pqr-resp-t { white-space: pre-wrap; font-size: 13px; line-height: 1.55; color: #1f2937; }
+.pqr-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.pqr-ta { width: 100%; font: inherit; font-size: 13px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 10px; resize: vertical; }
+.pqr-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pqr-sel { font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.pqr-hist { display: grid; gap: 8px; }
+.pqr-hist-it { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; }
+.pqr-hist-h { font-size: 12px; color: #64748b; font-weight: 600; }
+.pqr-hist-t { font-size: 13px; color: #1f2937; white-space: pre-wrap; margin-top: 2px; }
+.pqr-h { margin: 18px 0 8px; font-size: 13px; color: var(--primary); letter-spacing: .2px; }

@@ -7367,69 +7367,76 @@ function pqrModal() {
 }
 
 function openPqrsf(row) {
-  if (!row) return;
+  if (!row || !puedeVerPqrsf()) return;
   _pqrRow = row;
-  const m = pqrModal();
-  m.querySelector('h3').textContent = `📣 ${row.radicado || 'PQRSF'}`;
-  const body = m.querySelector('.pf-body');
-  body.innerHTML = '';
-  const bloque = (titulo, pares) => {
-    const vivos = pares.filter(([, v]) => v != null && String(v).trim() !== '');
-    if (!vivos.length) return;
-    body.appendChild(pstEl('h4', 'pf-sec', titulo));
-    const dl = pstEl('div', 'pf-grid');
-    vivos.forEach(([k, v]) => {
-      const c = pstEl('div', 'pf-item');
-      c.appendChild(pstEl('div', 'pf-k', k));
-      c.appendChild(pstEl('div', 'pf-v', String(v)));
-      dl.appendChild(c);
-    });
-    body.appendChild(dl);
-  };
+  const m = pqrModal(), body = m.querySelector('.pf-body');
   const fl = (v) => (v ? fechaLegible(v) : '');
   const hr = (v) => (v ? String(v).slice(0, 5) : '');
-  const sn = (v) => (v === true ? 'SÍ' : v === false ? 'NO' : '');
-
-  bloque('Radicación', [
-    ['Radicado', row.radicado], ['Fecha', fl(row.fecha_radicado)], ['Hora recibido', hr(row.hora_recibido)],
-    ['Tipo', row.tipo], ['Motivo', row.motivo], ['Urgencia', row.urgencia],
-    ['Medio', row.medio_recibido], ['Radicó', row.responsable_radicacion],
-  ]);
-  bloque('Qué pasó', [
-    ['Fecha del suceso', fl(row.fecha_suceso)], ['Hora del suceso', hr(row.hora_suceso)],
-    ['Dirección', row.direccion_suceso], ['Descripción', row.descripcion],
-  ]);
-  bloque('Vehículo', [
-    ['Móvil', row.numero_interno], ['Placa', row.placa], ['Ruta', row.ruta],
-    ['Propietario', row.propietario], ['Identificación', row.identificacion],
-    ['Conductor', row.conductor], ['Cédula', row.conductor_cedula],
-  ]);
-  bloque('Usuario', [
-    ['Nombre', row.usuario_nombre], ['Correo', row.usuario_correo], ['Teléfono', row.usuario_telefono],
-    ['Requiere respuesta personalizada', sn(row.respuesta_personalizada)],
-  ]);
-  bloque('Gestión', [
-    ['Estado', row.estado], ['Área de destino', row.responsable_destino],
-    ['Fecha límite', fl(row.fecha_limite)], ['Fecha de respuesta', fl(row.fecha_respuesta)],
-    ['Cumplimiento', row.cumplimiento],
-    ['Días en responder', row.dias_respuesta == null ? '' : `${row.dias_respuesta} día(s)`],
-    ['Estado de envío', row.estado_envio], ['Respuesta al servidor', row.respuesta_servidor],
-    ['Cumplimiento en la hoja', row.cumplimiento_origen], ['Revisión', row.revision],
-  ]);
-  bloque('Respuesta al usuario', [['Respuesta', row.respuesta]]);
-  bloque('Proceso al conductor', [
-    ['Requiere proceso', sn(row.requiere_proceso)], ['Responsable de descargos', row.responsable_descargos],
-    ['Fecha del proceso', fl(row.fecha_proceso)], ['Consecutivo', row.consecutivo_proceso],
-    ['Decisión final', row.decision_final], ['Estado de los descargos', row.estado_descargos],
-    ['Fecha límite de descargos', fl(row.fecha_limite_descargos)], ['Observación', row.observacion],
-    ['Observaciones de corrección', row.observaciones_correccion],
-  ]);
-  const adj = [row.pruebas, row.informe_tecnico].filter(Boolean);
-  if (adj.length) {
-    body.appendChild(pstEl('h4', 'pf-sec', 'Adjuntos'));
-    body.appendChild(pstEl('div', 'pst-nota',
-      'Los archivos siguen en AppSheet; aquí queda el nombre con el que se guardaron: ' + adj.join(' · ')));
-  }
+  const sn = (v) => (v === true ? 'S\u00cd' : v === false ? 'NO' : '');
+  const COL_CUMPL = { 'A TIEMPO': 'chip-green', 'FUERA DE PLAZO': 'chip-amber', 'SIN RESPUESTA': 'chip-red' };
+  const chips = [
+    row.tipo ? `<span class="chip chip-indigo">${esc(row.tipo)}</span>` : '',
+    row.cumplimiento ? `<span class="chip ${COL_CUMPL[row.cumplimiento] || 'chip-gray'}">${esc(row.cumplimiento)}</span>` : '',
+    row.estado ? `<span class="chip ${row.estado === 'CERRADA' ? 'chip-green' : 'chip-violet'}">${esc(row.estado)}</span>` : '',
+    row.estado_app ? `<span class="chip chip-blue">${esc(row.estado_app)}</span>` : '',
+    row.urgencia ? `<span class="chip chip-amber">${esc(row.urgencia)}</span>` : '',
+  ].filter(Boolean).join(' ');
+  const wa = (tel) => {
+    const t = String(tel || '').replace(/\D/g, '');
+    return t.length === 10 ? `${esc(tel)} <a href="https://wa.me/57${t}" target="_blank" rel="noopener" title="WhatsApp">\ud83d\udcac</a>` : esc(tel || '');
+  };
+  m.querySelector('h3').textContent = `\ud83d\udce3 ${row.radicado || 'PQRSF'}`;
+  body.innerHTML = `
+    <header class="pf-top">
+      <div class="pf-av cond">${esc(row.numero_interno || '\u2014')}</div>
+      <div class="pf-idt">
+        <h2>${esc(row.motivo || row.tipo || 'PQRSF')}</h2>
+        <div class="pf-sub">Radicada el ${esc(fl(row.fecha_radicado))}${row.ruta ? ` \u00b7 ruta ${esc(row.ruta)}` : ''}${
+  row.dias_respuesta != null ? ` \u00b7 respondida en ${row.dias_respuesta} d\u00eda(s)` : ''}</div>
+        <div class="pf-chips">${chips}</div>
+      </div>
+    </header>
+    <div class="pf-secs">
+      ${sinBloque('\ud83d\udcdd Radicaci\u00f3n', [['Radicado', esc(row.radicado || '')], ['Fecha', esc(fl(row.fecha_radicado))],
+    ['Hora recibido', esc(hr(row.hora_recibido))], ['Tipo', esc(row.tipo || '')], ['Motivo', esc(row.motivo || '')],
+    ['Urgencia', esc(row.urgencia || '')], ['Medio', esc(row.medio_recibido || '')],
+    ['Radic\u00f3', esc(row.responsable_radicacion || '')]])}
+      ${sinBloque('\u26a0\ufe0f Qu\u00e9 pas\u00f3', [['Fecha del suceso', esc(fl(row.fecha_suceso))],
+    ['Hora del suceso', esc(hr(row.hora_suceso))], ['Direcci\u00f3n', esc(row.direccion_suceso || '')],
+    ['Descripci\u00f3n', esc(row.descripcion || '')]])}
+      ${sinBloque('\ud83d\ude8c Veh\u00edculo', [['M\u00f3vil', esc(row.numero_interno || '')], ['Placa', esc(row.placa || '')],
+    ['Ruta', esc(row.ruta || '')], ['Propietario', esc(row.propietario || '')],
+    ['Identificaci\u00f3n', esc(row.identificacion || '')], ['Conductor', esc(row.conductor || '')],
+    ['C\u00e9dula', esc(row.conductor_cedula || '')]])}
+      ${sinBloque('\ud83d\udc64 Usuario', [['Nombre', esc(row.usuario_nombre || '')],
+    ['Correo', row.usuario_correo ? `<a href="mailto:${esc(row.usuario_correo)}">${esc(row.usuario_correo)}</a>` : ''],
+    ['Tel\u00e9fono', wa(row.usuario_telefono)],
+    ['Requiere respuesta personalizada', esc(sn(row.respuesta_personalizada))]])}
+      ${sinBloque('\u23f1\ufe0f Gesti\u00f3n', [['Estado', esc(row.estado || '')],
+    ['\u00c1rea de destino', esc(row.area_app || row.responsable_destino || '')],
+    ['Estado en la app', esc(row.estado_app || '')],
+    ['Fecha l\u00edmite', esc(fl(row.fecha_limite))], ['Fecha de respuesta', esc(fl(row.fecha_respuesta))],
+    ['Respondida aqu\u00ed el', esc(fl(row.respondido_el))], ['Respondi\u00f3', esc(row.respondido_por || '')],
+    ['Cumplimiento', esc(row.cumplimiento || '')],
+    ['D\u00edas en responder', row.dias_respuesta == null ? '' : `${row.dias_respuesta} d\u00eda(s)`],
+    ['Estado de env\u00edo', esc(row.estado_envio || '')],
+    ['Cumplimiento en la hoja', esc(row.cumplimiento_origen || '')], ['Revisi\u00f3n', esc(row.revision || '')]])}
+      ${sinBloque('\u2696\ufe0f Proceso al conductor', [['Requiere proceso', esc(sn(row.requiere_proceso))],
+    ['Responsable de descargos', esc(row.responsable_descargos || '')],
+    ['Fecha del proceso', esc(fl(row.fecha_proceso))], ['Consecutivo', esc(row.consecutivo_proceso || '')],
+    ['Decisi\u00f3n final', esc(row.decision_final || '')], ['Estado de los descargos', esc(row.estado_descargos || '')],
+    ['Fecha l\u00edmite de descargos', esc(fl(row.fecha_limite_descargos))],
+    ['Observaci\u00f3n', esc(row.observacion || '')],
+    ['Observaciones de correcci\u00f3n', esc(row.observaciones_correccion || '')]])}
+      ${[row.pruebas, row.informe_tecnico].filter(Boolean).length
+    ? sinBloque('\ud83d\udcce Adjuntos', [['Pruebas', esc(row.pruebas || '')], ['Informe t\u00e9cnico', esc(row.informe_tecnico || '')],
+      ['D\u00f3nde est\u00e1n', 'Los archivos siguen en AppSheet; aqu\u00ed queda el nombre con el que se guardaron.']])
+    : ''}
+    </div>`;
+  // Responder, asignar y el historial (se llena aparte: consulta la base)
+  const panel = pstEl('div', 'pqr-gestion');
+  body.appendChild(panel);
+  pqrPanelGestion(panel, row);
   m.hidden = false;
 }
 
@@ -7728,6 +7735,134 @@ async function exportarPqrsfStats() {
   } catch (e) {
     toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
   } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---- Panel de gestión: responder, asignar y ver el historial ----
+// La respuesta escrita aquí NO va a las mismas columnas que trae la hoja de AppSheet: vive en
+// `respuesta_app` (sql/91), así que volver a traer la hoja no la borra. Lo que se muestra como
+// respuesta es la de la app si existe y, si no, la que vino de la hoja.
+async function pqrPanelGestion(cont, row) {
+  cont.innerHTML = '';
+  const deLaApp = !!row.respuesta_app;
+  const texto = row.respuesta_app || row.respuesta || '';
+
+  cont.appendChild(pstEl('h4', 'pqr-h', 'Respuesta al usuario'));
+  if (texto) {
+    const caja = pstEl('div', 'pqr-resp');
+    caja.appendChild(pstEl('div', 'pqr-resp-t', texto));
+    const pie = deLaApp
+      ? `Respondida en la app${row.respondido_por ? ' por ' + row.respondido_por : ''}`
+        + `${row.respondido_el ? ' el ' + fechaLegible(row.respondido_el) : ''}`
+      : 'Respuesta que venía de la hoja de AppSheet';
+    caja.appendChild(pstEl('div', 'pst-nota', pie));
+    cont.appendChild(caja);
+  } else {
+    cont.appendChild(pstEl('div', 'pst-nota', 'Todavía no tiene respuesta.'));
+  }
+
+  let F = null;
+  try {
+    const { data, error } = await sb.rpc('pqrsf_ficha', { p_key: row.key });
+    if (error) throw error;
+    F = data;
+  } catch (e) {
+    const txt = String(e.message || e);
+    cont.appendChild(pstEl('div', 'pst-nota',
+      /pqrsf_ficha/.test(txt) ? 'Para responder desde la app falta ejecutar sql/91.' : 'No se pudo leer la gestión: ' + txt));
+    return;
+  }
+  if (!F || !F.ok) return;
+
+  // ---- Formulario de respuesta ----
+  if (F.puede_responder) {
+    const caja = pstEl('div', 'pqr-form');
+    const ta = document.createElement('textarea');
+    ta.className = 'pqr-ta'; ta.rows = 5; ta.value = row.respuesta_app || '';
+    ta.placeholder = 'Escribe aquí la respuesta que se le da al usuario…';
+    const fila = pstEl('div', 'pqr-btns');
+    const bGuardar = pstEl('button', 'btn btn-sm', '💾 Guardar respuesta');
+    const bCerrar = pstEl('button', 'btn btn-sm btn-primary', '✅ Responder y cerrar');
+    const msg = pstEl('span', 'pst-nota');
+    const enviar = async (cerrar) => {
+      const t = ta.value.trim();
+      if (!t) { msg.textContent = 'Escribe la respuesta primero.'; return; }
+      bGuardar.disabled = true; bCerrar.disabled = true; msg.textContent = 'Guardando…';
+      try {
+        const { data, error } = await sb.rpc('pqrsf_responder',
+          { p_key: row.key, p_texto: t, p_cerrar: !!cerrar });
+        if (error) throw error;
+        if (!data?.ok) throw new Error(data?.error || 'no se pudo guardar');
+        toast(cerrar ? 'PQRSF respondida y cerrada.' : 'Respuesta guardada.', 'ok');
+        const { data: fresca } = await sb.from('pqrsf').select('*').eq('key', row.key).single();
+        if (fresca) { _pqrRow = fresca; openPqrsf(fresca); }
+        if (current === 'pqrsf') loadData();
+        refrescarPqrsfAcceso();
+      } catch (e) {
+        msg.textContent = 'No se pudo guardar: ' + (e.message || e);
+        bGuardar.disabled = false; bCerrar.disabled = false;
+      }
+    };
+    bGuardar.type = 'button'; bCerrar.type = 'button';
+    bGuardar.onclick = () => enviar(false);
+    bCerrar.onclick = () => enviar(true);
+    fila.append(bGuardar, bCerrar, msg);
+    caja.append(ta, fila);
+    cont.appendChild(pstEl('h4', 'pqr-h', deLaApp ? 'Corregir la respuesta' : 'Responder'));
+    cont.appendChild(caja);
+  } else {
+    cont.appendChild(pstEl('div', 'pst-nota',
+      F.mi_area ? `Esta PQRSF no es de tu área (${F.mi_area}), así que solo la puedes consultar.`
+        : 'Tu cuenta puede consultar las PQRSF, pero no responderlas.'));
+  }
+
+  // ---- Asignar a un área (administración y Gestión Humana) ----
+  if (F.puede_asignar) {
+    const caja = pstEl('div', 'pqr-form');
+    const sel = document.createElement('select'); sel.className = 'pqr-sel';
+    sel.appendChild(Object.assign(document.createElement('option'),
+      { value: '', textContent: '— Elegir área —' }));
+    (F.areas || []).filter(Boolean).sort().forEach((a) => sel.appendChild(
+      Object.assign(document.createElement('option'), { value: a, textContent: a })));
+    const actual = row.area_app || row.responsable_destino || '';
+    if (actual && [...sel.options].some((o) => o.value === actual)) sel.value = actual;
+    const b = pstEl('button', 'btn btn-sm', '📨 Asignar');
+    b.type = 'button';
+    const msg = pstEl('span', 'pst-nota');
+    b.onclick = async () => {
+      if (!sel.value) { msg.textContent = 'Elige el área.'; return; }
+      b.disabled = true; msg.textContent = 'Asignando…';
+      try {
+        const { data, error } = await sb.rpc('pqrsf_asignar', { p_key: row.key, p_area: sel.value });
+        if (error) throw error;
+        if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+        toast('PQRSF asignada a ' + sel.value, 'ok');
+        const { data: fresca } = await sb.from('pqrsf').select('*').eq('key', row.key).single();
+        if (fresca) openPqrsf(fresca);
+        if (current === 'pqrsf') loadData();
+      } catch (e) {
+        msg.textContent = 'No se pudo asignar: ' + (e.message || e); b.disabled = false;
+      }
+    };
+    caja.append(sel, b, msg);
+    cont.appendChild(pstEl('h4', 'pqr-h', 'Asignar a un área'));
+    cont.appendChild(caja);
+  }
+
+  // ---- Historial ----
+  const hist = F.historial || [];
+  if (hist.length) {
+    cont.appendChild(pstEl('h4', 'pqr-h', 'Movimientos'));
+    const ul = pstEl('div', 'pqr-hist');
+    const ICONO = { RESPUESTA: '✍️', CIERRE: '✅', ASIGNACION: '📨', REAPERTURA: '↩️', NOTA: '📝' };
+    hist.forEach((h) => {
+      const it = pstEl('div', 'pqr-hist-it');
+      it.appendChild(pstEl('div', 'pqr-hist-h',
+        `${ICONO[h.accion] || '•'} ${h.accion}${h.area ? ' → ' + h.area : ''} · ${h.usuario} · ${evbCuando(h.cuando)}`));
+      if (h.texto) it.appendChild(pstEl('div', 'pqr-hist-t', h.texto));
+      ul.appendChild(it);
+    });
+    cont.appendChild(ul);
+  }
 }
 
 // ---- Ficha del siniestro: el reporte completo, ordenado ----
