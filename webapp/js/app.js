@@ -516,7 +516,9 @@ async function showApp(user) {
   updateNet();
   processQueue();
   checkAsistenciaPendiente(); // avisar si falta marcar el ingreso de hoy
-  refrescarAlertasDocs();     // avisar de documentos vencidos / por vencer
+  // El aviso de ✨ Novedades va DESPUÉS de refrescarAlertasDocs: de ahí sale si esta cuenta ve
+  // permisos (PERM_OK), y sin eso la lista saldría incompleta.
+  refrescarAlertasDocs().then(avisarNovedades, avisarNovedades); // pase lo que pase, el aviso sale
   avisarNovedadDesbloqueos(); // novedad v239: cómo desbloquear un móvil con documento vencido
 }
 
@@ -646,6 +648,7 @@ function buildSidebar() {
   if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
   if (isTalentoHumano()) addNavAction(gTh, '🔗', 'Link de actualización', openPerfilLink, 'nav-perfil-link');
   if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
+  if (isTalentoHumano()) addNavAction(gTh, '✨', `Novedades${NOV_PEND ? ` <span class="nav-badge">${NOV_PEND}</span>` : ''}`, () => openNovedades(), 'nav-novedades');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
   // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
   if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
@@ -7103,6 +7106,207 @@ function avisarNovedadDesbloqueos() {
   try { if (localStorage.getItem('docblk_info_v239')) return; } catch (e) { return; }
   abrirDocBlkInfo();
   try { localStorage.setItem('docblk_info_v239', '1'); } catch (e) { /* */ }
+}
+
+// ===================================================================================
+// ✨ NOVEDADES — la lista de puesta en marcha de los módulos nuevos (sql/99)
+// Varios módulos nuevos NO quedan completos hasta que administración hace algo por fuera del
+// código: subir las firmas escaneadas, poner el auxilio de transporte del año, registrar las
+// cuentas de Gerencia que aprueban, nombrarle "oriental" al puesto del control. Esa lista vivía
+// en un chat; aquí se calcula con el estado real (verde/ámbar) y cada cosa trae el botón que
+// lleva a hacerla. novedades_estado() devuelve SOLO conteos y banderas: ni un nombre ni un valor.
+// ===================================================================================
+const NOV_VER = 'v288';      // sube con cada tanda: el aviso vuelve a salir una vez
+let NOV_EST = null, NOV_PEND = 0;
+
+async function novEstado() {
+  try {
+    const { data } = await sb.rpc('novedades_estado');
+    NOV_EST = (data && data.ok) ? data : null;
+  } catch (e) { NOV_EST = null; }
+  return NOV_EST;
+}
+
+// Una línea de la lista: hecha (verde) o por hacer (ámbar).
+function novLi(ok, hecho, falta) {
+  return `<li class="${ok ? 'nov-ok' : 'nov-falta'}"><span class="nov-ic">${ok ? '✅' : '⚠️'}</span><div>${ok ? hecho : falta}</div></li>`;
+}
+function novChip(n) {
+  return n ? `<span class="chip chip-amber">${n} por hacer</span>` : '<span class="chip chip-green">listo</span>';
+}
+// Un módulo: título, para qué sirve, la lista, las notas y los botones.
+function novSec(icono, titulo, ver, que, items, notas, acciones) {
+  const pend = items.filter((i) => i.includes('nov-falta')).length;
+  return `<section class="nov-mod${pend ? ' nov-mod-pend' : ''}">
+    <h4>${icono} ${titulo} <small>${ver}</small> <span class="spacer"></span> ${novChip(pend)}</h4>
+    <p class="nov-que">${que}</p>
+    <ul class="nov-list">${items.join('')}</ul>
+    ${(notas || []).map((n) => `<p class="nov-nota">${n}</p>`).join('')}
+    ${acciones.length ? `<div class="nov-acc">${acciones.join('')}</div>` : ''}
+  </section>`;
+}
+const novBtn = (k, txt, prim) => `<button type="button" class="btn btn-sm${prim ? ' btn-primary' : ''}" data-nov="${k}">${txt}</button>`;
+
+// Las secciones, una por módulo. De aquí sale también el conteo de lo que falta.
+function novSecs(st) {
+  const secs = [];
+
+  // ✍️ Certificado laboral ----------------------------------------------------------------------
+  const c = st.cert || {};
+  const itC = [
+    novLi(c.titular1, 'Está registrado quién es hoy el Gerente que firma',
+      'Registra al <b>Gerente</b> que firma (queda con fecha de vigencia: cuando cambie, se cambia ahí y el documento sale actualizado solo)'),
+    novLi(c.firma1, 'La firma del Gerente está cargada',
+      'Sube la <b>foto de la firma del Gerente</b> — la app le quita el fondo, la recorta y la deja ubicar sobre la línea'),
+    novLi(c.titular2, 'Está registrado quién firma por Gestión Humana',
+      'Registra a quien firma por <b>Gestión Humana</b>'),
+    novLi(c.firma2, 'La firma de Gestión Humana está cargada',
+      'Sube la <b>foto de la firma de Gestión Humana</b>'),
+    novLi(c.smmlv, 'El salario mínimo del año está puesto',
+      'Falta el <b>salario mínimo</b> del año (se usa cuando el certificado va sin el salario de la persona)'),
+    novLi(c.auxilio, 'El auxilio de transporte del año está puesto',
+      'Falta el <b>auxilio de transporte</b> del año'),
+    novLi(c.telefono, 'El teléfono de contacto que se imprime está puesto',
+      'Falta el <b>teléfono</b> que va al pie del certificado'),
+  ];
+  // El año de los valores solo se cuestiona cuando ya hay valores que cuestionar.
+  if (c.smmlv && c.auxilio) {
+    itC.push(novLi(Number(c.anio) === Number(c.anio_hoy), `Los valores son los de ${c.anio_hoy}`,
+      `Los valores guardados son de <b>${c.anio || 'un año sin decir'}</b>: confírmalos para <b>${c.anio_hoy}</b>`));
+  }
+  secs.push(novSec('✍️', 'Certificado laboral', 'v280', 'Se genera desde la ficha de la persona, en el Perfil, con el logo de la empresa. La redacción se ajusta sola según esté activa o retirada (y al género), la cifra va también en letras, y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario.</b>',
+    itC,
+    c.expedidos ? [`Certificados expedidos hasta hoy: <b>${c.expedidos}</b>.`] : [],
+    [novBtn('cert', '✍️ Abrir Firmas del certificado', true)]));
+
+  // 📝 Permisos y licencias ---------------------------------------------------------------------
+  if (PERM_OK) {
+    const p = st.permisos || {};
+    const itP = [
+      novLi(p.gerencia_n > 0, `Hay ${p.gerencia_n} cuenta(s) de Gerencia que pueden firmar su casilla`,
+        'No hay <b>ninguna cuenta de Gerencia</b> registrada: por ahora administración firma las dos casillas, y así se pierde la doble autorización'),
+      novLi(!p.sin_fecha_nac, 'Todas las personas activas tienen fecha de nacimiento: cualquiera puede radicar',
+        `<b>${p.sin_fecha_nac}</b> persona(s) activa(s) sin <b>fecha de nacimiento</b>: no pueden identificarse en el link, así que no pueden radicar. Complétala en el Perfil`),
+    ];
+    const url = permLinkUrl();
+    const notasP = [
+      `<b>El link para los empleados:</b><span class="nov-url"><input type="text" readonly value="${esc(url)}">`
+      + `${novBtn('copiar', '📋 Copiar')}<a class="btn btn-sm" target="_blank" rel="noopener" href="${esc(url)}">👁️ Abrir</a></span>`,
+      `Radicadas hasta hoy: <b>${p.total || 0}</b> · por decidir: <b>${p.pendientes || 0}</b>.`,
+    ];
+    secs.push(novSec('📝', 'Permisos y licencias', 'v286', 'El formato F-GH-07 ya no se llena a mano: el empleado radica por un <b>link público</b> (se identifica con cédula y fecha de nacimiento y puede adjuntar el soporte con la cámara), y <b>Gestión Humana y Gerencia</b> firman cada uno su casilla. El formato se imprime ya con el estado y quién autorizó — que en el papel quedaba en blanco.',
+      itP, notasP, [novBtn('perm', '📝 Abrir Permisos y licencias', true)]));
+  }
+
+  // 🛂 Control Av. Oriental ---------------------------------------------------------------------
+  if (puedeVerOriental()) {
+    const o = st.oriental || {};
+    const itO = [
+      novLi(o.puestos > 0, 'Hay un puesto con «oriental» en el nombre',
+        'Crea (o renombra) el <b>puesto de la Oriental</b>: el nombre <b>tiene que contener «oriental»</b>, si no, la cuenta del controlador no ve el tablero'),
+      novLi(o.turno_hoy > 0, 'Hoy hay turno asignado a ese puesto',
+        'Hoy <b>nadie</b> tiene ese puesto en el horario: asígnaselo al controlador del día para que pueda escanear'),
+    ];
+    const acO = [novBtn('oriental', '🛂 Abrir el control', true)];
+    if (isAdmin()) acO.push(novBtn('puestos', '📌 Puestos'), novBtn('horarios', '🕒 Horarios'));
+    secs.push(novSec('🛂', 'Control Av. Oriental', 'v287', 'El mismo modelo del Control Laureles, con <b>un solo punto de paso</b>: el controlador tiene la lista de los buses que pasan hoy con su hora, les escanea el QR al llegar y salta la alerta si el carro no es el que se esperaba. Cubre 9 rutas; las dos de <b>MADRUGADA no aparecen</b> porque esas no se despachan a SONAR.',
+      itO, [`Escaneos registrados hoy: <b>${o.checkins || 0}</b>.`], acO));
+  }
+
+  // 📣 PQRSF -------------------------------------------------------------------------------------
+  if (puedeVerPqrsf()) {
+    const q = st.pqrsf || {};
+    const itQ = [
+      novLi(!q.sin_responder, 'No hay PQRSF sin responder',
+        `<b>${q.sin_responder}</b> PQRSF <b>sin responder</b>: esas sí son deuda con el usuario`),
+      novLi(!q.falta_cerrar, 'No queda ninguna respondida sin cerrar',
+        `<b>${q.falta_cerrar}</b> ya respondidas que <b>falta cerrar</b> (el botón <b>Cerrar</b> está en la bandeja; es papeleo, no incumplimiento)`),
+    ];
+    secs.push(novSec('📣', 'PQRSF: la bandeja quedó en dos listas', 'v279', 'Antes todo lo abierto salía revuelto. Ahora se separa lo que de verdad <b>no tiene respuesta</b> de lo que ya se respondió y <b>solo falta cerrar</b>, y <b>vencida</b> es únicamente la que sigue sin responder con el plazo pasado. Así el aviso del menú no se infla con desorden administrativo.',
+      itQ, [], [novBtn('pqrsf', '📣 Abrir la bandeja', true)]));
+  }
+
+  return secs;
+}
+
+// Cuántas cosas quedan por hacer (para decidir si vale la pena interrumpir al entrar).
+function novPendientes(st) { return (novSecs(st).join('').match(/nov-falta/g) || []).length; }
+
+function novHtml(st) {
+  const secs = novSecs(st);
+  const n = (secs.join('').match(/nov-falta/g) || []).length;
+  return `<p class="nov-intro">Lo nuevo de estas semanas y <b>lo que falta para que quede andando</b>: `
+    + `<b class="nov-v">verde</b> es lo que ya está, <b class="nov-a">ámbar</b> lo que falta — y el botón te lleva a hacerlo.</p>`
+    + (n ? '' : '<p class="nov-listo">🎉 No queda nada pendiente de configurar.</p>')
+    + secs.join('');
+}
+
+function novModal() {
+  let m = $('nov-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'nov-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card nov-card">
+    <div class="modal-head"><h3>✨ Novedades · lo que falta configurar</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="nov-body"></div>
+    <div class="modal-foot"><span class="nov-pie">Mientras quede algo en ámbar, esto vuelve a salir una vez al día. También está en <b>👥 Talento humano → ✨ Novedades</b>.</span>
+      <span class="spacer"></span><button type="button" class="btn btn-primary" data-x>Entendido</button></div></div>`;
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-nov]');
+    if (b) {
+      const k = b.dataset.nov;
+      if (k === 'copiar') { novCopiarLink(m); return; }   // copiar no cierra el aviso
+      m.hidden = true;
+      if (k === 'cert') openCertFirmas();
+      else if (k === 'perm') openPermisos();
+      else if (k === 'pqrsf') openPqrsfStats('pendientes');
+      else if (k === 'oriental') openOriental('control');
+      else if (k === 'puestos') selectTable('puestos');
+      else if (k === 'horarios') selectTable('horarios');
+      return;
+    }
+    if (e.target === m || e.target.closest('[data-x]')) m.hidden = true;
+  });
+  document.body.appendChild(m);
+  return m;
+}
+async function novCopiarLink(m) {
+  const url = permLinkUrl();
+  try { await navigator.clipboard.writeText(url); }
+  catch (e) { const i = m.querySelector('.nov-url input'); if (i) { i.select(); document.execCommand('copy'); } }
+  toast('Enlace copiado', 'ok');
+}
+
+async function openNovedades(st) {
+  if (!isTalentoHumano()) return;
+  const m = novModal();
+  const body = m.querySelector('.nov-body');
+  if (!st) { body.innerHTML = '<div class="loading">Cargando…</div>'; m.hidden = false; }
+  const e = st || await novEstado();
+  if (!e) { body.innerHTML = '<div class="cump-empty">No se pudo leer el estado. ¿Falta aplicar sql/99?</div>'; m.hidden = false; return; }
+  body.innerHTML = novHtml(e);
+  NOV_PEND = novPendientes(e);   // el ✨ del menú queda con la cuenta al día
+  buildSidebar();
+  closeMenu();
+  m.hidden = false;
+}
+
+// Al entrar: se cuenta lo que falta (va al ✨ del menú) y, si hay algo, se avisa una vez al día.
+// Solo a quien puede hacerlo: administración y Gestión Humana.
+async function avisarNovedades() {
+  if (!isTalentoHumano()) return;
+  const st = await novEstado();
+  if (!st) return;
+  NOV_PEND = novPendientes(st);
+  buildSidebar();
+  if (!NOV_PEND) return;                      // nada por hacer: no interrumpir
+  const hoy = hoyServidor();
+  try {
+    if (localStorage.getItem('nov_' + NOV_VER) === hoy) return;
+    localStorage.setItem('nov_' + NOV_VER, hoy);
+  } catch (e) { return; }
+  openNovedades(st);
 }
 
 // ===================================================================================
