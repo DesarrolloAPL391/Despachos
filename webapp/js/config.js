@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v285';
+export const APP_VERSION = 'v286';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -32,6 +32,42 @@ export const TABLE_ORDER = [
 
 // Listas unificadas del PERFIL SOCIODEMOGRÁFICO. Las usan el formulario del admin y el link público
 // de actualización de datos (actualizar-datos.html), para que los datos no se vuelvan a desordenar.
+
+// Tipos de permiso del formato F-GH-07 (v5) con los soportes que el propio formato exige.
+// En el papel esta lista se imprime COMPLETA aunque solo aplique un renglon; aqui se muestra
+// unicamente la del tipo elegido, que es lo que la persona tiene que conseguir.
+export const PERMISO_TIPOS = [
+  { key: 'CITA MEDICA', label: 'Cita médica', icon: '\ud83e\ude7a', soportes: [
+    'Asignación de la cita (si aplica)',
+    'Comprobante de asistencia con el horario de atención'] },
+  { key: 'MATERNIDAD O PATERNIDAD', label: 'Licencia de maternidad o paternidad', icon: '\ud83d\udc76', soportes: [
+    'Incapacidad expedida por la EPS'] },
+  { key: 'PERSONAL', label: 'Personal', icon: '\ud83d\ude4b', soportes: [
+    'Autorización del jefe inmediato'] },
+  { key: 'MATRIMONIO', label: 'Matrimonio', icon: '\ud83d\udc8d', soportes: [
+    'Certificado o registro civil de matrimonio'] },
+  { key: 'CALAMIDAD DOMESTICA', label: 'Calamidad doméstica', icon: '\ud83c\udfe0', soportes: [
+    'Desastre natural: registro fotográfico del lugar; si es vivienda, foto frontal donde se vea la placa con la dirección',
+    'Hospitalización: certificado de la clínica con fecha y hora de ingreso',
+    'Hospitalización: copia del documento del paciente (padres, hijos, cónyuge, hijastros o suegros)'] },
+  { key: 'GRAVE CALAMIDAD DOMESTICA', label: 'Grave calamidad doméstica', icon: '\u26a0\ufe0f', soportes: [
+    'Desastre natural: registro fotográfico del lugar y copia del impuesto predial',
+    'Hospitalización prolongada: certificado de la clínica con fecha y hora de ingreso',
+    'Copia del documento del paciente',
+    'Registro civil de matrimonio (cónyuge) o declaración extrajuicio (compañera permanente)',
+    'Registro civil de nacimiento (hijos)'] },
+  { key: 'LUTO', label: 'Licencia de luto', icon: '\ud83d\udda4', soportes: [
+    'Copia de la cédula del empleado',
+    'Registro civil de nacimiento del empleado',
+    'Certificado de defunción (padres, hijos, hermanos, nietos, abuelos, cónyuge, hijastros, suegros o hijos adoptivos)',
+    'Copia de la cédula del fallecido (si la tiene)'] },
+  { key: 'COMPENSATORIO', label: 'Compensatorio', icon: '\u23f1\ufe0f', soportes: [
+    'Sepelio de compañeros de trabajo: autorización de Gerencia',
+    'Autorización del jefe inmediato'] },
+  { key: 'ESTUDIO', label: 'Estudio', icon: '\ud83c\udf93', soportes: [
+    'Matrícula', 'Certificado de estudio', 'Horarios'] },
+];
+
 export const PERFIL_LISTAS = {
   tipo: ['CONDUCTOR', 'ADMINISTRATIVO'],
   estado: ['ACTIVO', 'INACTIVO'],

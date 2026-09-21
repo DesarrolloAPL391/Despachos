@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -645,6 +645,8 @@ function buildSidebar() {
   if (isTalentoHumano()) addNavAction(gTh, '🔗', 'Link de actualización', openPerfilLink, 'nav-perfil-link');
   if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
+  // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
+  if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
 
   // ⚙️ Administración (tablas de configuración + acciones)
   const gAd = addNavGroup(nav, '⚙️', 'Administración', 'admin');
@@ -3232,12 +3234,13 @@ async function cargarAlertasDocumentos() {
 }
 async function refrescarAlertasDocs() {
   // Gestión Humana no ve vehículos ni licencias: solo sus contadores de Talento humano
-  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false)]); buildSidebar(); return; }
+  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false), refrescarPermisos(false)]); buildSidebar(); return; }
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
   try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
   try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; } catch { DESBLOQ_PEND = 0; }
   if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]);
   await refrescarPqrsfAcceso(false);
+  await refrescarPermisos(false);
   await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
@@ -9013,6 +9016,408 @@ async function cfGuardar(r, card, msg) {
     msg.textContent = /certificado_firmante/.test(t) ? 'Falta ejecutar sql/94.' : 'No se pudo guardar: ' + t;
     btn.disabled = false;
   }
+}
+
+
+// ===================================================================================
+// 📝 PERMISOS Y LICENCIAS (formato F-GH-07, sql/97)
+// El empleado radica en permisos.html (link público). Aquí Gestión Humana y Gerencia deciden,
+// y de aquí sale el mismo formato impreso, ya con el estado y quién autorizó — que en el papel
+// quedaba en blanco.
+// ===================================================================================
+let PERM_OK = false, PERM_GH = false, PERM_GER = false, PERM_MIOS = 0;
+const _perm = { rows: [], vista: 'decidir', q: '', abierto: null };
+const PERM_VISTAS = [
+  { key: 'decidir', label: 'Por decidir' },
+  { key: 'PENDIENTE', label: 'Pendientes' },
+  { key: 'APROBADO', label: 'Aprobados' },
+  { key: 'NEGADO', label: 'Negados' },
+  { key: 'todos', label: 'Todos' },
+];
+const PERM_CHIP = { PENDIENTE: 'chip-amber', 'EN TRAMITE': 'chip-blue', APROBADO: 'chip-green',
+  NEGADO: 'chip-red', ANULADO: 'chip-gray' };
+
+async function refrescarPermisos(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('permisos_estado');
+    PERM_OK = !!(data && data.ok);
+    PERM_GH = !!(data && data.es_gh);
+    PERM_GER = !!(data && data.es_gerencia);
+    PERM_MIOS = Number((data && data.mios) || 0);
+  } catch { PERM_OK = false; PERM_GH = false; PERM_GER = false; PERM_MIOS = 0; }
+  if (rebuild) buildSidebar();
+}
+
+function permLinkUrl() { return new URL('permisos.html', location.href).href; }
+
+// Cuánto duró, dicho como lo diría una persona.
+function permDuracion(r) {
+  const h = Number(r.horas || 0);
+  if (!h) return '—';
+  if (h < 24) return `${h % 1 ? h.toFixed(1) : h} hora(s)`;
+  const d = h / 24;
+  return `${d % 1 ? d.toFixed(1) : d} día(s)`;
+}
+const permFechaHora = (v) => {
+  if (!v) return '—';
+  const s = String(v).replace('T', ' ');
+  return `${fechaLegible(s.slice(0, 10))} ${s.slice(11, 16)}`;
+};
+
+function permModal() {
+  let m = $('perm-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'perm-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card perm-card">
+    <div class="modal-head"><h3>📝 Permisos y licencias</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="asp-toolbar">
+      <div class="asp-vistas">${PERM_VISTAS.map((v) =>
+    `<button type="button" class="btn btn-sm" data-vista="${v.key}">${v.label} <b data-n="${v.key}"></b></button>`).join('')}</div>
+      <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula o radicado" aria-label="Buscar">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-link>🔗 Link para el empleado</button>
+      <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
+    </div>
+    <div class="perm-body"><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const v = e.target.closest('[data-vista]');
+    if (v) { _perm.vista = v.dataset.vista; renderPermisos(); return; }
+    if (e.target.closest('[data-link]')) { permCopiarLink(); return; }
+    const x = e.target.closest('[data-excel]'); if (x) { exportarPermisos(x); return; }
+    if (e.target.closest('[data-recargar]')) { cargarPermisos(); return; }
+    const t = e.target.closest('[data-perm]'); if (t) openPermiso(Number(t.dataset.perm));
+  });
+  m.querySelector('.asp-q').addEventListener('input', (e) => { _perm.q = e.target.value; renderPermisos(); });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openPermisos() {
+  if (!PERM_OK) { toast('No tienes permiso para ver las solicitudes.', 'err'); return; }
+  permModal().hidden = false;
+  closeMenu();
+  await cargarPermisos();
+}
+
+async function cargarPermisos() {
+  const body = permModal().querySelector('.perm-body');
+  if (!_perm.rows.length) body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.from('permisos').select('*').order('radicado', { ascending: false }).limit(2000);
+    if (error) throw error;
+    _perm.rows = data || [];
+    renderPermisos();
+    refrescarPermisos();
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">No se pudo cargar: ${esc(String(e.message || e))}</div>`;
+  }
+}
+
+// Lo que ESTA cuenta todavía no ha decidido: es la vista con la que se entra a trabajar.
+function permMeFalta(r) {
+  if (r.estado === 'ANULADO') return false;
+  return (PERM_GH && !r.gh_estado) || (PERM_GER && !r.ger_estado);
+}
+
+function renderPermisos() {
+  const m = permModal(), body = m.querySelector('.perm-body');
+  const q = _perm.q.trim().toLowerCase();
+  const todas = _perm.rows;
+  const cuenta = {
+    decidir: todas.filter(permMeFalta).length,
+    PENDIENTE: todas.filter((r) => r.estado === 'PENDIENTE' || r.estado === 'EN TRAMITE').length,
+    APROBADO: todas.filter((r) => r.estado === 'APROBADO').length,
+    NEGADO: todas.filter((r) => r.estado === 'NEGADO').length,
+    todos: todas.length,
+  };
+  PERM_VISTAS.forEach((v) => {
+    const b = m.querySelector(`[data-n="${v.key}"]`); if (b) b.textContent = cuenta[v.key] || '';
+    const btn = m.querySelector(`[data-vista="${v.key}"]`);
+    if (btn) btn.classList.toggle('btn-primary', _perm.vista === v.key);
+  });
+
+  let rows = _perm.vista === 'decidir' ? todas.filter(permMeFalta)
+    : _perm.vista === 'todos' ? todas
+      : _perm.vista === 'PENDIENTE' ? todas.filter((r) => r.estado === 'PENDIENTE' || r.estado === 'EN TRAMITE')
+        : todas.filter((r) => r.estado === _perm.vista);
+  if (q) {
+    rows = rows.filter((r) => [r.nombre, r.cedula, String(r.radicado), r.tipo, r.area, r.cargo]
+      .some((v) => String(v || '').toLowerCase().includes(q)));
+  }
+
+  if (!rows.length) {
+    body.innerHTML = `<div class="rst-empty">${_perm.vista === 'decidir'
+      ? 'No tienes solicitudes por decidir. 👏' : 'No hay solicitudes en esta vista.'}</div>`;
+    return;
+  }
+
+  const tabla = pstEl('table', 'pst-tabla');
+  const cab = ['#', 'Empleado', 'Cargo / área', 'Tipo', 'Desde', 'Hasta', 'Duración', 'Repone', 'G. Humana', 'Gerencia', 'Estado'];
+  const thead = pstEl('thead'); const tr = pstEl('tr');
+  cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
+  thead.appendChild(tr); tabla.appendChild(thead);
+  const tb = pstEl('tbody');
+  const marca = (v) => v === 'APROBADO' ? '✅' : v === 'NEGADO' ? '⛔' : '⏳';
+  rows.forEach((r) => {
+    const f = pstEl('tr');
+    f.dataset.perm = r.id;
+    [`${r.radicado}`, r.nombre || '—', `${r.cargo || '—'}${r.area ? ' · ' + r.area : ''}`,
+      r.tipo || '—', permFechaHora(r.desde), permFechaHora(r.hasta), permDuracion(r),
+      r.reposicion ? 'Sí' : 'No', marca(r.gh_estado), marca(r.ger_estado)]
+      .forEach((v) => f.appendChild(pstEl('td', null, v)));
+    const td = pstEl('td');
+    td.innerHTML = `<span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(r.estado)}</span>`;
+    f.appendChild(td);
+    f.classList.add('pst-clic'); f.tabIndex = 0; f.title = 'Abrir la solicitud';
+    f.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); openPermiso(r.id); } });
+    tb.appendChild(f);
+  });
+  tabla.appendChild(tb);
+  body.innerHTML = '';
+  const wrap = pstEl('div', 'pst-tabla-wrap perm-tabla');
+  wrap.appendChild(tabla);
+  body.appendChild(wrap);
+}
+
+// ---- Ficha de una solicitud ----
+async function openPermiso(id) {
+  const r = _perm.rows.find((x) => x.id === id);
+  if (!r) return;
+  _perm.abierto = r;
+  let m = $('permf-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'permf-modal'; m.className = 'modal'; m.hidden = true;
+    m.innerHTML = `<div class="modal-card perm-ficha">
+      <div class="modal-head"><h3>📝 Solicitud</h3><span class="spacer"></span>
+        <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+      <div class="permf-body"></div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-sm" data-imprimir>🖨️ Imprimir formato</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-x>Cerrar</button>
+      </div>
+    </div>`;
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    m.querySelector('[data-imprimir]').addEventListener('click', () => permImprimir(_perm.abierto));
+    document.body.appendChild(m);
+  }
+  const body = m.querySelector('.permf-body');
+  m.querySelector('h3').textContent = `📝 Radicado # ${r.radicado}`;
+  body.innerHTML = permFichaHtml(r) + '<div class="loading">Cargando soportes…</div>';
+  m.hidden = false;
+  permConectarFicha(body, r);
+
+  try {
+    const { data } = await sb.rpc('permiso_soportes_de', { p_id: r.id });
+    const cont = body.querySelector('.loading');
+    if (!cont) return;
+    const lista = data || [];
+    cont.outerHTML = lista.length
+      ? `<h4 class="pqr-h">Soportes (${lista.length})</h4><div class="perm-sops">${lista.map((s) => {
+        const esImg = String(s.tipo_mime || '').startsWith('image/');
+        return `<a href="${s.archivo}" target="_blank" rel="noopener" class="perm-sop" title="${esc(s.nombre || '')}">
+            ${esImg ? `<img src="${s.archivo}" alt="">` : '<span class="perm-pdf">📄 PDF</span>'}
+            <span>${esc((s.nombre || 'soporte').slice(0, 26))}</span></a>`;
+      }).join('')}</div>`
+      : '<div class="pst-nota">No adjuntó soportes.</div>';
+  } catch {
+    const c = body.querySelector('.loading');
+    if (c) c.outerHTML = '<div class="pst-nota">No se pudieron cargar los soportes.</div>';
+  }
+}
+
+function permFichaHtml(r) {
+  const T = (PERMISO_TIPOS || []).find((t) => t.key === r.tipo);
+  const decision = (titulo, estado, por, en, nota) => `
+    <div class="perm-dec ${estado === 'APROBADO' ? 'ok' : estado === 'NEGADO' ? 'no' : ''}">
+      <div class="perm-dec-t">${esc(titulo)}</div>
+      <div class="perm-dec-e">${estado ? esc(estado) : 'Sin decidir'}</div>
+      ${por ? `<div class="pst-nota">${esc(por)} · ${esc(evbCuando(en))}</div>` : ''}
+      ${nota ? `<div class="perm-dec-n">${esc(nota)}</div>` : ''}
+    </div>`;
+
+  return `
+    <header class="pf-top">
+      <div class="pf-av ${r.estado === 'APROBADO' ? 'cond' : 'adm'}">${esc(String(r.radicado))}</div>
+      <div class="pf-idt">
+        <h2>${esc(r.nombre || '')}</h2>
+        <div class="pf-sub">C.C. ${esc(r.cedula || '')}${r.cargo ? ' · ' + esc(r.cargo) : ''}${r.area ? ' · ' + esc(r.area) : ''}</div>
+        <div class="pf-chips">
+          <span class="chip chip-indigo">${esc(r.tipo || '')}</span>
+          <span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(r.estado)}</span>
+          ${r.reposicion ? '<span class="chip chip-blue">Repone el tiempo</span>' : ''}
+        </div>
+      </div>
+    </header>
+    <div class="pf-secs">
+      ${sinBloque('🕐 El permiso', [['Desde', esc(permFechaHora(r.desde))], ['Hasta', esc(permFechaHora(r.hasta))],
+    ['Duración', esc(permDuracion(r))], ['Radicada el', esc(fechaLegible(r.fecha_solicitud))],
+    ['Motivo', esc(r.motivo || '')], ['Lo reemplaza', esc(r.reemplaza || '')],
+    ['Repone el tiempo', r.reposicion ? 'Sí' : 'No'], ['Cómo lo repone', esc(r.forma_reposicion || '')],
+    ['Celular', esc(r.celular || '')]])}
+      ${T ? `<section class="pf-sec"><h4>📎 Soportes que exige este permiso</h4>
+        <ul class="perm-req">${T.soportes.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></section>` : ''}
+    </div>
+    <h4 class="pqr-h">Estado del permiso</h4>
+    <div class="perm-decs">
+      ${decision('Gestión Humana', r.gh_estado, r.gh_por, r.gh_en, r.gh_nota)}
+      ${decision('Gerencia', r.ger_estado, r.ger_por, r.ger_en, r.ger_nota)}
+    </div>
+    ${r.anulado_en ? `<div class="cert-bloqueo">Solicitud anulada por ${esc(r.anulado_por || '')} · ${esc(evbCuando(r.anulado_en))}</div>` : `
+    <div class="perm-acciones">
+      ${PERM_GH ? `<div class="perm-acc-g"><b>Gestión Humana</b>
+        <button type="button" class="btn btn-sm" data-dec="GH:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="GH:NEGADO">⛔ Negar</button></div>` : ''}
+      ${PERM_GER ? `<div class="perm-acc-g"><b>Gerencia</b>
+        <button type="button" class="btn btn-sm" data-dec="GERENCIA:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="GERENCIA:NEGADO">⛔ Negar</button></div>` : ''}
+      <label class="perm-nota">Observación (opcional)
+        <input type="text" data-nota maxlength="200" placeholder="Queda en el formato impreso"></label>
+      ${PERM_GH ? '<button type="button" class="btn btn-sm" data-anular>🗑️ Anular solicitud</button>' : ''}
+      <span class="pst-nota" data-msg></span>
+    </div>`}`;
+}
+
+function permConectarFicha(body, r) {
+  const msg = body.querySelector('[data-msg]');
+  const nota = () => (body.querySelector('[data-nota]') || {}).value || null;
+  body.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', async () => {
+    const [instancia, estado] = b.dataset.dec.split(':');
+    b.disabled = true; msg.textContent = 'Guardando…';
+    try {
+      const { data, error } = await sb.rpc('permiso_decidir',
+        { p_id: r.id, p_instancia: instancia, p_estado: estado, p_nota: nota() });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      toast(`Solicitud ${estado.toLowerCase()} por ${instancia === 'GH' ? 'Gestión Humana' : 'Gerencia'}.`, 'ok');
+      $('permf-modal').hidden = true;
+      await cargarPermisos();
+    } catch (e) {
+      msg.textContent = 'No se pudo: ' + (e.message || e);
+      b.disabled = false;
+    }
+  }));
+  const ba = body.querySelector('[data-anular]');
+  if (ba) ba.addEventListener('click', async () => {
+    if (!confirm('¿Anular esta solicitud? No se borra: queda registrada como anulada.')) return;
+    ba.disabled = true;
+    try {
+      const { data, error } = await sb.rpc('permiso_anular', { p_id: r.id, p_nota: nota() });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      toast('Solicitud anulada.', 'ok');
+      $('permf-modal').hidden = true;
+      await cargarPermisos();
+    } catch (e) { msg.textContent = 'No se pudo anular: ' + (e.message || e); ba.disabled = false; }
+  });
+}
+
+// ---- El formato F-GH-07, para imprimir ----
+// El documento se arma aparte de la impresion para poder verlo sin abrir una ventana.
+function permFormatoHtml(r, logo) {
+  const T = (PERMISO_TIPOS || []).find((t) => t.key === r.tipo);
+  const fila = (k, v) => `<tr><th>${esc(k)}</th><td>${v == null ? '' : esc(String(v))}</td></tr>`;
+  const dec = (e, por, en, n) => e
+    ? `${e}${por ? ` — ${por}` : ''}${en ? ` (${evbCuando(en)})` : ''}${n ? ` · ${n}` : ''}`
+    : '';
+  return `
+    <div class="pf-hoja">
+      <table class="pf-enc"><tr>
+        <td class="pf-logo">${logo ? `<img src="${logo}" alt="">` : ''}</td>
+        <td class="pf-tit">SOLICITUD PERMISOS Y/O LICENCIAS</td>
+        <td class="pf-cod">F-GH-07<br>Versión: 5<br>Fecha: 13/10/2022<br><b>RADICADO # ${esc(String(r.radicado))}</b></td>
+      </tr></table>
+      <table class="pf-t">
+        ${fila('FECHA DE SOLICITUD:', fechaLegible(r.fecha_solicitud))}
+        ${fila('EMPLEADO:', r.nombre)}
+        ${fila('CÉDULA:', r.cedula)}
+        ${fila('CARGO:', r.cargo)}
+        ${fila('ÁREA:', r.area)}
+        ${fila('EMPLEADO QUE REEMPLAZA:', r.reemplaza)}
+        ${fila('TIPO DE PERMISO:', r.tipo)}
+      </table>
+      ${T ? `<table class="pf-t"><tr><th colspan="2" class="pf-sec">SOPORTES QUE EXIGE ESTE PERMISO</th></tr>
+        <tr><td colspan="2"><ul class="pf-ul">${T.soportes.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></td></tr></table>` : ''}
+      <table class="pf-t">
+        ${fila('FECHA Y HORA DEL PERMISO:', `Desde ${permFechaHora(r.desde)}   ·   Hasta ${permFechaHora(r.hasta)}   ·   ${permDuracion(r)}`)}
+        ${fila('MOTIVO:', r.motivo)}
+        ${fila('TIEMPO DE REPOSICIÓN (SI/NO):', r.reposicion ? 'SI' : 'NO')}
+        ${fila('FORMA DE REPOSICIÓN:', r.forma_reposicion)}
+        <tr><th>ESTADO DEL PERMISO GERENCIA Y GESTIÓN HUMANA:</th>
+          <td><div><b>GERENCIA:</b> ${esc(dec(r.ger_estado, r.ger_por, r.ger_en, r.ger_nota))}</div>
+              <div style="margin-top:8px"><b>GESTIÓN HUMANA:</b> ${esc(dec(r.gh_estado, r.gh_por, r.gh_en, r.gh_nota))}</div></td></tr>
+      </table>
+      <table class="pf-firmas"><tr>
+        <td>FIRMA EMPLEADO</td><td>FIRMA JEFE INMEDIATO</td><td>FIRMA GESTIÓN HUMANA</td>
+      </tr></table>
+    </div>`;
+}
+
+const PERM_FORMATO_CSS = `
+    @page { size: letter; margin: 1.6cm; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; font-size: 10.5pt; }
+    table { width: 100%; border-collapse: collapse; }
+    .pf-enc { border: 1px solid #000; margin-bottom: 10px; }
+    .pf-enc td { border: 1px solid #000; padding: 6px 8px; vertical-align: middle; }
+    .pf-logo { width: 130px; text-align: center; }
+    .pf-logo img { height: 52px; }
+    .pf-tit { text-align: center; font-weight: 700; font-size: 13pt; }
+    .pf-cod { width: 150px; font-size: 8.5pt; line-height: 1.35; }
+    .pf-t { border: 1px solid #000; margin-bottom: 10px; }
+    .pf-t th, .pf-t td { border: 1px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; }
+    .pf-t th { width: 38%; font-weight: 400; }
+    .pf-t td { font-weight: 700; }
+    .pf-sec { text-align: center; font-weight: 700; background: #f1f1f1; width: auto; }
+    .pf-ul { margin: 0; padding-left: 18px; font-weight: 400; font-size: 9.5pt; }
+    .pf-ul li { margin-bottom: 3px; }
+    .pf-firmas { margin-top: 64px; }
+    .pf-firmas td { border-top: 1px solid #000; padding-top: 6px; text-align: center; font-size: 9pt; width: 33%; }
+`;
+
+async function permImprimir(r) {
+  if (!r) return;
+  const logo = await certLogoDataUri();
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
+    + `<title>Permiso ${r.radicado}</title><style>${PERM_FORMATO_CSS}</style></head><body>`
+    + permFormatoHtml(r, logo)
+    + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+}
+
+function permCopiarLink() {
+  const url = permLinkUrl();
+  navigator.clipboard?.writeText(url).then(
+    () => toast('Link copiado. Compártelo con los empleados.', 'ok'),
+    () => prompt('Copia este link:', url));
+}
+
+async function exportarPermisos(btn) {
+  const rows = _perm.rows;
+  if (!rows.length) { toast('No hay solicitudes para exportar.', 'err'); return; }
+  const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const cab = ['Radicado', 'Fecha solicitud', 'Cédula', 'Empleado', 'Cargo', 'Área', 'Tipo', 'Motivo',
+      'Desde', 'Hasta', 'Horas', 'Reemplaza', 'Repone', 'Forma de reposición',
+      'Gestión Humana', 'Decidió GH', 'Gerencia', 'Decidió Gerencia', 'Estado'];
+    const aoa = [cab, ...rows.map((r) => [r.radicado, celdaFechaXlsx(r.fecha_solicitud), r.cedula, r.nombre,
+      r.cargo, r.area, r.tipo, r.motivo, permFechaHora(r.desde), permFechaHora(r.hasta), Number(r.horas || 0),
+      r.reemplaza, r.reposicion ? 'SI' : 'NO', r.forma_reposicion,
+      r.gh_estado, r.gh_por, r.ger_estado, r.ger_por, r.estado])];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Permisos');
+    XLSX.writeFile(wb, `permisos_${hoyServidor()}.xlsx`);
+  } catch (e) {
+    toast('No se pudo exportar: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
 }
 
 // ===================================================================================
