@@ -158,9 +158,11 @@ function matchItinerario(its, rutaNombre) {
 //  - despachador con tabla de puesto propia (ej. laureles): solo esa
 //  - despachador sin tabla propia: las marcadas con despachador:true (despachos, filtrado por rutas)
 // PQRSF no depende del rol sino de la lista de acceso (sql/89): se agrega a lo que ya ve
+function puedeVerPqrsf() { return PQR_OK || isAdmin() || isGestionHumana() || isAuditor(); }
+function puedeTraerPqrsf() { return PQR_EDITA || isTalentoHumano(); }
 function conPqrsf(lista) {
   if (PREVIEW) return lista;   // simulando a otro usuario: el menu se queda como el suyo
-  return PQR_OK && TABLES.pqrsf && !lista.includes('pqrsf') ? [...lista, 'pqrsf'] : lista;
+  return puedeVerPqrsf() && TABLES.pqrsf && !lista.includes('pqrsf') ? [...lista, 'pqrsf'] : lista;
 }
 function visibleTables() { return conPqrsf(visibleTablesBase()); }
 function visibleTablesBase() {
@@ -856,7 +858,7 @@ function selectTable(name, filtroInicial) {
   // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
   const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !isTalentoHumano();
-  const bPqr = $('pqr-sync-btn'); if (bPqr) bPqr.hidden = name !== 'pqrsf' || !PQR_EDITA;
+  const bPqr = $('pqr-sync-btn'); if (bPqr) bPqr.hidden = name !== 'pqrsf' || !puedeTraerPqrsf();
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
@@ -2182,7 +2184,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       tr.appendChild(act);
     } else if (cfg.fichaDetalle && ((current === 'siniestros' && isTalentoHumano())
-                                    || (current === 'pqrsf' && PQR_OK))) {
+                                    || (current === 'pqrsf' && puedeVerPqrsf()))) {
       // Siniestros y PQRSF: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
       const act = document.createElement('td');
       act.className = 'row-actions'; act.dataset.label = 'Acciones';
@@ -7310,7 +7312,12 @@ async function sincronizarPqrsf() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Leyendo la hoja…'; }
   try {
     const { data: est, error: e1 } = await sb.rpc('pqrsf_estado');
-    if (e1) throw e1;
+    if (e1) {
+      if (/pqrsf_estado/.test(String(e1.message || e1))) {
+        toast('Falta ejecutar sql/89 en la base: todavia no existe el modulo de PQRSF.', 'err'); return;
+      }
+      throw e1;
+    }
     if (!est?.ok) { toast('No tienes permiso para ver las PQRSF.', 'err'); return; }
     if (!est.puede_cargar) { toast('Tu cuenta puede consultar las PQRSF, pero no traerlas.', 'err'); return; }
     const url = est.url || '';
