@@ -4938,6 +4938,7 @@ async function openLaureles(modo) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
+  $('oriental-view').hidden = true;   // venir del otro control: si no, quedan las dos tablas en pantalla
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -7214,7 +7215,7 @@ function novSecs(st) {
   }
 
   // 📣 PQRSF -------------------------------------------------------------------------------------
-  if (puedeVerPqrsf()) {
+  if (puedeVerPqrsf() && visibleTables().includes('pqrsf')) {
     const q = st.pqrsf || {};
     const itQ = [
       novLi(!q.sin_responder, 'No hay PQRSF sin responder',
@@ -7302,10 +7303,10 @@ async function avisarNovedades() {
   buildSidebar();
   if (!NOV_PEND) return;                      // nada por hacer: no interrumpir
   const hoy = hoyServidor();
-  try {
-    if (localStorage.getItem('nov_' + NOV_VER) === hoy) return;
-    localStorage.setItem('nov_' + NOV_VER, hoy);
-  } catch (e) { return; }
+  let visto = null;
+  try { visto = localStorage.getItem('nov_' + NOV_VER); } catch (e) { /* sin memoria: se avisa igual */ }
+  if (visto === hoy) return;
+  try { localStorage.setItem('nov_' + NOV_VER, hoy); } catch (e) { /* */ }
   openNovedades(st);
 }
 

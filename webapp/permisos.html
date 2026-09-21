@@ -255,7 +255,7 @@
       mostrarError($('err2'), '');
       const a = await comprimir(f);
       if (!a) return mostrarError($('err2'), 'No se pudo leer el archivo.');
-      if (a.archivo.length > 2000000) return mostrarError($('err2'), 'El archivo quedó muy pesado. Toma la foto con menos calidad.');
+      if (a.archivo.length > 2000000) return mostrarError($('err2'), 'Ese soporte quedó muy pesado. Si es una foto, tómala con menos calidad; si es un PDF, envía uno más liviano.');
       adjuntos.push(a);
       pintarAdjuntos();
     });

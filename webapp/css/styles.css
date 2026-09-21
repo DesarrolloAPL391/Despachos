@@ -2713,7 +2713,7 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 
 /* ✨ Novedades: la lista de puesta en marcha de lo nuevo (sql/99). Verde = ya está, ámbar = falta. */
 .nov-card { max-width: 800px; }
-.nov-body { padding: 14px 18px; overflow: auto; }
+.nov-body { padding: 14px 18px; overflow: auto; max-height: 72vh; }   /* como .pact-body: el pie no se sale */
 .nov-intro { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
 .nov-v { color: #15803d; }
 .nov-a { color: #b45309; }
