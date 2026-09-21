@@ -8481,7 +8481,45 @@ const CERT_CSS = `
   .cl-cons { margin-top: 40px; font-size: 9.5pt; color: #444; }
 `;
 
-// ---- Pantalla: opciones + vista previa ----
+// ---- Pantalla: primero se revisa, se decide lo del salario, y solo entonces se genera ----
+// El salario NO viene marcado por defecto a propósito: incluirlo o no es una decisión de quien
+// expide el certificado (no es lo mismo el que pide un crédito que el que lo lleva a un arriendo),
+// y una casilla premarcada se convierte en una decisión que nadie tomó.
+let _certSal = null;   // null = todavía no ha decidido; true/false = con o sin salario
+
+// Los datos que van a salir impresos, para revisarlos antes de generar.
+function certRevisionHtml(row, cfg) {
+  const inactivo = row.estado === 'INACTIVO';
+  // El tercer argumento es lo que se muestra CUANDO NO HAY dato; solo entonces se marca en ambar.
+  const dato = (etiqueta, valor, siFalta) => `<div class="cert-d${!valor && siFalta ? ' falta' : ''}">
+      <span>${esc(etiqueta)}</span><b>${valor ? esc(String(valor)) : (siFalta || '—')}</b></div>`;
+  const falta = [];
+  if (!row.nombre) falta.push('el nombre');
+  if (!row.cedula) falta.push('la cédula');
+  if (!row.fecha_ingreso) falta.push('la fecha de ingreso');
+
+  return `
+    <div class="cert-rev">
+      <div class="cert-rev-t">Esto es lo que va a decir el certificado</div>
+      <div class="cert-datos">
+        ${dato('Nombre', row.nombre, 'FALTA')}
+        ${dato('Cédula', row.cedula, 'FALTA')}
+        ${dato('Cargo', row.cargo, 'sin cargo en la ficha')}
+        ${dato('Estado', row.estado)}
+        ${dato('Tipo de contrato', row.tipo_contrato, 'sin contrato en la ficha')}
+        ${dato('Fecha de ingreso', row.fecha_ingreso ? fechaLegible(row.fecha_ingreso) : '', 'FALTA')}
+        ${dato('Fecha de retiro', row.fecha_retiro ? fechaLegible(row.fecha_retiro) : (inactivo ? '' : 'no aplica'),
+    inactivo && !row.fecha_retiro ? 'está INACTIVA y no tiene fecha de retiro' : '')}
+        ${dato('Salario en la ficha', row.salario ? certPesos(row.salario) : '', 'sin salario en la ficha')}
+      </div>
+      ${inactivo
+    ? '<div class="cert-nota-est">Esta persona está <b>INACTIVA</b>: el certificado se redacta en pasado («laboró», «desempeñó») y lleva la fecha de retiro.</div>'
+    : '<div class="cert-nota-est">Esta persona está <b>ACTIVA</b>: el certificado se redacta en presente («labora», «desempeña») y la fecha de retiro va en blanco.</div>'}
+      ${falta.length
+    ? `<div class="cert-bloqueo">No se puede expedir sin ${falta.join(', ')}. Corrige la ficha primero.</div>` : ''}
+    </div>`;
+}
+
 function certModal() {
   let m = $('cert-modal');
   if (m) return m;
@@ -8490,75 +8528,95 @@ function certModal() {
   m.innerHTML = `<div class="modal-card cert-card">
     <div class="modal-head"><h3>📄 Certificado laboral</h3><span class="spacer"></span>
       <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
-    <div class="cert-opts">
-      <label class="pf-sw"><input type="checkbox" data-sal checked> Incluir el salario</label>
-      <label class="pf-sw"><input type="checkbox" data-aux checked> Incluir el auxilio de transporte</label>
-      <label class="cert-dir">Con destino a
-        <input type="text" data-dir placeholder="(opcional) banco, entidad…" maxlength="80">
-      </label>
-    </div>
     <div class="cert-aviso" data-aviso hidden></div>
-    <div class="cert-prev"><div class="loading">Preparando…</div></div>
+    <div class="cert-paso" data-paso1><div class="loading">Cargando…</div></div>
+    <div class="cert-paso cert-prev" data-paso2 hidden></div>
     <div class="modal-foot">
+      <button type="button" class="btn btn-sm" data-volver hidden>← Cambiar</button>
       <span class="spacer"></span>
-      <button type="button" class="btn btn-primary" data-imprimir>🖨️ Imprimir / Guardar PDF</button>
+      <button type="button" class="btn btn-primary" data-imprimir hidden>🖨️ Imprimir / Guardar PDF</button>
       <button type="button" class="btn" data-x>Cerrar</button>
     </div>
   </div>`;
-  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
-  m.querySelectorAll('[data-sal], [data-aux]').forEach((c) => c.addEventListener('change', certPintar));
-  m.querySelector('[data-dir]').addEventListener('input', certPintar);
-  m.querySelector('[data-imprimir]').addEventListener('click', certImprimir);
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const s = e.target.closest('[data-sal]');
+    if (s) { _certSal = s.dataset.sal === '1'; certPaso(2); return; }
+    if (e.target.closest('[data-volver]')) { certPaso(1); return; }
+    if (e.target.closest('[data-imprimir]')) certImprimir();
+  });
   document.body.appendChild(m);
   return m;
 }
 
 function certOpciones() {
   const m = certModal();
+  const dir = m.querySelector('[data-dir]');
   return {
-    conSalario: m.querySelector('[data-sal]').checked,
-    conAuxilio: m.querySelector('[data-aux]').checked,
-    dirigidoA: m.querySelector('[data-dir]').value.trim(),
+    conSalario: _certSal === true,
+    conAuxilio: _certSal === true,
+    dirigidoA: dir ? dir.value.trim() : '',
     logo: _certLogo || '',
   };
 }
-
 let _certLogo = '';
+
+// Cambia entre revisar (1) y ver el documento ya armado (2).
+function certPaso(n) {
+  const m = certModal();
+  m.querySelector('[data-paso1]').hidden = n !== 1;
+  m.querySelector('[data-paso2]').hidden = n !== 2;
+  m.querySelector('[data-volver]').hidden = n !== 2;
+  m.querySelector('[data-imprimir]').hidden = n !== 2;
+  if (n === 2) certPintar();
+}
+
 function certPintar() {
   if (!_certRow || !_certCfg) return;
-  const prev = certModal().querySelector('.cert-prev');
+  const prev = certModal().querySelector('[data-paso2]');
   prev.innerHTML = `<style>${CERT_CSS}</style>` + certDocHtml(_certRow, _certCfg, certOpciones());
 }
 
 async function openCertificado(row) {
   if (!isTalentoHumano() || !row) return;
-  _certRow = row;
+  _certRow = row; _certSal = null;
   const m = certModal();
   m.hidden = false;
-  const prev = m.querySelector('.cert-prev');
-  prev.innerHTML = '<div class="loading">Preparando…</div>';
+  certPaso(1);
+  const p1 = m.querySelector('[data-paso1]');
+  p1.innerHTML = '<div class="loading">Cargando…</div>';
   const aviso = m.querySelector('[data-aviso]');
   try {
     const [cfg] = await Promise.all([certLeerConfig(), certLogoDataUri().then((d) => { _certLogo = d; })]);
     if (!cfg || !cfg.ok) throw new Error('falta ejecutar sql/93 o no tienes permiso');
-    const falta = cfg.falta || [];
+
     const LBL = { firmante1_nombre: 'quién firma', telefono: 'el teléfono de contacto',
       smmlv: 'el salario mínimo del año', auxilio_transporte: 'el auxilio de transporte' };
+    const falta = cfg.falta || [];
+    aviso.hidden = !falta.length;
     if (falta.length) {
-      aviso.hidden = false;
       aviso.innerHTML = `⚠️ Falta configurar ${falta.map((f) => LBL[f] || f).join(', ')}. `
         + 'El certificado sale igual, pero sin esos datos.';
-    } else { aviso.hidden = true; }
-    if (!row.salario) {
-      m.querySelector('[data-sal]').checked = false;
-      m.querySelector('[data-sal]').disabled = true;
-    } else {
-      m.querySelector('[data-sal]').disabled = false;
     }
-    certPintar();
+
+    const puede = !!(row.nombre && row.cedula && row.fecha_ingreso);
+    const haySalario = !!row.salario;
+    p1.innerHTML = certRevisionHtml(row, cfg) + (puede ? `
+      <div class="cert-preg">
+        <div class="cert-preg-t">¿El certificado debe incluir el salario?</div>
+        <div class="cert-preg-b">
+          <button type="button" class="btn btn-primary" data-sal="1"${haySalario ? '' : ' disabled'}>💰 Sí, con salario</button>
+          <button type="button" class="btn" data-sal="0">🔒 No, sin salario</button>
+        </div>
+        <div class="pst-nota">${haySalario
+    ? 'Con salario es lo que piden bancos y arrendadores. Sin salario sirve para trámites donde no hay que revelarlo.'
+    : 'Esta persona no tiene salario en la ficha, así que solo se puede expedir sin salario.'}</div>
+        <label class="cert-dir">Con destino a
+          <input type="text" data-dir placeholder="(opcional) banco, entidad…" maxlength="80">
+        </label>
+      </div>` : '');
   } catch (e) {
-    const t = String(e.message || e);
-    prev.innerHTML = `<div class="rst-empty">No se pudo preparar el certificado: ${esc(t)}</div>`;
+    p1.innerHTML = `<div class="rst-empty">No se pudo preparar el certificado: ${esc(String(e.message || e))}</div>`;
   }
 }
 
