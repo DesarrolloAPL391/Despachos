@@ -8666,7 +8666,7 @@ const CF_ROLES = [
   { rol: 'GERENTE', icono: '👔', titulo: 'Gerente General', cargo: 'Gerente General' },
   { rol: 'GESTION_HUMANA', icono: '🧾', titulo: 'Gestión Humana', cargo: 'Coordinador de Gestión Humana' },
 ];
-const _cf = { datos: null, cfg: null, edit: {}, src: {} }; // edit = lo que se está tocando; src = la foto sin procesar
+const _cf = { datos: null, cfg: null, sug: null, edit: {}, src: {} }; // edit = lo que se está tocando; src = la foto sin procesar
 
 // Deja el trazo y vuelve transparente el papel; después recorta el sobrante.
 // `umbral` es qué tan claro tiene que ser un punto para considerarlo fondo (0-255).
@@ -8732,12 +8732,15 @@ async function openCertFirmas() {
   const body = m.querySelector('.cf-body');
   body.innerHTML = '<div class="loading">Cargando…</div>';
   try {
-    const [r1, r2] = await Promise.all([
-      sb.rpc('certificado_firmantes_listar'), sb.rpc('certificado_config_leer')]);
+    const [r1, r2, r3] = await Promise.all([
+      sb.rpc('certificado_firmantes_listar'), sb.rpc('certificado_config_leer'),
+      sb.rpc('certificado_firmantes_sugerir').catch(() => ({ data: null }))]);
     if (r1.error) throw r1.error;
     const data = r1.data;
     if (!data || !data.ok) throw new Error('falta ejecutar sql/94 o no tienes permiso');
-    _cf.datos = data; _cf.cfg = (r2.data && r2.data.ok) ? r2.data : {}; _cf.edit = {}; _cf.src = {};
+    _cf.datos = data; _cf.cfg = (r2.data && r2.data.ok) ? r2.data : {};
+    _cf.sug = (r3 && r3.data && r3.data.ok) ? r3.data : {};   // candidatos del perfil (sql/96)
+    _cf.edit = {}; _cf.src = {};
     CF_ROLES.forEach((r) => {
       const v = (data.vigentes || {})[r.rol] || null;
       _cf.edit[r.rol] = {
@@ -8786,6 +8789,7 @@ function cfTarjetaHtml(r, puede) {
     <label class="cf-l">Nombre de quien firma
       <input type="text" data-nombre value="${esc(e.nombre)}" maxlength="80" ${puede ? '' : 'disabled'}
         placeholder="Nombre completo, como debe aparecer"></label>
+    ${cfSugerencias(r.rol, puede)}
     <label class="cf-l">Cargo
       <input type="text" data-cargo value="${esc(e.cargo)}" maxlength="60" ${puede ? '' : 'disabled'}></label>
 
@@ -8871,6 +8875,19 @@ function cfConectarDatos(puede) {
   });
 }
 
+// Candidatos sacados del perfil: quien configura solo confirma, no teclea el nombre.
+function cfSugerencias(rol, puede) {
+  if (!puede) return '';
+  const lista = ((_cf.sug || {})[rol] || []).slice(0, 6);
+  if (!lista.length) return '';
+  const e = _cf.edit[rol];
+  return `<div class="cf-sug">
+    <span class="pst-nota">Del perfil${e.nombre ? ', por si cambi\u00f3' : ''}:</span>
+    ${lista.map((c, i) => `<button type="button" class="cf-sug-b" data-sug="${i}"
+      title="${esc(c.cargo || '')}">${esc(c.nombre)}</button>`).join('')}
+  </div>`;
+}
+
 function cfHistorialHtml() {
   const h = (_cf.datos && _cf.datos.historial) || [];
   if (!h.length) return '';
@@ -8905,6 +8922,16 @@ function cfConectar(r, puede) {
   const msg = q('[data-msg]');
   cfPintarPrev(r.rol);
   if (!puede) return;
+
+  card.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => {
+    const c = ((_cf.sug || {})[r.rol] || [])[Number(b.dataset.sug)];
+    if (!c) return;
+    e.nombre = c.nombre;
+    q('[data-nombre]').value = c.nombre;
+    if (c.cargo) { e.cargo = c.cargo; q('[data-cargo]').value = c.cargo; }
+    cfPintarPrev(r.rol);
+    msg.textContent = 'Nombre tomado del perfil. Revisa el cargo y guarda.';
+  }));
 
   q('[data-nombre]').addEventListener('input', (ev) => { e.nombre = ev.target.value; cfPintarPrev(r.rol); });
   q('[data-cargo]').addEventListener('input', (ev) => { e.cargo = ev.target.value; cfPintarPrev(r.rol); });

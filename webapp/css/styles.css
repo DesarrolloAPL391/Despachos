@@ -2675,3 +2675,8 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .cf-datos { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
 .cf-datos h4 { margin: 0 0 10px; font-size: 13px; color: var(--primary); }
 .cf-datos-g { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 16px; }
+
+.cf-sug { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: -4px 0 10px; }
+.cf-sug-b { border: 1px solid var(--border); background: #f8fafc; border-radius: 999px;
+  padding: 3px 10px; font: inherit; font-size: 11.5px; color: #334155; cursor: pointer; }
+.cf-sug-b:hover { background: #eef2f7; border-color: #cbd5e1; }
