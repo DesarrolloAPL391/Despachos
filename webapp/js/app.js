@@ -643,6 +643,7 @@ function buildSidebar() {
   }
   if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
   if (isTalentoHumano()) addNavAction(gTh, '🔗', 'Link de actualización', openPerfilLink, 'nav-perfil-link');
+  if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
 
   // ⚙️ Administración (tablas de configuración + acciones)
@@ -8417,8 +8418,12 @@ function certDocHtml(row, cfg, opts) {
     ? `Se expide a solicitud del interesado, con destino a <b>${esc(o.dirigidoA)}</b>.`
     : 'Se expide a solicitud del interesado.';
 
-  const firma = (nom, cargo, img) => nom
-    ? `<div class="cl-f">${img ? `<img src="${esc(img)}" alt="">` : '<div class="cl-fl"></div>'}
+  // La firma se imprime con el tamano y la posicion que se dejaron configurados (sql/94),
+  // para que salga igual en todos los certificados.
+  const firma = (nom, cargo, img, alto, dx, dy) => nom
+    ? `<div class="cl-f">${img
+      ? `<img src="${esc(img)}" alt="" style="height:${Number(alto) || 58}px;transform:translate(${Number(dx) || 0}px,${Number(dy) || 0}px)">`
+      : '<div class="cl-fl"></div>'}
          <div class="cl-fn">${esc(nom)}</div><div class="cl-fc">${esc(cargo || '')}</div></div>`
     : '';
 
@@ -8448,8 +8453,10 @@ function certDocHtml(row, cfg, opts) {
     ${cfg.nota_pie ? `<p class="cl-p cl-nota">${esc(cfg.nota_pie)}</p>` : ''}
 
     <div class="cl-firmas">
-      ${firma(cfg.firmante1_nombre, cfg.firmante1_cargo, cfg.firmante1_firma)}
-      ${firma(cfg.firmante2_nombre, cfg.firmante2_cargo, cfg.firmante2_firma)}
+      ${firma(cfg.firmante1_nombre, cfg.firmante1_cargo, cfg.firmante1_firma,
+    cfg.firmante1_alto, cfg.firmante1_dx, cfg.firmante1_dy)}
+      ${firma(cfg.firmante2_nombre, cfg.firmante2_cargo, cfg.firmante2_firma,
+    cfg.firmante2_alto, cfg.firmante2_dx, cfg.firmante2_dy)}
     </div>
     ${o.consecutivo ? `<div class="cl-cons">${esc(o.consecutivo)}</div>` : ''}
   </div>`;
@@ -8645,6 +8652,286 @@ async function certImprimir() {
   } catch (e) {
     toast('No se pudo generar: ' + (e.message || e), 'err');
   } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+
+// ===================================================================================
+// ✍️ FIRMAS DEL CERTIFICADO (sql/94) — quién firma, desde cuándo, y su firma escaneada.
+// Cada firma es un CARGO con titular vigente: cuando entra otra persona, a la anterior se le
+// cierra la vigencia y el certificado empieza a salir con el nuevo nombre sin tocar nada más.
+// La foto de la firma se limpia aquí mismo (fondo del papel → transparente) y se recorta, que es
+// lo que evita tener que acomodarla a mano en cada documento.
+// ===================================================================================
+const CF_ROLES = [
+  { rol: 'GERENTE', icono: '👔', titulo: 'Gerente General', cargo: 'Gerente General' },
+  { rol: 'GESTION_HUMANA', icono: '🧾', titulo: 'Gestión Humana', cargo: 'Coordinador de Gestión Humana' },
+];
+const _cf = { datos: null, edit: {}, src: {} }; // edit = lo que se está tocando; src = la foto sin procesar
+
+// Deja el trazo y vuelve transparente el papel; después recorta el sobrante.
+// `umbral` es qué tan claro tiene que ser un punto para considerarlo fondo (0-255).
+function cfLimpiarFirma(srcDataUrl, umbral) {
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const factor = Math.min(1, 700 / (img.naturalWidth || 700));
+        const w = Math.max(1, Math.round((img.naturalWidth || 700) * factor));
+        const h = Math.max(1, Math.round((img.naturalHeight || 300) * factor));
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0, w, h);
+        const dat = cx.getImageData(0, 0, w, h), p = dat.data;
+        let x0 = w, y0 = h, x1 = -1, y1 = -1;
+        for (let i = 0, px = 0; i < p.length; i += 4, px++) {
+          if ((p[i] + p[i + 1] + p[i + 2]) / 3 >= umbral) { p[i + 3] = 0; continue; }
+          p[i] = p[i + 1] = p[i + 2] = 20; // el trazo, en tinta pareja
+          const y = (px / w) | 0, x = px % w;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
+        cx.putImageData(dat, 0, 0);
+        if (x1 < 0) { res(''); return; } // no quedó nada: el umbral se comió la firma
+        const m = 4;
+        x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m);
+        x1 = Math.min(w - 1, x1 + m); y1 = Math.min(h - 1, y1 + m);
+        const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+        const out = document.createElement('canvas'); out.width = cw; out.height = ch;
+        out.getContext('2d').drawImage(cv, x0, y0, cw, ch, 0, 0, cw, ch);
+        res(out.toDataURL('image/png'));
+      } catch { res(''); }
+    };
+    img.onerror = () => res('');
+    img.src = srcDataUrl;
+  });
+}
+
+function cfModal() {
+  let m = $('cf-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'cf-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card cf-card">
+    <div class="modal-head"><h3>✍️ Firmas del certificado</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="cf-body"><div class="loading">Cargando…</div></div>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openCertFirmas() {
+  if (!isTalentoHumano()) return;
+  const m = cfModal();
+  m.hidden = false; closeMenu();
+  const body = m.querySelector('.cf-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.rpc('certificado_firmantes_listar');
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error('falta ejecutar sql/94 o no tienes permiso');
+    _cf.datos = data; _cf.edit = {}; _cf.src = {};
+    CF_ROLES.forEach((r) => {
+      const v = (data.vigentes || {})[r.rol] || null;
+      _cf.edit[r.rol] = {
+        hay: !!v,
+        nombre: v ? v.nombre : '',
+        cargo: v ? v.cargo : r.cargo,
+        firma: v ? (v.firma || '') : '',
+        alto: v ? Number(v.firma_alto || 58) : 58,
+        dx: v ? Number(v.firma_dx || 0) : 0,
+        dy: v ? Number(v.firma_dy || 0) : 0,
+        desde: v ? v.vigente_desde : null,
+        umbral: 195,
+        cambio: !v, // sin titular, guardar siempre crea uno
+      };
+    });
+    cfRender();
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">No se pudo cargar: ${esc(String(e.message || e))}</div>`;
+  }
+}
+
+function cfRender() {
+  const body = cfModal().querySelector('.cf-body');
+  const puede = !!(_cf.datos && _cf.datos.puede_editar);
+  body.innerHTML = `
+    <div class="cf-intro">Estas dos firmas salen en <b>todos</b> los certificados laborales.
+      Cuando entra otra persona al cargo no se borra la anterior: se registra desde cuándo firma
+      la nueva, y el certificado se actualiza solo.</div>
+    ${puede ? '' : '<div class="cert-bloqueo">Puedes consultarlas, pero solo administración las cambia.</div>'}
+    <div class="cf-grid">${CF_ROLES.map((r) => cfTarjetaHtml(r, puede)).join('')}</div>
+    ${cfHistorialHtml()}`;
+  CF_ROLES.forEach((r) => cfConectar(r, puede));
+}
+
+function cfTarjetaHtml(r, puede) {
+  const e = _cf.edit[r.rol];
+  return `
+  <section class="cf-card-f" data-rol="${r.rol}">
+    <header class="cf-h"><span class="cf-ic">${r.icono}</span>
+      <div><h4>${esc(r.titulo)}</h4>
+        <div class="pst-nota">${e.hay && e.desde ? 'Firma desde el ' + esc(fechaLegible(e.desde))
+    : 'Todavía no hay nadie asignado'}</div></div>
+    </header>
+    <label class="cf-l">Nombre de quien firma
+      <input type="text" data-nombre value="${esc(e.nombre)}" maxlength="80" ${puede ? '' : 'disabled'}
+        placeholder="Nombre completo, como debe aparecer"></label>
+    <label class="cf-l">Cargo
+      <input type="text" data-cargo value="${esc(e.cargo)}" maxlength="60" ${puede ? '' : 'disabled'}></label>
+
+    <div class="cf-firma-zona">
+      <div class="cf-prev" data-prev></div>
+      <div class="cf-acc">
+        <label class="btn btn-sm cf-file">📷 Subir foto de la firma
+          <input type="file" accept="image/*" data-file hidden ${puede ? '' : 'disabled'}></label>
+        <button type="button" class="btn btn-sm" data-quitar ${puede ? '' : 'disabled'}>🗑️ Quitar</button>
+      </div>
+      <div class="cf-ajustes" data-ajustes${e.firma ? '' : ' hidden'}>
+        <label class="cf-r">Limpiar el papel
+          <input type="range" min="120" max="245" step="5" value="${e.umbral}" data-umbral ${puede ? '' : 'disabled'}>
+          <span class="pst-nota">Súbelo si queda fondo gris; bájalo si se borran trazos.</span></label>
+        <label class="cf-r">Tamaño
+          <input type="range" min="26" max="120" step="2" value="${e.alto}" data-alto ${puede ? '' : 'disabled'}></label>
+        <label class="cf-r">Mover a los lados
+          <input type="range" min="-90" max="90" step="2" value="${e.dx}" data-dx ${puede ? '' : 'disabled'}></label>
+        <label class="cf-r">Subir o bajar
+          <input type="range" min="-50" max="50" step="2" value="${e.dy}" data-dy ${puede ? '' : 'disabled'}></label>
+      </div>
+    </div>
+
+    <div class="cf-guardar">
+      <label class="pf-sw"><input type="checkbox" data-cambio ${e.cambio ? 'checked' : ''}
+        ${e.hay && puede ? '' : 'disabled'}> Entra otra persona al cargo</label>
+      <label class="cf-desde" data-desdewrap${e.cambio ? '' : ' hidden'}>Firma desde
+        <input type="date" data-desde value="${hoyServidor()}" ${puede ? '' : 'disabled'}></label>
+      <div class="cf-btns">
+        <button type="button" class="btn btn-primary btn-sm" data-guardar ${puede ? '' : 'disabled'}>💾 Guardar</button>
+        <span class="pst-nota" data-msg></span>
+      </div>
+    </div>
+  </section>`;
+}
+
+function cfHistorialHtml() {
+  const h = (_cf.datos && _cf.datos.historial) || [];
+  if (!h.length) return '';
+  const nom = { GERENTE: 'Gerente General', GESTION_HUMANA: 'Gestión Humana' };
+  return `<div class="cf-hist">
+    <h4>Quién firmaba antes</h4>
+    ${h.map((x) => `<div class="cf-hist-it"><b>${esc(x.nombre)}</b> · ${esc(nom[x.rol] || x.rol)}
+      · del ${esc(fechaLegible(x.desde))} al ${esc(fechaLegible(x.hasta))}
+      ${x.tiene_firma ? ' · tenía firma cargada' : ''}</div>`).join('')}
+  </div>`;
+}
+
+// Así se va a ver impreso: la firma sobre la línea, con el nombre y el cargo debajo.
+function cfPintarPrev(rol) {
+  const e = _cf.edit[rol];
+  const cont = cfModal().querySelector(`[data-rol="${rol}"] [data-prev]`);
+  if (!cont) return;
+  cont.innerHTML = e.firma
+    ? `<img src="${e.firma}" alt="" style="height:${e.alto}px;transform:translate(${e.dx}px,${e.dy}px)">`
+    : '<div class="cf-sin">Sin firma cargada: el certificado imprime la línea para firmar a mano.</div>';
+  const linea = document.createElement('div');
+  linea.className = 'cf-linea';
+  linea.innerHTML = `<div class="cf-linea-n">${esc(e.nombre || '—')}</div>
+    <div class="cf-linea-c">${esc(e.cargo || '')}</div>`;
+  cont.appendChild(linea);
+}
+
+function cfConectar(r, puede) {
+  const card = cfModal().querySelector(`[data-rol="${r.rol}"]`);
+  const e = _cf.edit[r.rol];
+  const q = (sel) => card.querySelector(sel);
+  const msg = q('[data-msg]');
+  cfPintarPrev(r.rol);
+  if (!puede) return;
+
+  q('[data-nombre]').addEventListener('input', (ev) => { e.nombre = ev.target.value; cfPintarPrev(r.rol); });
+  q('[data-cargo]').addEventListener('input', (ev) => { e.cargo = ev.target.value; cfPintarPrev(r.rol); });
+
+  q('[data-file]').addEventListener('change', async (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    if (f.size > 8 * 1024 * 1024) { msg.textContent = 'La foto pesa demasiado (máximo 8 MB).'; return; }
+    msg.textContent = 'Procesando la foto…';
+    const crudo = await new Promise((res) => {
+      const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(''); fr.readAsDataURL(f);
+    });
+    if (!crudo) { msg.textContent = 'No se pudo leer la imagen.'; return; }
+    _cf.src[r.rol] = crudo;
+    await cfReprocesar(r.rol);
+    q('[data-ajustes]').hidden = false;
+    msg.textContent = e.firma ? 'Lista. Ajusta el tamaño y la posición, y guarda.' : 'No se distingue la firma: prueba subiendo "Limpiar el papel".';
+    ev.target.value = '';
+  });
+
+  q('[data-quitar]').addEventListener('click', () => {
+    e.firma = ''; _cf.src[r.rol] = '';
+    q('[data-ajustes]').hidden = true;
+    cfPintarPrev(r.rol);
+    msg.textContent = 'Firma quitada. Guarda para que quede así.';
+  });
+
+  q('[data-umbral]').addEventListener('input', async (ev) => {
+    e.umbral = Number(ev.target.value);
+    if (_cf.src[r.rol]) await cfReprocesar(r.rol);
+  });
+  q('[data-alto]').addEventListener('input', (ev) => { e.alto = Number(ev.target.value); cfPintarPrev(r.rol); });
+  q('[data-dx]').addEventListener('input', (ev) => { e.dx = Number(ev.target.value); cfPintarPrev(r.rol); });
+  q('[data-dy]').addEventListener('input', (ev) => { e.dy = Number(ev.target.value); cfPintarPrev(r.rol); });
+
+  q('[data-cambio]').addEventListener('change', (ev) => {
+    e.cambio = ev.target.checked;
+    q('[data-desdewrap]').hidden = !e.cambio;
+  });
+
+  q('[data-guardar]').addEventListener('click', () => cfGuardar(r, card, msg));
+}
+
+async function cfReprocesar(rol) {
+  const e = _cf.edit[rol];
+  if (!_cf.src[rol]) return;
+  e.firma = await cfLimpiarFirma(_cf.src[rol], e.umbral);
+  cfPintarPrev(rol);
+}
+
+async function cfGuardar(r, card, msg) {
+  const e = _cf.edit[r.rol];
+  const btn = card.querySelector('[data-guardar]');
+  if (!e.nombre.trim() || !e.cargo.trim()) { msg.textContent = 'Escribe el nombre y el cargo.'; return; }
+  if (e.firma && e.firma.length > 900000) {
+    msg.textContent = 'La firma quedó muy pesada: recorta la foto antes de subirla.'; return;
+  }
+  btn.disabled = true; msg.textContent = 'Guardando…';
+  try {
+    let resp;
+    if (e.cambio || !e.hay) {
+      const desde = card.querySelector('[data-desde]').value || null;
+      resp = await sb.rpc('certificado_firmante_cambiar', {
+        p_rol: r.rol, p_nombre: e.nombre.trim(), p_cargo: e.cargo.trim(), p_desde: desde,
+        p_firma: e.firma || null, p_alto: e.alto, p_dx: e.dx, p_dy: e.dy });
+    } else {
+      resp = await sb.rpc('certificado_firmante_actualizar', {
+        p_rol: r.rol, p_nombre: e.nombre.trim(), p_cargo: e.cargo.trim(),
+        p_firma: e.firma === '' ? '' : (e.firma || null), p_alto: e.alto, p_dx: e.dx, p_dy: e.dy });
+    }
+    if (resp.error) throw resp.error;
+    if (!resp.data?.ok) throw new Error(resp.data?.error || 'no se pudo guardar');
+    toast('Firma guardada.', 'ok');
+    _certCfg = null; // el certificado vuelve a leer la configuración
+    await openCertFirmas();
+  } catch (err) {
+    const t = String(err.message || err);
+    msg.textContent = /certificado_firmante/.test(t) ? 'Falta ejecutar sql/94.' : 'No se pudo guardar: ' + t;
+    btn.disabled = false;
+  }
 }
 
 // ===================================================================================

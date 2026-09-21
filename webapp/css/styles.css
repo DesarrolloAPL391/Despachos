@@ -2636,3 +2636,38 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 @media (max-width: 640px) { .cert-prev { padding: 10px; } .cert-prev .cl-hoja { padding: 24px 20px; } }
 
 .btn:disabled, .btn[disabled] { opacity: .45; cursor: not-allowed; filter: grayscale(.6); }
+
+/* ---- Firmas del certificado: quien firma y su firma escaneada ---- */
+.cf-card { max-width: 1020px; }
+.cf-body { padding: 16px 18px; overflow: auto; max-height: 74vh; }
+.cf-intro { font-size: 13px; color: #475569; margin-bottom: 14px; }
+.cf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; }
+.cf-card-f { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: #fff; }
+.cf-h { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.cf-h h4 { margin: 0; font-size: 15px; }
+.cf-ic { font-size: 26px; line-height: 1; }
+.cf-l { display: block; font-size: 12px; color: #64748b; margin-bottom: 10px; }
+.cf-l input { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font: inherit;
+  border: 1px solid var(--border); border-radius: 7px; box-sizing: border-box; }
+/* La vista previa imita el pie del documento: firma encima de la linea */
+.cf-firma-zona { border: 1px dashed var(--border); border-radius: 10px; padding: 12px; background: #fafafa; }
+.cf-prev { min-height: 116px; display: flex; flex-direction: column; justify-content: flex-end;
+  align-items: center; overflow: hidden; }
+.cf-prev img { display: block; max-width: 100%; }
+.cf-sin { font-size: 12px; color: #94a3b8; text-align: center; padding: 22px 8px; }
+.cf-linea { border-top: 1px solid #000; margin-top: 4px; padding-top: 5px; text-align: center;
+  width: 86%; }
+.cf-linea-n { font-weight: 700; font-size: 12px; }
+.cf-linea-c { font-size: 11px; color: #334155; }
+.cf-acc { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.cf-file { cursor: pointer; }
+.cf-ajustes { margin-top: 10px; display: grid; gap: 8px; }
+.cf-r { font-size: 12px; color: #64748b; display: block; }
+.cf-r input[type=range] { width: 100%; margin-top: 2px; }
+.cf-guardar { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.cf-desde { display: block; font-size: 12px; color: #64748b; margin: 8px 0; }
+.cf-desde input { margin-left: 6px; padding: 5px 8px; font: inherit; border: 1px solid var(--border); border-radius: 7px; }
+.cf-btns { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.cf-hist { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.cf-hist h4 { margin: 0 0 8px; font-size: 13px; color: var(--primary); }
+.cf-hist-it { font-size: 12.5px; color: #475569; padding: 3px 0; }
