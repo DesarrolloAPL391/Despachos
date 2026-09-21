@@ -374,6 +374,22 @@
           <div id="laur-body" class="malla-body"></div>
         </div>
 
+        <!-- Control Av. Oriental: un solo punto de paso (sql/98). Misma mecanica de Laureles. -->
+        <div id="oriental-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🛂 Control Av. Oriental</h2>
+            <span id="or-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <label class="cump-fecha-lbl">📅 <input type="date" id="or-fecha" /></label>
+            <input type="search" id="or-search" placeholder="Buscar móvil o ruta…" />
+            <label class="rutas-auto" title="Actualizar cada minuto (solo hoy)"><input type="checkbox" id="or-auto" checked /> Auto</label>
+            <button id="or-excel" class="btn">📊 Excel</button>
+            <button id="or-refresh" class="btn">↻ Actualizar</button>
+            <button id="or-close" class="btn">← Volver</button>
+          </div>
+          <div id="or-body" class="malla-body"></div>
+        </div>
+
         <!-- Vista "Integradas": el admin habilita carros EXTRA que se ofrecen en toda ruta I/II -->
         <div id="integradas-view" class="malla-view" hidden>
           <div class="toolbar cump-toolbar">

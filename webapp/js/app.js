@@ -590,6 +590,8 @@ function buildSidebar() {
   if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🏆', 'Top de movilización', openTop, 'nav-top');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(gAn, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(gAn, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
+  if (puedeVerOriental()) addNavAction(gAn, '🛂', 'Control Av. Oriental', () => openOriental('control'), 'nav-or');
+  if (puedeCumplimientoOriental()) addNavAction(gAn, '📊', 'Cumplimiento Av. Oriental', () => openOriental('cumplimiento'), 'nav-orcump');
   if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
 
   // 🚫 Restricciones y documentos (tabla del módulo + acciones)
@@ -683,6 +685,8 @@ function buildSidebar() {
   const aPue = $('nav-evb-pue'); if (aPue) aPue.classList.toggle('active', enConduccion && filters.categoria === 'PUERTA ABIERTA');
   const alau = $('nav-laur'); if (alau) alau.classList.toggle('active', currentView === 'laureles' && _laurModo === 'control');
   const alauc = $('nav-laurcump'); if (alauc) alauc.classList.toggle('active', currentView === 'laureles' && _laurModo === 'cumplimiento');
+  const aor = $('nav-or'); if (aor) aor.classList.toggle('active', currentView === 'oriental' && _orModo === 'control');
+  const aorc = $('nav-orcump'); if (aorc) aorc.classList.toggle('active', currentView === 'oriental' && _orModo === 'cumplimiento');
   // Submenús: ocultar los grupos que quedaron vacíos (según el rol) y abrir el que tiene la opción activa
   nav.querySelectorAll('.nav-group').forEach((g) => {
     const body = g.querySelector('.nav-group-body');
@@ -822,7 +826,7 @@ function selectTable(name, filtroInicial) {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4286,7 +4290,7 @@ async function openCumplimiento() {
   $('map-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4553,7 +4557,7 @@ async function openRutasVivo(modo) {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4781,7 +4785,7 @@ async function openMalla() {
   $('map-view').hidden = true;
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -4950,7 +4954,7 @@ async function openLaureles(modo) {
 }
 function cerrarLaureles() {
   if (_laurTimer) { clearInterval(_laurTimer); _laurTimer = null; }
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -5292,6 +5296,7 @@ async function escanearViaje(v) {
     return;
   }
   _laurScanViaje = v;
+  _scanCtrl = 'laureles';
   const esperada = normPlaca(v.placa);
   if (!esperada) { toast('Ese móvil no tiene placa registrada; no se puede cruzar.', 'err'); return; }
   const cap = $('qr-caption');
@@ -5376,7 +5381,368 @@ async function _mostrarResultadoLaur(v, text) {
 }
 $('laur-scan-x')?.addEventListener('click', cerrarLaurScan);
 $('laur-scan-cancel')?.addEventListener('click', cerrarLaurScan);
-$('laur-scan-go')?.addEventListener('click', () => { $('laur-scan').hidden = true; if (_laurScanViaje) escanearViaje(_laurScanViaje); });
+// El modal de resultado lo comparten los dos controles: _scanCtrl dice a cual volver.
+$('laur-scan-go')?.addEventListener('click', () => {
+  $('laur-scan').hidden = true;
+  if (_scanCtrl === 'oriental') { if (_orScanViaje) escanearViajeOriental(_orScanViaje); }
+  else if (_laurScanViaje) escanearViaje(_laurScanViaje);
+});
+
+
+// ===================================================================================
+// 🛂 CONTROL AV. ORIENTAL (sql/98) — mismo modelo que Control Laureles, con UN punto.
+// El controlador ve los buses que van a pasar hoy y le escanea el QR a cada uno al llegar.
+// A diferencia de Laureles no hay tramo (entrada→salida), así que no se mide permanencia:
+// se mide paso, puntualidad y escaneo. Si algún día se crea un segundo punto, se amplía.
+// ===================================================================================
+let _orUltimo = null, _orTimer = null, _orScanViaje = null, _orModo = 'control';
+let _scanCtrl = 'laureles';   // que control abrio el modal de resultado del QR
+const OR_GRACIA = 3;   // minutos de gracia para considerar "a tiempo" el paso
+
+// El despachador de ese puesto (igual que en Laureles, por el nombre del puesto asignado).
+function esDespachadorOriental() { return isDespachador() && /oriental/.test(normRuta(CTX?.puesto || '')); }
+function puedeVerOriental() { return isAdmin() || isAuditor() || isOperaciones() || esDespachadorOriental(); }
+function puedeCumplimientoOriental() { return isAdmin() || isAuditor() || isOperaciones(); }
+
+async function openOriental(modo) {
+  _orModo = (modo === 'cumplimiento') ? 'cumplimiento' : 'control';
+  const esCump = (_orModo === 'cumplimiento');
+  if (!(esCump ? puedeCumplimientoOriental() : puedeVerOriental())) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'oriental';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  $('table-view').hidden = true;
+  $('map-view').hidden = true;
+  $('cump-view').hidden = true;
+  $('rutas-view').hidden = true;
+  $('malla-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('perfilstats-view').hidden = true;
+  $('oriental-view').hidden = false;
+  const h2 = document.querySelector('#oriental-view h2');
+  if (h2) h2.textContent = esCump ? '📊 Cumplimiento Av. Oriental' : '🛂 Control Av. Oriental';
+  $('or-search').hidden = esCump;  // en cumplimiento no hay tabla que filtrar
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $(esCump ? 'nav-orcump' : 'nav-or')?.classList.add('active');
+  buildBottomNav();
+  const bx = $('or-excel'); if (bx) bx.hidden = !puedeCumplimientoOriental();
+  $('or-fecha').max = hoyServidor();
+  if (!$('or-fecha').value) $('or-fecha').value = hoyServidor();
+  await cargarOriental(false);
+  _armarAutoOr();
+}
+
+function cerrarOriental() {
+  if (_orTimer) { clearInterval(_orTimer); _orTimer = null; }
+  $('oriental-view').hidden = true;
+  selectTable(current);
+}
+
+function _armarAutoOr() {
+  if (_orTimer) { clearInterval(_orTimer); _orTimer = null; }
+  // auto-refresco solo si la fecha es HOY (control en vivo)
+  if ($('or-auto')?.checked && $('or-fecha').value === hoyServidor()) {
+    _orTimer = setInterval(() => { if (currentView === 'oriental') cargarOriental(true); }, 60000);
+  }
+}
+
+async function cargarOriental(silencioso) {
+  const body = $('or-body');
+  const fecha = $('or-fecha').value || hoyServidor();
+  if (!silencioso) body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  try {
+    const { data, error } = await sb.rpc('control_oriental', { p_fecha: fecha });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin datos');
+    _orUltimo = data;
+    renderOriental();
+  } catch (e) {
+    const t = String(e.message || e);
+    if (!silencioso) {
+      body.innerHTML = `<div class="cump-empty">${/control_oriental/.test(t)
+        ? 'Falta ejecutar sql/98.' : 'No se pudo consultar SONAR.'}<br><small>${esc(t)}</small></div>`;
+    }
+  }
+}
+
+function renderOriental() {
+  const d = _orUltimo; if (!d) return;
+  const total = (d.viajes || []).length;
+  const escan = (d.viajes || []).filter((v) => v.chk).length;
+  const soloLectura = (d.fecha !== hoyServidor());
+  const sub = $('or-sub');
+  if (sub) {
+    sub.textContent = `${total} buses · ${escan} escaneados · ${d.punto || 'CONTROL AV. ORIENTAL'}`
+      + ` · ${fechaLegible(d.fecha)}${soloLectura ? ' · solo lectura' : ''}`;
+  }
+
+  if (_orModo === 'cumplimiento') {
+    const agg = _orAgg(d.viajes || []);
+    $('or-body').innerHTML = total ? _orDashHtml(d, agg) : '<div class="cump-empty">Sin buses ese día.</div>';
+    return;
+  }
+
+  const term = ($('or-search')?.value || '').trim().toLowerCase();
+  let viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.paso) - _laurMin(b.paso));
+  if (term) {
+    viajes = viajes.filter((v) => String(v.movil || '').toLowerCase().includes(term)
+      || String(v.ruta || '').toLowerCase().includes(term));
+  }
+  if (!viajes.length) {
+    $('or-body').innerHTML = `<div class="cump-empty">Sin buses ese día${term ? ' (con ese filtro)' : ''}.</div>`;
+    return;
+  }
+  const leyenda = '<div class="lv-leyenda mc-leyenda">'
+    + '<span class="lv-lg lv-lg-ok">A tiempo</span><span class="lv-lg lv-lg-adel">Adelantado</span>'
+    + '<span class="lv-lg lv-lg-atras">Atrasado</span><span class="lv-lg lv-lg-prog">Programado (sin registro)</span></div>';
+  const esHoy = (d.fecha === hoyServidor());
+  const filas = viajes.map((v) => {
+    const cancel = (v.canceled === 'Y' || v.canceled === '1');
+    const c = v.chk;
+    const rowCls = c ? (c.ok ? ' laur-ok' : ' laur-bad') : '';
+    const tip = esHoy ? 'Tocar para escanear el QR y confirmar el paso' : 'Solo lectura (fecha anterior)';
+    return `<tr class="or-row ${esHoy ? 'rv-clk ' : ''}${cancel ? 'mc-row-cancel' : ''}${v.running === 'Y' ? ' mc-row-live' : ''}${rowCls}" data-regid="${esc(String(v.regid || ''))}" title="${tip}">`
+      + _laurCell(v.paso)
+      + `<td class="laur-mov">${esc(String(v.movil || '—').trim())}</td>`
+      + `<td class="laur-ruta">${esc(v.ruta || '')}</td>`
+      + `<td class="laur-desp">${esc(v.hora || '—')}</td>`
+      + `<td class="laur-dur">${_durTxt(_durMin(v.hora, v.paso))}</td>`
+      + _laurEstadoCell(v.chk) + '</tr>';
+  }).join('');
+  $('or-body').innerHTML = leyenda
+    + '<div class="mc-wrap"><table class="mc-tabla laur-tabla"><thead><tr>'
+    + `<th>Paso · ${esc(d.punto || 'CONTROL AV. ORIENTAL')}</th><th>Vehículo</th><th>Ruta</th>`
+    + '<th>Despacho</th><th>Desp→Control</th><th>Estado (QR)</th>'
+    + `</tr></thead><tbody>${filas}</tbody></table></div>`;
+}
+
+// Igual que el de Laureles pero sin permanencia: aquí no hay tramo que medir.
+function _orAgg(viajes) {
+  const A = {
+    total: 0, activos: 0, cancelados: 0, enCurso: 0,
+    qrOk: 0, qrNo: 0, qrPend: 0, conReal: 0, soloProg: 0,
+    adel: 0, aTiempo: 0, atras: 0, puntN: 0, desvSum: 0,
+    porRuta: new Map(), porHora: new Map(), alertas: [],
+  };
+  (viajes || []).forEach((v) => {
+    A.total++;
+    if (v.canceled === 'Y' || v.canceled === '1') { A.cancelados++; return; }
+    A.activos++;
+    if (v.running === 'Y') A.enCurso++;
+    const ruta = String(v.ruta || '—');
+    const r = A.porRuta.get(ruta) || { activos: 0, qrOk: 0, conReal: 0, aTiempo: 0, puntN: 0 };
+    r.activos++;
+    const c = v.chk;
+    if (c && c.ok) { A.qrOk++; r.qrOk++; } else if (c && !c.ok) {
+      A.qrNo++;
+      A.alertas.push({ movil: String(v.movil || '').trim(), ruta, esperada: v.placa || '',
+        leida: c.leida || '', por: c.por || '', hora: c.hora || '' });
+    } else A.qrPend++;
+    const real = !!(v.paso && !v.paso.e && v.paso.h);
+    if (real) { A.conReal++; r.conReal++; } else A.soloProg++;
+    if (real && v.paso.d != null) {
+      const dv = v.paso.d; A.puntN++; A.desvSum += dv; r.puntN++;
+      if (dv < -OR_GRACIA) A.adel++;
+      else if (dv > OR_GRACIA) A.atras++;
+      else { A.aTiempo++; r.aTiempo++; }
+    }
+    const hm = _hm(v.paso) != null ? _hm(v.paso) : _hm(v.hora);
+    if (hm != null) { const h = Math.floor(hm / 60); A.porHora.set(h, (A.porHora.get(h) || 0) + 1); }
+    A.porRuta.set(ruta, r);
+  });
+  A.desvProm = A.puntN ? Math.round(A.desvSum / A.puntN) : null;
+  return A;
+}
+
+function _orDashHtml(d, a) {
+  if (!a.total) return '';
+  const pQR = _pctCump(a.qrOk, a.activos), pPunt = _pctCump(a.aTiempo, a.puntN), pPaso = _pctCump(a.conReal, a.activos);
+  const hero = `<div class="cump-heros laur-heros">
+    <div class="cump-hero" style="--acc:${_colCump(pQR)}"><div class="ch-val">${pQR}%</div><div class="ch-lbl">Control QR</div><div class="ch-sub">${a.qrOk}/${a.activos} escaneados</div></div>
+    <div class="cump-hero" style="--acc:${a.puntN ? _colCump(pPunt) : '#94a3b8'}"><div class="ch-val">${a.puntN ? pPunt + '%' : '—'}</div><div class="ch-lbl">Puntualidad en el paso</div><div class="ch-sub">${a.puntN ? a.aTiempo + '/' + a.puntN + ' a tiempo' : 'sin registro'}</div></div>
+    <div class="cump-hero" style="--acc:${_colCump(pPaso)}"><div class="ch-val">${pPaso}%</div><div class="ch-lbl">Paso registrado</div><div class="ch-sub">${a.conReal}/${a.activos} con GPS</div></div>
+  </div>`;
+  const stat = (dot, lbl, n) => `<div class="cump-stat"><span class="cs-dot ${dot}"></span><span class="cs-lbl">${lbl}</span><b class="cs-n">${n}</b><span class="cs-pct">${_pctCump(n, a.total)}%</span></div>`;
+  const desglose = `<div class="cump-stats"><div class="cump-stats-head"><b>${a.total}</b> buses del día${a.cancelados ? ` · ${a.activos} activos` : ''}</div>`
+    + stat('desp', 'Escaneados ✅', a.qrOk) + stat('perd', 'No coincide 🚨', a.qrNo)
+    + stat('sin', 'Pendientes ⏳', a.qrPend) + stat('curso', 'En curso', a.enCurso)
+    + stat('inc', 'Cancelados', a.cancelados) + '</div>';
+  const rutas = [...a.porRuta.entries()].sort((x, y) => y[1].activos - x[1].activos);
+  const barsRuta = rutas.map(([ruta, r]) => {
+    const p = _pctCump(r.qrOk, r.activos), pp = r.puntN ? _pctCump(r.aTiempo, r.puntN) : null;
+    return `<div class="crow"><div class="crow-lbl">${esc(ruta)}</div>`
+      + `<div class="crow-track"><div class="crow-fill" style="width:${p}%;background:${_colCump(p)}"></div></div>`
+      + `<div class="crow-val"><b style="color:${_colCump(p)}">${p}%</b> <small>${r.qrOk}/${r.activos}${pp != null ? ' · punt ' + pp + '%' : ''}</small></div></div>`;
+  }).join('');
+  const cardRuta = `<div class="cump-card"><h4>Control por ruta <small>· % escaneado</small></h4>${barsRuta || '<div class="cump-empty">Sin datos.</div>'}</div>`;
+  const puntRow = (lbl, n, col) => `<div class="crow"><div class="crow-lbl">${lbl}</div>`
+    + `<div class="crow-track"><div class="crow-fill" style="width:${_pctCump(n, a.puntN)}%;background:${col}"></div></div>`
+    + `<div class="crow-val"><b>${n}</b> <small>${_pctCump(n, a.puntN)}%</small></div></div>`;
+  // La gracia va en el titulo: dentro de la etiqueta se corta y no se alcanza a leer.
+  const cardPunt = `<div class="cump-card"><h4>Puntualidad en el paso <small>· gracia ±${OR_GRACIA}m${a.desvProm != null ? ` · desvío prom. ${a.desvProm > 0 ? '+' : ''}${a.desvProm}m` : ''}</small></h4>`
+    + (a.puntN ? puntRow('⏩ Adelantado', a.adel, '#3b82f6') + puntRow('✓ A tiempo', a.aTiempo, '#16a34a') + puntRow('⏳ Atrasado', a.atras, '#dc2626')
+      : '<div class="cump-empty">Ningún bus registró hora real de paso todavía.</div>') + '</div>';
+  const horas = [...a.porHora.keys()].sort((x, y) => x - y);
+  const maxH = Math.max(1, ...horas.map((h) => a.porHora.get(h)));
+  const pico = horas.length ? horas.reduce((m, h) => (a.porHora.get(h) > a.porHora.get(m) ? h : m), horas[0]) : null;
+  const barsHora = horas.map((h) => {
+    const n = a.porHora.get(h);
+    return `<div class="cbar-col"><div class="cbar-n">${n}</div>`
+      + `<div class="cbar"><div class="cbar-seg ${h === pico ? 'perd peak' : 'curso'}" style="height:${(n / maxH * 100).toFixed(1)}%" title="${n} buses"></div></div>`
+      + `<div class="cbar-x">${String(h).padStart(2, '0')}h</div></div>`;
+  }).join('');
+  const cardHora = horas.length ? `<div class="cump-card"><h4>Flujo por hora <small>${pico != null ? `· pico ${String(pico).padStart(2, '0')}h (${maxH})` : ''}</small></h4><div class="cbar-wrap">${barsHora}</div></div>` : '';
+  const cardAlert = a.alertas.length ? `<div class="cump-card"><h4>🚨 Placas que no coinciden (${a.alertas.length})</h4>`
+    + '<div class="cump-tablewrap"><table class="cump-table"><thead><tr><th>Móvil</th><th>Ruta</th><th>Esperada</th><th>Leída</th><th>Reportó</th></tr></thead><tbody>'
+    + a.alertas.map((x) => `<tr><td><b>${esc(x.movil)}</b></td><td>${esc(x.ruta)}</td><td>${esc(x.esperada)}</td><td class="laur-al-leida">${esc(x.leida || '—')}</td><td>${esc(x.por || '')}${x.hora ? ' · ' + esc(x.hora) : ''}</td></tr>`).join('')
+    + '</tbody></table></div></div>' : '';
+  return `<div class="cump-top">${hero}${desglose}</div><div class="cump-grid">${cardRuta}${cardPunt}</div>${cardHora}${cardAlert}`;
+}
+
+// ---- Escaneo del QR en el puesto ----
+async function escanearViajeOriental(v) {
+  if (($('or-fecha').value || hoyServidor()) !== hoyServidor()) {
+    toast('Solo se puede chequear el día de hoy; las fechas anteriores son solo lectura.', 'err');
+    return;
+  }
+  _orScanViaje = v;
+  _scanCtrl = 'oriental';
+  const esperada = normPlaca(v.placa);
+  if (!esperada) { toast('Ese móvil no tiene placa registrada; no se puede cruzar.', 'err'); return; }
+  const cap = $('qr-caption');
+  if (cap) {
+    cap.hidden = false;
+    cap.innerHTML = `Escaneando · <b>Móvil ${esc(String(v.movil || '').trim())}</b> · placa esperada <b>${esc(v.placa || '—')}</b> · Ruta ${esc(v.ruta || '')}`;
+  }
+  const th = document.querySelector('#qr-modal h3'); if (th) th.textContent = '📷 Escanear QR del bus';
+  const text = await openQrScanner('Apunta la cámara al QR del bus…');
+  if (cap) cap.hidden = true;
+  if (!text) return;
+  _mostrarResultadoOriental(v, text);
+}
+
+async function _mostrarResultadoOriental(v, text) {
+  const esperada = normPlaca(v.placa);
+  const cands = _qrCandidatos(text);
+  const leida = normPlaca(cands.map((c) => normPlaca(c)).find(Boolean) || text);
+  const ok = cands.some((c) => {
+    const p = normPlaca(c);
+    return p && (p === esperada || (esperada.length >= 5 && p.includes(esperada)));
+  });
+  $('laur-scan-info').innerHTML =
+    `<div class="ls-bus">🚌 Móvil <b>${esc(String(v.movil || '—').trim())}</b> · Ruta ${esc(v.ruta || '')}</div>`
+    + `<div class="ls-pla">Placa esperada: <b>${esc(v.placa || '—')}</b></div>`
+    + `<div class="ls-hr">Paso: ${esc((v.paso && v.paso.h) || '—')}</div>`;
+  const res = $('laur-scan-result');
+  if (ok) {
+    _beep(true);
+    res.className = 'laur-scan-result ls-ok';
+    res.innerHTML = '<div class="ls-big">✅ PLACA CORRECTA</div>'
+      + `<div class="ls-sub">${esc(v.placa)} · Móvil ${esc(String(v.movil || '').trim())} · paso confirmado</div>`;
+    toast(`Confirmado móvil ${String(v.movil || '').trim()} (${v.placa})`, 'ok');
+  } else {
+    _beep(false);
+    res.className = 'laur-scan-result ls-err';
+    res.innerHTML = '<div class="ls-big">⚠️ PLACA NO COINCIDE</div>'
+      + `<div class="ls-sub">Esperada: <b>${esc(v.placa || '—')}</b> (móvil ${esc(String(v.movil || '').trim())})<br>Leída: <b>${esc(leida || text)}</b></div>`
+      + '<div class="ls-alert">🚨 El carro que pasó no es el de este viaje. Avísale al despachador.</div>';
+    toast(`⚠️ Placa no coincide: esperada ${v.placa || '?'}, leída ${leida || '?'}`, 'err');
+  }
+  $('laur-scan').hidden = false;
+  const fecha = $('or-fecha').value || hoyServidor();
+  try {
+    const { data, error } = await sb.rpc('registrar_checkin_oriental', {
+      p_regid: v.regid, p_fecha: fecha, p_ruta: v.ruta || '',
+      p_movil: String(v.movil || '').trim(), p_placa_esperada: v.placa || '',
+      p_placa_leida: leida || '', p_ok: ok,
+    });
+    if (error) throw error;
+    if (data && data.ok) {
+      v.chk = { ok, por: data.por || (CTX?.nombre || miCorreo()), hora: data.hora, leida };
+      renderOriental();
+    } else if (data && data.error) {
+      toast(data.error, 'err');
+    }
+  } catch (e) {
+    toast('No se pudo guardar el chequeo: ' + (e.message || e), 'err');
+  }
+}
+
+$('or-body')?.addEventListener('click', (e) => {
+  const tr = e.target.closest('.or-row'); if (!tr) return;
+  const v = (_orUltimo?.viajes || []).find((x) => String(x.regid) === tr.dataset.regid);
+  if (v) escanearViajeOriental(v);
+});
+$('or-close')?.addEventListener('click', cerrarOriental);
+$('or-refresh')?.addEventListener('click', () => cargarOriental(false));
+$('or-fecha')?.addEventListener('change', () => { cargarOriental(false); _armarAutoOr(); });
+$('or-search')?.addEventListener('input', renderOriental);
+$('or-auto')?.addEventListener('change', _armarAutoOr);
+$('or-excel')?.addEventListener('click', exportOrExcel);
+
+async function exportOrExcel() {
+  if (!puedeCumplimientoOriental()) { toast('No tienes permiso para descargar.', 'err'); return; }
+  const d = _orUltimo;
+  if (!d || !(d.viajes || []).length) { toast('No hay datos para exportar.', 'err'); return; }
+  const viajes = (d.viajes || []).slice().sort((a, b) => _laurMin(a.paso) - _laurMin(b.paso));
+  const celTxt = (c) => {
+    if (!c || !c.h) return '';
+    if (c.e) return `${c.h} (prog)`;
+    const dd = c.d == null ? '' : ` (${c.d > 0 ? '+' : ''}${c.d}m)`;
+    return `${c.h}${dd}`;
+  };
+  const estTxt = (c) => (!c ? 'Pendiente' : (c.ok ? 'Escaneado' : 'No coincide'));
+  const head = [`Paso ${d.punto || ''}`.trim(), 'Vehículo', 'Ruta', 'Despacho', 'Desp→Control (min)',
+    'Estado QR', 'Escaneó', 'Hora chequeo', 'Placa leída'];
+  const filas = viajes.map((v) => [celTxt(v.paso), String(v.movil || '').trim(), v.ruta || '', v.hora || '',
+    _durMin(v.hora, v.paso) == null ? '' : _durMin(v.hora, v.paso),
+    estTxt(v.chk), (v.chk && v.chk.por) || '', (v.chk && v.chk.hora) || '', (v.chk && !v.chk.ok && v.chk.leida) || '']);
+  const btn = $('or-excel'); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const wb = XLSX.utils.book_new();
+    const a = _orAgg(d.viajes || []);
+    const resAoa = [
+      ['Control Av. Oriental — Resumen', d.fecha],
+      [],
+      ['Buses del día', a.total],
+      ['Activos (no cancelados)', a.activos],
+      ['Cancelados', a.cancelados],
+      ['En curso', a.enCurso],
+      [],
+      ['Control QR (% escaneado)', _pctCump(a.qrOk, a.activos) + '%', a.qrOk + '/' + a.activos],
+      ['  Escaneados OK', a.qrOk],
+      ['  No coincide', a.qrNo],
+      ['  Pendientes', a.qrPend],
+      [],
+      ['Paso registrado GPS (%)', _pctCump(a.conReal, a.activos) + '%', a.conReal + '/' + a.activos],
+      [],
+      ['Puntualidad en el paso (%)', a.puntN ? _pctCump(a.aTiempo, a.puntN) + '%' : '—', a.aTiempo + '/' + a.puntN],
+      ['  Adelantado', a.adel],
+      ['  A tiempo (±' + OR_GRACIA + 'm)', a.aTiempo],
+      ['  Atrasado', a.atras],
+      ['  Desvío promedio (min)', a.desvProm == null ? '' : a.desvProm],
+      [],
+      ['Por ruta'],
+      ['Ruta', 'Activos', 'Escaneados', '% QR', 'A tiempo', '% Punt'],
+      ...[...a.porRuta.entries()].sort((x, y) => y[1].activos - x[1].activos).map(([ruta, r]) =>
+        [ruta, r.activos, r.qrOk, _pctCump(r.qrOk, r.activos) + '%', r.aTiempo,
+          r.puntN ? _pctCump(r.aTiempo, r.puntN) + '%' : '-']),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resAoa), 'Resumen');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...filas]), 'Control Oriental');
+    XLSX.writeFile(wb, `control_oriental_${d.fecha}.xlsx`);
+  } catch (e) {
+    toast('No se pudo exportar: ' + (e.message || e), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev; }
+  }
+}
 
 // ---------- Recorrido en vivo de un bus (paradas del itinerario) ----------
 // Estado por punto: a tiempo / atrasado (min) / pendiente. Umbrales en minutos.
@@ -5847,7 +6213,7 @@ async function openIntegradas() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
@@ -5962,7 +6328,7 @@ async function openPasajeros() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -6046,7 +6412,7 @@ async function openPreventivas() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -10007,7 +10373,7 @@ async function openFrecuencia() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('productividad-view').hidden = true;
   $('jornada-view').hidden = true;
@@ -10117,7 +10483,7 @@ async function openProductividad() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -10275,7 +10641,7 @@ async function openJornada() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -10466,7 +10832,7 @@ async function openTop() {
   cerrarRecorridoBus();
   cerrarPanelesFlotantes();
   $('table-view').hidden = true; $('map-view').hidden = true; $('cump-view').hidden = true;
-  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true;
+  $('rutas-view').hidden = true; $('malla-view').hidden = true; $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true; $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   $('frecuencia-view').hidden = true; $('productividad-view').hidden = true; $('jornada-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
@@ -13040,7 +13406,7 @@ async function openUsuarios() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
@@ -16310,7 +16676,7 @@ async function showMapView() {
   $('cump-view').hidden = true;
   $('rutas-view').hidden = true;
   $('malla-view').hidden = true;
-  $('laureles-view').hidden = true;
+  $('laureles-view').hidden = true; $('oriental-view').hidden = true;
   $('integradas-view').hidden = true;
   $('frecuencia-view').hidden = true;
   $('productividad-view').hidden = true;
