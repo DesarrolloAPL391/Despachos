@@ -4,6 +4,9 @@ credenciales_despachadores.csv
 horarios_usuarios.csv
 resumen.csv
 
+# SQL con datos que no pueden ser publicos (firmantes, correos, enlaces con PII)
+sql/local/
+
 # perfil sociodemográfico: bases de empleados y conductores (cédula, salario, salud)
 datos/
 APPS - *.csv
