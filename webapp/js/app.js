@@ -6170,7 +6170,7 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; if (s.dataset.pvblock !== '1') s.disabled = false; } return; }
+  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn', 'nd-licwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; s.dataset.licblock = ''; aplicarBloqueosBtn(s); } return; }
   avisoRestriccionND(); // aviso de restricción vigente de hoy (por móvil o por conductor)
   avisarBloqueoDocMovil(vr.numero, 'nd-docblk', 'nd-save'); // BLOQUEO por documento vencido (SOAT/tecno/tarjeta)
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
@@ -6206,7 +6206,7 @@ async function avisoRestriccionND() {
   const drs = await loadDrivers();
   const drow = drs.find((d) => d.dr_id === $('nd-cond').value);
   await avisarRestriccionMovil(vr?.numero || '', drow?.nombre || '', 'nd-restrwarn');
-  avisarLicenciaConductor($('nd-cond').value, 'nd-licwarn'); // 🪪 licencia del conductor (solo alerta)
+  avisarLicenciaConductor($('nd-cond').value, 'nd-licwarn', 'nd-save'); // 🪪 licencia (bloquea desde sql/110)
 }
 // Al elegir el móvil en Nuevo despacho, trae el conductor (mapeando por NOMBRE al conductor SONAR)
 async function traerConductorND() {
@@ -6686,7 +6686,7 @@ async function avisarPreventivaMovil(numero, boxId, btnId) {
   const box = $(boxId); if (!box) return;
   box.hidden = true; box.innerHTML = '';
   const btn = btnId ? $(btnId) : null;
-  if (btn) { btn.dataset.pvblock = ''; btn.disabled = (btn.dataset.docblock === '1'); } // reset (respeta bloqueo por documento)
+  if (btn) { btn.dataset.pvblock = ''; aplicarBloqueosBtn(btn); } // reset (respeta los otros bloqueos)
   if (!numero) return;
   try {
     // 1) ¿SUSPENDIDO por preventiva RECHAZADA? → caja roja + botón deshabilitado
@@ -6736,6 +6736,16 @@ function dbFechaHora(x) {
   try { return new Date(x).toLocaleString('es-CO', { timeZone: 'America/Bogota', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   catch (e) { return String(x || ''); }
 }
+// Los bloqueos del despacho son tres (preventiva, documento del vehículo y licencia del
+// conductor) y cada uno pone su bandera. El botón lo decide esta función mirándolas todas:
+// si cada bloqueo manejara el disabled por su cuenta, apagar uno habilitaría el botón
+// aunque otro siguiera activo.
+const BLOQUEOS_BTN = ['pvblock', 'docblock', 'licblock'];
+function aplicarBloqueosBtn(btn) {
+  if (!btn) return;
+  btn.disabled = BLOQUEOS_BTN.some((k) => btn.dataset[k] === '1');
+}
+
 // Devuelve el detalle del bloqueo si el móvil está suspendido por documento (o null). Fail-open ante error.
 async function docSuspendido(numero) {
   try {
@@ -6764,7 +6774,7 @@ async function avisarBloqueoDocMovil(numero, boxId, btnId) {
   const box = $(boxId); if (!box) return;
   box.hidden = true; box.innerHTML = ''; box.className = 'field full';
   const btn = btnId ? $(btnId) : null;
-  if (btn) { btn.dataset.docblock = ''; if (btn.dataset.pvblock !== '1') btn.disabled = false; }
+  if (btn) { btn.dataset.docblock = ''; aplicarBloqueosBtn(btn); }
   if (!numero) return;
   try {
     const { data } = await sb.rpc('doc_bloqueo_estado', { p_interno: String(numero).trim() });
@@ -6774,7 +6784,7 @@ async function avisarBloqueoDocMovil(numero, boxId, btnId) {
       box.innerHTML = docBloqueoMsg(data)
         + ` <button type="button" class="docblk-subir" data-veh="${data.vehiculo_id}" data-mov="${esc(String(data.interno || ''))}">📎 Subir documento para desbloquear</button>`;
       box.hidden = false;
-      if (btn) { btn.disabled = true; btn.dataset.docblock = '1'; }
+      if (btn) { btn.dataset.docblock = '1'; aplicarBloqueosBtn(btn); }
       return;
     }
     const rev = (data.docs || []).filter((d) => d.situacion === 'en_revision');
@@ -6889,19 +6899,67 @@ async function refrescarLicencias(rebuild = true) {
 function licAlertasActivas() { return (LIC_ALERTAS || []).filter((a) => a.activo && a.solicitud !== 'PENDIENTE'); }
 function licDiasTxt(dias) {
   if (dias == null) return '';
-  if (dias < 0) return `venció hace ${Math.abs(dias)} día(s)`;
+  const d = Math.abs(dias), p = d === 1 ? 'día' : 'días';
+  if (dias < 0) return `venció hace ${d} ${p}`;
   if (dias === 0) return 'vence HOY';
-  return `vence en ${dias} día(s)`;
+  return `vence en ${d} ${p}`;
 }
-async function avisarLicenciaConductor(drId, boxId) {
+// Bloqueo por LICENCIA VENCIDA (sql/110). Se enciende solo en la fecha configurada.
+// Fail-open: si la consulta falla, no se traba el despacho.
+async function licBloqueada(drId) {
+  if (!drId) return null;
+  try {
+    const { data } = await sb.rpc('licencia_bloqueo_estado', { p_dr_id: String(drId) });
+    return (data && data.bloqueado) ? data : null;
+  } catch (e) { return null; }
+}
+
+function licBloqueoMsg(b) {
+  const venc = b.vence ? fechaLegible(b.vence) : '';
+  const d = Math.abs(Number(b.dias) || 0);
+  return `🚫 <b>DESPACHO BLOQUEADO</b> · licencia de conducción vencida<br>`
+    + `<b>${esc(b.nombre || '')}</b>: venció el <b>${esc(venc)}</b>`
+    + (d ? ` — <b>hace ${d} ${d === 1 ? 'día' : 'días'}</b>` : '') + '<br>'
+    + (b.motivo_rechazo
+      ? `↳ <b>operaciones rechazó</b> la licencia subida: ${esc(String(b.motivo_rechazo).replace(/\.+$/, ''))}. `
+        + 'Hay que subirla de nuevo.<br>'
+      : '')
+    + '<b>¿Qué hacer?</b> Pídele la licencia al conductor y sube las dos fotos (frente y respaldo). '
+    + 'Con eso queda desbloqueado mientras operaciones la revisa.';
+}
+
+async function avisarLicenciaConductor(drId, boxId, btnId) {
   const box = $(boxId); if (!box) return;
+  const btn = btnId ? $(btnId) : null;
   box.hidden = true; box.innerHTML = ''; box.className = 'field full';
+  if (btn) { btn.dataset.licblock = ''; aplicarBloqueosBtn(btn); }
   if (!drId) return;
   const pedido = String(drId); box.dataset.dr = pedido;
   try {
-    const { data } = await sb.rpc('licencia_estado', { p_dr_id: pedido });
+    const [est, blq] = await Promise.all([
+      sb.rpc('licencia_estado', { p_dr_id: pedido }),
+      sb.rpc('licencia_bloqueo_estado', { p_dr_id: pedido }).catch(() => ({ data: null })),
+    ]);
+    const data = est.data;
+    const b = blq && blq.data;
     if (box.dataset.dr !== pedido) return; // cambiaron de conductor mientras consultaba
+
+    // Desde la fecha configurada, la licencia vencida no deja despachar.
+    if (b && b.bloqueado) {
+      box.className = 'field full sonar-info docblk';
+      box.innerHTML = licBloqueoMsg(b)
+        + ` <button type="button" class="lic-subir" data-dr="${esc(pedido)}" data-nombre="${esc(b.nombre || '')}">📎 Subir licencia renovada</button>`
+        + ' <button type="button" class="lic-guia">❓ Cómo se hace</button>';
+      box.hidden = false;
+      if (btn) { btn.dataset.licblock = '1'; aplicarBloqueosBtn(btn); }
+      return;
+    }
     if (!data || !data.encontrado || (data.nivel !== 'vencida' && data.nivel !== 'por_vencer')) return;
+    // Antes de la fecha: el aviso de siempre, más cuánto falta para que empiece a bloquear.
+    const cuenta = (b && !b.vigente && b.desde && data.nivel === 'vencida')
+      ? `<br>⏳ <b>Desde el ${esc(fechaLegible(b.desde))} esto bloqueará el despacho</b>`
+        + (b.faltan ? ` (faltan ${b.faltan} día${b.faltan === 1 ? '' : 's'})` : '') + '.'
+      : '';
     const sol = data.solicitud;
     const nombre = esc(data.nombre || '');
     const fecha = data.vence ? esc(fechaLegible(data.vence)) : '';
@@ -6914,7 +6972,7 @@ async function avisarLicenciaConductor(drId, boxId) {
         + `Ya se subió la foto y operaciones la está revisando.${inactivo}`;
     } else if (data.nivel === 'vencida') {
       box.className = 'field full sonar-info licwarn lic-venc';
-      box.innerHTML = `🪪 <b>LICENCIA DE CONDUCCIÓN VENCIDA</b> · ${nombre}<br>Venció el <b>${fecha}</b> (${esc(licDiasTxt(data.dias))}). `
+      box.innerHTML = `🪪 <b>LICENCIA DE CONDUCCIÓN VENCIDA</b> · ${nombre}<br>Venció el <b>${fecha}</b> (${esc(licDiasTxt(data.dias))}).${cuenta} `
         + `Pídele al conductor la licencia renovada y súbela.${inactivo}`
         + (sol && sol.estado === 'RECHAZADO' ? `<br>✖️ La foto anterior fue rechazada: <i>${esc(sol.motivo_rechazo || '')}</i>` : '')
         + `<br>${boton}`;
@@ -6928,11 +6986,16 @@ async function avisarLicenciaConductor(drId, boxId) {
     box.hidden = false;
   } catch (e) { /* informativo: si falla, no estorba el despacho */ }
 }
-['nd-licwarn', 's-licwarn'].forEach((id) => {
+// El aviso vive en dos pantallas; solo la de Nuevo despacho deshabilita su botón. Al volver
+// de subir la licencia hay que reevaluar CON el botón, o el despacho quedaría trancado
+// aunque el conductor ya haya quedado en revisión.
+const LIC_BOX_BTN = { 'nd-licwarn': 'nd-save', 's-licwarn': null };
+Object.keys(LIC_BOX_BTN).forEach((id) => {
   $(id)?.addEventListener('click', (e) => {
     if (e.target.closest('.lic-guia')) { openGuiaLicencias('despachador'); return; }
     const b = e.target.closest('.lic-subir'); if (!b) return;
-    openLicSubir(b.dataset.dr, b.dataset.nombre, () => avisarLicenciaConductor(b.dataset.dr, id));
+    openLicSubir(b.dataset.dr, b.dataset.nombre,
+      () => avisarLicenciaConductor(b.dataset.dr, id, LIC_BOX_BTN[id]));
   });
 });
 
@@ -18188,6 +18251,8 @@ $('nd-save').addEventListener('click', async () => {
   if (vrow?.numero) { const bq = await pvSuspendido(vrow.numero); if (bq) { err.innerHTML = pvBloqueoMsg(bq); err.hidden = false; return; } }
   // Bloqueo por DOCUMENTO vencido (SOAT/tecno/tarjeta): solo se levanta subiendo la foto/PDF (desbloqueo provisional)
   if (vrow?.numero) { const db = await docSuspendido(vrow.numero); if (db) { err.innerHTML = docBloqueoMsg(db); err.hidden = false; return; } }
+  // Bloqueo por LICENCIA VENCIDA del conductor (sql/110): se levanta subiendo las dos fotos
+  { const lb = await licBloqueada($('nd-cond').value); if (lb) { err.innerHTML = licBloqueoMsg(lb); err.hidden = false; return; } }
   // Bloqueo por RESTRICCIÓN de ruta (castigo del auditor): móvil restringido en esa ruta/fecha/ventana
   if (vrow?.numero) { const rb = await restriccionSuspende(vrow.numero, itin?.nombre || '', intent.fecha, intent.hora, current, drow?.nombre || ''); if (rb) { err.innerHTML = restriccionBloqueoMsg(rb); err.hidden = false; return; } }
 
@@ -18358,7 +18423,7 @@ async function updateSonarInfo() {
   const _drsR = await loadDrivers();
   const _drowR = _drsR.find((d) => d.dr_id === $('s-drv').value);
   avisarRestriccionMovil(vr.numero, _drowR?.nombre || '', 's-restrwarn'); // aviso: móvil (puesto) o conductor (despachos)
-  avisarLicenciaConductor($('s-drv').value, 's-licwarn'); // 🪪 licencia del conductor (solo alerta)
+  avisarLicenciaConductor($('s-drv').value, 's-licwarn'); // 🪪 licencia: avisa aqui, bloquea al guardar (sql/110)
   // BLOQUEO por documento vencido. En SONAR el botón también sirve para "no realizó" (no es despacho):
   // NO deshabilitamos el botón; la caja roja avisa y el guarda de "Despachar" bloquea solo el despacho real.
   avisarBloqueoDocMovil(vr.numero, 's-docblk');
@@ -18650,6 +18715,8 @@ $('sonar-send').addEventListener('click', async () => {
       if (bq) { const e = $('sonar-error'); e.innerHTML = pvBloqueoMsg(bq); e.hidden = false; return; }
       const db = await docSuspendido(vrB.numero);
       if (db) { const e = $('sonar-error'); e.innerHTML = docBloqueoMsg(db); e.hidden = false; return; }
+      const lb = await licBloqueada($('s-drv').value);
+      if (lb) { const e = $('sonar-error'); e.innerHTML = licBloqueoMsg(lb); e.hidden = false; return; }
       const rutaNom = $('s-itin')?.selectedOptions[0]?.textContent || '';
       const condNom = $('s-drv')?.selectedOptions[0]?.textContent || '';
       const rb = await restriccionSuspende(vrB.numero, rutaNom, hoyServidor(), $('s-hora')?.value || null, current, condNom);
