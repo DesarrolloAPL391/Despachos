@@ -7773,8 +7773,13 @@ function dcFicha(id) {
       ${r.origen === 'HOJA' ? ' · viene de la hoja' : (r.origen === 'REPORTE' ? ' · reporte de auditoría' : '')}</div>
     ${puedeGestionarDisc() && r.etapa !== 'ANULADO' ? `<div class="iv-acciones">
       <button type="button" class="btn btn-sm btn-primary" data-dc-paso="${r.id}">➡️ Siguiente paso</button>
+      <button type="button" class="btn btn-sm" data-dc-acta="${r.id}">📝 Diligencia y documentos</button>
       <button type="button" class="btn btn-sm" data-dc-editar="${r.id}">✏️ Corregir el hecho</button>
       <button type="button" class="btn btn-sm btn-danger" data-dc-anular="${r.id}">🚫 Anular</button></div>` : ''}`;
+  m.querySelector('[data-dc-acta]')?.addEventListener('click', (ev) => {
+    const fila = _dc.rows.find((x) => String(x.id) === String(ev.currentTarget.dataset.dcActa));
+    if (fila) dcActaAbrir(fila);
+  });
   m.querySelector('[data-ok]').hidden = true;
   m.hidden = false;
 }
@@ -7814,12 +7819,19 @@ function dcDescargos(r) {
   const m = dcModal('dc-paso-modal', '📝 Registrar la diligencia de descargos', 'perm-card');
   m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
     <p class="dc-nota">Citado para el <b>${esc(dcF(r.citacion_fecha))}${r.citacion_hora ? ' ' + esc(dcHora(r.citacion_hora)) : ''}</b>.</p>
+    <div class="dca-llamado">
+      <b>📝 ¿Vas a hacer la diligencia ahora?</b>
+      <p>Abre el acta y escríbela en vivo: hechos, preguntas, versión del trabajador y firmas.
+      Aquí abajo solo se registra la fecha, que es lo que hacía falta para los procesos viejos.</p>
+      <button type="button" class="btn btn-sm btn-primary" data-abrir-acta>Abrir el acta</button>
+    </div>
     <div class="iv-form">
       <label class="field"><span>Fecha de la diligencia *</span><input type="date" id="dcd-fecha" value="${esc(r.descargo_fecha || r.citacion_fecha || hoyServidor())}"></label>
       <label class="field"><span>Hora inicio</span><input type="time" id="dcd-ini" value="${esc(dcHora(r.descargo_hora_ini))}"></label>
       <label class="field"><span>Hora fin</span><input type="time" id="dcd-fin" value="${esc(dcHora(r.descargo_hora_fin))}"></label>
       <label class="field full"><span>Motivo</span><input id="dcd-mot" value="${esc(r.motivo_descargos || 'Citación a Diligencia de Descargos')}"></label>
     </div>`;
+  m.querySelector('[data-abrir-acta]')?.addEventListener('click', () => { m.hidden = true; dcActaAbrir(r); });
   dcGuardarCon(m, 'Guardar los descargos', async () => sb.rpc('disc_descargos', {
     p_id: r.id, p_fecha: $('dcd-fecha').value || null, p_hora_ini: $('dcd-ini').value || null,
     p_hora_fin: $('dcd-fin').value || null, p_motivo: $('dcd-mot').value || null,
@@ -8171,6 +8183,573 @@ async function dcReportarModal() {
     if (!$('dcr-fecha').value) return 'Falta la fecha del suceso.';
     if (!($('dcr-nov').value || '').trim()) return 'Cuenta qué pasó.';
   });
+}
+
+// ===================================================================================
+// 📝 DILIGENCIA DE DESCARGOS: el acta y los documentos del proceso (sql/105)
+// ===================================================================================
+// El acta se escribe EN VIVO, mientras se hace la diligencia: se guarda sola cada vez
+// que uno deja de escribir, para que un cierre de sesión o un portátil que se apaga no
+// borre media hora de trabajo. Al final se CIERRA y queda sellada.
+//
+// Lo que hace que un acta sirva no es que exista, es que tenga: los hechos que se le
+// imputan (leídos), lo que el trabajador contestó, quién lo acompañó y su firma. El
+// artículo 115 del CST exige oír al trabajador antes de sancionarlo y le da derecho a
+// hacerse acompañar. Por eso el cierre no deja pasar sin esas cuatro cosas.
+let _dcaId = null, _dcaRow = null, _dcaDatos = null, _dcaPap = null, _dcaTimer = null, _dcaCerrada = false;
+const _dcaFirmas = {};   // canvas → { pad, vacio }
+
+const dcaNL = (t) => esc(String(t || '')).replace(/\n/g, '<br>');
+
+// ---------- Firma en pantalla ----------
+// Un canvas y punteros. Funciona con dedo, mouse o lápiz sin depender de nada externo.
+function firmaPad(canvas, alCambiar) {
+  const ctx = canvas.getContext('2d');
+  const r = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 320, h = canvas.clientHeight || 110;
+  canvas.width = w * r; canvas.height = h * r;
+  ctx.scale(r, r);
+  ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111827';
+  let pintando = false, vacio = true;
+  const punto = (e) => {
+    const b = canvas.getBoundingClientRect();
+    return { x: e.clientX - b.left, y: e.clientY - b.top };
+  };
+  const ini = (e) => {
+    e.preventDefault(); pintando = true; vacio = false;
+    const p = punto(e); ctx.beginPath(); ctx.moveTo(p.x, p.y);
+    canvas.setPointerCapture?.(e.pointerId);
+  };
+  const mov = (e) => { if (!pintando) return; e.preventDefault(); const p = punto(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const fin = () => { if (!pintando) return; pintando = false; alCambiar?.(); };
+  canvas.addEventListener('pointerdown', ini);
+  canvas.addEventListener('pointermove', mov);
+  canvas.addEventListener('pointerup', fin);
+  canvas.addEventListener('pointerleave', fin);
+  return {
+    limpiar() { ctx.clearRect(0, 0, w, h); vacio = true; alCambiar?.(); },
+    vacio: () => vacio,
+    dataUrl: () => (vacio ? null : canvas.toDataURL('image/png')),
+    pintar(dataUrl) {
+      if (!dataUrl) return;
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, 0, 0, w, h); vacio = false; };
+      img.src = dataUrl;
+    },
+  };
+}
+
+// ---------- Abrir la diligencia ----------
+async function dcActaAbrir(r) {
+  if (!puedeGestionarDisc()) return;
+  _dcaRow = r; _dcaId = r.id;
+  const m = dcModal('dc-acta-modal', '📝 Diligencia de descargos', 'dca-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = '<div class="loading">Cargando la diligencia…</div>';
+  m.hidden = false;
+  try {
+    const [a, p] = await Promise.all([
+      sb.rpc('disc_acta_leer', { p_id: r.id }),
+      _dcaPap ? Promise.resolve({ data: _dcaPap }) : sb.rpc('disc_papeleria'),
+    ]);
+    if (a.error) throw a.error;
+    if (!a.data || !a.data.ok) throw new Error((a.data && a.data.error) || 'No se pudo abrir.');
+    if (p.data && p.data.ok) _dcaPap = p.data;
+    _dcaDatos = a.data.acta || {};
+    _dcaCerrada = !!_dcaDatos.cerrada_en;
+    dcActaPintar(m, a.data.docs || []);
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/disciplinarios_acta/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar <b>sql/105</b>.' : 'No se pudo abrir la diligencia.'}<br><small>${esc(t)}</small></div>`;
+  }
+}
+
+function dcActaPintar(m, docs) {
+  const r = _dcaRow, d = _dcaDatos || {};
+  const ro = _dcaCerrada ? ' disabled' : '';
+  const comparecio = d.comparecio !== false;
+  const acomp = Array.isArray(d.acompanantes) ? d.acompanantes : [];
+  const preg = Array.isArray(d.preguntas) ? d.preguntas : [];
+  const gh = (_dcaPap && _dcaPap.firmante) || {};
+
+  m.querySelector('.iv-modal-body').innerHTML = `
+    ${_dcaCerrada ? `<div class="dca-sello">🔒 Acta cerrada el
+      ${esc(fmtFechaHora(d.cerrada_en))} por ${esc(d.cerrada_por || '')}. Ya no se modifica.
+      ${isAdmin() ? '<button type="button" class="btn btn-sm" data-reabrir>Reabrir</button>' : ''}</div>` : ''}
+    <div class="iv-ficha-h"><b>${esc(r.nombre || '—')}</b>
+      <span class="muted">${esc(r.cargo || r.tipo_persona || '')}${r.cedula ? ` · C.C. ${esc(r.cedula)}` : ''}</span></div>
+
+    <div class="dca-sec"><h4>Dónde y quién</h4>
+      <div class="iv-form">
+        <label class="field full"><span>Lugar de la diligencia</span>
+          <input id="dca-lugar" value="${esc(d.lugar || ((_dcaPap?.empresa?.ciudad) ? 'Oficinas de la empresa, ' + _dcaPap.empresa.ciudad : ''))}"${ro}></label>
+        <label class="field"><span>Quién dirige *</span>
+          <input id="dca-dnom" value="${esc(d.dirige_nombre || gh.nombre || '')}"${ro}></label>
+        <label class="field"><span>Cargo</span>
+          <input id="dca-dcar" value="${esc(d.dirige_cargo || gh.cargo || '')}"${ro}></label>
+        <label class="field"><span>Cédula</span>
+          <input id="dca-dced" value="${esc(d.dirige_cedula || '')}"${ro}></label>
+        <label class="field"><span>Quién toma nota</span>
+          <input id="dca-secr" value="${esc(d.secretario_nombre || '')}"${ro}></label>
+      </div>
+    </div>
+
+    <div class="dca-sec"><h4>¿Se presentó?</h4>
+      <div class="dca-tog">
+        <label><input type="radio" name="dca-comp" value="1"${comparecio ? ' checked' : ''}${ro}> Sí, se presentó</label>
+        <label><input type="radio" name="dca-comp" value="0"${comparecio ? '' : ' checked'}${ro}> No se presentó</label>
+      </div>
+      <div id="dca-nocomp" class="iv-form"${comparecio ? ' hidden' : ''}>
+        <label class="field full"><span>Constancia de no comparecencia *</span>
+          <textarea id="dca-ncnota" rows="3"${ro}
+            placeholder="Se dejó constancia de que, siendo las __, la persona citada no se presentó…">${esc(d.no_comparecio_nota || '')}</textarea></label>
+      </div>
+    </div>
+
+    <div id="dca-dilig"${comparecio ? '' : ' hidden'}>
+      <div class="dca-sec"><h4>Acompañamiento</h4>
+        <p class="dca-ley">El trabajador puede hacerse acompañar de dos compañeros (art. 115 del CST).
+          Si no quiso llevar a nadie, igual déjalo dicho: que conste que se le ofreció.</p>
+        <label class="dca-chk"><input type="checkbox" id="dca-ofre"${d.acompanar_ofrecido === false ? '' : ' checked'}${ro}>
+          Se le informó de ese derecho</label>
+        <div id="dca-acomp"></div>
+        ${_dcaCerrada ? '' : '<button type="button" class="btn btn-sm" data-add-acomp">➕ Agregar acompañante</button>'}
+      </div>
+
+      <div class="dca-sec"><h4>Hechos que se le imputan *</h4>
+        <p class="dca-ley">Esto se le lee al iniciar. Si no consta qué se le dijo, no hay cómo probar que supo de qué se le acusaba.</p>
+        <textarea id="dca-hechos" rows="4"${ro}>${esc(d.hechos || r.novedad || '')}</textarea>
+      </div>
+
+      <div class="dca-sec"><h4>Preguntas y respuestas</h4>
+        <div id="dca-preg"></div>
+        ${_dcaCerrada ? '' : '<button type="button" class="btn btn-sm" data-add-preg>➕ Agregar pregunta</button>'}
+      </div>
+
+      <div class="dca-sec"><h4>Versión del trabajador *</h4>
+        <p class="dca-ley">El descargo: lo que la persona responde, en sus palabras.</p>
+        <textarea id="dca-version" rows="5"${ro}>${esc(d.version_trabajador || '')}</textarea>
+      </div>
+
+      <div class="dca-sec"><h4>Pruebas que aporta o solicita</h4>
+        <textarea id="dca-pruebas" rows="2"${ro}>${esc(d.pruebas || '')}</textarea>
+      </div>
+
+      <div class="dca-sec"><h4>Firmas</h4>
+        <div class="dca-firmas">
+          <div class="dca-firma">
+            <span>Trabajador</span>
+            <canvas id="dca-f-trab" class="dca-canvas"></canvas>
+            <div class="dca-firma-acc">
+              ${_dcaCerrada ? '' : '<button type="button" class="btn btn-sm" data-limpiar="dca-f-trab">Limpiar</button>'}
+              <label class="dca-chk"><input type="checkbox" id="dca-negada"${d.firma_trabajador_negada ? ' checked' : ''}${ro}>
+                Se negó a firmar</label>
+            </div>
+            <input id="dca-negnota" class="dca-negnota" placeholder="Motivo o constancia"
+              value="${esc(d.firma_negada_nota || '')}"${d.firma_trabajador_negada ? '' : ' hidden'}${ro}>
+          </div>
+          <div class="dca-firma">
+            <span>Quien dirige la diligencia</span>
+            <canvas id="dca-f-dir" class="dca-canvas"></canvas>
+            <div class="dca-firma-acc">
+              ${_dcaCerrada ? '' : '<button type="button" class="btn btn-sm" data-limpiar="dca-f-dir">Limpiar</button>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dca-sec"><h4>Observaciones</h4>
+      <textarea id="dca-obs" rows="2"${ro}>${esc(d.observaciones || '')}</textarea>
+    </div>
+
+    <div class="dca-docs"><h4>Documentos</h4>
+      <div class="dca-docs-btns">
+        <button type="button" class="btn btn-sm" data-doc="CITACION">📨 Citación</button>
+        <button type="button" class="btn btn-sm" data-doc="ACTA"${comparecio ? '' : ' hidden'}>📝 Acta de descargos</button>
+        <button type="button" class="btn btn-sm" data-doc="NO_COMPARECENCIA"${comparecio ? ' hidden' : ''}>🚫 Constancia de no comparecencia</button>
+        <button type="button" class="btn btn-sm" data-doc="SANCION">⚖️ Carta de sanción</button>
+      </div>
+      ${docs.length ? `<ul class="dca-docs-list">${docs.map((x) => `<li><b>${esc(x.consecutivo)}</b>
+        <span class="muted">${esc(fmtFechaHora(x.generado_en))} · ${esc(x.generado_por || '')}</span></li>`).join('')}</ul>` : ''}
+    </div>
+
+    <p class="dca-estado" id="dca-estado"></p>`;
+
+  dcaPintarAcomp(acomp);
+  dcaPintarPreg(preg);
+
+  // Firmas
+  ['dca-f-trab', 'dca-f-dir'].forEach((id) => {
+    const c = $(id);
+    if (!c) return;
+    const pad = firmaPad(c, dcaCambio);
+    _dcaFirmas[id] = pad;
+    if (_dcaCerrada) { c.style.pointerEvents = 'none'; }
+  });
+  setTimeout(() => {
+    _dcaFirmas['dca-f-trab']?.pintar(d.firma_trabajador);
+    _dcaFirmas['dca-f-dir']?.pintar(d.firma_dirige);
+  }, 60);
+
+  // Eventos
+  m.querySelectorAll('input, textarea, select').forEach((el) => {
+    el.addEventListener('input', dcaCambio);
+    el.addEventListener('change', dcaCambio);
+  });
+  m.querySelectorAll('input[name="dca-comp"]').forEach((el) => el.addEventListener('change', () => {
+    const si = m.querySelector('input[name="dca-comp"]:checked')?.value === '1';
+    $('dca-dilig').hidden = !si;
+    $('dca-nocomp').hidden = si;
+    m.querySelector('[data-doc="ACTA"]').hidden = !si;
+    m.querySelector('[data-doc="NO_COMPARECENCIA"]').hidden = si;
+  }));
+  $('dca-negada')?.addEventListener('change', (e) => { $('dca-negnota').hidden = !e.target.checked; });
+  m.querySelector('[data-add-acomp]')?.addEventListener('click', () => {
+    dcaPintarAcomp([...dcaLeerAcomp(), { nombre: '', cedula: '', cargo: '' }]); dcaCambio();
+  });
+  m.querySelector('[data-add-preg]')?.addEventListener('click', () => {
+    dcaPintarPreg([...dcaLeerPreg(), { p: '', r: '' }]); dcaCambio();
+  });
+  m.querySelectorAll('[data-limpiar]').forEach((b) => b.addEventListener('click', () => {
+    _dcaFirmas[b.dataset.limpiar]?.limpiar();
+  }));
+  m.querySelectorAll('[data-doc]').forEach((b) => b.addEventListener('click', () => dcDoc(b.dataset.doc)));
+  m.querySelector('[data-reabrir]')?.addEventListener('click', dcaReabrir);
+
+  // Pie: cerrar el acta
+  const ok = m.querySelector('[data-ok]');
+  ok.hidden = _dcaCerrada;
+  ok.textContent = '🔒 Cerrar el acta';
+  ok.onclick = dcaCerrar;
+}
+
+// ---------- Listas dinámicas ----------
+function dcaPintarAcomp(lista) {
+  const cont = $('dca-acomp');
+  if (!cont) return;
+  cont.innerHTML = lista.length
+    ? lista.map((a, i) => `<div class="dca-fila" data-i="${i}">
+        <input class="dca-ac-nom" placeholder="Nombre" value="${esc(a.nombre || '')}"${_dcaCerrada ? ' disabled' : ''}>
+        <input class="dca-ac-ced" placeholder="Cédula" value="${esc(a.cedula || '')}"${_dcaCerrada ? ' disabled' : ''}>
+        <input class="dca-ac-car" placeholder="Cargo" value="${esc(a.cargo || '')}"${_dcaCerrada ? ' disabled' : ''}>
+        ${_dcaCerrada ? '' : '<button type="button" class="icon-btn" data-del>✕</button>'}</div>`).join('')
+    : '<p class="dca-vacio">Sin acompañantes.</p>';
+  cont.querySelectorAll('input').forEach((el) => el.addEventListener('input', dcaCambio));
+  cont.querySelectorAll('[data-del]').forEach((b, i) => b.addEventListener('click', () => {
+    const l = dcaLeerAcomp(); l.splice(i, 1); dcaPintarAcomp(l); dcaCambio();
+  }));
+}
+function dcaLeerAcomp() {
+  return [...document.querySelectorAll('#dca-acomp .dca-fila')].map((f) => ({
+    nombre: f.querySelector('.dca-ac-nom').value.trim(),
+    cedula: f.querySelector('.dca-ac-ced').value.trim(),
+    cargo: f.querySelector('.dca-ac-car').value.trim(),
+  })).filter((a) => a.nombre || a.cedula);
+}
+function dcaPintarPreg(lista) {
+  const cont = $('dca-preg');
+  if (!cont) return;
+  cont.innerHTML = lista.length
+    ? lista.map((x, i) => `<div class="dca-pr" data-i="${i}">
+        <label><span>Pregunta ${i + 1}</span>
+          <textarea class="dca-p" rows="2"${_dcaCerrada ? ' disabled' : ''}>${esc(x.p || '')}</textarea></label>
+        <label><span>Respuesta</span>
+          <textarea class="dca-r" rows="2"${_dcaCerrada ? ' disabled' : ''}>${esc(x.r || '')}</textarea></label>
+        ${_dcaCerrada ? '' : '<button type="button" class="icon-btn" data-del>✕</button>'}</div>`).join('')
+    : '<p class="dca-vacio">Sin preguntas registradas.</p>';
+  cont.querySelectorAll('textarea').forEach((el) => el.addEventListener('input', dcaCambio));
+  cont.querySelectorAll('[data-del]').forEach((b, i) => b.addEventListener('click', () => {
+    const l = dcaLeerPreg(); l.splice(i, 1); dcaPintarPreg(l); dcaCambio();
+  }));
+}
+function dcaLeerPreg() {
+  return [...document.querySelectorAll('#dca-preg .dca-pr')].map((f) => ({
+    p: f.querySelector('.dca-p').value.trim(),
+    r: f.querySelector('.dca-r').value.trim(),
+  })).filter((x) => x.p || x.r);
+}
+
+// ---------- Guardado automático ----------
+// Se guarda solo, 1,5 s después de que uno deja de escribir. Una diligencia dura media
+// hora: si se pierde la sesión o se cierra el portátil, no se puede perder todo.
+function dcaCambio() {
+  if (_dcaCerrada) return;
+  const e = $('dca-estado');
+  if (e) { e.textContent = '✎ Sin guardar…'; e.className = 'dca-estado pend'; }
+  clearTimeout(_dcaTimer);
+  _dcaTimer = setTimeout(dcaGuardar, 1500);
+}
+
+function dcaPayload() {
+  const comp = document.querySelector('input[name="dca-comp"]:checked')?.value === '1';
+  const neg = !!$('dca-negada')?.checked;
+  return {
+    lugar: $('dca-lugar')?.value || '',
+    dirige_nombre: $('dca-dnom')?.value || '',
+    dirige_cargo: $('dca-dcar')?.value || '',
+    dirige_cedula: $('dca-dced')?.value || '',
+    secretario_nombre: $('dca-secr')?.value || '',
+    acompanantes: dcaLeerAcomp(),
+    acompanar_ofrecido: !!$('dca-ofre')?.checked,
+    hechos: $('dca-hechos')?.value || '',
+    preguntas: dcaLeerPreg(),
+    version_trabajador: $('dca-version')?.value || '',
+    pruebas: $('dca-pruebas')?.value || '',
+    observaciones: $('dca-obs')?.value || '',
+    comparecio: comp,
+    no_comparecio_nota: $('dca-ncnota')?.value || '',
+    firma_trabajador: _dcaFirmas['dca-f-trab']?.dataUrl() || null,
+    firma_trabajador_negada: neg,
+    firma_negada_nota: $('dca-negnota')?.value || '',
+    firma_dirige: _dcaFirmas['dca-f-dir']?.dataUrl() || null,
+  };
+}
+
+async function dcaGuardar(silencio) {
+  if (_dcaCerrada || !_dcaId) return true;
+  const e = $('dca-estado');
+  try {
+    const { data, error } = await sb.rpc('disc_acta_guardar', { p_id: _dcaId, p_datos: dcaPayload() });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo guardar.');
+    if (e) { e.textContent = '✔ Guardado ' + new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+      e.className = 'dca-estado ok'; }
+    return true;
+  } catch (err) {
+    if (e) { e.textContent = '⚠ No se pudo guardar: ' + (err.message || err); e.className = 'dca-estado err'; }
+    if (!silencio) toast('No se pudo guardar la diligencia: ' + (err.message || err), 'err');
+    return false;
+  }
+}
+
+async function dcaCerrar() {
+  const m = $('dc-acta-modal'), err = m.querySelector('[data-err]');
+  err.hidden = true;
+  clearTimeout(_dcaTimer);
+  if (!(await dcaGuardar(true))) { err.textContent = 'No se pudo guardar antes de cerrar.'; err.hidden = false; return; }
+  const ok = await confirmAction({
+    title: '🔒 Cerrar el acta',
+    lead: 'Una vez cerrada, el acta no se puede modificar.',
+    message: 'Es lo que le da valor: un acta que se puede cambiar después no prueba nada.\n'
+      + 'Si hay que corregir algo, hazlo ahora.',
+    okLabel: 'Cerrar el acta',
+  });
+  if (!ok) return;
+  const btn = m.querySelector('[data-ok]'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Cerrando…';
+  try {
+    const { data, error } = await sb.rpc('disc_acta_cerrar', {
+      p_id: _dcaId,
+      p_fecha: _dcaRow.descargo_fecha || _dcaRow.citacion_fecha || hoyServidor(),
+      p_hora_ini: null, p_hora_fin: null,
+    });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cerrar.');
+    toast('Acta cerrada.', 'ok');
+    await cargarDisc();
+    const r = _dc.rows.find((x) => String(x.id) === String(_dcaId));
+    await dcActaAbrir(r || _dcaRow);
+  } catch (e2) {
+    err.textContent = e2.message || e2; err.hidden = false;
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+async function dcaReabrir() {
+  const nota = prompt('¿Por qué se reabre el acta? Queda escrito dentro de ella.');
+  if (!nota || !nota.trim()) return;
+  try {
+    const { data, error } = await sb.rpc('disc_acta_reabrir', { p_id: _dcaId, p_nota: nota.trim() });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo reabrir.');
+    toast('Acta reabierta.', 'ok');
+    await dcActaAbrir(_dcaRow);
+  } catch (e) { toast('No se pudo reabrir: ' + (e.message || e), 'err'); }
+}
+
+// ===================================================================================
+// Los documentos: se registran (para que salgan con consecutivo) y luego se imprimen.
+// ===================================================================================
+const DC_DOC_CSS = `
+  @page { size: letter; margin: 2.2cm 2.4cm; }
+  * { box-sizing: border-box; }
+  body { font: 12pt/1.5 Georgia, 'Times New Roman', serif; color: #111; margin: 0; }
+  .enc { text-align: center; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 18px; }
+  .enc b { font-size: 13pt; letter-spacing: .4px; }
+  .enc div { font-size: 9.5pt; color: #444; }
+  .cons { text-align: right; font-size: 9.5pt; color: #444; margin-bottom: 14px; }
+  h1 { font-size: 13pt; text-align: center; margin: 0 0 16px; text-transform: uppercase; letter-spacing: .5px; }
+  .meta { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10.5pt; }
+  .meta td { border: 1px solid #999; padding: 5px 8px; vertical-align: top; }
+  .meta td.l { background: #f2f2f2; font-weight: bold; width: 26%; }
+  h2 { font-size: 11pt; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: .3px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+  p { margin: 0 0 9px; text-align: justify; }
+  .qa { margin: 0 0 10px; }
+  .qa b { display: block; }
+  .firmas { margin-top: 42px; display: flex; gap: 40px; flex-wrap: wrap; }
+  .fm { flex: 1 1 42%; text-align: center; }
+  .fm img { max-height: 60px; display: block; margin: 0 auto 2px; }
+  .fm .linea { border-top: 1px solid #111; margin-top: 46px; padding-top: 4px; font-size: 10pt; }
+  .fm img + .linea { margin-top: 0; }
+  .fm small { display: block; font-size: 9pt; color: #444; }
+  .pie { margin-top: 28px; font-size: 8.5pt; color: #555; border-top: 1px solid #ccc; padding-top: 6px; }
+  .nota { font-size: 9.5pt; color: #333; font-style: italic; }
+`;
+
+function dcDocEnc(pap, cons) {
+  const e = (pap && pap.empresa) || {};
+  return `<div class="enc"><b>${esc(e.empresa || '')}</b>
+      <div>${esc(e.nit || '')}${e.ciudad ? ' · ' + esc(e.ciudad) : ''}${e.telefono ? ' · Tel. ' + esc(e.telefono) : ''}</div>
+    </div>${cons ? `<div class="cons">${esc(cons)}</div>` : ''}`;
+}
+
+function dcDocFirma(titulo, dataUrl, nombre, sub) {
+  return `<div class="fm">
+    ${dataUrl ? `<img src="${dataUrl}" alt="">` : ''}
+    <div class="linea">${esc(nombre || '')}</div>
+    <small>${esc(titulo)}${sub ? '<br>' + esc(sub) : ''}</small></div>`;
+}
+
+function dcDocMeta(r) {
+  const f = (v) => (v ? fechaLegible(v) : '—');
+  return `<table class="meta">
+    <tr><td class="l">Trabajador</td><td>${esc(r.nombre || '—')}</td>
+        <td class="l">Cédula</td><td>${esc(r.cedula || '—')}</td></tr>
+    <tr><td class="l">Cargo</td><td>${esc(r.cargo || r.tipo_persona || '—')}</td>
+        <td class="l">Radicado</td><td>${esc(String(r.radicado || r.id || '—'))}</td></tr>
+    <tr><td class="l">Fecha del hecho</td><td>${esc(f(r.fecha_suceso))}</td>
+        <td class="l">${r.vehiculo ? 'Vehículo' : 'Área'}</td><td>${esc(r.vehiculo || r.tipo_persona || '—')}</td></tr>
+  </table>`;
+}
+
+function dcDocHtml(tipo, r, a, pap, cons) {
+  const e = (pap && pap.empresa) || {};
+  const gh = (pap && pap.firmante) || {};
+  const hoy = fechaLegible(hoyServidor());
+  const ciudad = e.ciudad || '';
+  const enc = dcDocEnc(pap, cons + ' · ' + ciudad + ', ' + hoy);
+
+  if (tipo === 'CITACION') {
+    return enc + '<h1>Citación a diligencia de descargos</h1>' + dcDocMeta(r) + `
+      <p>Por medio de la presente se cita a usted a <b>diligencia de descargos</b>, a realizarse el
+      <b>${esc(fechaLegible(r.citacion_fecha || ''))}</b>${r.citacion_hora ? ` a las <b>${esc(dcHora(r.citacion_hora))}</b>` : ''}
+      ${a && a.lugar ? ` en <b>${esc(a.lugar)}</b>` : ''}, con el fin de que rinda su versión sobre los siguientes hechos:</p>
+      <h2>Hechos</h2>
+      <p>${dcaNL((a && a.hechos) || r.novedad || '')}</p>
+      <p>Se le informa que puede hacerse acompañar de <b>dos (2) compañeros de trabajo</b>, conforme al
+      artículo 115 del Código Sustantivo del Trabajo, y que en la diligencia podrá aportar las pruebas
+      que considere pertinentes para su defensa.</p>
+      <p class="nota">La inasistencia sin justificación no impide que la empresa continúe con el proceso,
+      dejando constancia de su no comparecencia.</p>
+      <div class="firmas">
+        ${dcDocFirma('Por la empresa', gh.firma, gh.nombre || '', gh.cargo || '')}
+        ${dcDocFirma('Recibido — Trabajador', null, r.nombre || '', 'C.C. ' + (r.cedula || ''))}
+      </div>
+      <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
+  }
+
+  if (tipo === 'NO_COMPARECENCIA') {
+    return enc + '<h1>Constancia de no comparecencia</h1>' + dcDocMeta(r) + `
+      <p>En ${esc(ciudad)}, siendo la fecha señalada para la diligencia de descargos citada para el
+      <b>${esc(fechaLegible(r.citacion_fecha || ''))}</b>${r.citacion_hora ? ` a las <b>${esc(dcHora(r.citacion_hora))}</b>` : ''},
+      se deja constancia de que el trabajador <b>${esc(r.nombre || '')}</b> no se presentó.</p>
+      <h2>Constancia</h2>
+      <p>${dcaNL((a && a.no_comparecio_nota) || '')}</p>
+      <h2>Hechos objeto de la citación</h2>
+      <p>${dcaNL((a && a.hechos) || r.novedad || '')}</p>
+      <div class="firmas">
+        ${dcDocFirma('Quien dirige la diligencia', (a && a.firma_dirige) || gh.firma,
+    (a && a.dirige_nombre) || gh.nombre || '', (a && a.dirige_cargo) || gh.cargo || '')}
+        ${(a && Array.isArray(a.acompanantes) && a.acompanantes[0])
+    ? dcDocFirma('Testigo', null, a.acompanantes[0].nombre, 'C.C. ' + (a.acompanantes[0].cedula || '')) : ''}
+      </div>
+      <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
+  }
+
+  if (tipo === 'SANCION') {
+    const dias = r.sancion_dias ? `${r.sancion_dias} ${String(r.sancion_unidad || 'DIAS').toLowerCase()}` : '';
+    return enc + '<h1>Comunicación de decisión</h1>' + dcDocMeta(r) + `
+      <p>Una vez surtida la diligencia de descargos${r.descargo_fecha ? ` realizada el <b>${esc(fechaLegible(r.descargo_fecha))}</b>` : ''},
+      y analizados los hechos y la versión rendida por el trabajador, la empresa comunica su decisión:</p>
+      <table class="meta">
+        <tr><td class="l">Falta</td><td colspan="3">${esc(r.falta || '—')}</td></tr>
+        <tr><td class="l">Decisión</td><td colspan="3"><b>${esc(r.sancion || '—')}</b>${dias ? ' · ' + esc(dias) : ''}</td></tr>
+        ${r.suspension_ini ? `<tr><td class="l">Desde</td><td>${esc(fechaLegible(r.suspension_ini))}</td>
+          <td class="l">Hasta</td><td>${esc(fechaLegible(r.suspension_fin || ''))}</td></tr>` : ''}
+      </table>
+      ${(a && a.version_trabajador) ? `<h2>Versión del trabajador</h2><p>${dcaNL(a.version_trabajador)}</p>` : ''}
+      <p class="nota">Contra esta decisión el trabajador puede presentar las observaciones que estime
+      pertinentes ante la empresa.</p>
+      <div class="firmas">
+        ${dcDocFirma('Por la empresa', gh.firma, gh.nombre || '', gh.cargo || '')}
+        ${dcDocFirma('Recibido — Trabajador', null, r.nombre || '', 'C.C. ' + (r.cedula || ''))}
+      </div>
+      <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
+  }
+
+  // ACTA
+  const ac = (a && Array.isArray(a.acompanantes)) ? a.acompanantes : [];
+  const pr = (a && Array.isArray(a.preguntas)) ? a.preguntas : [];
+  return enc + '<h1>Acta de diligencia de descargos</h1>' + dcDocMeta(r) + `
+    <table class="meta">
+      <tr><td class="l">Fecha</td><td>${esc(fechaLegible(r.descargo_fecha || hoyServidor()))}</td>
+          <td class="l">Hora</td><td>${esc(dcHora(r.descargo_hora_ini) || '—')}${r.descargo_hora_fin ? ' a ' + esc(dcHora(r.descargo_hora_fin)) : ''}</td></tr>
+      <tr><td class="l">Lugar</td><td colspan="3">${esc((a && a.lugar) || '—')}</td></tr>
+      <tr><td class="l">Dirige</td><td>${esc((a && a.dirige_nombre) || '—')}</td>
+          <td class="l">Cargo</td><td>${esc((a && a.dirige_cargo) || '—')}</td></tr>
+    </table>
+    <h2>Acompañamiento</h2>
+    <p>${ac.length
+    ? 'El trabajador asistió acompañado de: ' + ac.map((x) => `<b>${esc(x.nombre)}</b>${x.cedula ? ' (C.C. ' + esc(x.cedula) + ')' : ''}`).join(', ') + '.'
+    : ((a && a.acompanar_ofrecido === false)
+      ? 'No se dejó constancia sobre el acompañamiento.'
+      : 'Se informó al trabajador de su derecho a hacerse acompañar de dos compañeros de trabajo (art. 115 del CST) y manifestó asistir sin acompañamiento.')}</p>
+    <h2>Hechos que se imputan</h2>
+    <p>${dcaNL((a && a.hechos) || r.novedad || '')}</p>
+    ${pr.length ? '<h2>Preguntas y respuestas</h2>' + pr.map((x, i) => `<div class="qa">
+      <b>Pregunta ${i + 1}. ${dcaNL(x.p)}</b>${dcaNL(x.r)}</div>`).join('') : ''}
+    <h2>Versión del trabajador</h2>
+    <p>${dcaNL((a && a.version_trabajador) || '')}</p>
+    ${(a && a.pruebas) ? `<h2>Pruebas</h2><p>${dcaNL(a.pruebas)}</p>` : ''}
+    ${(a && a.observaciones) ? `<h2>Observaciones</h2><p>${dcaNL(a.observaciones)}</p>` : ''}
+    ${(a && a.firma_trabajador_negada)
+    ? `<p class="nota">El trabajador se negó a firmar la presente acta.${a.firma_negada_nota ? ' ' + esc(a.firma_negada_nota) : ''}</p>` : ''}
+    <div class="firmas">
+      ${dcDocFirma('Trabajador', (a && a.firma_trabajador), r.nombre || '', 'C.C. ' + (r.cedula || ''))}
+      ${dcDocFirma('Quien dirige la diligencia', (a && a.firma_dirige) || gh.firma,
+    (a && a.dirige_nombre) || gh.nombre || '', (a && a.dirige_cargo) || gh.cargo || '')}
+      ${ac.map((x) => dcDocFirma('Acompañante', null, x.nombre, 'C.C. ' + (x.cedula || ''))).join('')}
+    </div>
+    <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
+}
+
+async function dcDoc(tipo) {
+  if (!puedeGestionarDisc() || !_dcaRow) return;
+  // Lo escrito se guarda antes de imprimir: el papel tiene que decir lo mismo que la pantalla.
+  clearTimeout(_dcaTimer);
+  if (!_dcaCerrada) await dcaGuardar(true);
+  try {
+    const { data, error } = await sb.rpc('disc_doc_registrar', {
+      p_id: _dcaId, p_tipo: tipo,
+      p_datos: { nombre: _dcaRow.nombre, cedula: _dcaRow.cedula, etapa: _dcaRow.etapa },
+    });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo registrar el documento.');
+
+    const { data: leido } = await sb.rpc('disc_acta_leer', { p_id: _dcaId });
+    const acta = (leido && leido.acta) || _dcaDatos || {};
+    const w = window.open('', '_blank');
+    if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
+      + `<title>${esc(data.consecutivo)}</title><style>${DC_DOC_CSS}</style></head><body>`
+      + dcDocHtml(tipo, _dcaRow, acta, _dcaPap, data.consecutivo)
+      + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
+    w.document.close();
+    await dcActaAbrir(_dcaRow);   // refresca la lista de documentos generados
+  } catch (e) {
+    toast('No se pudo generar el documento: ' + (e.message || e), 'err');
+  }
 }
 
 // ===================================================================================

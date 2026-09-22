@@ -2830,3 +2830,66 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
   .cb-carros td.cb-barra,
   .cb-carros thead th:nth-child(5) { display: none; }
 }
+
+/* ---------- 📝 Diligencia de descargos (sql/105) ---------- */
+.dca-card { max-width: 860px; }
+.dca-sello {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe;
+  border-radius: 10px; padding: 9px 12px; font-size: 13px; margin-bottom: 12px;
+}
+.dca-sec { margin: 14px 0; }
+.dca-sec h4 {
+  margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+.dca-sec textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+/* La nota de ley: explica POR QUÉ se pide el campo, no solo qué se pide */
+.dca-ley { font-size: 12px; color: var(--muted); margin: 0 0 7px; line-height: 1.45; }
+/* El texto del rotulo NO se parte: junto a una casilla, partido en tres lineas
+   deja de leerse como una opcion. La casilla tampoco se encoge. */
+.dca-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.dca-chk input { flex: none; }
+.dca-tog { display: flex; gap: 18px; font-size: 13.5px; margin-bottom: 8px; flex-wrap: wrap; }
+.dca-tog label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dca-tog input { flex: none; }
+.dca-vacio { font-size: 12.5px; color: var(--muted); margin: 4px 0 8px; }
+/* Acompañantes: una fila por persona */
+.dca-fila { display: grid; grid-template-columns: 1fr 120px 1fr 32px; gap: 6px; margin-bottom: 6px; }
+.dca-fila input { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; min-width: 0; }
+/* Pregunta y respuesta, una debajo de otra */
+.dca-pr { position: relative; border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin-bottom: 10px; }
+.dca-pr label { display: block; margin-bottom: 4px; }
+.dca-pr label span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.dca-pr textarea { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; resize: vertical; }
+.dca-pr [data-del] { position: absolute; top: 0; right: 0; }
+/* Firmas: el recuadro donde se firma con el dedo */
+.dca-firmas { display: flex; gap: 16px; flex-wrap: wrap; }
+.dca-firma { flex: 1 1 260px; min-width: 240px; }
+.dca-firma > span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 4px; }
+.dca-canvas {
+  width: 100%; height: 110px; border: 1px dashed #94a3b8; border-radius: 10px;
+  background: #fff; touch-action: none; cursor: crosshair; display: block;
+}
+.dca-firma-acc { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 5px; }
+.dca-negnota { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; margin-top: 6px; }
+/* Documentos */
+.dca-docs { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.dca-docs h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--primary); }
+.dca-docs-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.dca-docs-list { list-style: none; margin: 10px 0 0; padding: 0; font-size: 12.5px; }
+.dca-docs-list li { padding: 3px 0; border-bottom: 1px solid var(--border); }
+.dca-docs-list li:last-child { border-bottom: 0; }
+/* El aviso de guardado: tiene que verse sin buscarlo */
+.dca-estado { font-size: 12px; margin: 10px 0 0; min-height: 17px; }
+.dca-estado.pend { color: #b45309; }
+.dca-estado.ok { color: #15803d; }
+.dca-estado.err { color: #b91c1c; font-weight: 600; }
+/* El llamado a hacer la diligencia completa, dentro del registro rápido */
+.dca-llamado { background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+.dca-llamado b { font-size: 13.5px; }
+.dca-llamado p { font-size: 12.5px; color: var(--muted); margin: 5px 0 8px; line-height: 1.45; }
+@media (max-width: 620px) {
+  .dca-fila { grid-template-columns: 1fr 32px; }
+  .dca-fila input:nth-child(2), .dca-fila input:nth-child(3) { grid-column: 1; }
+}
