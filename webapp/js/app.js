@@ -6845,7 +6845,27 @@ $('docblk-save')?.addEventListener('click', async () => {
   });
 });
 
-// ---- 🪪 LICENCIA DEL CONDUCTOR (sql/76): SOLO ALERTA, no bloquea el despacho ----
+// Achica una foto antes de subirla: con datos móviles una foto de 4 MB no sube, y el
+// registro se traba justo cuando hay alguien esperando. La usan las licencias (sql/108)
+// y las entregas de actividades (sql/107).
+async function comprimirFoto(file, max = 1400, calidad = 0.78) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i); i.onerror = () => rej(new Error('imagen ilegible'));
+      i.src = url;
+    });
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const w = Math.round(img.width * k), h = Math.round(img.height * k);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return await new Promise((res) => c.toBlob(res, 'image/jpeg', calidad));
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// ---- 🪪 LICENCIA DEL CONDUCTOR (sql/76 + sql/108): SOLO ALERTA, no bloquea el despacho ----
 // La licencia sale del Perfil sociodemográfico (archivo de Gestión Humana); el conductor SONAR se cruza
 // por cédula en el servidor (licencia_estado). Vencida = rojo, vence en <=30 días = amarillo. El despachador
 // sube la foto de la licencia renovada; operaciones/admin aprueban con la nueva fecha (actualiza el perfil).
@@ -6910,44 +6930,110 @@ async function avisarLicenciaConductor(drId, boxId) {
   });
 });
 
-// Ventana para subir la foto de la licencia renovada (despachador / operaciones / admin)
+// Ventana para subir la licencia renovada (despachador / operaciones / admin).
+// Se piden las DOS CARAS y el sistema dice cuál va primero: la fecha de vencimiento no
+// está en el frente, está en el respaldo, en la tabla de categorías. Con una sola foto
+// —casi siempre la del frente— operaciones tenía que escribir una fecha que no veía.
+const LIC_CARAS = [
+  { k: 'frente', n: 1, t: 'Frente de la licencia', d: 'El lado de la foto y el nombre.' },
+  { k: 'respaldo', n: 2, t: 'Respaldo de la licencia',
+    d: 'El lado de las categorías y las fechas de vigencia. De aquí sale el vencimiento que registra operaciones.' },
+];
+
 function openLicSubir(drId, nombre, after) {
   let m = $('licsub-modal');
   if (!m) {
     m = document.createElement('div');
     m.id = 'licsub-modal'; m.className = 'modal'; m.hidden = true;
     m.innerHTML = `<div class="modal-card confirm-card">
-      <div class="modal-head"><h3>📎 Subir licencia renovada</h3><button type="button" class="icon-btn" data-x>✕</button></div>
-      <div class="edit-form" style="padding:14px 20px;display:grid;gap:10px">
+      <div class="modal-head"><h3>📎 Actualizar licencia</h3><button type="button" class="icon-btn" data-x>✕</button></div>
+      <div class="edit-form lic-sub-body">
         <div class="lic-sub-info"></div>
-        <label class="field full"><span>Foto o PDF de la licencia (ambas caras si es posible) *</span>
-          <input type="file" class="lic-sub-file" accept="image/*,application/pdf" capture="environment"></label>
+        ${LIC_CARAS.map((c) => `<div class="lic-cara" data-cara="${c.k}">
+          <div class="lic-cara-h"><span class="lic-paso">${c.n}</span>
+            <div><b>${c.t}</b><small>${c.d}</small></div>
+            <span class="spacer"></span>
+            <label class="btn btn-sm" for="lic-f-${c.k}">Tomar foto</label></div>
+          <input type="file" id="lic-f-${c.k}" accept="image/*" hidden>
+          <div class="lic-prev" data-prev="${c.k}"><span class="muted">Sin foto</span></div>
+        </div>`).join('')}
         <label class="field full"><span>Observación (opcional)</span>
           <input type="text" class="lic-sub-obs" maxlength="300" placeholder="Ej: la renovó el 10/09"></label>
         <div class="form-error lic-sub-err" hidden></div>
       </div>
       <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cancelar</button>
-        <button type="button" class="btn btn-primary lic-sub-save">Subir</button></div></div>`;
+        <button type="button" class="btn btn-primary lic-sub-save">Subir las dos</button></div></div>`;
     m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
     document.body.appendChild(m);
   }
-  m.querySelector('.lic-sub-info').innerHTML = `Conductor: <b>${esc(nombre || '')}</b><br><span class="muted">Operaciones revisará la foto y actualizará la fecha de vencimiento. El despacho no se bloquea.</span>`;
-  m.querySelector('.lic-sub-file').value = ''; m.querySelector('.lic-sub-obs').value = '';
-  const err = m.querySelector('.lic-sub-err'); err.hidden = true;
+
+  const fotos = { frente: null, respaldo: null };
+  const err = m.querySelector('.lic-sub-err');
   const btn = m.querySelector('.lic-sub-save');
+
+  // El paso 2 queda en gris hasta que el 1 esté: así se ve cuál va primero sin encerrar
+  // a nadie — si la del respaldo ya está tomada, se puede montar igual.
+  const pintarPasos = () => {
+    m.querySelectorAll('[data-cara]').forEach((c) => {
+      const k = c.dataset.cara;
+      c.classList.toggle('lic-lista', !!fotos[k]);
+      c.classList.toggle('lic-espera', k === 'respaldo' && !fotos.frente && !fotos.respaldo);
+    });
+  };
+
+  m.querySelector('.lic-sub-info').innerHTML = `Conductor: <b>${esc(nombre || '')}</b>`
+    + '<br><span class="muted">Operaciones revisa las fotos y registra la fecha de vencimiento. '
+    + 'El despacho no se bloquea.</span>';
+  m.querySelector('.lic-sub-obs').value = '';
+  err.hidden = true;
+
+  LIC_CARAS.forEach((c) => {
+    const inp = m.querySelector('#lic-f-' + c.k);
+    const prev = m.querySelector(`[data-prev="${c.k}"]`);
+    fotos[c.k] = null;
+    inp.value = '';
+    prev.innerHTML = '<span class="muted">Sin foto</span>';
+    inp.onchange = async (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      prev.innerHTML = '<span class="muted">Preparando la foto…</span>';
+      try {
+        fotos[c.k] = await comprimirFoto(f);
+        prev.innerHTML = `<img src="${URL.createObjectURL(fotos[c.k])}" alt="">`
+          + `<small>${Math.round(fotos[c.k].size / 1024)} KB</small>`;
+        err.hidden = true;
+      } catch (e) {
+        fotos[c.k] = null;
+        prev.innerHTML = '<span class="iv-warn">No se pudo leer la imagen. Toma la foto otra vez.</span>';
+      }
+      pintarPasos();
+    };
+  });
+  pintarPasos();
+
   btn.onclick = async () => {
     if (btn.dataset.busy === '1') return;
-    const file = m.querySelector('.lic-sub-file').files[0];
-    if (!file) { err.textContent = 'Adjunta la foto o el PDF de la licencia.'; err.hidden = false; return; }
-    if (file.size > 15 * 1024 * 1024) { err.textContent = 'El archivo supera 15 MB.'; err.hidden = false; return; }
-    btn.dataset.busy = '1'; btn.disabled = true; showBusy('Subiendo licencia…');
+    if (!fotos.frente) { err.textContent = 'Falta la foto del frente (paso 1).'; err.hidden = false; return; }
+    if (!fotos.respaldo) {
+      err.textContent = 'Falta la foto del respaldo (paso 2): ahí está la fecha de vencimiento.';
+      err.hidden = false; return;
+    }
+    btn.dataset.busy = '1'; btn.disabled = true; showBusy('Subiendo la licencia…');
     try {
-      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const path = `${drId}/licencia/${Date.now()}_${safe}`;
-      const up = await sb.storage.from('docs-conductores').upload(path, file, { upsert: false, contentType: file.type || undefined });
-      if (up.error) throw up.error;
+      const t = Date.now();
+      const subir = async (cara) => {
+        const path = `${drId}/licencia/${t}_${cara}.jpg`;
+        const up = await sb.storage.from('docs-conductores')
+          .upload(path, fotos[cara], { upsert: false, contentType: 'image/jpeg' });
+        if (up.error) throw up.error;
+        return path;
+      };
+      const pFrente = await subir('frente');
+      const pRespaldo = await subir('respaldo');
       const { error } = await sb.rpc('licencia_actualizacion_subir', {
-        p_dr_id: String(drId), p_archivo_path: path, p_archivo_nombre: file.name, p_observacion: m.querySelector('.lic-sub-obs').value.trim(),
+        p_dr_id: String(drId), p_archivo_path: pFrente, p_archivo_nombre: 'frente.jpg',
+        p_respaldo_path: pRespaldo, p_respaldo_nombre: 'respaldo.jpg',
+        p_observacion: m.querySelector('.lic-sub-obs').value.trim(),
       });
       if (error) throw error;
       m.hidden = true;
@@ -6992,10 +7078,14 @@ async function cargarLicencias(m) {
         <div><b>${esc(r.conductor_nombre || '')}</b> · licencia ${r.vence_anterior ? `vencía ${esc(fechaLegible(r.vence_anterior))}` : 'sin fecha registrada'}
           ${r.categoria_actual ? `· categoría ${esc(r.categoria_actual)}` : ''}</div>
         <div class="muted">Subida ${esc(fmtFechaHora(r.subido_en))} por ${esc(r.subido_por || '')}${r.observacion ? ` · “${esc(r.observacion)}”` : ''}</div>
+        ${r.actualizada_en ? `<div class="muted">Última actualización registrada: <b>${esc(fechaLegible(r.actualizada_en))}</b></div>` : ''}
         ${r.revisado_en ? `<div class="muted">Revisada ${esc(fmtFechaHora(r.revisado_en))} por ${esc(r.revisado_por || '')}${r.nueva_fecha ? ` · nuevo vencimiento <b>${esc(fechaLegible(r.nueva_fecha))}</b>` : ''}${r.motivo_rechazo ? ` · motivo: ${esc(r.motivo_rechazo)}` : ''}</div>` : ''}
       </div>
       <div class="pact-foot">
-        <button type="button" class="btn btn-sm" data-ver>🖼️ Ver licencia</button>
+        <button type="button" class="btn btn-sm" data-ver="${esc(r.archivo_path || '')}">🖼️ Frente</button>
+        ${r.archivo_respaldo_path
+    ? `<button type="button" class="btn btn-sm btn-primary" data-ver="${esc(r.archivo_respaldo_path)}">🔍 Respaldo (la fecha)</button>`
+    : '<span class="muted lic-sin-resp">sin respaldo: se subió antes del cambio</span>'}
         ${pend ? `<span class="spacer"></span>
           <label class="lic-rev-f">Nuevo vencimiento * <input type="date" data-fecha></label>
           <label class="lic-rev-f">Categoría <select data-cat><option value="">(igual)</option>${CATS.map((c) => `<option>${c}</option>`).join('')}</select></label>
@@ -7003,11 +7093,14 @@ async function cargarLicencias(m) {
           <button type="button" class="btn btn-sm btn-danger" data-rech>Rechazar</button>
           <button type="button" class="btn btn-sm btn-primary" data-aprob>Aprobar</button>` : ''}
       </div>`;
-    card.querySelector('[data-ver]').onclick = async () => {
-      const { data: u, error: e } = await sb.storage.from('docs-conductores').createSignedUrl(r.archivo_path, 600);
-      if (e || !u?.signedUrl) { toast('No se pudo abrir el archivo: ' + (e?.message || ''), 'err'); return; }
-      window.open(u.signedUrl, '_blank', 'noopener');
-    };
+    card.querySelectorAll('[data-ver]').forEach((b) => {
+      b.onclick = async () => {
+        const { data: u, error: e } = await sb.storage.from('docs-conductores')
+          .createSignedUrl(b.dataset.ver, 600);
+        if (e || !u?.signedUrl) { toast('No se pudo abrir el archivo: ' + (e?.message || ''), 'err'); return; }
+        window.open(u.signedUrl, '_blank', 'noopener');
+      };
+    });
     if (pend) {
       const revisar = async (aprobar, motivo) => {
         showBusy(aprobar ? 'Aprobando…' : 'Rechazando…');
@@ -9600,7 +9693,7 @@ function acEntregar(a) {
       if (!f) return;
       $('ace-prev').innerHTML = '<span class="muted">Preparando la foto…</span>';
       try {
-        foto = await acComprimirFoto(f);
+        foto = await comprimirFoto(f);
         $('ace-prev').innerHTML = `<img src="${URL.createObjectURL(foto)}" alt="">`
           + `<small>${Math.round(foto.size / 1024)} KB</small>`;
       } catch (e) { foto = null; $('ace-prev').innerHTML = '<span class="iv-warn">No se pudo leer la imagen.</span>'; }
@@ -9688,23 +9781,7 @@ function acEntregar(a) {
   setTimeout(() => $('ace-ced').focus(), 60);
 }
 
-// La foto se achica antes de subirla: con datos móviles, 4 MB no suben.
-async function acComprimirFoto(file, max = 1100, calidad = 0.75) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i); i.onerror = () => rej(new Error('imagen ilegible'));
-      i.src = url;
-    });
-    const k = Math.min(1, max / Math.max(img.width, img.height));
-    const w = Math.round(img.width * k), h = Math.round(img.height * k);
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    c.getContext('2d').drawImage(img, 0, 0, w, h);
-    return await new Promise((res) => c.toBlob(res, 'image/jpeg', calidad));
-  } finally { URL.revokeObjectURL(url); }
-}
+// (comprimirFoto vive junto al modulo de licencias: la usan los dos)
 
 function acAnular(id) {
   const e = (_acDet.entregas || []).find((x) => String(x.id) === String(id));
