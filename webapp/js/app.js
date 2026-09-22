@@ -842,6 +842,16 @@ $('menu-toggle').addEventListener('click', () => setMenu(!$('sidebar').classList
 $('scrim').addEventListener('click', closeMenu);
 $('app-ver').textContent = APP_VERSION;
 
+// Apaga todas las pantallas completas menos la que se va a mostrar.
+// Antes cada modulo repetia la lista a mano, y la vista que llegaba nueva quedaba
+// por fuera de las listas viejas: por eso Intervenciones dejaba Pasajeros asomada debajo.
+function ocultarVistas(excepto) {
+  document.querySelectorAll('[id$="-view"]').forEach((e) => {
+    if (e.id === excepto) return;
+    if (e.id === 'map-view' && mapaFlotante) return; // el mapa flotante vive dentro de #map-view
+    e.hidden = true;
+  });
+}
 function selectTable(name, filtroInicial) {
   // salir de la vista de mapa si estaba activa
   currentView = 'tabla';
@@ -860,6 +870,7 @@ function selectTable(name, filtroInicial) {
   $('jornada-view').hidden = true;
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  ocultarVistas('table-view');
   $('table-view').hidden = false;
   clearTimeout(searchTimer); // cancela una búsqueda con debounce pendiente de la tabla anterior
   current = name; page = 0; term = ''; filters = filtroInicial ? { ...filtroInicial } : {}; $('search').value = '';
@@ -4328,6 +4339,7 @@ async function openCumplimiento() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('cump-view');
   $('cump-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-cump')?.classList.add('active');
@@ -4594,6 +4606,7 @@ async function openRutasVivo(modo) {
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('rutas-view');
   $('rutas-view').hidden = false;
   const h2 = $('rutas-h2');
   if (h2) h2.textContent = _rutasModo === 'linea' ? '🚏 Despachos en vivo lineal' : '🟢 Rutas en vivo';
@@ -4823,6 +4836,7 @@ async function openMalla() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('malla-view');
   $('malla-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-malla')?.classList.add('active');
@@ -4969,6 +4983,7 @@ async function openLaureles(modo) {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('perfilstats-view').hidden = true;
+  ocultarVistas('laureles-view');
   $('laureles-view').hidden = false;
   const h2 = document.querySelector('#laureles-view h2'); if (h2) h2.textContent = esCump ? '📊 Cumplimiento Laureles' : '🛂 Control Laureles';
   $('laur-search').hidden = esCump; // la búsqueda filtra la tabla; en cumplimiento no hay tabla
@@ -5452,6 +5467,7 @@ async function openOriental(modo) {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('perfilstats-view').hidden = true;
+  ocultarVistas('oriental-view');
   $('oriental-view').hidden = false;
   const h2 = document.querySelector('#oriental-view h2');
   if (h2) h2.textContent = esCump ? '📊 Cumplimiento Av. Oriental' : '🛂 Control Av. Oriental';
@@ -6248,6 +6264,7 @@ async function openIntegradas() {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('perfilstats-view').hidden = true;
+  ocultarVistas('integradas-view');
   $('integradas-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-integradas')?.classList.add('active');
@@ -6367,6 +6384,7 @@ async function openPasajeros() {
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
   $('perfilstats-view').hidden = true;
+  ocultarVistas('pasajeros-view');
   $('pasajeros-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-pasajeros')?.classList.add('active');
@@ -6448,6 +6466,7 @@ async function openPreventivas() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('preventivas-view');
   $('preventivas-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-preventivas')?.classList.add('active');
@@ -7199,6 +7218,7 @@ async function openDisc(modo) {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('disc-view');
   $('disc-view').hidden = false;
   const h2 = document.querySelector('#disc-view h2');
   if (h2) h2.textContent = _dcModo === 'bandeja' ? '⚖️ Procesos disciplinarios'
@@ -7902,6 +7922,7 @@ async function openInterv(modo) {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('interv-view');
   $('interv-view').hidden = false;
   const h2 = document.querySelector('#interv-view h2');
   if (h2) h2.textContent = _ivModo === 'agenda' ? '🛠️ Intervenciones · agenda'
@@ -11922,6 +11943,7 @@ async function openFrecuencia() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('frecuencia-view');
   $('frecuencia-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-frec')?.classList.add('active');
@@ -12031,6 +12053,7 @@ async function openProductividad() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('productividad-view');
   $('productividad-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-prod')?.classList.add('active');
@@ -12189,6 +12212,7 @@ async function openJornada() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('jornada-view');
   $('jornada-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-jor')?.classList.add('active');
@@ -12380,6 +12404,7 @@ async function openTop() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('top-view');
   $('top-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-top')?.classList.add('active');
@@ -12547,6 +12572,7 @@ function statsPrepararVista() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('perfilstats-view');
   $('perfilstats-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
 }
@@ -14957,6 +14983,7 @@ async function openUsuarios() {
   if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('usuarios-view');
   $('usuarios-view').hidden = false;
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
   $('nav-usuarios')?.classList.add('active');
@@ -18226,6 +18253,7 @@ async function showMapView() {
   $('pasajeros-view').hidden = true; $('usuarios-view').hidden = true; $('top-view').hidden = true; $('perfilstats-view').hidden = true; $('preventivas-view').hidden = true;
   if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
   $('table-view').hidden = true;
+  ocultarVistas('map-view');
   $('map-view').hidden = false;
   closeVehSheet();
   limpiarRecorrido(); // entra al mapa sin recorrido previo dibujado
