@@ -9721,7 +9721,10 @@ async function dcxDoc(tipo) {
 const TL_PRIO = { high: { l: 'Urgente', c: 'chip-red' }, medium: { l: 'Media', c: 'chip-amber' }, low: { l: 'Baja', c: 'chip-gray' } };
 let _tl = { d: null, cargando: false, tab: 'taller' };
 
-function puedeVerTaller() { return isAdmin() || isOperaciones() || isAuditor(); }
+// El despachador también entra: necesita saber qué carros están en el taller para mover la
+// programación ANTES de que el problema le llegue a la hora del despacho. Lo que no ve son
+// los costos ni el represamiento administrativo — eso lo recorta taller_tablero (sql/113).
+function puedeVerTaller() { return isAdmin() || isOperaciones() || isAuditor() || isDespachador(); }
 
 // Los buses que estan en el taller con orden que los deja FUERA DE SERVICIO. Va de numerito
 // en el menu para que operaciones y los auditores lo vean sin tener que entrar a mirar.
@@ -9729,10 +9732,8 @@ let TALLER_FUERA = 0;
 async function refrescarTaller(rebuild = true) {
   if (!puedeVerTaller()) { TALLER_FUERA = 0; return; }
   try {
-    const { count } = await sb.from('taller_ordenes')
-      .select('numero', { count: 'exact', head: true })
-      .eq('estado', 'opened').eq('fuera_listado', false).eq('afecta_disponib', true);
-    TALLER_FUERA = count || 0;
+    const { data } = await sb.rpc('taller_fuera_n');
+    TALLER_FUERA = Number(data) || 0;
   } catch (e) { TALLER_FUERA = 0; }   // si falta sql/111 el menu sale sin numerito, y ya
   if (rebuild) buildSidebar();
 }
@@ -9917,6 +9918,22 @@ function renderTaller() {
   }
 
   if (_tl.tab === 'taller') {
+    // Lo primero de la pantalla: un bus que el taller dio de baja y que hoy se despachó o
+    // está programado. O el taller no cerró la orden, o ese carro está rodando sin deber.
+    const op = d.operacion || [];
+    if (op.length) {
+      h += `<div class="tl-alerta"><b>⛔ ${op.length} ${op.length === 1 ? 'bus está' : 'buses están'}
+        fuera de servicio y ${op.length === 1 ? 'aparece' : 'aparecen'} en la operación de hoy</b>
+        <div class="tl-alerta-sub">Hay que resolverlo: o el taller no cerró la orden, o el carro está
+          rodando cuando no debería.</div>
+        <div class="mc-wrap"><table class="mc-tabla"><tbody>
+        ${op.map((r) => `<tr><td><b>${esc(r.movil)}</b></td>
+          <td>${Number(r.despachados) ? `<span class="chip chip-red">despachado hoy · ${Number(r.despachados)}</span>` : ''}
+            ${Number(r.programados) ? `<span class="chip chip-amber">programado hoy · ${Number(r.programados)}</span>` : ''}</td>
+          <td class="muted">#${esc(String(r.orden))} · ${esc(r.tipo || '')} · ${esc(tlDias(r.dias))}</td>
+          <td class="tl-motivo">${esc(r.motivo || '')}</td></tr>`).join('')}
+        </tbody></table></div></div>`;
+    }
     h += `<div class="cump-heros">
       <div class="cump-hero"><div class="ch-val">${Number(o.abiertas || 0)}</div><div class="ch-lbl">Órdenes abiertas</div></div>
       <div class="cump-hero"><div class="ch-val">${Number(o.afectan || 0)}</div><div class="ch-lbl">Fuera de servicio</div>
@@ -9927,7 +9944,7 @@ function renderTaller() {
     </div>`;
     const lista = d.lista || [];
     h += lista.length ? `<div class="mc-wrap"><table class="mc-tabla tl-tabla"><thead><tr>
-      <th>Móvil</th><th>Orden</th><th>Tipo</th><th>Abierta</th><th>Motivo</th><th></th></tr></thead><tbody>
+      <th>Móvil</th><th>Orden</th><th>Tipo</th><th>Abierta</th><th>Motivo</th>${d.admin ? '<th>Costo</th>' : ''}</tr></thead><tbody>
       ${lista.map((r) => `<tr class="${r.afecta ? 'tl-fuera' : ''}">
         <td><b>${esc(r.movil)}</b>${r.grupo ? `<small>${esc(r.grupo)}</small>` : ''}</td>
         <td>#${esc(String(r.numero))}${(r.etiquetas || []).length ? `<small>${esc((r.etiquetas || []).join(', '))}</small>` : ''}</td>
@@ -9935,10 +9952,10 @@ function renderTaller() {
           ${r.afecta ? '<span class="chip chip-red">fuera de servicio</span>' : ''}</td>
         <td>${esc(tlDias(r.dias))}<small>${esc(fechaLegible(r.desde))}</small></td>
         <td class="tl-motivo">${esc(r.motivo || '—')}</td>
-        <td class="mc-num">${r.costo ? '$ ' + Math.round(Number(r.costo)).toLocaleString('es-CO') : ''}</td></tr>`).join('')}
+        ${d.admin ? `<td class="mc-num">${r.costo ? '$ ' + Math.round(Number(r.costo)).toLocaleString('es-CO') : ''}</td>` : ''}</tr>`).join('')}
       </tbody></table></div>` : '<div class="cump-empty">✅ Ningún bus en el taller ahora mismo.</div>';
 
-    const rep = d.represadas || [];
+    const rep = d.admin ? (d.represadas || []) : [];
     if (rep.length) {
       h += `<details class="dcx-det"><summary>⏳ Salieron del taller pero la orden sigue sin cerrar · ${rep.length}</summary>
         <div class="cump-subtitle">Mientras la orden no se cierre, ese bus sigue apareciendo con mantenimiento pendiente.</div>
@@ -10527,6 +10544,8 @@ $('ac-search')?.addEventListener('input', (e) => { _ac.q = e.target.value; rende
 
 $('tl-refresh')?.addEventListener('click', () => cargarTaller());
 $('tl-traer')?.addEventListener('click', () => tallerTraer());
+// Traer a mano es de administración; al resto ni se le muestra el botón.
+if (!isAdmin()) { const b = $('tl-traer'); if (b) b.hidden = true; }
 $('tl-close')?.addEventListener('click', () => { $('tl-view').hidden = true; selectTable(current); });
 
 // ===================================================================================

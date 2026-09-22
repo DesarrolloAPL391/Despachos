@@ -3088,3 +3088,13 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .tl-tabla tr.tl-fuera > td { background: #fef2f2; }
 .tl-tabla td small { display: block; font-size: 11px; opacity: .7; }
 .tl-tabla .tl-motivo { max-width: 320px; }
+
+/* El motivo lo escribe el taller a mano y a veces es largo: sin esto la celda no envuelve
+   (las de .mc-tabla son nowrap) y el texto se montaba encima de la columna del costo. */
+.tl-tabla .tl-motivo, .tl-alerta .tl-motivo { white-space: normal; line-height: 1.35; }
+
+/* Buses fuera de servicio que aparecen en la operación de hoy: es lo primero que se debe ver. */
+.tl-alerta { border: 1px solid #fca5a5; background: #fef2f2; color: #7f1d1d;
+  border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+.tl-alerta-sub { font-size: 12px; opacity: .85; margin: 2px 0 8px; }
+.tl-alerta .mc-tabla td { background: transparent; }
