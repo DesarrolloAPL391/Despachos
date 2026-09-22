@@ -2016,7 +2016,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
     if (hasMobile && !c.m) th.className = 'col-hide';
     head.appendChild(th);
   });
-  if ((!cfg.readonly || cfg.asistenciaMarcar || cfg.fichaDetalle) && !afiliadoSoloLectura() && (current !== 'restricciones_rutas' || puedeGestionarRestricciones())) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
+  if ((!cfg.readonly || cfg.asistenciaMarcar || cfg.fichaDetalle) && !afiliadoSoloLectura()) head.appendChild(Object.assign(document.createElement('th'), { textContent: 'Acciones', className: 'col-act' }));
 
   const body = $('tbody'); body.innerHTML = '';
   $('empty').hidden = rows.length > 0;
@@ -2134,7 +2134,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       tr.appendChild(td);
     }
-    if (!cfg.readonly && !afiliadoSoloLectura() && (current !== 'restricciones_rutas' || puedeGestionarRestricciones())) {
+    if (!cfg.readonly && !afiliadoSoloLectura()) {
       const act = document.createElement('td');
       act.className = 'row-actions';
       act.dataset.label = 'Acciones';
@@ -2200,6 +2200,14 @@ function renderTable(cfg, rows, count, diaSel = false) {
           ev.onclick = () => abrirEventosAuditor(row);
           act.appendChild(ev);
         }
+        // Ver la restriccion completa: en la tabla la novedad sale recortada y el
+        // bloqueo hay que armarlo leyendo cinco columnas. La ve todo el que ve la tabla.
+        if (current === 'restricciones_rutas') {
+          const vr = Object.assign(document.createElement('button'),
+            { className: 'act act-ver', innerHTML: '👁️', title: 'Ver la restriccion completa' });
+          vr.onclick = () => openRestriccion(row);
+          act.appendChild(vr);
+        }
         // Ver la ficha completa de la persona (Talento humano)
         if (current === 'perfilsociodemografico' && isTalentoHumano()) {
           const ver = Object.assign(document.createElement('button'),
@@ -2211,8 +2219,9 @@ function renderTable(cfg, rows, count, diaSel = false) {
         // (la RLS lo limita a sus propias filas y a su horario). Antes solo admin/auditor
         // tenían el lápiz; el despachador ahora puede editar los campos del viaje, no solo despachar.
         // Gestión Humana edita la ficha de las personas (su RLS solo le deja Talento humano)
-        if (efIsAdmin() || efIsAuditor() || filtraComoDespachador()
-            || (isGestionHumana() && (current === 'perfilsociodemografico' || current === 'perfil_vinculaciones'))) {
+        if ((current !== 'restricciones_rutas' || puedeGestionarRestricciones())  // el ojito es de todos; el lapiz no
+            && (efIsAdmin() || efIsAuditor() || filtraComoDespachador()
+            || (isGestionHumana() && (current === 'perfilsociodemografico' || current === 'perfil_vinculaciones')))) {
           const ed = Object.assign(document.createElement('button'), { className: 'act act-edit', innerHTML: ICON.edit });
           // No se edita una fecha adelantada (futura). El auditor sí audita días anteriores.
           if (esFutura) {
@@ -7999,6 +8008,14 @@ function ivFilaHtml(r, conCierre) {
   </tr>`;
 }
 
+// Vacio con causa: no es lo mismo "no hay nada cargado" que "no hay nada en ESE rango".
+// La primera vez la tabla esta vacia de verdad y hay que decir como llenarla.
+function ivVacioMsg(enRango) {
+  if (_iv.rows.length) return enRango;
+  return isAdmin()
+    ? 'Todavía no hay ninguna intervención cargada.<br>Usa <b>⬆️ Cargar histórico</b> para subir el archivo, o <b>➕ Nueva</b> para citar una.'
+    : 'Todavía no hay ninguna intervención registrada.';
+}
 function ivTablaHtml(rows, conCierre, vacio) {
   if (!rows.length) return `<div class="cump-empty">${vacio}</div>`;
   return '<div class="mc-wrap"><table class="mc-tabla iv-tabla"><thead><tr>'
@@ -8023,7 +8040,7 @@ function renderInterv() {
       + '<p class="iv-nota">Ya pasó la cita y nadie dijo qué ocurrió. Ciérralas para que el cumplimiento sea real.</p>'
       + ivTablaHtml(pend.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)), true, '') : '')
       + `<h3 class="iv-h">📅 Hoy · ${esc(fechaLegible(hoy))}</h3>`
-      + ivTablaHtml(hoyR, true, 'No hay intervenciones citadas para hoy.')
+      + ivTablaHtml(hoyR, true, ivVacioMsg('No hay intervenciones citadas para hoy.'))
       + (prox.length ? '<h3 class="iv-h">🔜 Próximas</h3>' + ivTablaHtml(prox.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)), true, '') : '');
     return;
   }
@@ -8031,7 +8048,7 @@ function renderInterv() {
   const sub = $('iv-sub');
   if (sub) sub.textContent = `${rows.length} intervención(es)`
     + (_iv.rows.length !== rows.length ? ` de ${_iv.rows.length}` : '');
-  body.innerHTML = ivTablaHtml(rows, true, 'No hay intervenciones en ese rango.');
+  body.innerHTML = ivTablaHtml(rows, true, ivVacioMsg('No hay intervenciones en ese rango. Amplia las fechas de arriba.'));
 }
 
 // ---------- Indicadores ----------
@@ -8085,7 +8102,7 @@ function _ivBarras(obj, titulo, sub, enOrden) {
   return `<div class="cump-card"><h4>${titulo}${sub ? ` <small>${sub}</small>` : ''}</h4>${filas}</div>`;
 }
 function _ivDashHtml(rows) {
-  if (!rows.length) return '<div class="cump-empty">No hay intervenciones en ese rango.</div>';
+  if (!rows.length) return `<div class="cump-empty">${ivVacioMsg('No hay intervenciones en ese rango. Amplia las fechas de arriba.')}</div>`;
   const a = _ivAgg(rows);
   const pIng = _pctCump(a.ing, a.cerradas);
   const pCerr = _pctCump(a.cerradas, a.total - a.anul);
@@ -8728,6 +8745,119 @@ async function avisarRestriccionMovil(numero, conductor, boxId) {
       + '<br>No se puede despachar en ese horario.';
     box.hidden = false;
   } catch (e) { /* informativo */ }
+}
+
+// ---------- Visor de la restricción (el 👁️ de cada fila) ----------
+// En la tabla la novedad sale recortada, y lo que de verdad se consulta —a quién
+// bloquea, dónde y cuándo— hay que armarlo leyendo cinco columnas. Aquí eso se
+// dice en una frase arriba, y debajo queda el registro completo, por bloques.
+function restrModal() {
+  let m = $('restr-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'restr-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🚫 Restricción</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+const _rsHm = (v) => String(v || '').slice(0, 5); // 07:30:00 -> 07:30
+// Nombre legible del puesto donde aplica ('laureles' -> 'Laureles').
+function restrDonde(r) {
+  const t = String(r.tabla || '');
+  if (!t) return '';
+  if (t === 'despachos') return 'Despachos (vista general)';
+  return (TABLES[t] && TABLES[t].label) || t;
+}
+// Qué bloquea, en palabras. En "despachos" la restricción sigue al CONDUCTOR en
+// cualquier móvil; en una tabla de puesto sigue al MÓVIL en esa ruta (sql/71+72).
+function restrFrase(r, pasado) {
+  const neg = pasado ? 'no se podía despachar' : 'no se puede despachar';
+  const dia = r.fecha_restriccion ? `el <b>${esc(fechaLegible(r.fecha_restriccion))}</b>` : '(sin fecha)';
+  const ini = _rsHm(r.hora_inicial); const fin = _rsHm(r.hora_finalizacion);
+  const franja = (ini || fin) ? ` entre las <b>${esc(ini || '—')}</b> y las <b>${esc(fin || '—')}</b>` : '';
+  const viaje = r.hora_viaje ? ` en el viaje de las <b>${esc(_rsHm(r.hora_viaje))}</b>` : '';
+  const cuando = franja || viaje;
+  if (String(r.tabla || '') === 'despachos') {
+    return r.conductor
+      ? `<b>${esc(r.conductor)}</b> ${neg} en <b>ningún móvil</b> ${dia}${cuando}.`
+      : `Restricción en la vista general de Despachos ${dia}${cuando}.`;
+  }
+  const ruta = r.ruta_restringida ? ` en la ruta <b>${esc(r.ruta_restringida)}</b>` : '';
+  const don = restrDonde(r);
+  return `El móvil <b>${esc(r.vehiculo || '?')}</b> ${neg}${ruta}`
+    + `${don ? ` en <b>${esc(don)}</b>` : ''} ${dia}${cuando}.`;
+}
+function openRestriccion(r) {
+  const m = restrModal(); const body = m.querySelector('.pf-body');
+  const wa = (tel) => {
+    const t = String(tel || '').replace(/\D/g, '');
+    return t.length === 10 ? `${esc(tel)} <a href="https://wa.me/57${t}" target="_blank" rel="noopener" title="WhatsApp">💬</a>` : esc(tel || '');
+  };
+  const cancelada = String(r.estado || '') === 'CANCELADA';
+  const dia = r.fecha_restriccion ? String(r.fecha_restriccion).slice(0, 10) : '';
+  const pasada = !cancelada && dia && dia < hoyServidor();
+  const aviso = cancelada
+    ? `<div class="pf-aviso gris">✅ <b>Cancelada</b> — ya no bloquea nada. Bloqueaba esto: ${restrFrase(r, true)}</div>`
+    : (pasada
+      ? `<div class="pf-aviso ambar">🕓 <b>Ya pasó el día:</b> hoy no bloquea. ${restrFrase(r)}</div>`
+      : `<div class="pf-aviso rojo">🚫 ${restrFrase(r)}</div>`);
+  const chips = [
+    `<span class="chip ${cancelada ? 'chip-gray' : (pasada ? 'chip-amber' : 'chip-red')}">${esc(r.estado || 'VIGENTE')}</span>`,
+    r.modo ? `<span class="chip chip-blue">${r.modo === 'HORA' ? 'Por franja de hora' : 'Por viaje'}</span>` : '',
+    restrDonde(r) ? `<span class="chip chip-gray">${esc(restrDonde(r))}</span>` : '',
+  ].filter(Boolean).join(' ');
+  m.querySelector('h3').textContent = `🚫 Restricción${r.vehiculo ? ` · móvil ${r.vehiculo}` : ''}`;
+  const contactos = !afiliadoSoloLectura(); // el afiliado no ve los teléfonos del personal
+  body.innerHTML = `
+    <header class="pf-top">
+      <div class="pf-av cond">${esc(r.vehiculo || '—')}</div>
+      <div class="pf-idt">
+        <h2>${r.vehiculo ? `Móvil ${esc(r.vehiculo)}` : 'Sin móvil'}${r.ruta_restringida ? ` · ruta ${esc(r.ruta_restringida)}` : ''}</h2>
+        <div class="pf-sub">Novedad del ${esc(fechaLegible(r.fecha_novedad || '') || '—')}</div>
+        <div class="pf-chips">${chips}</div>
+      </div>
+    </header>
+    ${aviso}
+    <div class="pf-secs">
+      ${sinBloque('🚫 La restricción', [
+    ['Dónde aplica', esc(restrDonde(r))],
+    ['A quién bloquea', String(r.tabla || '') === 'despachos'
+      ? `el conductor <b>${esc(r.conductor || '?')}</b>, en cualquier móvil`
+      : (r.vehiculo ? `el móvil <b>${esc(r.vehiculo)}</b>` : '')],
+    ['Ruta restringida', esc(r.ruta_restringida || '')],
+    ['Día restringido', esc(fechaLegible(r.fecha_restriccion || ''))],
+    ['Modo', r.modo === 'HORA' ? 'Por franja de hora' : (r.modo === 'VIAJE' ? 'Por viaje' : '')],
+    ['Viaje / hora a restringir', esc(r.viajes_hora || '')],
+    ['Hora del viaje', esc(_rsHm(r.hora_viaje))],
+    ['Desde', esc(_rsHm(r.hora_inicial))],
+    ['Hasta', esc(_rsHm(r.hora_finalizacion))]])}
+      ${sinBloque('⚠️ La novedad que la originó', [
+    ['Fecha de la novedad', esc(fechaLegible(r.fecha_novedad || ''))],
+    ['Ruta de la infracción', esc(r.ruta || '')],
+    ['Qué incumplió', esc(r.novedad || '')],
+    ['Observaciones', esc(r.observaciones || '')]])}
+      ${sinBloque('🧑‍✈️ Conductor', [['Nombre', esc(r.conductor || '')]])}
+      ${contactos ? sinBloque('🧑‍💼 Propietario del móvil', [
+    ['Nombre', esc(r.propietario || '')],
+    ['Correo', esc(r.correo_propietario || '')],
+    ['Celular', wa(r.celular_propietario)]]) : ''}
+      ${contactos ? sinBloque('📻 Despachadores', [
+    ['Turno AM', esc(r.despachador_am || '')], ['Celular AM', wa(r.numero_am)],
+    ['Turno PM', esc(r.despachador_pm || '')], ['Celular PM', wa(r.numero_pm)]]) : ''}
+      ${sinBloque('🗂️ Registro', [
+    ['Quién la montó', esc(r.usuario || '')],
+    ['Acción', esc(r.accion_usuario || '')],
+    ['Montada el', esc(fmtFechaHora(r.creado_en || ''))],
+    ['N.º interno', String(r.id || '')],
+    ['Origen (hoja)', esc(r.key_origen || '')]])}
+    </div>`;
+  m.hidden = false;
 }
 
 // ===================================================================================

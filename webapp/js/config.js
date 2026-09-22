@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v293';
+export const APP_VERSION = 'v294';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -857,7 +857,7 @@ export const TABLES = {
     pkEditable: false,
     select: '*',
     searchCols: ['vehiculo', 'conductor', 'ruta', 'novedad', 'propietario'],
-    defaultOrder: { col: 'fecha_novedad', asc: false },
+    defaultOrder: { col: 'id', asc: false },   // la ultima que se monto, de primera (creado_en empata en las 815 del CSV)
     filters: [
       { col: 'estado', label: 'Estado', options: ['VIGENTE', 'CANCELADA'] },
     ],
