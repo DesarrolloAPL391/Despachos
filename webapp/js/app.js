@@ -6932,6 +6932,83 @@ async function avisarLicenciaConductor(drId, boxId) {
   });
 });
 
+// Dibujo de las dos caras de la licencia. No es una licencia real: es un esquema, para
+// que el despachador vea de qué se le está hablando antes de tomar la foto. Va en SVG
+// para que se imprima nítido y no dependa de ninguna imagen cargada.
+// mini = la versión chiquita que acompaña cada paso del formulario: misma forma, sin
+// los textos, que a ese tamaño no se leerían.
+function licCaraSvg(cara, mini) {
+  const g = '#cbd5e1', b = '#64748b', t = '#334155';
+  if (cara === 'frente') {
+    return `<svg viewBox="0 0 240 150" class="lic-svg${mini ? ' lic-svg-mini' : ''}" role="img"
+      aria-label="Frente de la licencia: la foto y el nombre">
+      <rect x="1.5" y="1.5" width="237" height="147" rx="11" fill="#fff" stroke="#334155" stroke-width="2.5"/>
+      <path d="M1.5 12.5a11 11 0 0 1 11-11h215a11 11 0 0 1 11 11V30H1.5z" fill="#e2e8f0"/>
+      ${mini ? '' : `<text x="14" y="21" font-family="system-ui" font-size="10.5" font-weight="700" fill="${t}">LICENCIA DE CONDUCCIÓN</text>`}
+      <rect x="16" y="44" width="54" height="66" rx="5" fill="${g}" stroke="${b}" stroke-width="1.5"/>
+      <circle cx="43" cy="66" r="11" fill="#94a3b8"/>
+      <path d="M25 104c0-11 8-18 18-18s18 7 18 18z" fill="#94a3b8"/>
+      ${mini ? `<rect x="84" y="48" width="136" height="9" rx="3" fill="${g}"/>
+        <rect x="84" y="66" width="104" height="9" rx="3" fill="${g}"/>
+        <rect x="84" y="84" width="122" height="9" rx="3" fill="${g}"/>
+        <rect x="84" y="102" width="88" height="9" rx="3" fill="${g}"/>`
+    : `<text x="84" y="50" font-family="system-ui" font-size="7" fill="${b}">NOMBRE</text>
+        <rect x="84" y="54" width="136" height="10" rx="3" fill="${g}"/>
+        <text x="84" y="76" font-family="system-ui" font-size="7" fill="${b}">NÚMERO</text>
+        <rect x="84" y="80" width="104" height="10" rx="3" fill="${g}"/>
+        <text x="84" y="102" font-family="system-ui" font-size="7" fill="${b}">FECHA DE NACIMIENTO</text>
+        <rect x="84" y="106" width="88" height="10" rx="3" fill="${g}"/>`}
+      <rect x="16" y="120" width="204" height="8" rx="3" fill="#e2e8f0"/>
+    </svg>`;
+  }
+  // Respaldo: la tabla de categorías. La última columna es la que importa.
+  return `<svg viewBox="0 0 240 150" class="lic-svg${mini ? ' lic-svg-mini' : ''}" role="img"
+    aria-label="Respaldo de la licencia: la tabla de categorías, con la fecha de vigencia">
+    <rect x="1.5" y="1.5" width="237" height="147" rx="11" fill="#fff" stroke="#334155" stroke-width="2.5"/>
+    <path d="M1.5 12.5a11 11 0 0 1 11-11h215a11 11 0 0 1 11 11V30H1.5z" fill="#e2e8f0"/>
+    ${mini ? '' : `<text x="14" y="21" font-family="system-ui" font-size="10.5" font-weight="700" fill="${t}">CATEGORÍAS Y VIGENCIA</text>`}
+
+    <!-- la columna de la fecha, resaltada: el relleno se ve en pantalla y el borde grueso en blanco y negro -->
+    <rect x="150" y="40" width="76" height="74" rx="4" fill="#fde68a" stroke="#111" stroke-width="2.5"/>
+
+    <line x1="16" y1="58" x2="226" y2="58" stroke="${b}" stroke-width="1"/>
+    <line x1="16" y1="80" x2="226" y2="80" stroke="${g}" stroke-width="1"/>
+    <line x1="16" y1="100" x2="226" y2="100" stroke="${g}" stroke-width="1"/>
+    <line x1="58" y1="40" x2="58" y2="114" stroke="${g}" stroke-width="1"/>
+    <line x1="150" y1="40" x2="150" y2="114" stroke="${g}" stroke-width="1"/>
+
+    ${mini ? `<rect x="22" y="64" width="26" height="8" rx="3" fill="${g}"/>
+      <rect x="22" y="86" width="26" height="8" rx="3" fill="${g}"/>
+      <rect x="66" y="64" width="72" height="8" rx="3" fill="${g}"/>
+      <rect x="66" y="86" width="72" height="8" rx="3" fill="${g}"/>
+      <rect x="158" y="64" width="60" height="9" rx="3" fill="#111"/>
+      <rect x="158" y="86" width="60" height="9" rx="3" fill="#111"/>`
+    : `<text x="22" y="53" font-family="system-ui" font-size="7" fill="${b}">CAT.</text>
+      <text x="66" y="53" font-family="system-ui" font-size="7" fill="${b}">EXPEDICIÓN</text>
+      <text x="158" y="53" font-family="system-ui" font-size="7.5" font-weight="700" fill="#111">VIGENTE HASTA</text>
+      <text x="22" y="73" font-family="system-ui" font-size="9.5" fill="${t}">C2</text>
+      <text x="22" y="95" font-family="system-ui" font-size="9.5" fill="${t}">C3</text>
+      <text x="66" y="73" font-family="system-ui" font-size="9.5" fill="${t}">12/03/2020</text>
+      <text x="66" y="95" font-family="system-ui" font-size="9.5" fill="${t}">12/03/2020</text>
+      <text x="158" y="73" font-family="system-ui" font-size="10" font-weight="700" fill="#111">12/03/2026</text>
+      <text x="158" y="95" font-family="system-ui" font-size="10" font-weight="700" fill="#111">12/03/2026</text>`}
+
+    <path d="M188 118v14m0 0-5-5m5 5 5-5" stroke="#111" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    ${mini ? '' : `<text x="152" y="145" font-family="system-ui" font-size="8.5" font-weight="700" fill="#111">ESTA ES LA FECHA</text>`}
+  </svg>`;
+}
+
+// Las dos caras, una al lado de la otra, con su rótulo. Es lo que se ve en la guía.
+function licCarasHtml() {
+  return `<div class="lic-caras-dib">
+    <figure><div class="lic-num">1</div>${licCaraSvg('frente')}
+      <figcaption><b>FRENTE</b>La foto y el nombre.</figcaption></figure>
+    <figure><div class="lic-num">2</div>${licCaraSvg('respaldo')}
+      <figcaption><b>RESPALDO</b>La tabla de categorías.
+        <span>Aquí está la fecha que registra operaciones.</span></figcaption></figure>
+  </div>`;
+}
+
 // Ventana para subir la licencia renovada (despachador / operaciones / admin).
 // Se piden las DOS CARAS y el sistema dice cuál va primero: la fecha de vencimiento no
 // está en el frente, está en el respaldo, en la tabla de categorías. Con una sola foto
@@ -6953,6 +7030,7 @@ function openLicSubir(drId, nombre, after) {
         <div class="lic-sub-info"></div>
         ${LIC_CARAS.map((c) => `<div class="lic-cara" data-cara="${c.k}">
           <div class="lic-cara-h"><span class="lic-paso">${c.n}</span>
+            ${licCaraSvg(c.k, true)}
             <div><b>${c.t}</b><small>${c.d}</small></div>
             <span class="spacer"></span>
             <label class="btn btn-sm" for="lic-f-${c.k}">Tomar foto</label></div>
@@ -7091,6 +7169,7 @@ function openGuiaLicencias(tab) {
         <button type="button" class="btn btn-sm${desp ? '' : ' btn-primary'}" data-lg="operaciones">🪪 Operaciones</button>
       </div>` : ''}
       ${desp ? `
+        ${licCarasHtml()}
         <ol class="lg-pasos">${LG_PASOS_DESP.map((p) => `<li>
           <b>${esc(p.t)}</b><span>${p.d}</span></li>`).join('')}</ol>
         <div class="lg-caja">
@@ -7106,6 +7185,9 @@ function openGuiaLicencias(tab) {
         ${puedeVerAmbas ? '<div class="iv-acciones"><button type="button" class="btn btn-sm" data-lg-print>'
         + '🖨️ Imprimir para el puesto</button></div>' : ''}`
       : `
+        <div class="lic-caras-dib lic-caras-una"><figure>${licCaraSvg('respaldo')}
+          <figcaption><b>Esta es la foto que hay que abrir</b>La fecha está en la última columna
+            de la tabla de categorías.</figcaption></figure></div>
         <ol class="lg-pasos">
           <li><b>Abre 🔍 Respaldo (la fecha)</b><span>Es la foto donde está la tabla de categorías con
             las vigencias. <b>La fecha de vencimiento no está en el frente.</b></span></li>
@@ -7170,9 +7252,18 @@ function imprimirGuiaLicencia() {
     .caja li { margin-bottom: 4px; }
     .ojo { background: #111; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 12.5pt; }
     .pie { margin-top: 20px; font-size: 9.5pt; color: #666; border-top: 1px solid #ccc; padding-top: 6px; }
+    .lic-caras-dib { display: flex; gap: 18px; margin: 0 0 20px; }
+    .lic-caras-dib figure { margin: 0; flex: 1 1 0; position: relative; }
+    .lic-caras-dib svg { width: 100%; height: auto; display: block; }
+    .lic-caras-dib figcaption { font-size: 10pt; margin-top: 5px; line-height: 1.35; }
+    .lic-caras-dib figcaption b { display: block; font-size: 11pt; }
+    .lic-caras-dib figcaption span { display: block; font-weight: 700; }
+    .lic-num { position: absolute; left: -6px; top: -6px; width: 22px; height: 22px; border-radius: 50%;
+      background: #111; color: #fff; font: 700 11pt/22px system-ui; text-align: center; z-index: 1; }
     </style></head><body>
     <h1>🪪 Sale el aviso de licencia vencida</h1>
     <p class="sub">Qué hacer, paso a paso. Puedes despachar igual: el aviso no bloquea el despacho.</p>
+    ${licCarasHtml()}
     <ol>${LG_PASOS_DESP.map((p) => `<li><b>${esc(p.t)}</b><span>${p.d}</span></li>`).join('')}</ol>
     <div class="caja"><b>📷 Para que la foto sirva</b>
       <ul>${LG_FOTO.map((f) => `<li>${f}</li>`).join('')}</ul></div>

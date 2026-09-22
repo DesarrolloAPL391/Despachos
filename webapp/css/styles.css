@@ -3027,3 +3027,16 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
   cursor: pointer; font: inherit; padding: 0; opacity: .85; }
 .lic-guia:hover { opacity: 1; }
 .lic-guia-link { justify-self: start; font-size: 12.5px; color: var(--muted); }
+
+/* El dibujo de las dos caras de la licencia (v301) */
+.lic-caras-dib { display: flex; gap: 14px; margin: 2px 0 16px; flex-wrap: wrap; }
+.lic-caras-dib figure { margin: 0; flex: 1 1 220px; min-width: 0; position: relative; }
+.lic-caras-dib svg { width: 100%; height: auto; display: block; }
+.lic-caras-dib figcaption { font-size: 12.5px; margin-top: 5px; line-height: 1.4; color: var(--muted); }
+.lic-caras-dib figcaption b { display: block; font-size: 13px; color: inherit;
+  color: var(--text, #111); letter-spacing: .3px; }
+.lic-caras-dib figcaption span { display: block; font-weight: 700; color: #92400e; }
+.lic-caras-una figure { flex: 0 1 260px; }
+.lic-num { position: absolute; left: -5px; top: -5px; width: 22px; height: 22px; border-radius: 50%;
+  background: #1e293b; color: #fff; font: 700 12px/22px system-ui; text-align: center; z-index: 1; }
+.lic-svg-mini { flex: 0 0 76px; width: 76px; height: auto; }
