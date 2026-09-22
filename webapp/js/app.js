@@ -604,6 +604,13 @@ function buildSidebar() {
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   if (isAdmin() || isOperaciones()) addNavAction(gRe, '🪪', `Licencias de conductores${LIC_PEND ? ` <span class="nav-badge">${LIC_PEND}</span>` : ''}`, openLicencias, 'nav-licencias');
 
+  // ⛽ Combustible: los tanqueos que trae el SCA de la estación (sql/103+104).
+  if (puedeVerComb()) {
+    const gCb = addNavGroup(nav, '⛽', 'Combustible', 'comb');
+    addNavAction(gCb, '⛽', 'Tanqueos', () => openComb('tanqueos'), 'nav-cb-tanqueos');
+    addNavAction(gCb, '🚌', 'Consumo por carro', () => openComb('carros'), 'nav-cb-carros');
+  }
+
   // ⚖️ Procesos disciplinarios (sql/102). El auditor no entra aquí: solo reporta el hecho.
   if (puedeVerDisc()) {
     const gDc = addNavGroup(nav, '⚖️', 'Disciplinarios', 'disc');
@@ -3294,6 +3301,7 @@ async function refrescarAlertasDocs() {
   await refrescarPermisos(false);
   await refrescarInterv(false);
   await refrescarDisc(false);
+  await refrescarComb(false);
   await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
@@ -7162,6 +7170,292 @@ function avisarNovedadDesbloqueos() {
   abrirDocBlkInfo();
   try { localStorage.setItem('docblk_info_v239', '1'); } catch (e) { /* */ }
 }
+
+// ===================================================================================
+// ⛽ COMBUSTIBLE — los tanqueos que trae el SCA de la estación (sql/103 + sql/104)
+// ===================================================================================
+// APL tanquea en una EDS ajena: aquí SOLO se mira. La estación vende, nosotros leemos.
+// Dos pantallas: los tanqueos uno por uno (para cuadrar contra la factura) y el consumo
+// por carro (para ver quién gasta y cada cuánto). El rendimiento km/galón viene después,
+// cuando crucemos contra el odómetro de SONAR: la estación casi nunca digita el kilometraje.
+let CB_OK = false, CB_TRAE = false, CB_CONF = false;
+let _cbModo = 'tanqueos';
+const _cb = { rows: [], q: '', cargando: false, est: null };
+const CB_COLS = 'id_sca,fecha,inicio,fin,movil,placa,cantidad,unidad,galones,producto,'
+  + 'precio,total,surtidor,manguera,documento,estacion,odometro,rendimiento_sca,flota';
+
+function puedeVerComb() { return CB_OK; }
+function puedeTraerComb() { return CB_TRAE; }
+
+async function refrescarComb(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('combustible_estado');
+    CB_OK = !!(data && data.ok);
+    CB_TRAE = !!(data && data.puede_traer);
+    CB_CONF = !!(data && data.configurado);
+    _cb.est = data || null;
+  } catch (e) { CB_OK = false; CB_TRAE = false; CB_CONF = false; _cb.est = null; }
+  if (rebuild) buildSidebar();
+}
+
+// ---------- Formatos ----------
+const cbGal = (n) => (n == null ? '' : Number(n).toLocaleString('es-CO',
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const cbPes = (n) => (n == null || Number(n) === 0 ? '' : '$ ' + Math.round(Number(n)).toLocaleString('es-CO'));
+const cbHora = (r) => {
+  if (!r.inicio) return '';
+  const d = new Date(r.inicio);
+  return isNaN(d) ? '' : d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+// ---------- Abrir ----------
+async function openComb(modo) {
+  if (!puedeVerComb()) return;
+  _cbModo = ['tanqueos', 'carros'].includes(modo) ? modo : 'tanqueos';
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'comb';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  ocultarVistas('comb-view');
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  if (_rutasTimer) { clearInterval(_rutasTimer); _rutasTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  $('comb-view').hidden = false;
+  const h2 = document.querySelector('#comb-view h2');
+  if (h2) h2.textContent = _cbModo === 'carros' ? '🚌 Consumo por carro' : '⛽ Tanqueos';
+  $('cb-traer').hidden = !puedeTraerComb();
+  if (!$('cb-desde').value) {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    $('cb-desde').value = d.toISOString().slice(0, 10);
+    $('cb-hasta').value = hoyServidor();
+  }
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-cb-' + _cbModo)?.classList.add('active');
+  buildBottomNav();
+  closeMenu();
+  await cargarComb();
+}
+
+async function cargarComb() {
+  const body = $('cb-body');
+  if (_cb.cargando) return;
+  _cb.cargando = true;
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.from('combustible_tanqueos').select(CB_COLS)
+      .gte('fecha', $('cb-desde').value || '2015-01-01')
+      .lte('fecha', $('cb-hasta').value || hoyServidor())
+      .order('inicio', { ascending: false })
+      .limit(8000);
+    if (error) throw error;
+    _cb.rows = data || [];
+    renderComb();
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/combustible_tanqueos/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar sql/103 y sql/104.' : 'No se pudieron cargar los tanqueos.'}<br><small>${esc(t)}</small></div>`;
+  } finally { _cb.cargando = false; }
+}
+
+function cbFiltrar(rows) {
+  const t = (_cb.q || '').trim().toLowerCase();
+  if (!t) return rows;
+  return rows.filter((r) => [r.movil, r.placa, r.producto, r.documento, r.surtidor, r.flota]
+    .some((v) => String(v || '').toLowerCase().includes(t)));
+}
+
+// Vacío con causa: no es lo mismo "no hay en ese rango" que "no se ha traído nada".
+function cbVacioMsg(enRango) {
+  const tot = Number((_cb.est && _cb.est.total) || 0);
+  if (tot) return enRango;
+  if (!CB_CONF) {
+    return 'Falta decirle a la app cuál es la estación.<br>'
+      + 'Ponle el punto de venta a <b>combustible_config</b>: el número lo da GetStationList del SCA.';
+  }
+  return puedeTraerComb()
+    ? 'Todavía no se ha traído ningún tanqueo.<br>Usa <b>🔄 Traer</b> para pedirlos al SCA de la estación.'
+    : 'Todavía no hay tanqueos cargados.';
+}
+
+// ---------- Pintar ----------
+function _cbAgg(rows) {
+  const a = { n: rows.length, gal: 0, val: 0, carros: new Set(), sinMovil: 0, dias: new Set() };
+  rows.forEach((r) => {
+    a.gal += Number(r.galones || 0);
+    a.val += Number(r.total || 0);
+    if (r.movil) a.carros.add(String(r.movil)); else a.sinMovil++;
+    if (r.fecha) a.dias.add(r.fecha);
+  });
+  a.prom = a.n ? a.gal / a.n : 0;
+  return a;
+}
+
+function _cbHeros(a) {
+  return '<div class="cump-heros">'
+    + `<div class="cump-hero"><div class="ch-val">${a.n.toLocaleString('es-CO')}</div>`
+    + `<div class="ch-lbl">Tanqueos</div><div class="ch-sub">${a.dias.size} día(s)</div></div>`
+    + `<div class="cump-hero"><div class="ch-val">${cbGal(a.gal)}</div>`
+    + `<div class="ch-lbl">Galones</div><div class="ch-sub">${cbGal(a.prom)} por tanqueo</div></div>`
+    + `<div class="cump-hero"><div class="ch-val">${cbPes(a.val) || '—'}</div>`
+    + `<div class="ch-lbl">Valor</div><div class="ch-sub">${a.val && a.gal ? cbPes(a.val / a.gal) + ' el galón' : 'sin precio'}</div></div>`
+    + `<div class="cump-hero"><div class="ch-val">${a.carros.size}</div>`
+    + `<div class="ch-lbl">Carros</div><div class="ch-sub">${a.sinMovil
+      ? a.sinMovil + ' tanqueo(s) sin carro' : 'todos con carro'}</div></div>`
+    + '</div>';
+}
+
+function cbTablaHtml(rows) {
+  if (!rows.length) return `<div class="cump-empty">${cbVacioMsg('No hay tanqueos en ese rango. Amplía las fechas de arriba.')}</div>`;
+  return '<div class="mc-wrap"><table class="mc-tabla cb-tabla"><thead><tr>'
+    + '<th>Fecha</th><th>Hora</th><th>Móvil</th><th>Placa</th><th>Producto</th>'
+    + '<th class="num">Galones</th><th class="num">Valor</th><th>Surtidor</th><th>Factura</th>'
+    + '</tr></thead><tbody>'
+    + rows.map((r) => `<tr${r.movil ? '' : ' class="cb-ajeno"'}>`
+      + `<td><b>${esc(fechaLegible(r.fecha))}</b></td>`
+      + `<td>${esc(cbHora(r))}</td>`
+      + `<td>${r.movil ? `<b>${esc(r.movil)}</b>` : '<span class="cb-nomov" title="La placa no está en el parque automotor">sin móvil</span>'}</td>`
+      + `<td>${esc(r.placa || '')}</td>`
+      + `<td>${esc(r.producto || '')}</td>`
+      + `<td class="num"><b>${cbGal(r.galones)}</b>${String(r.unidad || '').toUpperCase() === 'L'
+        ? `<small title="La estación vendió ${cbGal(r.cantidad)} litros">${cbGal(r.cantidad)} L</small>` : ''}</td>`
+      + `<td class="num">${cbPes(r.total)}</td>`
+      + `<td>${esc(r.surtidor || '')}${r.manguera ? `<small>${esc(r.manguera)}</small>` : ''}</td>`
+      + `<td>${esc(r.documento || '')}</td></tr>`).join('')
+    + '</tbody></table></div>';
+}
+
+// Consumo por carro: cuánto lleva, cada cuánto tanquea y cuánto le cabe de una.
+function cbCarrosHtml(rows) {
+  if (!rows.length) return `<div class="cump-empty">${cbVacioMsg('No hay tanqueos en ese rango.')}</div>`;
+  const m = new Map();
+  rows.forEach((r) => {
+    const k = r.movil || '(sin móvil)';
+    if (!m.has(k)) m.set(k, { movil: k, placa: r.placa || '', n: 0, gal: 0, val: 0, max: 0, ini: null, fin: null });
+    const c = m.get(k);
+    c.n++; c.gal += Number(r.galones || 0); c.val += Number(r.total || 0);
+    c.max = Math.max(c.max, Number(r.galones || 0));
+    if (!c.ini || r.fecha < c.ini) c.ini = r.fecha;
+    if (!c.fin || r.fecha > c.fin) c.fin = r.fecha;
+  });
+  const lista = [...m.values()].sort((a, b) => b.gal - a.gal);
+  const tope = lista.reduce((x, c) => Math.max(x, c.gal), 0) || 1;
+  return '<div class="cump-card"><h4>🚌 Consumo por carro '
+    + `<small>${lista.length} carro(s), de mayor a menor</small></h4>`
+    + '<div class="mc-wrap"><table class="mc-tabla cb-tabla cb-carros"><thead><tr>'
+    + '<th>Móvil</th><th>Placa</th><th class="num">Tanqueos</th><th class="num">Galones</th>'
+    + '<th>Participación</th><th class="num">Promedio</th><th class="num">El mayor</th>'
+    + '<th class="num">Cada</th><th class="num">Valor</th></tr></thead><tbody>'
+    + lista.map((c) => {
+      const dias = (c.ini && c.fin) ? (new Date(c.fin) - new Date(c.ini)) / 86400000 : 0;
+      const cada = (c.n > 1 && dias > 0) ? (dias / (c.n - 1)) : null;
+      const pct = Math.round((c.gal / tope) * 100);
+      return `<tr><td><b>${esc(c.movil)}</b></td><td>${esc(c.placa)}</td>`
+        + `<td class="num">${c.n}</td><td class="num"><b>${cbGal(c.gal)}</b></td>`
+        + `<td class="cb-barra"><div class="crow-track"><div class="crow-fill" style="width:${pct}%"></div></div></td>`
+        + `<td class="num">${cbGal(c.gal / c.n)}</td><td class="num">${cbGal(c.max)}</td>`
+        + `<td class="num">${cada ? cada.toFixed(1) + ' d' : '—'}</td>`
+        + `<td class="num">${cbPes(c.val)}</td></tr>`;
+    }).join('')
+    + '</tbody></table></div></div>';
+}
+
+function renderComb() {
+  const body = $('cb-body');
+  const rows = cbFiltrar(_cb.rows);
+  const a = _cbAgg(rows);
+  const sub = $('cb-sub');
+  if (sub) {
+    sub.textContent = `${rows.length} tanqueo(s)`
+      + (_cb.rows.length !== rows.length ? ` de ${_cb.rows.length}` : '')
+      + (a.gal ? ` · ${cbGal(a.gal)} galones` : '');
+  }
+  const aviso = (_cb.est && _cb.est.dias_sin_datos != null && _cb.est.dias_sin_datos > 3 && puedeTraerComb())
+    ? `<div class="cb-aviso">⚠️ El último tanqueo que tenemos es de hace <b>${_cb.est.dias_sin_datos} día(s)</b>. `
+      + 'Si la estación sigue despachando, la traída se cayó.</div>' : '';
+  body.innerHTML = aviso + (rows.length ? _cbHeros(a) : '')
+    + (_cbModo === 'carros' ? cbCarrosHtml(rows) : cbTablaHtml(rows));
+}
+
+// ---------- Traer del SCA ----------
+async function cbTraer() {
+  if (!puedeTraerComb()) return;
+  const desde = $('cb-desde').value || hoyServidor();
+  const hasta = $('cb-hasta').value || hoyServidor();
+  const ok = await confirmAction({
+    title: '🔄 Traer los tanqueos',
+    lead: `Se le van a pedir al SCA de la estación los tanqueos del ${fechaLegible(desde)} al ${fechaLegible(hasta)}:`,
+    message: 'Solo se guardan los de placas del parque de APL.\n'
+      + 'Lo de otros clientes de la estación se descarta.\n'
+      + 'No se marca nada en el SCA de la estación.',
+    okLabel: 'Traer',
+  });
+  if (!ok) return;
+  const btn = $('cb-traer'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Trayendo…';
+  try {
+    const { data, error } = await sb.rpc('sca_traer', { p_desde: desde, p_hasta: hasta });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo traer.');
+    const extra = data.de_otros ? ` · ${data.de_otros} de otros clientes (no se guardaron)` : '';
+    toast(`Nuevos ${data.nuevos} · nuestros ${data.nuestros} de ${data.trajo}${extra}`, 'ok');
+    await refrescarComb(false);
+    await cargarComb();
+  } catch (e) {
+    toast('No se pudo traer: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---------- Excel ----------
+async function exportCbExcel() {
+  const rows = cbFiltrar(_cb.rows);
+  if (!rows.length) { toast('No hay datos para exportar.', 'err'); return; }
+  const btn = $('cb-excel'); const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const head = ['Fecha', 'Hora', 'Móvil', 'Placa', 'Producto', 'Galones', 'Cantidad', 'Unidad',
+      'Precio', 'Valor', 'Surtidor', 'Manguera', 'Factura', 'Estación', 'Id SCA'];
+    const aoa = [head].concat(rows.map((r) => [
+      r.fecha, cbHora(r), String(r.movil || '').trim(), r.placa || '', r.producto || '',
+      Number(r.galones || 0), Number(r.cantidad || 0), r.unidad || '',
+      Number(r.precio || 0), Number(r.total || 0),
+      r.surtidor || '', r.manguera || '', r.documento || '', r.estacion || '', r.id_sca]));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    // La fecha como fecha de verdad, para que Excel la ordene ([[excel-fechas-colombianas]]).
+    rows.forEach((r, ri) => {
+      const fx = celdaFechaXlsx(r.fecha);
+      if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c: 0 })] = fx;
+    });
+    ws['!cols'] = [{ wch: 11 }, { wch: 7 }, { wch: 8 }, { wch: 9 }, { wch: 14 }, { wch: 10 },
+      { wch: 10 }, { wch: 7 }, { wch: 11 }, { wch: 13 }, { wch: 18 }, { wch: 12 }, { wch: 14 },
+      { wch: 22 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Tanqueos');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tanqueos_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${rows.length} fila(s).`, 'ok');
+  } catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---------- Botones ----------
+$('cb-close')?.addEventListener('click', () => { $('comb-view').hidden = true; selectTable(current); });
+$('cb-refresh')?.addEventListener('click', () => cargarComb());
+$('cb-excel')?.addEventListener('click', exportCbExcel);
+$('cb-traer')?.addEventListener('click', cbTraer);
+$('cb-desde')?.addEventListener('change', () => cargarComb());
+$('cb-hasta')?.addEventListener('change', () => cargarComb());
+let _cbTimer = null;
+$('cb-search')?.addEventListener('input', (e) => {
+  clearTimeout(_cbTimer);
+  const v = e.target.value;
+  _cbTimer = setTimeout(() => { _cb.q = v; renderComb(); }, 250);
+});
 
 // ===================================================================================
 // ⚖️ PROCESOS DISCIPLINARIOS — sql/102

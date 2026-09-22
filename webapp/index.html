@@ -374,6 +374,25 @@
           <div id="laur-body" class="malla-body"></div>
         </div>
 
+        <!-- Combustible: tanqueos traidos del SCA de la estacion (sql/103+104). Solo lectura. -->
+        <div id="comb-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>⛽ Tanqueos</h2>
+            <span id="cb-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <span class="iv-rango">
+              <label class="cump-fecha-lbl">📅 <input type="date" id="cb-desde" /></label>
+              <label class="cump-fecha-lbl">a <input type="date" id="cb-hasta" /></label>
+            </span>
+            <input type="search" id="cb-search" placeholder="Móvil, placa, factura…" />
+            <button id="cb-traer" class="btn btn-primary" title="Pedirle los tanqueos al SCA de la estacion">🔄 Traer</button>
+            <button id="cb-excel" class="btn">📊 Excel</button>
+            <button id="cb-refresh" class="btn">↻ Actualizar</button>
+            <button id="cb-close" class="btn">← Volver</button>
+          </div>
+          <div id="cb-body" class="malla-body"></div>
+        </div>
+
         <!-- Procesos disciplinarios (sql/102). La etapa se calcula de las fechas. -->
         <div id="disc-view" class="malla-view" hidden>
           <div class="toolbar cump-toolbar">
