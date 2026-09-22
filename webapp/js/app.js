@@ -607,7 +607,7 @@ function buildSidebar() {
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
   // 🛠️ Taller: el mantenimiento de CloudFleet. Va aquí al lado de Preventivas (que es la
   // revisión del CDA) porque el despachador busca las dos cosas en el mismo sitio.
-  if (puedeVerTaller()) addNavAction(gRe, '🛠️', 'Taller y mantenimiento', () => openTaller(), 'nav-taller');
+  if (puedeVerTaller()) addNavAction(gRe, '🛠️', `Taller y mantenimiento${TALLER_FUERA ? ` <span class="nav-badge">${TALLER_FUERA}</span>` : ''}`, () => openTaller(), 'nav-taller');
   if (isAdmin() || isOperaciones()) addNavAction(gRe, '🪪', `Licencias de conductores${LIC_PEND ? ` <span class="nav-badge">${LIC_PEND}</span>` : ''}`, openLicencias, 'nav-licencias');
 
   // ⛽ Combustible: los tanqueos que trae el SCA de la estación (sql/103+104).
@@ -3312,6 +3312,7 @@ async function refrescarAlertasDocs() {
   await refrescarComb(false);
   await refrescarActividades(false);
   await refrescarLicencias(false);
+  await refrescarTaller(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
@@ -9721,10 +9722,24 @@ const TL_PRIO = { high: { l: 'Urgente', c: 'chip-red' }, medium: { l: 'Media', c
 let _tl = { d: null, cargando: false, tab: 'taller' };
 
 function puedeVerTaller() { return isAdmin() || isOperaciones() || isAuditor(); }
+
+// Los buses que estan en el taller con orden que los deja FUERA DE SERVICIO. Va de numerito
+// en el menu para que operaciones y los auditores lo vean sin tener que entrar a mirar.
+let TALLER_FUERA = 0;
+async function refrescarTaller(rebuild = true) {
+  if (!puedeVerTaller()) { TALLER_FUERA = 0; return; }
+  try {
+    const { count } = await sb.from('taller_ordenes')
+      .select('numero', { count: 'exact', head: true })
+      .eq('estado', 'opened').eq('fuera_listado', false).eq('afecta_disponib', true);
+    TALLER_FUERA = count || 0;
+  } catch (e) { TALLER_FUERA = 0; }   // si falta sql/111 el menu sale sin numerito, y ya
+  if (rebuild) buildSidebar();
+}
 function puedeReportarTaller() { return isAdmin() || isOperaciones() || isAuditor() || isDespachador(); }
 
 // ---------- El aviso al elegir el móvil (despacho y pantalla SONAR) ----------
-async function avisarTallerMovil(numero, boxId) {
+async function avisarTallerMovil(numero, boxId, intervencionId) {
   const box = $(boxId); if (!box) return;
   box.hidden = true; box.innerHTML = ''; box.className = 'field full';
   if (!numero) return;
@@ -9770,7 +9785,7 @@ async function avisarTallerMovil(numero, boxId) {
       partes.push(`<button type="button" class="btn btn-sm tl-rep" data-mov="${esc(pedido)}">🛠️ Reportarle algo al taller</button>`);
     }
     box.innerHTML = partes.join('<br>');
-    box.querySelector('.tl-rep')?.addEventListener('click', () => tallerReportar(pedido));
+    box.querySelector('.tl-rep')?.addEventListener('click', () => tallerReportar(pedido, intervencionId));
     box.hidden = false;
   } catch (e) { /* si falla, el despacho sigue: esto solo informa */ }
 }
@@ -9830,6 +9845,7 @@ async function tallerTraer() {
       .filter(Boolean);
     if (malo.length) toast(malo.join(' | '), 'err');
     else toast('Taller actualizado.', 'ok');
+    refrescarTaller();
   } catch (e) {
     toast('No se pudo traer: ' + (e.message || e), 'err');
   } finally {
@@ -10802,6 +10818,7 @@ function ivFicha(id) {
     <div class="iv-bloque"><span>Motivo</span><p>${esc(r.motivo || '')}</p></div>
     ${r.observacion ? `<div class="iv-bloque"><span>Lo que se hizo</span><p>${esc(r.observacion)}</p></div>` : ''}
     ${r.nota_anulacion ? `<div class="iv-bloque"><span>Anulada porque</span><p>${esc(r.nota_anulacion)}</p></div>` : ''}
+    <div class="field full" id="iv-taller" hidden></div>
     <div class="iv-pie">
       ${r.creado_por ? `Citada por ${esc(r.creado_nombre || r.creado_por)}` : ''}
       ${r.cerrado_por ? ` · cerrada por ${esc(r.cerrado_por)}` : ''}
@@ -10812,8 +10829,16 @@ function ivFicha(id) {
         <button type="button" class="btn btn-sm" data-iv-editar="${r.id}">✏️ Corregir</button>` : ''}
       ${r.estado !== 'ANULADA' ? `<button type="button" class="btn btn-sm btn-danger" data-iv-anular="${r.id}">🚫 Anular</button>` : ''}
       ${isAdmin() && IV_RESULTADOS.includes(r.estado) ? `<button type="button" class="btn btn-sm" data-iv-reabrir="${r.id}">↩️ Reabrir</button>` : ''}
+    </div>` : ''}
+    ${puedeReportarTaller() ? `<div class="iv-acciones">
+      <button type="button" class="btn btn-sm" data-iv-taller="${esc(String(r.movil || '').trim())}">🛠️ Reportarle al taller</button>
     </div>` : ''}`;
   m.querySelector('[data-ok]').hidden = true;
+  // Si el bus ya está en el taller, el auditor tiene que saberlo antes de citarlo aparte:
+  // es el momento de aprovechar que está allá.
+  avisarTallerMovil(String(r.movil || '').trim(), 'iv-taller', r.id);
+  m.querySelector('[data-iv-taller]')?.addEventListener('click',
+    (e) => tallerReportar(e.currentTarget.dataset.ivTaller, r.id));
   m.hidden = false;
 }
 
