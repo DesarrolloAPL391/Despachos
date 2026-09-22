@@ -10832,6 +10832,9 @@ function mostrarAvisoObligatorio(a) {
     // Sin botón de cerrar y sin cerrar al tocar afuera: es de obligatoria respuesta.
     const acc = AVISO_ACCION[a.codigo];
     const puntos = Array.isArray(a.puntos) ? a.puntos : [];
+    // La casilla y el boton van en el PIE, no dentro del texto: en un celular el aviso es
+    // mas alto que la pantalla y quedaban fuera de vista, sin scroll, con el despachador
+    // sin poder aceptar ni despachar. El cuerpo hace scroll; el pie se queda fijo.
     m.innerHTML = `<div class="modal-card av-card">
       <div class="av-head"><span class="av-ico">${esc(a.icono || '📢')}</span>
         <h3>${esc(a.titulo)}</h3></div>
@@ -10839,37 +10842,71 @@ function mostrarAvisoObligatorio(a) {
         ${String(a.cuerpo || '').split(/\n{2,}/).map((p) => `<p>${dcaNL(p)}</p>`).join('')}
         ${puntos.length ? `<ul class="av-puntos">${puntos.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
         ${acc ? `<div class="av-acc"><button type="button" class="btn btn-sm" data-av-guia>${acc.l}</button></div>` : ''}
-        ${a.confirmacion ? `<label class="av-chk">
-          <input type="checkbox" id="av-ok"> <span>${esc(a.confirmacion)}</span></label>` : ''}
       </div>
       <div class="av-foot">
-        <button type="button" class="btn btn-primary av-btn" ${a.confirmacion ? 'disabled' : ''}>${esc(a.boton || 'Entendido')}</button>
+        ${a.confirmacion ? `<label class="av-chk">
+          <input type="checkbox" id="av-ok"> <span>${esc(a.confirmacion)}</span></label>` : ''}
+        <p class="av-err" hidden></p>
+        <div class="av-acciones">
+          <button type="button" class="btn btn-primary av-btn">${esc(a.boton || 'Entendido')}</button>
+        </div>
       </div></div>`;
     document.body.appendChild(m);
 
     const btn = m.querySelector('.av-btn');
     const chk = m.querySelector('#av-ok');
-    if (chk) chk.addEventListener('change', () => { btn.disabled = !chk.checked; });
+    const err = m.querySelector('.av-err');
+    // El boton NUNCA arranca deshabilitado: un boton gris en un celular se lee como que la
+    // app se trabo. Si falta marcar la casilla, se dice y se resalta.
+    if (chk) chk.addEventListener('change', () => {
+      if (chk.checked) { err.hidden = true; m.querySelector('.av-chk').classList.remove('av-falta'); }
+    });
     if (acc) m.querySelector('[data-av-guia]').addEventListener('click', acc.fn);
 
     // Escape tampoco lo cierra.
     const bloquearEsc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } };
     document.addEventListener('keydown', bloquearEsc, true);
 
+    let fallos = 0;
+    const cerrar = () => {
+      document.removeEventListener('keydown', bloquearEsc, true);
+      m.remove();
+      resolve();
+    };
+
     btn.addEventListener('click', async () => {
+      if (chk && !chk.checked) {
+        err.textContent = 'Marca la casilla para continuar.';
+        err.hidden = false;
+        const caja = m.querySelector('.av-chk');
+        caja.classList.add('av-falta');
+        caja.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       btn.disabled = true; btn.textContent = 'Guardando…';
       try {
         const { data, error } = await sb.rpc('aviso_confirmar', { p_id: a.id });
         if (error) throw error;
         if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo registrar.');
       } catch (e) {
-        toast('No se pudo registrar la confirmación: ' + (e.message || e), 'err');
+        fallos += 1;
         btn.disabled = false; btn.textContent = a.boton || 'Entendido';
-        return;                              // sin acuse no se cierra: para eso es obligatorio
+        err.textContent = 'No se pudo guardar la confirmación: ' + (e.message || e);
+        err.hidden = false;
+        // A la segunda falla se abre la salida. El aviso importa, pero no puede dejar a un
+        // despachador sin despachar por un problema de red: vuelve a salir al siguiente ingreso.
+        if (fallos >= 2 && !m.querySelector('[data-av-salir]')) {
+          const salir = document.createElement('button');
+          salir.type = 'button';
+          salir.className = 'btn av-salir';
+          salir.dataset.avSalir = '1';
+          salir.textContent = 'Continuar sin confirmar';
+          salir.addEventListener('click', cerrar);
+          m.querySelector('.av-acciones').prepend(salir);
+        }
+        return;
       }
-      document.removeEventListener('keydown', bloquearEsc, true);
-      m.remove();
-      resolve();
+      cerrar();
     });
     m.hidden = false;
   });

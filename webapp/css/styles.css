@@ -3043,11 +3043,15 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 
 /* 📢 Aviso de obligatoria respuesta (sql/109) */
 .av-modal { align-items: center; }
-.av-card { max-width: 560px; width: 100%; }
+/* .modal-card ya limita la altura a 90vh y recorta con overflow:hidden. Lo que faltaba
+   era que el CUERPO hiciera scroll: sin eso, en un celular el aviso quedaba cortado con
+   la casilla y el boton fuera de vista, y el despachador no podia aceptar ni despachar. */
+.av-card { max-width: 560px; }
 .av-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px 10px; }
 .av-ico { font-size: 30px; line-height: 1; }
 .av-head h3 { margin: 0; font-size: 18px; line-height: 1.25; }
-.av-body { padding: 0 22px 8px; }
+.av-body { padding: 0 22px 8px; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  flex: 1 1 auto; min-height: 0; }
 .av-body p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; }
 .av-puntos { margin: 12px 0; padding: 12px 14px 12px 32px; border-radius: 10px;
   background: #fffbeb; border: 1px solid #fcd34d; }
@@ -3059,8 +3063,14 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
   line-height: 1.45; }
 .av-chk input { flex: none; margin-top: 2px; width: 18px; height: 18px; }
 .av-chk:has(input:checked) { border-color: #16a34a; background: #f0fdf4; }
-.av-foot { padding: 14px 22px 18px; display: flex; justify-content: flex-end; }
+.av-foot { padding: 12px 18px 16px; display: grid; gap: 10px; flex: none;
+  border-top: 1px solid var(--border); background: var(--card, #fff);
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+.av-acciones { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .av-foot .btn { font-size: 15px; padding: 10px 20px; }
+.av-err { margin: 0; color: #b91c1c; font-size: 13px; line-height: 1.4; }
+.av-falta { border-color: #dc2626; background: #fef2f2; }
+.av-salir { font-size: 13px; }
 .av-tabla small { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
 .av-pct { white-space: nowrap; min-width: 120px; }
 .av-pct .crow-track { margin-top: 4px; }
