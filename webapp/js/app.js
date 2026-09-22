@@ -681,6 +681,7 @@ function buildSidebar() {
   if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
   if (isTalentoHumano()) addNavAction(gTh, '✨', `Novedades${NOV_PEND ? ` <span class="nav-badge">${NOV_PEND}</span>` : ''}`, () => openNovedades(), 'nav-novedades');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
+  if (puedeVerActividades()) addNavAction(gTh, '🎁', 'Actividades y entregas', openActividades, 'nav-actividades');
   // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
   if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
 
@@ -3302,6 +3303,7 @@ async function refrescarAlertasDocs() {
   await refrescarInterv(false);
   await refrescarDisc(false);
   await refrescarComb(false);
+  await refrescarActividades(false);
   await refrescarLicencias(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
@@ -9308,6 +9310,549 @@ async function dcxDoc(tipo) {
   }
   await dcDocGenerar(tipo, r, _dcx.acta || {}, _dcx.pap, extra, () => dcExpediente(_dcxId));
 }
+
+// ===================================================================================
+// 🎁 ACTIVIDADES Y ENTREGAS — a quién se le dio qué, y con qué respaldo (sql/107)
+// Gestión Humana entrega cosas todo el año (entradas de Comfama, bonos, dotación,
+// regalos) y el registro vivía en una hoja suelta. Aquí se crea la ACTIVIDAD y, a
+// medida que la gente llega, se registra la ENTREGA con foto y firma.
+// Dos cosas sostienen el módulo: el nombre SALE DEL PERFIL (nadie lo escribe a mano)
+// y NADIE RECIBE DOS VECES (si vuelve a la fila, la pantalla dice cuándo se le dio).
+// ===================================================================================
+let AC_OK = false, AC_GESTIONA = false;
+const _ac = { filas: [], q: '', cargando: false, est: null };
+let _acId = null, _acDet = null, _acPap = null;
+
+const AC_TIPOS = ['ENTRADA', 'REGALO', 'BONO', 'DOTACION', 'REFRIGERIO', 'CAPACITACION', 'OTRO'];
+const AC_TIPO_LBL = { ENTRADA: '🎟️ Entradas', REGALO: '🎁 Regalo', BONO: '🎫 Bono',
+  DOTACION: '👕 Dotación', REFRIGERIO: '🥤 Refrigerio', CAPACITACION: '📚 Capacitación', OTRO: '📦 Otro' };
+
+function puedeVerActividades() { return AC_OK; }
+
+async function refrescarActividades(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('actividades_estado');
+    _ac.est = (data && data.ok) ? data : null;
+    AC_OK = !!(data && data.ok);
+    AC_GESTIONA = AC_OK;
+  } catch (e) { AC_OK = false; AC_GESTIONA = false; }
+  if (rebuild) buildSidebar();
+}
+
+// ---------- Abrir ----------
+async function openActividades() {
+  if (!puedeVerActividades()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'act';
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('act-view');
+  $('act-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-actividades')?.classList.add('active');
+  buildBottomNav();
+  await cargarActividades();
+}
+
+async function cargarActividades() {
+  const body = $('ac-body');
+  if (_ac.cargando) return;
+  _ac.cargando = true;
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.rpc('actividades_listar', { p_desde: null, p_hasta: null });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cargar.');
+    _ac.filas = data.filas || [];
+    renderActividades();
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/actividades_listar|actividades/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar <b>sql/107_actividades.sql</b>.'
+      : 'No se pudieron cargar las actividades.'}<br><small>${esc(t)}</small></div>`;
+  } finally { _ac.cargando = false; }
+}
+
+function acFiltrar() {
+  const t = (_ac.q || '').trim().toLowerCase();
+  if (!t) return _ac.filas;
+  return _ac.filas.filter((a) => [a.nombre, a.lugar, a.descripcion, AC_TIPO_LBL[a.tipo]]
+    .some((v) => String(v || '').toLowerCase().includes(t)));
+}
+
+function renderActividades() {
+  const filas = acFiltrar();
+  const abiertas = _ac.filas.filter((a) => !a.cerrada_en).length;
+  const entregas = _ac.filas.reduce((s, a) => s + Number(a.entregas || 0), 0);
+  // El subtitulo va en un elemento con text-transform: capitalize, asi que "actividad(es)"
+  // se pinta "Actividad(Es)". Los plurales se escriben completos.
+  const pl = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+  $('ac-sub').textContent = _ac.filas.length
+    ? `${pl(_ac.filas.length, 'actividad', 'actividades')} · ${pl(abiertas, 'abierta', 'abiertas')}`
+      + ` · ${pl(entregas, 'entrega', 'entregas')}`
+    : '';
+
+  if (!filas.length) {
+    $('ac-body').innerHTML = `<div class="cump-empty">${_ac.filas.length
+      ? 'Ninguna actividad coincide con esa búsqueda.'
+      : 'Todavía no hay actividades. Crea la primera con <b>➕ Nueva actividad</b>: '
+        + 'por ejemplo "Entrega de entradas Comfama".'}</div>`;
+    return;
+  }
+  $('ac-body').innerHTML = `<div class="ac-grid">${filas.map(acTarjeta).join('')}</div>`;
+}
+
+function acTarjeta(a) {
+  const n = Number(a.entregas || 0);
+  return `<button type="button" class="ac-card${a.cerrada_en ? ' ac-cerrada' : ''}" data-ac="${a.id}">
+    <div class="ac-top">
+      <span class="ac-tipo">${esc(AC_TIPO_LBL[a.tipo] || a.tipo || '')}</span>
+      <span class="chip ${a.cerrada_en ? 'chip-gray' : 'chip-green'}">${a.cerrada_en ? 'cerrada' : 'abierta'}</span>
+    </div>
+    <b class="ac-nombre">${esc(a.nombre)}</b>
+    <div class="ac-meta">📅 ${esc(fechaLegible(a.fecha))}${a.lugar ? ' · 📍 ' + esc(a.lugar) : ''}</div>
+    <div class="ac-cifra"><b>${n}</b> <span>entrega${n === 1 ? '' : 's'}</span></div>
+    <div class="ac-pide">${a.pide_foto ? '<span>📷 foto</span>' : ''}${a.pide_firma ? '<span>✍️ firma</span>' : ''}</div>
+  </button>`;
+}
+
+// ---------- Crear o corregir la actividad ----------
+function acFormulario(id) {
+  if (!AC_GESTIONA) return;
+  const a = id ? _ac.filas.find((x) => String(x.id) === String(id)) : null;
+  const m = dcModal('ac-form-modal', a ? '✏️ Corregir la actividad' : '➕ Nueva actividad', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <div class="iv-form">
+      <label class="field full"><span>Nombre de la actividad *</span>
+        <input id="acf-nombre" value="${esc(a ? a.nombre : '')}" placeholder="Entrega de entradas Comfama"></label>
+      <label class="field"><span>Tipo</span><select id="acf-tipo">
+        ${AC_TIPOS.map((t) => `<option value="${t}"${(a && a.tipo) === t ? ' selected' : ''}>${AC_TIPO_LBL[t]}</option>`).join('')}
+      </select></label>
+      <label class="field"><span>Fecha *</span><input type="date" id="acf-fecha" value="${esc(a ? a.fecha : hoyServidor())}"></label>
+      <label class="field full"><span>Lugar</span><input id="acf-lugar" value="${esc(a ? (a.lugar || '') : '')}" placeholder="Oficinas, patio, punto de despacho…"></label>
+      <label class="field full"><span>De qué se trata</span>
+        <textarea id="acf-desc" rows="2" placeholder="Para qué es la entrega, cuántas hay, a quién va dirigida">${esc(a ? (a.descripcion || '') : '')}</textarea></label>
+    </div>
+    <div class="dcx-sub">Qué se le pide a quien recibe</div>
+    <div class="dca-tog">
+      <label><input type="checkbox" id="acf-foto"${(!a || a.pide_foto) ? ' checked' : ''}> 📷 Foto</label>
+      <label><input type="checkbox" id="acf-firma"${(!a || a.pide_firma) ? ' checked' : ''}> ✍️ Firma</label>
+    </div>
+    <p class="dc-nota">Para unas entradas se justifican las dos. Para un refrigerio, ninguna:
+      con la cédula y la hora basta.</p>`;
+
+  dcGuardarCon(m, a ? 'Guardar cambios' : 'Crear la actividad', async () => sb.rpc('actividad_guardar', {
+    p_id: a ? a.id : null, p_nombre: $('acf-nombre').value, p_tipo: $('acf-tipo').value,
+    p_fecha: $('acf-fecha').value || null, p_lugar: $('acf-lugar').value || null,
+    p_descripcion: $('acf-desc').value || null,
+    p_pide_foto: $('acf-foto').checked, p_pide_firma: $('acf-firma').checked,
+  }), () => {
+    if (!($('acf-nombre').value || '').trim()) return 'Falta el nombre de la actividad.';
+    if (!$('acf-fecha').value) return 'Falta la fecha.';
+  }, async () => { await cargarActividades(); if (a) await acFicha(a.id); });
+}
+
+// ---------- La ficha de la actividad, con sus entregas ----------
+async function acFicha(id) {
+  if (!puedeVerActividades()) return;
+  _acId = id;
+  const m = dcModal('ac-ficha-modal', '🎁 Actividad', 'dcx-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = '<div class="loading">Abriendo…</div>';
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+  try {
+    const [d, p] = await Promise.all([
+      sb.rpc('actividad_detalle', { p_id: id }),
+      _acPap ? Promise.resolve({ data: _acPap }) : sb.rpc('actividades_papeleria'),
+    ]);
+    if (d.error) throw d.error;
+    if (!d.data || !d.data.ok) throw new Error((d.data && d.data.error) || 'No se pudo abrir.');
+    if (p.data && p.data.ok) _acPap = p.data;
+    _acDet = d.data;
+    acFichaPintar(m);
+  } catch (e) {
+    body.innerHTML = `<div class="cump-empty">No se pudo abrir la actividad.<br><small>${esc(String(e.message || e))}</small></div>`;
+  }
+}
+
+function acFichaPintar(m) {
+  const d = _acDet, a = d.actividad;
+  const vivas = (d.entregas || []).filter((e) => !e.anulado_en);
+  const anuladas = (d.entregas || []).filter((e) => e.anulado_en);
+  const cerrada = !!a.cerrada_en;
+
+  m.querySelector('.modal-head h3').textContent = '🎁 ' + a.nombre;
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <div class="iv-ficha-h">
+      <span class="chip ${cerrada ? 'chip-gray' : 'chip-green'}">${cerrada ? 'cerrada' : 'abierta'}</span>
+      <b>${esc(AC_TIPO_LBL[a.tipo] || a.tipo)}</b>
+      <span class="muted">${esc(fechaLegible(a.fecha))}${a.lugar ? ' · ' + esc(a.lugar) : ''}</span>
+    </div>
+    ${a.descripcion ? `<div class="iv-bloque"><span>De qué se trata</span><p>${dcaNL(a.descripcion)}</p></div>` : ''}
+    <div class="cump-heros ac-heros">
+      <div class="cump-hero"><div class="ch-val">${vivas.length}</div><div class="ch-lbl">Entregas</div>
+        <div class="ch-sub">${a.pide_foto ? 'con foto' : 'sin foto'} · ${a.pide_firma ? 'con firma' : 'sin firma'}</div></div>
+      ${anuladas.length ? `<div class="cump-hero"><div class="ch-val">${anuladas.length}</div>
+        <div class="ch-lbl">Anuladas</div><div class="ch-sub">no cuentan</div></div>` : ''}
+    </div>
+    ${d.puede_editar ? `<div class="iv-acciones ac-acciones">
+      ${cerrada ? '' : '<button type="button" class="btn btn-primary" data-aca="entregar">➕ Registrar entrega</button>'}
+      ${vivas.length ? '<button type="button" class="btn" data-aca="planilla">🖨️ Planilla firmada</button>' : ''}
+      ${vivas.length ? '<button type="button" class="btn" data-aca="excel">📊 Excel</button>' : ''}
+      <button type="button" class="btn" data-aca="editar"${cerrada ? ' disabled' : ''}>✏️ Corregir</button>
+      <button type="button" class="btn" data-aca="${cerrada ? 'reabrir' : 'cerrar'}">${cerrada ? '🔓 Reabrir' : '📦 Cerrar'}</button>
+    </div>` : ''}
+    ${cerrada ? `<p class="dc-nota">Cerrada el ${esc(fmtFechaHora(a.cerrada_en))}${a.cerrada_por ? ' por ' + esc(a.cerrada_por) : ''}.
+      Mientras esté cerrada no se registran más entregas.</p>` : ''}
+
+    ${d.entregas.length ? `<div class="mc-wrap"><table class="mc-tabla ac-tabla">
+      <thead><tr><th></th><th>Quién recibió</th><th>Cuándo</th><th>Firma</th><th>Registró</th><th></th></tr></thead>
+      <tbody>${d.entregas.map(acFilaEntrega).join('')}</tbody></table></div>`
+    : '<div class="cump-empty">Todavía no se le ha entregado a nadie.</div>'}
+    <div class="iv-pie">Creada por ${esc(a.creado_nombre || a.creado_por || '—')} el ${esc(fmtFechaHora(a.creado_en))}</div>`;
+
+  m.querySelector('.iv-modal-body').onclick = (ev) => {
+    const b = ev.target.closest('[data-aca]');
+    if (b) return acAccion(b.dataset.aca, b.dataset.id);
+    const f = ev.target.closest('[data-acfoto]');
+    if (f) return acVerFoto(f.dataset.acfoto, f.dataset.nombre);
+  };
+}
+
+function acFilaEntrega(e) {
+  const anu = !!e.anulado_en;
+  return `<tr class="${anu ? 'ac-anulada' : ''}">
+    <td class="ac-fotoc">${e.foto_path
+    ? `<button type="button" class="ac-mini" data-acfoto="${esc(e.foto_path)}" data-nombre="${esc(e.nombre)}" title="Ver la foto">📷</button>`
+    : '<span class="muted">—</span>'}</td>
+    <td><b>${esc(e.nombre)}</b><small>${esc(e.cedula)}${e.cargo ? ' · ' + esc(e.cargo) : ''}</small>
+      ${anu ? `<small class="ac-anu">Anulada: ${esc(e.nota_anulacion || '')}</small>` : ''}
+      ${e.observacion ? `<small>${esc(e.observacion)}</small>` : ''}</td>
+    <td class="ac-nw">${esc(fmtFechaHora(e.entregado_en))}</td>
+    <td class="ac-firmac">${e.firma ? `<img src="${e.firma}" alt="firma" class="ac-firma-mini">` : '<span class="muted">—</span>'}</td>
+    <td class="muted">${esc(e.registrado_por || '')}</td>
+    <td class="ac-nw">${anu ? '' : `<button type="button" class="btn btn-sm" data-aca="anular" data-id="${e.id}">🚫</button>`}</td>
+  </tr>`;
+}
+
+function acAccion(act, id) {
+  const a = _acDet && _acDet.actividad;
+  if (!a) return;
+  if (act === 'entregar') return acEntregar(a);
+  if (act === 'editar') return acFormulario(a.id);
+  if (act === 'planilla') return acPlanilla();
+  if (act === 'excel') return acExcel();
+  if (act === 'anular') return acAnular(id);
+  if (act === 'cerrar' || act === 'reabrir') return acCerrar(a, act === 'reabrir');
+}
+
+async function acVerFoto(path, nombre) {
+  try {
+    const { data, error } = await sb.storage.from('actividades').createSignedUrl(path, 600);
+    if (error) throw error;
+    const m = dcModal('ac-foto-modal', '📷 ' + (nombre || 'Foto'), '');
+    m.querySelector('.iv-modal-body').innerHTML = `<img src="${data.signedUrl}" alt="" class="ac-foto-full">`;
+    m.querySelector('[data-ok]').hidden = true;
+    m.hidden = false;
+  } catch (e) { toast('No se pudo abrir la foto: ' + (e.message || e), 'err'); }
+}
+
+// ---------- Registrar la entrega ----------
+// Pensado para una fila de gente esperando: cédula, foto, firma, guardar, y el
+// formulario queda listo para el siguiente sin cerrarse.
+function acEntregar(a) {
+  if (!AC_GESTIONA) return;
+  let foto = null, pad = null, buscada = null, n = 0;
+  const m = dcModal('ac-ent-modal', '➕ Registrar entrega', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <p class="dc-nota"><b>${esc(a.nombre)}</b> · ${esc(fechaLegible(a.fecha))}</p>
+    <div class="ac-cont" id="ace-cont" hidden></div>
+    <div class="iv-form">
+      <label class="field full"><span>Cédula de quien recibe *</span>
+        <input id="ace-ced" inputmode="numeric" autocomplete="off" placeholder="Escribe la cédula y pulsa Enter"></label>
+    </div>
+    <div id="ace-quien" class="ac-quien"></div>
+    ${a.pide_foto ? `<div id="ace-fotob">
+      <div class="dcx-sub">📷 Foto de quien recibe
+        <label class="btn btn-sm" for="ace-file">Tomar o elegir</label></div>
+      <input type="file" id="ace-file" accept="image/*" hidden>
+      <div id="ace-prev" class="ac-prev"><span class="muted">Sin foto</span></div>
+    </div>` : ''}
+    ${a.pide_firma ? `<div>
+      <div class="dcx-sub">✍️ Firma de quien recibe
+        <button type="button" class="btn btn-sm" id="ace-limpiar">Borrar</button></div>
+      <canvas id="ace-firma" class="dca-canvas"></canvas>
+    </div>` : ''}
+    <div class="iv-form"><label class="field full"><span>Observación</span>
+      <input id="ace-obs" placeholder="Opcional"></label></div>`;
+
+  if (a.pide_firma) {
+    pad = firmaPad($('ace-firma'));
+    $('ace-limpiar').onclick = () => pad.limpiar();
+  }
+
+  if (a.pide_foto) {
+    $('ace-file').addEventListener('change', async (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      $('ace-prev').innerHTML = '<span class="muted">Preparando la foto…</span>';
+      try {
+        foto = await acComprimirFoto(f);
+        $('ace-prev').innerHTML = `<img src="${URL.createObjectURL(foto)}" alt="">`
+          + `<small>${Math.round(foto.size / 1024)} KB</small>`;
+      } catch (e) { foto = null; $('ace-prev').innerHTML = '<span class="iv-warn">No se pudo leer la imagen.</span>'; }
+    });
+  }
+
+  // Buscar a la persona: el nombre nunca se escribe a mano.
+  const buscar = async () => {
+    const ced = ($('ace-ced').value || '').replace(/\D/g, '');
+    const caja = $('ace-quien');
+    buscada = null;
+    if (!ced) { caja.innerHTML = ''; return; }
+    caja.innerHTML = '<small>Buscando…</small>';
+    try {
+      const { data, error } = await sb.rpc('actividad_buscar_persona', { p_actividad: a.id, p_cedula: ced });
+      if (error) throw error;
+      if (!data || !data.ok) {
+        caja.innerHTML = `<div class="ac-no">⚠️ ${esc((data && data.error) || 'No se encontró.')}</div>`;
+        return;
+      }
+      if (data.ya_recibio) {
+        caja.innerHTML = `<div class="ac-no">🚫 <b>${esc(data.nombre)}</b> ya recibió el
+          ${esc(fmtFechaHora(data.recibio_en))}${data.recibio_por ? ' · lo registró ' + esc(data.recibio_por) : ''}.</div>`;
+        return;
+      }
+      buscada = data;
+      caja.innerHTML = `<div class="ac-si"><b>${esc(data.nombre)}</b>
+        <span>${esc(data.cargo || '')}</span>
+        ${data.estado && data.estado !== 'ACTIVO' ? `<span class="chip chip-amber">${esc(data.estado)}</span>` : ''}</div>`;
+    } catch (e) {
+      caja.innerHTML = `<div class="ac-no">⚠️ ${esc(String(e.message || e))}</div>`;
+    }
+  };
+  $('ace-ced').addEventListener('change', buscar);
+  $('ace-ced').addEventListener('blur', buscar);
+  $('ace-ced').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); buscar(); } });
+
+  const ok = m.querySelector('[data-ok]');
+  const err = m.querySelector('[data-err]');
+  err.hidden = true;
+  ok.hidden = false; ok.textContent = 'Guardar la entrega'; ok.className = 'btn btn-primary';
+  ok.onclick = async () => {
+    const ced = ($('ace-ced').value || '').replace(/\D/g, '');
+    if (!ced) { err.textContent = 'Falta la cédula.'; err.hidden = false; return; }
+    if (!buscada) { err.textContent = 'Busca primero la cédula: el nombre sale del perfil.'; err.hidden = false; return; }
+    if (a.pide_foto && !foto) { err.textContent = 'Esta actividad pide la foto de quien recibe.'; err.hidden = false; return; }
+    if (a.pide_firma && pad.vacio()) { err.textContent = 'Falta la firma de quien recibe.'; err.hidden = false; return; }
+    err.hidden = true; ok.disabled = true; ok.textContent = 'Guardando…';
+    try {
+      let path = null;
+      if (foto) {
+        path = `actividad-${a.id}/${ced}-${Date.now()}.jpg`;
+        const up = await sb.storage.from('actividades').upload(path, foto, { contentType: 'image/jpeg' });
+        if (up.error) throw up.error;
+      }
+      const { data, error } = await sb.rpc('actividad_entregar', {
+        p_actividad: a.id, p_cedula: ced, p_foto_path: path,
+        p_firma: pad && !pad.vacio() ? pad.dataUrl() : null,
+        p_observacion: $('ace-obs').value || null,
+      });
+      if (error) throw error;
+      if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo registrar.');
+
+      n += 1;
+      toast(`✅ Entregado a ${data.nombre}`, 'ok');
+      // Listo para el siguiente de la fila: se limpia todo menos el contador.
+      $('ace-cont').hidden = false;
+      $('ace-cont').innerHTML = `✅ <b>${n}</b> entrega(s) registrada(s) en esta sesión.
+        Última: ${esc(data.nombre)}.`;
+      $('ace-ced').value = ''; $('ace-obs').value = '';
+      $('ace-quien').innerHTML = ''; buscada = null;
+      if (pad) pad.limpiar();
+      if (a.pide_foto) { foto = null; $('ace-file').value = ''; $('ace-prev').innerHTML = '<span class="muted">Sin foto</span>'; }
+      $('ace-ced').focus();
+      await cargarActividades();
+    } catch (e) {
+      err.textContent = e.message || 'No se pudo registrar.'; err.hidden = false;
+    } finally { ok.disabled = false; ok.textContent = 'Guardar la entrega'; }
+  };
+  // Al cerrar el formulario se repinta la ficha con lo que se acaba de registrar.
+  m.querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', () => {
+    if (n) acFicha(a.id);
+  }, { once: true }));
+  m.hidden = false;
+  setTimeout(() => $('ace-ced').focus(), 60);
+}
+
+// La foto se achica antes de subirla: con datos móviles, 4 MB no suben.
+async function acComprimirFoto(file, max = 1100, calidad = 0.75) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i); i.onerror = () => rej(new Error('imagen ilegible'));
+      i.src = url;
+    });
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const w = Math.round(img.width * k), h = Math.round(img.height * k);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return await new Promise((res) => c.toBlob(res, 'image/jpeg', calidad));
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function acAnular(id) {
+  const e = (_acDet.entregas || []).find((x) => String(x.id) === String(id));
+  if (!e) return;
+  const m = dcModal('ac-anu-modal', '🚫 Anular la entrega', '');
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <p class="iv-cerrar-q"><b>${esc(e.nombre)}</b> · ${esc(e.cedula)}<br>
+      <span class="muted">Registrada el ${esc(fmtFechaHora(e.entregado_en))}</span></p>
+    <p class="dc-nota">No se borra: queda el rastro de que se anuló, y la persona puede volver a registrarse.</p>
+    <div class="iv-form"><label class="field full"><span>Por qué se anula *</span>
+      <input id="aca-nota" placeholder="Se registró la cédula equivocada, por ejemplo"></label></div>`;
+  dcGuardarCon(m, 'Anular', async () => sb.rpc('actividad_entrega_anular', {
+    p_id: e.id, p_nota: $('aca-nota').value || null,
+  }), () => { if (!($('aca-nota').value || '').trim()) return 'Escribe por qué se anula.'; },
+  async () => { await cargarActividades(); await acFicha(_acId); });
+}
+
+async function acCerrar(a, reabrir) {
+  const bien = await confirmAction({
+    title: reabrir ? '🔓 Reabrir la actividad' : '📦 Cerrar la actividad',
+    lead: a.nombre,
+    message: reabrir
+      ? 'Se podrán volver a registrar entregas.'
+      : 'Mientras esté cerrada no se registran más entregas. Se puede reabrir cuando quieras.',
+    okLabel: reabrir ? 'Reabrir' : 'Cerrar',
+  });
+  if (!bien) return;
+  try {
+    const { data, error } = await sb.rpc('actividad_cerrar', { p_id: a.id, p_reabrir: !!reabrir });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo.');
+    toast('Listo', 'ok');
+    await cargarActividades();
+    await acFicha(a.id);
+  } catch (e) { toast(e.message || 'No se pudo.', 'err'); }
+}
+
+// ---------- La planilla firmada: lo que se archiva ----------
+function acPlanilla() {
+  const d = _acDet, a = d.actividad;
+  const vivas = (d.entregas || []).filter((e) => !e.anulado_en)
+    .sort((x, y) => String(x.nombre).localeCompare(String(y.nombre), 'es'));
+  const e0 = (_acPap && _acPap.empresa) || {};
+  const gh = (_acPap && _acPap.firmante) || {};
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+  const filas = vivas.map((e, i) => `<tr>
+    <td class="c">${i + 1}</td>
+    <td>${esc(e.nombre)}</td>
+    <td class="c">${esc(e.cedula)}</td>
+    <td>${esc(e.cargo || '')}</td>
+    <td class="c">${esc(fmtFechaHora(e.entregado_en))}</td>
+    <td class="fi">${e.firma ? `<img src="${e.firma}" alt="">` : ''}</td>
+  </tr>`).join('');
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">
+    <title>Planilla ${esc(a.nombre)}</title><style>${AC_DOC_CSS}</style></head><body>
+    <div class="enc"><b>${esc(e0.empresa || '')}</b>
+      <div>${esc(e0.nit || '')}${e0.ciudad ? ' · ' + esc(e0.ciudad) : ''}${e0.telefono ? ' · Tel. ' + esc(e0.telefono) : ''}</div></div>
+    <h1>Planilla de entrega</h1>
+    <table class="meta">
+      <tr><td class="l">Actividad</td><td colspan="3">${esc(a.nombre)}</td></tr>
+      <tr><td class="l">Tipo</td><td>${esc(String(AC_TIPO_LBL[a.tipo] || a.tipo).replace(/^\S+\s/, ''))}</td>
+          <td class="l">Fecha</td><td>${esc(fechaLegible(a.fecha))}</td></tr>
+      ${a.lugar ? `<tr><td class="l">Lugar</td><td colspan="3">${esc(a.lugar)}</td></tr>` : ''}
+      ${a.descripcion ? `<tr><td class="l">Detalle</td><td colspan="3">${esc(a.descripcion)}</td></tr>` : ''}
+      <tr><td class="l">Total entregado</td><td colspan="3"><b>${vivas.length}</b> persona${vivas.length === 1 ? '' : 's'}</td></tr>
+    </table>
+    <table class="lista">
+      <thead><tr><th>#</th><th>Nombre</th><th>Cédula</th><th>Cargo</th><th>Fecha y hora</th><th>Firma</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    <p class="nota">Las personas relacionadas declaran haber recibido a satisfacción lo entregado
+      en esta actividad. La empresa conserva el respaldo fotográfico de cada entrega.</p>
+    <div class="firmas">
+      <div class="fm">${gh.firma ? `<img src="${gh.firma}" alt="">` : ''}
+        <div class="linea">${esc(gh.nombre || '')}</div><small>${esc(gh.cargo || 'Gestión Humana')}</small></div>
+    </div>
+    <div class="pie">Generado por el sistema el ${esc(fechaLegible(hoyServidor()))} · Actividad ${a.id}</div>
+    <script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+}
+
+const AC_DOC_CSS = `
+  @page { size: letter; margin: 1.8cm 1.6cm; }
+  * { box-sizing: border-box; }
+  body { font: 11pt/1.45 Georgia, 'Times New Roman', serif; color: #111; margin: 0; }
+  .enc { text-align: center; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 16px; }
+  .enc b { font-size: 13pt; letter-spacing: .4px; }
+  .enc div { font-size: 9pt; color: #444; }
+  h1 { font-size: 13pt; text-align: center; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .5px; }
+  .meta { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 10pt; }
+  .meta td { border: 1px solid #999; padding: 4px 7px; vertical-align: top; }
+  .meta td { color: #111; }
+  .meta td.l { background: #f2f2f2; font-weight: bold; width: 20%; }
+  .lista { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  .lista th, .lista td { border: 1px solid #999; padding: 4px 6px; vertical-align: middle; color: #111; }
+  .lista th { background: #f2f2f2; font-size: 9pt; text-transform: uppercase; letter-spacing: .3px;
+    text-align: left; }
+  /* Con 130 entregas la lista pasa de pagina: el encabezado se repite en cada una. */
+  .lista thead { display: table-header-group; }
+  .lista td.c { text-align: center; white-space: nowrap; }
+  .lista td.fi { width: 120px; height: 34px; text-align: center; }
+  .lista td.fi img { max-height: 30px; max-width: 115px; }
+  .lista tr { page-break-inside: avoid; }
+  .nota { font-size: 9pt; color: #333; font-style: italic; margin: 14px 0 0; text-align: justify; }
+  .firmas { margin-top: 44px; }
+  .fm { width: 46%; text-align: center; }
+  .fm img { max-height: 54px; display: block; margin: 0 auto 2px; }
+  .fm .linea { border-top: 1px solid #111; margin-top: 44px; padding-top: 4px; font-size: 10pt; }
+  .fm img + .linea { margin-top: 0; }
+  .fm small { display: block; font-size: 8.5pt; color: #444; }
+  .pie { margin-top: 22px; font-size: 8pt; color: #555; border-top: 1px solid #ccc; padding-top: 5px; }
+`;
+
+async function acExcel() {
+  const d = _acDet, a = d.actividad;
+  const rows = (d.entregas || []).filter((e) => !e.anulado_en);
+  if (!rows.length) { toast('No hay entregas para exportar.', 'err'); return; }
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const head = ['Cédula', 'Nombre', 'Cargo', 'Fecha y hora', 'Registró', 'Observación', '¿Foto?', '¿Firma?'];
+    const aoa = [head].concat(rows.map((e) => [
+      e.cedula, e.nombre, e.cargo || '', fmtFechaHora(e.entregado_en), e.registrado_por || '',
+      e.observacion || '', e.foto_path ? 'Sí' : 'No', e.firma ? 'Sí' : 'No']));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 12 }, { wch: 32 }, { wch: 20 }, { wch: 18 }, { wch: 26 }, { wch: 26 }, { wch: 8 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Entregas');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${String(a.nombre).replace(/[^\w\s-]/g, '').trim().slice(0, 40) || 'actividad'}_${a.fecha}.xlsx`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+    toast(`Excel generado: ${rows.length} entrega(s).`, 'ok');
+  } catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e), 'err'); }
+}
+
+// ---------- Botones de la vista ----------
+$('ac-body')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-ac]');
+  if (b) acFicha(b.dataset.ac);
+});
+$('ac-nueva')?.addEventListener('click', () => acFormulario(null));
+$('ac-refresh')?.addEventListener('click', () => cargarActividades());
+$('ac-close')?.addEventListener('click', () => { $('act-view').hidden = true; selectTable(current); });
+$('ac-search')?.addEventListener('input', (e) => { _ac.q = e.target.value; renderActividades(); });
 
 // ===================================================================================
 // 🛠️ INTERVENCIONES a los equipos del bus (GPS, sensores de pasajeros, cámaras) — sql/100
