@@ -6902,7 +6902,8 @@ async function avisarLicenciaConductor(drId, boxId) {
     const nombre = esc(data.nombre || '');
     const fecha = data.vence ? esc(fechaLegible(data.vence)) : '';
     const inactivo = data.activo === false ? '<br><span class="lic-inact">⚠️ Figura INACTIVO en Gestión Humana.</span>' : '';
-    const boton = `<button type="button" class="lic-subir" data-dr="${esc(pedido)}" data-nombre="${nombre}">📎 Subir licencia renovada</button>`;
+    const boton = `<button type="button" class="lic-subir" data-dr="${esc(pedido)}" data-nombre="${nombre}">📎 Subir licencia renovada</button>`
+      + ' <button type="button" class="lic-guia">❓ Cómo se hace</button>';
     if (sol && sol.estado === 'PENDIENTE') {
       box.className = 'field full sonar-info licwarn lic-rev';
       box.innerHTML = `⏳ <b>Licencia renovada en revisión</b> · ${nombre}<br>La licencia ${data.nivel === 'vencida' ? 'está vencida' : 'está por vencer'} (${fecha}). `
@@ -6925,6 +6926,7 @@ async function avisarLicenciaConductor(drId, boxId) {
 }
 ['nd-licwarn', 's-licwarn'].forEach((id) => {
   $(id)?.addEventListener('click', (e) => {
+    if (e.target.closest('.lic-guia')) { openGuiaLicencias('despachador'); return; }
     const b = e.target.closest('.lic-subir'); if (!b) return;
     openLicSubir(b.dataset.dr, b.dataset.nombre, () => avisarLicenciaConductor(b.dataset.dr, id));
   });
@@ -6959,11 +6961,15 @@ function openLicSubir(drId, nombre, after) {
         </div>`).join('')}
         <label class="field full"><span>Observación (opcional)</span>
           <input type="text" class="lic-sub-obs" maxlength="300" placeholder="Ej: la renovó el 10/09"></label>
+        <button type="button" class="lic-guia lic-guia-link">❓ Cómo tomar las fotos</button>
         <div class="form-error lic-sub-err" hidden></div>
       </div>
       <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cancelar</button>
         <button type="button" class="btn btn-primary lic-sub-save">Subir las dos</button></div></div>`;
-    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    m.addEventListener('click', (e) => {
+      if (e.target.closest('.lic-guia')) { openGuiaLicencias('despachador'); return; }
+      if (e.target === m || e.target.closest('[data-x]')) m.hidden = true;
+    });
     document.body.appendChild(m);
   }
 
@@ -7047,6 +7053,136 @@ function openLicSubir(drId, nombre, after) {
   m.hidden = false;
 }
 
+// ---- ❓ GUÍA DE LICENCIAS: cómo se hace, para cada quien ----
+// El despachador la ve desde el mismo aviso que le sale al despachar; operaciones y
+// administración, desde el panel de revisión. El admin ve las dos partes, porque es
+// quien tiene que explicárselo a los puestos — y puede imprimir la del despachador
+// para pegarla donde se despacha.
+let _lgTab = 'despachador';
+
+const LG_PASOS_DESP = [
+  { t: 'Pídele la licencia al conductor', d: 'El aviso sale cuando la licencia está vencida o le faltan menos de 30 días. '
+    + 'El despacho <b>no se bloquea</b>: puedes despachar igual. El aviso es para que la licencia se ponga al día.' },
+  { t: 'Toca 📎 Subir licencia renovada', d: 'Se abre la ventana con los dos pasos.' },
+  { t: 'Foto 1 · el FRENTE', d: 'El lado de la foto y el nombre.' },
+  { t: 'Foto 2 · el RESPALDO', d: 'El lado de las categorías y las fechas de vigencia. '
+    + '<b>Esta es la importante:</b> de ahí sale la fecha de vencimiento que registra operaciones. '
+    + 'En el frente esa fecha no aparece.' },
+  { t: 'Subir las dos', d: 'Hasta que no estén las dos fotos no deja subir, y te dice cuál falta.' },
+];
+
+const LG_FOTO = [
+  'La licencia <b>plana sobre una superficie</b>, no sostenida en la mano.',
+  'Sin reflejos: si el plástico brilla, muévete un poco en vez de usar el flash de frente.',
+  'Que se alcance a leer la tabla de categorías del respaldo. <b>Si tú no la lees, operaciones tampoco.</b>',
+];
+
+function openGuiaLicencias(tab) {
+  const admin = isAdmin() || isOperaciones();
+  _lgTab = tab || (admin ? 'operaciones' : 'despachador');
+  const m = dcModal('licguia-modal', '🪪 Cómo se actualiza una licencia', 'perm-card');
+  const puedeVerAmbas = admin;
+
+  const pintar = () => {
+    const desp = _lgTab === 'despachador';
+    m.querySelector('.iv-modal-body').innerHTML = `
+      ${puedeVerAmbas ? `<div class="pact-tabs lg-tabs">
+        <button type="button" class="btn btn-sm${desp ? ' btn-primary' : ''}" data-lg="despachador">🚏 El despachador</button>
+        <button type="button" class="btn btn-sm${desp ? '' : ' btn-primary'}" data-lg="operaciones">🪪 Operaciones</button>
+      </div>` : ''}
+      ${desp ? `
+        <ol class="lg-pasos">${LG_PASOS_DESP.map((p) => `<li>
+          <b>${esc(p.t)}</b><span>${p.d}</span></li>`).join('')}</ol>
+        <div class="lg-caja">
+          <b>📷 Para que la foto sirva</b>
+          <ul>${LG_FOTO.map((f) => `<li>${f}</li>`).join('')}</ul>
+        </div>
+        <div class="lg-caja lg-azul">
+          <b>Después de subirla</b>
+          <p>Operaciones revisa las fotos y registra la fecha. Mientras tanto el aviso dice
+          <i>“licencia renovada en revisión”</i>. Si la rechazan, el mismo aviso te muestra el motivo
+          y puedes volver a subirla.</p>
+        </div>
+        ${puedeVerAmbas ? '<div class="iv-acciones"><button type="button" class="btn btn-sm" data-lg-print>'
+        + '🖨️ Imprimir para el puesto</button></div>' : ''}`
+      : `
+        <ol class="lg-pasos">
+          <li><b>Abre 🔍 Respaldo (la fecha)</b><span>Es la foto donde está la tabla de categorías con
+            las vigencias. <b>La fecha de vencimiento no está en el frente.</b></span></li>
+          <li><b>Compara la categoría</b><span>La que aparece en la licencia contra la que tiene
+            registrada la persona (C1, C2, C3…).</span></li>
+          <li><b>Escribe la nueva fecha de vencimiento</b><span>Es obligatoria y tiene que ser posterior
+            a hoy. Categoría y número solo si cambiaron.</span></li>
+          <li><b>Aprobar o rechazar</b><span><b>Aprobar</b> actualiza el perfil de la persona y deja
+            registrada la fecha de actualización. <b>Rechazar</b> pide el motivo, y el despachador lo ve
+            en el aviso la próxima vez que despache a ese conductor.</span></li>
+        </ol>
+        <div class="lg-caja lg-azul">
+          <b>Qué cambió</b>
+          <ul>
+            <li>Antes se subía <b>una sola foto</b>, casi siempre la del frente. Ahora son las dos caras.</li>
+            <li>La fecha de vencimiento está en el <b>respaldo</b>: hasta ahora se registraba una fecha
+              que no se podía verificar contra la foto.</li>
+            <li>Queda guardado <b>cuándo se actualizó</b> cada licencia, para saber si el dato es de
+              esta semana o de hace tres años.</li>
+            <li>Las licencias subidas antes del cambio siguen viéndose; aparecen marcadas
+              <i>“sin respaldo”</i>.</li>
+          </ul>
+        </div>
+        <div class="lg-caja">
+          <b>Lo que no cambió</b>
+          <p>La licencia vencida <b>sigue sin bloquear el despacho</b>: es solo una alerta. Y los
+          despachadores nunca ven datos personales del conductor — solo el nombre, la fecha y la categoría.</p>
+        </div>`}`;
+
+    m.querySelectorAll('[data-lg]').forEach((b) => {
+      b.onclick = () => { _lgTab = b.dataset.lg; pintar(); };
+    });
+    const pr = m.querySelector('[data-lg-print]');
+    if (pr) pr.onclick = imprimirGuiaLicencia;
+  };
+
+  pintar();
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+}
+
+// Una hoja para pegar en el puesto de despacho. Sin tecnicismos y con los pasos grandes.
+function imprimirGuiaLicencia() {
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">
+    <title>Licencia vencida: qué hacer</title><style>
+    @page { size: letter; margin: 1.8cm; }
+    body { font: 13pt/1.5 system-ui, sans-serif; color: #111; margin: 0; }
+    h1 { font-size: 20pt; margin: 0 0 4px; }
+    .sub { color: #444; font-size: 11pt; margin: 0 0 18px; }
+    ol { padding-left: 0; list-style: none; counter-reset: p; margin: 0 0 18px; }
+    ol li { counter-increment: p; position: relative; padding: 0 0 14px 44px; }
+    ol li::before { content: counter(p); position: absolute; left: 0; top: 0; width: 30px; height: 30px;
+      border-radius: 50%; background: #111; color: #fff; font-weight: 700; display: grid;
+      place-items: center; font-size: 14pt; }
+    ol li > b { display: block; font-size: 14pt; }
+    ol li span { font-size: 11.5pt; color: #333; }
+    .caja { border: 2px solid #111; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
+    .caja b { font-size: 12.5pt; }
+    .caja ul { margin: 6px 0 0; padding-left: 20px; font-size: 11.5pt; }
+    .caja li { margin-bottom: 4px; }
+    .ojo { background: #111; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 12.5pt; }
+    .pie { margin-top: 20px; font-size: 9.5pt; color: #666; border-top: 1px solid #ccc; padding-top: 6px; }
+    </style></head><body>
+    <h1>🪪 Sale el aviso de licencia vencida</h1>
+    <p class="sub">Qué hacer, paso a paso. Puedes despachar igual: el aviso no bloquea el despacho.</p>
+    <ol>${LG_PASOS_DESP.map((p) => `<li><b>${esc(p.t)}</b><span>${p.d}</span></li>`).join('')}</ol>
+    <div class="caja"><b>📷 Para que la foto sirva</b>
+      <ul>${LG_FOTO.map((f) => `<li>${f}</li>`).join('')}</ul></div>
+    <div class="ojo"><b>Ojo:</b> la fecha de vencimiento <b>no está en el frente</b> de la licencia.
+      Está en el respaldo, en la tabla de categorías. Por eso se piden las dos fotos.</div>
+    <div class="pie">Si la rechazan, el aviso te muestra el motivo y puedes volver a subirla.</div>
+    <script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+}
+
 // Panel de revisión de licencias (operaciones / admin)
 let _licTab = 'PENDIENTE';
 async function openLicencias() {
@@ -7060,9 +7196,12 @@ async function cargarLicencias(m) {
   const body = m.querySelector('.pact-body');
   const TABS = { PENDIENTE: '⏳ Pendientes', APROBADO: '✅ Aprobadas', RECHAZADO: '✖️ Rechazadas' };
   body.innerHTML = `<div class="pact-tabs">${Object.entries(TABS).map(([t, l]) =>
-    `<button type="button" class="btn btn-sm${t === _licTab ? ' btn-primary' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
+    `<button type="button" class="btn btn-sm${t === _licTab ? ' btn-primary' : ''}" data-tab="${t}">${l}</button>`).join('')}
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-sm" data-guia>❓ Cómo se hace</button></div>
     <div class="pact-list"><div class="loading">Cargando…</div></div>`;
   body.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { _licTab = b.dataset.tab; cargarLicencias(m); }; });
+  body.querySelector('[data-guia]').onclick = () => openGuiaLicencias('operaciones');
   const list = body.querySelector('.pact-list');
   const { data, error } = await sb.rpc('licencia_actualizaciones_listar', { p_estado: _licTab });
   if (error) { list.innerHTML = `<div class="rst-empty">Error: ${esc(error.message)}</div>`; return; }

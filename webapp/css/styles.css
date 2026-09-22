@@ -3006,3 +3006,24 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .lic-prev img { max-height: 160px; max-width: 100%; border-radius: 7px; display: block; }
 .lic-prev small { color: var(--muted); font-size: 11px; }
 .lic-sin-resp { font-size: 11.5px; font-style: italic; }
+
+/* ❓ Guía de licencias (v300) */
+.lg-tabs { margin-bottom: 12px; }
+.lg-pasos { list-style: none; margin: 0 0 14px; padding: 0; counter-reset: lg; }
+.lg-pasos li { counter-increment: lg; position: relative; padding: 0 0 12px 36px; }
+.lg-pasos li::before { content: counter(lg); position: absolute; left: 0; top: 1px;
+  width: 24px; height: 24px; border-radius: 50%; background: #1e293b; color: #fff;
+  font: 700 12px/1 system-ui; display: grid; place-items: center; }
+/* Solo el titulo del paso es bloque: las negritas dentro del texto no deben saltar de linea. */
+.lg-pasos li > b { display: block; font-size: 14px; margin-bottom: 2px; }
+.lg-pasos li span { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.lg-caja { border: 1px solid var(--border); border-radius: 11px; padding: 11px 14px; margin-bottom: 12px; }
+.lg-caja > b { font-size: 13.5px; display: block; margin-bottom: 5px; }
+.lg-caja ul { margin: 0; padding-left: 18px; }
+.lg-caja li { font-size: 13px; line-height: 1.5; margin-bottom: 4px; }
+.lg-caja p { margin: 0; font-size: 13px; line-height: 1.5; }
+.lg-azul { background: #eff6ff; border-color: #bfdbfe; }
+.lic-guia { background: none; border: none; color: inherit; text-decoration: underline;
+  cursor: pointer; font: inherit; padding: 0; opacity: .85; }
+.lic-guia:hover { opacity: 1; }
+.lic-guia-link { justify-self: start; font-size: 12.5px; color: var(--muted); }
