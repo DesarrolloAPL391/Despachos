@@ -11118,8 +11118,11 @@ $('iv-file')?.addEventListener('change', (e) => {
 // ===================================================================================
 
 // Algunos avisos llevan un botón que abre la guía del tema del que hablan.
+// `l` + `fn`: boton dentro del aviso. `alCerrar`: adonde se lleva al usuario cuando acepta
+// (para un aviso que habla de una pantalla nueva, mostrarsela vale mas que describirsela).
 const AVISO_ACCION = {
   'LICENCIAS-2026-09': { l: '❓ Cómo se hace', fn: () => openGuiaLicencias('despachador') },
+  'TALLER-2026-09': { alCerrar: () => { if (puedeVerTaller()) openTaller('taller'); } },
 };
 
 async function revisarAvisos() {
@@ -11151,7 +11154,7 @@ function mostrarAvisoObligatorio(a) {
       <div class="av-body">
         ${String(a.cuerpo || '').split(/\n{2,}/).map((p) => `<p>${dcaNL(p)}</p>`).join('')}
         ${puntos.length ? `<ul class="av-puntos">${puntos.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
-        ${acc ? `<div class="av-acc"><button type="button" class="btn btn-sm" data-av-guia>${acc.l}</button></div>` : ''}
+        ${acc && acc.l ? `<div class="av-acc"><button type="button" class="btn btn-sm" data-av-guia>${acc.l}</button></div>` : ''}
       </div>
       <div class="av-foot">
         ${a.confirmacion ? `<label class="av-chk">
@@ -11171,7 +11174,7 @@ function mostrarAvisoObligatorio(a) {
     if (chk) chk.addEventListener('change', () => {
       if (chk.checked) { err.hidden = true; m.querySelector('.av-chk').classList.remove('av-falta'); }
     });
-    if (acc) m.querySelector('[data-av-guia]').addEventListener('click', acc.fn);
+    if (acc && acc.l) m.querySelector('[data-av-guia]').addEventListener('click', acc.fn);
 
     // Escape tampoco lo cierra.
     const bloquearEsc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } };
@@ -11181,6 +11184,7 @@ function mostrarAvisoObligatorio(a) {
     const cerrar = () => {
       document.removeEventListener('keydown', bloquearEsc, true);
       m.remove();
+      if (acc && acc.alCerrar) setTimeout(acc.alCerrar, 60); // ya sin el modal encima
       resolve();
     };
 
