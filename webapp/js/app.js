@@ -7502,6 +7502,12 @@ const DC_COLS = 'id,key_origen,radicado,cedula,nombre,cargo,tipo_persona,afiliad
   + 'descargo_fecha,descargo_hora_ini,descargo_hora_fin,falta,falta_grupo,sancion,sancion_dias,'
   + 'sancion_unidad,suspension_ini,suspension_fin,sancion_respuesta,sancion_enviada,estado_hoja,'
   + 'observacion,anulado_en,nota_anulacion,origen,creado_en,creado_por,creado_nombre,etapa';
+// Lo que sql/106 le agregó al proceso después de la decisión. Se pide aparte porque si
+// todavía no se ejecutó ese archivo, la bandeja tiene que seguir funcionando igual.
+const DC_COLS_106 = ',decision_en,decide_nombre,decide_cargo,consideraciones,valoracion_descargos,'
+  + 'recurso_texto,recurso_resuelto_en,recurso_resultado,recurso_motivacion,sancion_revocada,'
+  + 'ejecutado_en,ejecucion_nota,cerrado_en,cerrado_por,cierre_nota';
+let DC_HAY_106 = true;
 
 // ---------- Abrir ----------
 async function openDisc(modo) {
@@ -7550,14 +7556,22 @@ async function cargarDisc() {
   _dc.cargando = true;
   body.innerHTML = '<div class="loading">Cargando…</div>';
   try {
-    let q = sb.from('disciplinarios').select(DC_COLS);
-    if (_dcModo === 'bandeja') {
-      q = q.in('etapa', ['POR CITAR', 'CITADO', 'POR DECIDIR', 'REPROGRAMAR']);
-    } else {
-      q = q.gte('fecha_suceso', $('dc-desde').value || '2015-01-01')
-        .lte('fecha_suceso', $('dc-hasta').value || hoyServidor());
+    const traer = async (cols) => {
+      let q = sb.from('disciplinarios').select(cols);
+      if (_dcModo === 'bandeja') {
+        q = q.in('etapa', ['POR CITAR', 'CITADO', 'POR DECIDIR', 'REPROGRAMAR']);
+      } else {
+        q = q.gte('fecha_suceso', $('dc-desde').value || '2015-01-01')
+          .lte('fecha_suceso', $('dc-hasta').value || hoyServidor());
+      }
+      return q.order('fecha_suceso', { ascending: false }).limit(5000);
+    };
+    let { data, error } = await traer(DC_COLS + (DC_HAY_106 ? DC_COLS_106 : ''));
+    // Si sql/106 no está ejecutado, esas columnas no existen: se sigue con las de siempre.
+    if (error && DC_HAY_106 && /column|columna/i.test(String(error.message || ''))) {
+      DC_HAY_106 = false;
+      ({ data, error } = await traer(DC_COLS));
     }
-    const { data, error } = await q.order('fecha_suceso', { ascending: false }).limit(5000);
     if (error) throw error;
     _dc.rows = data || [];
     renderDisc();
@@ -7571,6 +7585,12 @@ async function cargarDisc() {
 
 // ---------- Pintar ----------
 const dcHora = (v) => (v ? String(v).slice(0, 5) : '');
+// "1 día", no "1 días": estos textos van en cartas que se le entregan a la persona.
+const dcCant = (n, uni) => {
+  const uno = Number(n) === 1;
+  return `${n} ${String(uni || 'DIAS').toUpperCase() === 'MESES'
+    ? (uno ? 'mes' : 'meses') : (uno ? 'día' : 'días')}`;
+};
 const dcChip = (r) => `<span class="chip ${DC_CHIP[r.etapa] || 'chip-gray'}">${DC_LBL[r.etapa] || esc(r.etapa || '')}</span>`;
 const dcDias = (f) => (f ? Math.round((Date.parse(hoyServidor()) - Date.parse(f)) / 86400000) : null);
 
@@ -7585,17 +7605,30 @@ function dcFiltrar(rows) {
   return out;
 }
 
+// Lo que le falta a un proceso YA DECIDIDO para quedar cerrado. La etapa dice "con sanción"
+// y ahí se quedaba: estos son los pendientes que nadie veía porque no salían en ninguna parte.
+function dcPendiente(r) {
+  if (!DC_HAY_106 || r.cerrado_en || r.anulado_en || !r.sancion) return '';
+  const sinSancion = /^NO GENERA/i.test(r.sancion);
+  if (r.recurso_texto && !r.recurso_resuelto_en) return 'reclamo sin resolver';
+  if (!sinSancion && !r.sancion_enviada) return 'sin notificar';
+  if (r.suspension_fin && r.suspension_fin < hoyServidor() && !r.ejecutado_en) return 'sin marcar cumplida';
+  return 'sin archivar';
+}
+
 function dcFilaHtml(r) {
   const d = dcDias(r.fecha_suceso);
   const viejo = d != null && d > 60 && ['POR CITAR', 'CITADO', 'POR DECIDIR', 'REPROGRAMAR'].includes(r.etapa);
   const sig = { 'POR CITAR': 'Citar', REPROGRAMAR: 'Citar', CITADO: 'Descargos', 'POR DECIDIR': 'Decidir' }[r.etapa];
+  const pend = dcPendiente(r);
   return `<tr class="dc-row${viejo ? ' dc-viejo' : ''}" data-id="${r.id}">
     <td class="dc-fh"><b>${esc(fechaLegible(r.fecha_suceso))}</b>${d != null ? `<small>${d} día(s)</small>` : ''}</td>
     <td class="dc-per"><b>${esc(r.nombre || '—')}</b><small>${esc(r.cargo || r.tipo_persona || '')}${r.vehiculo ? ' · ' + esc(r.vehiculo) : ''}${r.ruta ? ' · ' + esc(r.ruta) : ''}</small></td>
     <td class="dc-nov">${esc(String(r.novedad || '').slice(0, 160))}${String(r.novedad || '').length > 160 ? '…' : ''}
       ${r.falta_grupo ? `<small>⚖️ ${esc(r.falta_grupo)}</small>` : ''}
-      ${r.sancion ? `<small>📄 ${esc(r.sancion)}${r.sancion_dias ? ` · ${r.sancion_dias} ${esc((r.sancion_unidad || 'DIAS').toLowerCase())}` : ''}</small>` : ''}</td>
-    <td>${dcChip(r)}</td>
+      ${r.sancion ? `<small>📄 ${esc(r.sancion)}${r.sancion_dias ? ` · ${esc(dcCant(r.sancion_dias, r.sancion_unidad))}` : ''}</small>` : ''}</td>
+    <td>${dcChip(r)}${pend ? `<br><span class="chip chip-amber dc-pend">${esc(pend)}</span>` : ''}
+      ${r.cerrado_en ? '<br><span class="chip chip-gray">archivado</span>' : ''}</td>
     <td class="dc-acc">${sig && puedeGestionarDisc() ? `<button type="button" class="btn btn-sm btn-primary" data-dc-paso="${r.id}">${sig}</button>` : ''}
       <button type="button" class="btn btn-sm" data-dc-ficha="${r.id}">Ver</button></td>
   </tr>`;
@@ -7743,46 +7776,7 @@ function dcModal(id, titulo, cardClass) {
   return m;
 }
 const dcF = (v) => (v ? fechaLegible(v) : '—');
-function dcFicha(id) {
-  const r = _dc.rows.find((x) => String(x.id) === String(id));
-  if (!r) return;
-  const m = dcModal('dc-ficha-modal', '⚖️ Proceso disciplinario', 'perm-card');
-  const dato = (l, v) => (v ? `<div class="iv-d"><span>${l}</span><b>${esc(String(v))}</b></div>` : '');
-  const linea = (l, v) => `<div class="dc-linea"><span>${l}</span><b>${esc(v)}</b></div>`;
-  m.querySelector('.iv-modal-body').innerHTML = `
-    <div class="iv-ficha-h">${dcChip(r)} <b>${esc(r.nombre || '—')}</b>
-      <span class="muted">${esc(r.cargo || r.tipo_persona || '')}${r.radicado ? ` · radicado ${r.radicado}` : ''}</span></div>
-    <div class="iv-datos">
-      ${dato('Cédula', r.cedula)}${dato('Vehículo', r.vehiculo)}${dato('Ruta', r.ruta)}
-      ${dato('Placa', r.placa)}${dato('Afiliado', r.afiliado)}
-    </div>
-    <div class="iv-bloque"><span>El hecho · ${esc(dcF(r.fecha_suceso))}${r.hora_suceso ? ' ' + esc(dcHora(r.hora_suceso)) : ''}</span>
-      <p>${esc(r.novedad || '')}</p></div>
-    <div class="dc-linea-wrap">
-      ${linea('Citación enviada', dcF(r.citacion_enviada))}
-      ${linea('Diligencia', `${dcF(r.citacion_fecha)}${r.citacion_hora ? ' ' + dcHora(r.citacion_hora) : ''}`)}
-      ${linea('Entrega', r.citacion_estado || '—')}
-      ${linea('Descargos', `${dcF(r.descargo_fecha)}${r.descargo_hora_ini ? ' ' + dcHora(r.descargo_hora_ini) : ''}`)}
-      ${linea('Falta', r.falta || '—')}
-      ${linea('Sanción', r.sancion ? `${r.sancion}${r.sancion_dias ? ` · ${r.sancion_dias} ${(r.sancion_unidad || 'DIAS').toLowerCase()}` : ''}` : '—')}
-      ${r.suspension_ini ? linea('Suspensión', `${dcF(r.suspension_ini)} a ${dcF(r.suspension_fin)}`) : ''}
-    </div>
-    ${r.observacion ? `<div class="iv-bloque"><span>Observación</span><p>${esc(r.observacion)}</p></div>` : ''}
-    ${r.nota_anulacion ? `<div class="iv-bloque"><span>Anulado porque</span><p>${esc(r.nota_anulacion)}</p></div>` : ''}
-    <div class="iv-pie">${r.reporta_correo ? 'Reportó ' + esc(r.reporta_correo) : ''}
-      ${r.origen === 'HOJA' ? ' · viene de la hoja' : (r.origen === 'REPORTE' ? ' · reporte de auditoría' : '')}</div>
-    ${puedeGestionarDisc() && r.etapa !== 'ANULADO' ? `<div class="iv-acciones">
-      <button type="button" class="btn btn-sm btn-primary" data-dc-paso="${r.id}">➡️ Siguiente paso</button>
-      <button type="button" class="btn btn-sm" data-dc-acta="${r.id}">📝 Diligencia y documentos</button>
-      <button type="button" class="btn btn-sm" data-dc-editar="${r.id}">✏️ Corregir el hecho</button>
-      <button type="button" class="btn btn-sm btn-danger" data-dc-anular="${r.id}">🚫 Anular</button></div>` : ''}`;
-  m.querySelector('[data-dc-acta]')?.addEventListener('click', (ev) => {
-    const fila = _dc.rows.find((x) => String(x.id) === String(ev.currentTarget.dataset.dcActa));
-    if (fila) dcActaAbrir(fila);
-  });
-  m.querySelector('[data-ok]').hidden = true;
-  m.hidden = false;
-}
+// La ficha del proceso ES el expediente completo: lo arma dcExpediente (mas abajo).
 
 // El "siguiente paso" depende de dónde está el proceso: citar, descargos o decidir.
 function dcPaso(id) {
@@ -7790,7 +7784,8 @@ function dcPaso(id) {
   if (!r || !puedeGestionarDisc()) return;
   if (r.etapa === 'POR CITAR' || r.etapa === 'REPROGRAMAR') return dcCitar(r);
   if (r.etapa === 'CITADO') return dcDescargos(r);
-  return dcSancionar(r);
+  // Decidir necesita los antecedentes y el acta, que vienen en el expediente.
+  return dcExpediente(id).then(() => dcDecidirModal(_dcx ? _dcx.proceso : r));
 }
 function dcCab(r) {
   return `<p class="iv-cerrar-q"><b>${esc(r.nombre || '—')}</b> · ${esc(r.cargo || r.tipo_persona || '')}<br>
@@ -7837,33 +7832,7 @@ function dcDescargos(r) {
     p_hora_fin: $('dcd-fin').value || null, p_motivo: $('dcd-mot').value || null,
   }), () => { if (!$('dcd-fecha').value) return 'Falta la fecha de la diligencia.'; });
 }
-function dcSancionar(r) {
-  const m = dcModal('dc-paso-modal', '⚖️ Decidir el proceso', 'perm-card');
-  const faltas = [...new Set(_dc.rows.map((x) => String(x.falta || '').trim()).filter(Boolean))].slice(0, 40);
-  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
-    <div class="iv-form">
-      <label class="field full"><span>Falta disciplinaria</span><input id="dcs-falta" list="dcs-faltas" value="${esc(r.falta || '')}" placeholder="Como está en el RIT"></label>
-      <datalist id="dcs-faltas">${faltas.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
-      <label class="field full"><span>Sanción *</span><select id="dcs-sancion">
-        <option value="">— elige —</option>
-        ${DC_SANCIONES.map((x) => `<option${(r.sancion || '') === x ? ' selected' : ''}>${x}</option>`).join('')}
-      </select></label>
-      <label class="field"><span>Cuánto</span><input type="number" id="dcs-dias" min="0" step="1" value="${esc(r.sancion_dias == null ? '' : r.sancion_dias)}"></label>
-      <label class="field"><span>Días o meses</span><select id="dcs-uni">
-        <option value="DIAS"${(r.sancion_unidad || 'DIAS') === 'DIAS' ? ' selected' : ''}>Días</option>
-        <option value="MESES"${r.sancion_unidad === 'MESES' ? ' selected' : ''}>Meses</option>
-      </select></label>
-      <label class="field"><span>Suspensión desde</span><input type="date" id="dcs-ini" value="${esc(r.suspension_ini || '')}"></label>
-      <label class="field"><span>Hasta</span><input type="date" id="dcs-fin" value="${esc(r.suspension_fin || '')}"></label>
-    </div>
-    <p class="dc-nota">Si la decisión es que no hay falta, elige <b>NO GENERA SANCIÓN</b>: el proceso queda cerrado igual.</p>`;
-  dcGuardarCon(m, 'Guardar la decisión', async () => sb.rpc('disc_sancionar', {
-    p_id: r.id, p_falta: $('dcs-falta').value || null, p_sancion: $('dcs-sancion').value || null,
-    p_dias: $('dcs-dias').value ? Number($('dcs-dias').value) : null,
-    p_unidad: $('dcs-uni').value || null, p_ini: $('dcs-ini').value || null,
-    p_fin: $('dcs-fin').value || null, p_enviada: null,
-  }), () => { if (!$('dcs-sancion').value) return 'Elige qué sanción se aplica.'; });
-}
+// Decidir el proceso: dcDecidirModal, con los antecedentes a la vista (mas abajo).
 
 // Abrir un proceso nuevo (o corregir el hecho)
 async function dcFormulario(id) {
@@ -7909,7 +7878,9 @@ async function dcFormulario(id) {
 }
 
 // Botón de guardar compartido por todos los pasos: valida, llama, refresca y cierra.
-function dcGuardarCon(m, etiqueta, fn, validar) {
+// alTerminar: los pasos del expediente lo vuelven a abrir en vez de cerrarlo, para que se
+// vea lo que sigue (el paso que acaba de quedar listo ya no es el pendiente).
+function dcGuardarCon(m, etiqueta, fn, validar, alTerminar) {
   const ok = m.querySelector('[data-ok]');
   const err = m.querySelector('[data-err]');
   err.hidden = true;
@@ -7922,10 +7893,11 @@ function dcGuardarCon(m, etiqueta, fn, validar) {
       const { data, error } = await fn();
       if (error) throw error;
       if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo guardar.');
-      toast('Listo', 'ok');
+      if (data.nota) toast(data.nota, 'ok'); else toast('Listo', 'ok');
       m.hidden = true;
-      $('dc-ficha-modal') && ($('dc-ficha-modal').hidden = true);
+      if (!alTerminar && $('dc-ficha-modal')) $('dc-ficha-modal').hidden = true;
       if (puedeVerDisc()) await cargarDisc();   // el auditor que reporta no lee la tabla
+      if (alTerminar) await alTerminar();
     } catch (e) {
       err.textContent = e.message || 'No se pudo guardar.'; err.hidden = false;
     } finally { ok.disabled = false; ok.textContent = etiqueta; }
@@ -8623,7 +8595,7 @@ function dcDocMeta(r) {
   </table>`;
 }
 
-function dcDocHtml(tipo, r, a, pap, cons) {
+function dcDocHtml(tipo, r, a, pap, cons, extra) {
   const e = (pap && pap.empresa) || {};
   const gh = (pap && pap.firmante) || {};
   const hoy = fechaLegible(hoyServidor());
@@ -8668,19 +8640,91 @@ function dcDocHtml(tipo, r, a, pap, cons) {
   }
 
   if (tipo === 'SANCION') {
-    const dias = r.sancion_dias ? `${r.sancion_dias} ${String(r.sancion_unidad || 'DIAS').toLowerCase()}` : '';
-    return enc + '<h1>Comunicación de decisión</h1>' + dcDocMeta(r) + `
-      <p>Una vez surtida la diligencia de descargos${r.descargo_fecha ? ` realizada el <b>${esc(fechaLegible(r.descargo_fecha))}</b>` : ''},
-      y analizados los hechos y la versión rendida por el trabajador, la empresa comunica su decisión:</p>
+    const dias = r.sancion_dias ? dcCant(r.sancion_dias, r.sancion_unidad) : '';
+    const absuelve = /^NO GENERA/i.test(r.sancion || '');
+    const noComp = a && a.comparecio === false;
+    return enc + `<h1>${absuelve ? 'Comunicación de archivo del proceso' : 'Comunicación de decisión'}</h1>`
+      + dcDocMeta(r) + `
+      <h2>Trámite del proceso</h2>
+      <p>El trabajador fue citado a diligencia de descargos
+      ${r.citacion_enviada ? `mediante comunicación entregada el <b>${esc(fechaLegible(r.citacion_enviada))}</b>, ` : ''}
+      para el <b>${esc(fechaLegible(r.citacion_fecha || ''))}</b>${r.citacion_hora ? ` a las <b>${esc(dcHora(r.citacion_hora))}</b>` : ''}.
+      ${noComp
+    ? 'El trabajador no compareció a la diligencia, de lo cual se dejó la constancia correspondiente, '
+      + 'y el proceso continuó conforme al reglamento.'
+    : (r.descargo_fecha
+      ? `La diligencia se realizó el <b>${esc(fechaLegible(r.descargo_fecha))}</b>, se le informó de su derecho a `
+        + 'hacerse acompañar de dos compañeros de trabajo y rindió su versión, que consta en el acta respectiva.'
+      : 'Surtida la diligencia de descargos, el trabajador rindió su versión.')}</p>
+      <h2>Hechos</h2>
+      <p>${dcaNL((a && a.hechos) || r.novedad || '')}</p>
+      ${(a && a.version_trabajador) ? `<h2>Versión del trabajador</h2><p>${dcaNL(a.version_trabajador)}</p>` : ''}
+      ${r.consideraciones ? `<h2>Consideraciones</h2><p>${dcaNL(r.consideraciones)}</p>` : ''}
+      ${r.valoracion_descargos ? `<h2>Valoración de los descargos</h2><p>${dcaNL(r.valoracion_descargos)}</p>` : ''}
+      <h2>Decisión</h2>
       <table class="meta">
         <tr><td class="l">Falta</td><td colspan="3">${esc(r.falta || '—')}</td></tr>
         <tr><td class="l">Decisión</td><td colspan="3"><b>${esc(r.sancion || '—')}</b>${dias ? ' · ' + esc(dias) : ''}</td></tr>
         ${r.suspension_ini ? `<tr><td class="l">Desde</td><td>${esc(fechaLegible(r.suspension_ini))}</td>
           <td class="l">Hasta</td><td>${esc(fechaLegible(r.suspension_fin || ''))}</td></tr>` : ''}
+        ${r.decision_en ? `<tr><td class="l">Fecha de la decisión</td><td colspan="3">${esc(fechaLegible(r.decision_en))}</td></tr>` : ''}
       </table>
-      ${(a && a.version_trabajador) ? `<h2>Versión del trabajador</h2><p>${dcaNL(a.version_trabajador)}</p>` : ''}
-      <p class="nota">Contra esta decisión el trabajador puede presentar las observaciones que estime
-      pertinentes ante la empresa.</p>
+      <p class="nota">${absuelve
+    ? 'El proceso se archiva sin sanción. Copia de esta comunicación se incorpora a la hoja de vida del trabajador.'
+    : 'Contra esta decisión el trabajador puede presentar ante la empresa, por escrito, las observaciones '
+      + 'que estime pertinentes, las cuales serán resueltas y comunicadas.'}</p>
+      <div class="firmas">
+        ${dcDocFirma('Por la empresa', r.decide_nombre ? null : gh.firma,
+    r.decide_nombre || gh.nombre || '', r.decide_cargo || gh.cargo || '')}
+        ${dcDocFirma('Recibido — Trabajador', null, r.nombre || '', 'C.C. ' + (r.cedula || ''))}
+      </div>
+      <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
+  }
+
+  // Constancia de entrega: es lo que prueba que se le notificó, sobre todo si no firmó.
+  if (tipo === 'NOTIFICACION') {
+    const n = (extra && extra.notif) || {};
+    const nego = /NIEGA|NO SE LOCALIZA/.test(n.resultado || '');
+    return enc + '<h1>Constancia de notificación</h1>' + dcDocMeta(r) + `
+      <p>En ${esc(ciudad)}, el <b>${esc(fechaLegible(n.fecha || hoyServidor()))}</b>${n.hora ? ` a las <b>${esc(dcHora(n.hora))}</b>` : ''},
+      se procedió a notificar al trabajador <b>${esc(r.nombre || '')}</b>, identificado con cédula
+      <b>${esc(r.cedula || '')}</b>, ${n.tipo === 'CITACION'
+    ? 'la citación a diligencia de descargos'
+    : 'la decisión adoptada dentro del presente proceso disciplinario'}, por medio
+      <b>${esc(String(n.medio || '').toLowerCase())}</b>.</p>
+      <table class="meta">
+        <tr><td class="l">Resultado</td><td colspan="3"><b>${esc(n.resultado || '—')}</b></td></tr>
+        <tr><td class="l">Quien entrega</td><td colspan="3">${esc(n.quien_entrega || '—')}</td></tr>
+        ${n.nota ? `<tr><td class="l">Observación</td><td colspan="3">${esc(n.nota)}</td></tr>` : ''}
+      </table>
+      ${nego ? `<p>Se deja constancia de que el trabajador <b>${esc(String(n.resultado || '').toLowerCase())}</b>.
+      Lo anterior se hace constar con la firma de ${n.testigo2_nombre
+    ? 'los testigos que presenciaron la entrega' : 'el testigo que presenció la entrega'},
+      sin que ello afecte la validez de la notificación.</p>` : ''}
+      <div class="firmas">
+        ${n.firma || !nego ? dcDocFirma('Trabajador', n.firma, r.nombre || '', 'C.C. ' + (r.cedula || '')) : ''}
+        ${dcDocFirma('Quien entrega', null, n.quien_entrega || gh.nombre || '', '')}
+        ${n.testigo1_nombre ? dcDocFirma('Testigo', null, n.testigo1_nombre, 'C.C. ' + (n.testigo1_cedula || '')) : ''}
+        ${n.testigo2_nombre ? dcDocFirma('Testigo', null, n.testigo2_nombre, 'C.C. ' + (n.testigo2_cedula || '')) : ''}
+      </div>
+      <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
+  }
+
+  // Respuesta al reclamo del trabajador contra la decisión.
+  if (tipo === 'RECURSO') {
+    const res = { CONFIRMA: 'CONFIRMAR', MODIFICA: 'MODIFICAR', REVOCA: 'REVOCAR' }[r.recurso_resultado] || '';
+    return enc + '<h1>Respuesta al reclamo presentado</h1>' + dcDocMeta(r) + `
+      <p>El trabajador presentó el <b>${esc(fechaLegible(r.sancion_respuesta || ''))}</b> un reclamo contra la
+      decisión adoptada en este proceso disciplinario, en los siguientes términos:</p>
+      <h2>Lo que reclama</h2>
+      <p>${dcaNL(r.recurso_texto || '')}</p>
+      <h2>Consideraciones</h2>
+      <p>${dcaNL(r.recurso_motivacion || '')}</p>
+      <h2>Decisión</h2>
+      <p>Por lo expuesto, la empresa resuelve <b>${esc(res)}</b> la decisión comunicada
+      ${r.sancion_enviada ? `el <b>${esc(fechaLegible(r.sancion_enviada))}</b>` : ''}.
+      ${r.recurso_resultado === 'REVOCA' && r.sancion_revocada
+    ? `Queda sin efecto la sanción de <b>${esc(r.sancion_revocada)}</b>.` : ''}</p>
       <div class="firmas">
         ${dcDocFirma('Por la empresa', gh.firma, gh.nombre || '', gh.cargo || '')}
         ${dcDocFirma('Recibido — Trabajador', null, r.nombre || '', 'C.C. ' + (r.cedula || ''))}
@@ -8724,32 +8768,545 @@ function dcDocHtml(tipo, r, a, pap, cons) {
     <div class="pie">Documento generado por el sistema de la empresa. Consecutivo ${esc(cons)}.</div>`;
 }
 
+// Registra el consecutivo ANTES de imprimir y abre la ventana. Lo usan los dos caminos:
+// la diligencia (dcDoc) y el expediente (dcxDoc).
+async function dcDocGenerar(tipo, r, acta, pap, extra, alTerminar) {
+  try {
+    const { data, error } = await sb.rpc('disc_doc_registrar', {
+      p_id: r.id, p_tipo: tipo,
+      p_datos: { nombre: r.nombre, cedula: r.cedula, etapa: r.etapa },
+    });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo registrar el documento.');
+
+    const w = window.open('', '_blank');
+    if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
+      + `<title>${esc(data.consecutivo)}</title><style>${DC_DOC_CSS}</style></head><body>`
+      + dcDocHtml(tipo, r, acta || {}, pap, data.consecutivo, extra || {})
+      + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
+    w.document.close();
+    if (alTerminar) await alTerminar();   // refresca la lista de documentos generados
+  } catch (e) {
+    toast('No se pudo generar el documento: ' + (e.message || e), 'err');
+  }
+}
+
 async function dcDoc(tipo) {
   if (!puedeGestionarDisc() || !_dcaRow) return;
   // Lo escrito se guarda antes de imprimir: el papel tiene que decir lo mismo que la pantalla.
   clearTimeout(_dcaTimer);
   if (!_dcaCerrada) await dcaGuardar(true);
+  let acta = _dcaDatos || {};
   try {
-    const { data, error } = await sb.rpc('disc_doc_registrar', {
-      p_id: _dcaId, p_tipo: tipo,
-      p_datos: { nombre: _dcaRow.nombre, cedula: _dcaRow.cedula, etapa: _dcaRow.etapa },
-    });
-    if (error) throw error;
-    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo registrar el documento.');
-
     const { data: leido } = await sb.rpc('disc_acta_leer', { p_id: _dcaId });
-    const acta = (leido && leido.acta) || _dcaDatos || {};
-    const w = window.open('', '_blank');
-    if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
-    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
-      + `<title>${esc(data.consecutivo)}</title><style>${DC_DOC_CSS}</style></head><body>`
-      + dcDocHtml(tipo, _dcaRow, acta, _dcaPap, data.consecutivo)
-      + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
-    w.document.close();
-    await dcActaAbrir(_dcaRow);   // refresca la lista de documentos generados
-  } catch (e) {
-    toast('No se pudo generar el documento: ' + (e.message || e), 'err');
+    if (leido && leido.acta) acta = leido.acta;
+  } catch (e) { /* si no se pudo releer, se imprime lo que hay en pantalla */ }
+  await dcDocGenerar(tipo, _dcaRow, acta, _dcaPap, {}, () => dcActaAbrir(_dcaRow));
+}
+
+// ===================================================================================
+// 📋 EXPEDIENTE DEL PROCESO — el recorrido completo, paso por paso (sql/106)
+// La bandeja dice en qué ETAPA está cada proceso. El expediente dice qué le FALTA para
+// quedar bien hecho, que no es lo mismo: un proceso disciplinario no termina en la
+// diligencia. Sigue con la decisión motivada, la notificación de esa decisión, el reclamo
+// que el trabajador pueda presentar y el archivo. Cada paso muestra lo que ya está, lo que
+// falta y el documento que le corresponde.
+// ===================================================================================
+let _dcx = null, _dcxId = null, _dcPapCache = null;
+
+const DCX_MEDIOS = ['PERSONAL', 'CORREO', 'WHATSAPP', 'CORREO CERTIFICADO', 'TELEFONO'];
+const DCX_RESULT = ['RECIBIDO Y FIRMADO', 'SE NIEGA A FIRMAR', 'SE NIEGA A RECIBIR',
+  'NO SE LOCALIZA', 'ENVIADO'];
+const DCX_CON_TESTIGO = ['SE NIEGA A FIRMAR', 'SE NIEGA A RECIBIR', 'NO SE LOCALIZA'];
+const DCX_RECURSO = { CONFIRMA: 'Se confirma la decisión', MODIFICA: 'Se modifica la decisión',
+  REVOCA: 'Se revoca la decisión' };
+
+async function dcPapeleria() {
+  if (_dcPapCache) return _dcPapCache;
+  try {
+    const { data } = await sb.rpc('disc_papeleria');
+    if (data && data.ok) _dcPapCache = data;
+  } catch (e) { /* sin papelería los documentos salen sin encabezado */ }
+  return _dcPapCache || {};
+}
+
+// ---------- Abrir el expediente ----------
+async function dcExpediente(id) {
+  if (!puedeVerDisc()) return;
+  _dcxId = id;
+  const m = dcModal('dc-ficha-modal', '📋 Expediente del proceso', 'dcx-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = '<div class="loading">Abriendo el expediente…</div>';
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+  try {
+    const [e, p] = await Promise.all([sb.rpc('disc_expediente', { p_id: id }), dcPapeleria()]);
+    if (e.error) throw e.error;
+    if (!e.data || !e.data.ok) throw new Error((e.data && e.data.error) || 'No se pudo abrir.');
+    _dcx = e.data; _dcx.pap = p;
+    dcxPintar(m);
+  } catch (err) {
+    const t = String(err.message || err);
+    const fila = _dc.rows.find((k) => String(k.id) === String(id));
+    // Si sql/106 todavía no se ejecutó, el expediente se arma con lo que ya tiene la fila:
+    // se pierden los antecedentes y las constancias, pero el proceso se sigue viendo y llevando.
+    if (fila && /disc_expediente|does not exist|no existe la función/i.test(t)) {
+      _dcx = {
+        proceso: fila, acta: null, acta_cerrada: false, docs: [], notificaciones: [], antecedentes: [],
+        avisos: [{ nivel: 'medio', texto: 'Falta ejecutar sql/106: no se ven antecedentes ni constancias de entrega.' }],
+        puede_editar: puedeGestionarDisc(), es_admin: isAdmin(), hoy: hoyServidor(), pap: _dcPapCache || {},
+      };
+      dcxPintar(m);
+      return;
+    }
+    body.innerHTML = `<div class="cump-empty">${/disc_expediente|disciplinarios_notificaciones/.test(t)
+      ? 'Falta ejecutar <b>sql/106_disciplinarios_expediente.sql</b>.'
+      : 'No se pudo abrir el expediente.'}<br><small>${esc(t)}</small></div>`;
   }
+}
+
+// La ficha y el expediente son lo mismo: un solo lugar donde ver el proceso.
+function dcFicha(id) { return dcExpediente(id); }
+
+// ---------- Los seis pasos ----------
+// Cada paso sabe si ya está hecho, si es el que toca ahora o si todavía no aplica.
+function dcxPasos(x) {
+  const r = x.proceso;
+  const nots = x.notificaciones || [];
+  const cit = nots.filter((n) => n.tipo === 'CITACION');
+  const san = nots.filter((n) => n.tipo === 'SANCION');
+  const gest = !!x.puede_editar && !r.anulado_en && !r.cerrado_en;
+  const decidido = !!r.sancion;
+  const sinSancion = decidido && /^NO GENERA/i.test(r.sancion || '');
+  const bo = (l, act, primario) => ({ l, act, primario: !!primario });
+
+  const pasos = [];
+
+  // 1. El hecho
+  pasos.push({
+    t: 'El hecho', est: 'ok', f: dcF(r.fecha_suceso),
+    d: [['Reportado', r.fecha_informe ? dcF(r.fecha_informe) : (r.reporta_correo ? 'por ' + r.reporta_correo : '—')],
+      ['Origen', r.origen === 'HOJA' ? 'viene de la hoja' : (r.origen === 'REPORTE' ? 'reporte de auditoría' : 'abierto en la app')]],
+    a: gest ? [bo('✏️ Corregir el hecho', 'editar')] : [],
+  });
+
+  // 2. La citación
+  const citEst = r.citacion_estado || (cit.length ? cit[0].resultado : null);
+  pasos.push({
+    t: 'Citación a descargos',
+    est: r.citacion_fecha ? 'ok' : 'pend',
+    f: r.citacion_fecha ? dcF(r.citacion_fecha) + (r.citacion_hora ? ' · ' + dcHora(r.citacion_hora) : '') : '',
+    d: r.citacion_fecha
+      ? [['Entregada', r.citacion_enviada ? dcF(r.citacion_enviada) : 'sin registrar'],
+        ['Cómo resultó', citEst || 'sin constancia'],
+        ['Quién la entregó', r.citacion_responsable || '—']]
+      : [],
+    aviso: (r.citacion_fecha && !cit.length && !r.citacion_estado)
+      ? 'Sin constancia de entrega: si el trabajador dice que nunca la recibió, no hay con qué responderle.' : '',
+    a: gest ? (r.citacion_fecha
+      ? [bo('🖨️ Imprimir la citación', 'doc:CITACION'), bo('📬 Registrar la entrega', 'notif:CITACION', !cit.length),
+        bo('📅 Cambiar la fecha', 'citar')]
+      : [bo('📨 Citar a descargos', 'citar', true)]) : [],
+  });
+
+  // 3. La diligencia
+  const hayActa = !!x.acta;
+  const comp = x.acta_comparecio !== false;
+  pasos.push({
+    t: 'Diligencia de descargos',
+    est: (x.acta_cerrada || r.descargo_fecha) ? 'ok' : (r.citacion_fecha ? 'pend' : 'off'),
+    f: r.descargo_fecha ? dcF(r.descargo_fecha) + (r.descargo_hora_ini ? ' · ' + dcHora(r.descargo_hora_ini) : '') : '',
+    d: hayActa
+      ? [['Acta', x.acta_cerrada ? 'cerrada y sellada' : 'abierta, se está escribiendo'],
+        ['¿Se presentó?', comp ? 'sí' : 'no se presentó'],
+        ['Dirigió', x.acta.dirige_nombre || '—'],
+        ['Acompañantes', (x.acta.acompanantes || []).length
+          ? (x.acta.acompanantes || []).map((c) => c.nombre).join(', ')
+          : 'asistió sin acompañamiento']]
+      : (r.descargo_fecha ? [['Acta', 'no hay: solo se registró la fecha']] : []),
+    aviso: (r.descargo_fecha && !x.acta_cerrada)
+      ? 'La diligencia está registrada pero el acta no está cerrada: no queda constancia de qué se dijo.' : '',
+    a: gest ? [bo(x.acta_cerrada ? '📝 Ver el acta' : '📝 Abrir el acta', 'acta', !x.acta_cerrada && !!r.citacion_fecha)]
+      : [],
+  });
+
+  // 4. La decisión
+  pasos.push({
+    t: 'Decisión',
+    est: decidido ? 'ok' : ((r.descargo_fecha || x.acta_cerrada) ? 'pend' : 'off'),
+    f: r.decision_en ? dcF(r.decision_en) : (decidido ? dcF(r.sancion_enviada) : ''),
+    d: decidido
+      ? [['Falta', r.falta || '—'],
+        ['Decisión', r.sancion + (r.sancion_dias ? ' · ' + dcCant(r.sancion_dias, r.sancion_unidad) : '')],
+        ...(r.suspension_ini ? [['Suspensión', `${dcF(r.suspension_ini)} a ${dcF(r.suspension_fin)}`]] : []),
+        ['Decidió', r.decide_nombre ? r.decide_nombre + (r.decide_cargo ? ' · ' + r.decide_cargo : '') : '—']]
+      : [],
+    texto: decidido && r.consideraciones ? { t: 'Consideraciones', v: r.consideraciones } : null,
+    aviso: (decidido && !r.consideraciones)
+      ? 'La decisión no tiene consideraciones escritas: la carta no responde los descargos.' : '',
+    a: gest ? (decidido
+      ? [bo('🖨️ Imprimir la decisión', 'doc:SANCION'), bo('⚖️ Corregir la decisión', 'decidir')]
+      : [bo('⚖️ Decidir el proceso', 'decidir', !!(r.descargo_fecha || x.acta_cerrada))]) : [],
+  });
+
+  // 5. La notificación de la decisión
+  pasos.push({
+    t: 'Notificación de la decisión',
+    est: (san.length || r.sancion_enviada) ? 'ok' : (decidido && !sinSancion ? 'pend' : 'off'),
+    f: san.length ? dcF(san[0].fecha) : (r.sancion_enviada ? dcF(r.sancion_enviada) : ''),
+    d: san.length
+      ? [['Medio', san[0].medio], ['Resultado', san[0].resultado],
+        ['Entregó', san[0].quien_entrega || '—'],
+        ...(san[0].testigo1_nombre ? [['Testigo', san[0].testigo1_nombre]] : [])]
+      : (r.sancion_enviada ? [['Enviada', dcF(r.sancion_enviada) + ' (sin constancia detallada)']] : []),
+    aviso: (decidido && !sinSancion && !san.length && !r.sancion_enviada)
+      ? 'Una sanción que no se notificó no empieza a correr.' : '',
+    a: gest && decidido ? [bo('📬 Registrar la entrega', 'notif:SANCION', !san.length && !sinSancion),
+      ...(san.length ? [bo('🖨️ Constancia de notificación', 'doc:NOTIFICACION')] : [])] : [],
+  });
+
+  // 6. Cierre
+  const susPasada = r.suspension_fin && r.suspension_fin < x.hoy;
+  const susEmpezo = r.suspension_ini && r.suspension_ini <= x.hoy;
+  pasos.push({
+    t: 'Cierre del expediente',
+    est: r.cerrado_en ? 'ok' : ((san.length || r.sancion_enviada || sinSancion) && decidido ? 'pend' : 'off'),
+    f: r.cerrado_en ? fechaLegible(String(r.cerrado_en).slice(0, 10)) : '',
+    d: [...(r.suspension_ini ? [['Suspensión', r.ejecutado_en
+      ? 'cumplida el ' + dcF(r.ejecutado_en)
+      : (susEmpezo ? 'sin marcar si se cumplió' : 'programada, todavía no empieza')]] : []),
+    ...(r.cerrado_en ? [['Archivado por', r.cerrado_por || '—']] : [])],
+    texto: r.cierre_nota ? { t: 'Nota de cierre', v: r.cierre_nota } : null,
+    aviso: (susPasada && !r.ejecutado_en) ? 'La suspensión ya pasó y nadie marcó si se cumplió.' : '',
+    a: gest ? [...(susEmpezo && !r.ejecutado_en ? [bo('✅ Marcar cumplida', 'ejecutado', susPasada)] : []),
+      ...(decidido ? [bo('📦 Archivar el expediente', 'cerrar', !!(san.length || r.sancion_enviada || sinSancion))] : [])]
+      : (r.cerrado_en && x.es_admin ? [bo('🔓 Reabrir', 'reabrir')] : []),
+  });
+
+  return pasos;
+}
+
+function dcxPintar(m) {
+  const x = _dcx, r = x.proceso;
+  const pasos = dcxPasos(x);
+  const chip = dcChip(r);
+  const dato = (l, v) => (v ? `<div class="iv-d"><span>${l}</span><b>${esc(String(v))}</b></div>` : '');
+  const nivel = { alto: 'pf-aviso rojo', medio: 'pf-aviso ambar', info: 'pf-aviso gris' };
+
+  const pasoHtml = (p, i) => `
+    <li class="dcx-p dcx-${p.est}">
+      <div class="dcx-n">${p.est === 'ok' ? '✓' : i + 1}</div>
+      <div class="dcx-b">
+        <div class="dcx-t">${esc(p.t)}${p.f ? `<span class="dcx-f">${esc(p.f)}</span>` : ''}</div>
+        ${p.d && p.d.length ? `<div class="dcx-d">${p.d.map(([l, v]) => `<span><i>${esc(l)}</i>${esc(String(v))}</span>`).join('')}</div>` : ''}
+        ${p.texto ? `<div class="dcx-tx"><i>${esc(p.texto.t)}</i><p>${dcaNL(p.texto.v)}</p></div>` : ''}
+        ${p.aviso ? `<div class="dcx-w">⚠️ ${esc(p.aviso)}</div>` : ''}
+        ${p.a && p.a.length ? `<div class="dcx-a">${p.a.map((b) =>
+    `<button type="button" class="btn btn-sm${b.primario ? ' btn-primary' : ''}" data-dcx="${esc(b.act)}">${b.l}</button>`).join('')}</div>` : ''}
+      </div>
+    </li>`;
+
+  const ant = x.antecedentes || [];
+  const antSanc = ant.filter((a) => a.sancion && !/^NO GENERA/i.test(a.sancion));
+  const docs = x.docs || [];
+
+  m.querySelector('.iv-modal-body').innerHTML = `
+    <div class="iv-ficha-h">${chip} <b>${esc(r.nombre || '—')}</b>
+      <span class="muted">${esc(r.cargo || r.tipo_persona || '')}${r.radicado ? ` · radicado ${r.radicado}` : ''}</span>
+      ${r.cerrado_en ? '<span class="chip chip-gray">archivado</span>' : ''}</div>
+    <div class="iv-datos">
+      ${dato('Cédula', r.cedula)}${dato('Vehículo', r.vehiculo)}${dato('Ruta', r.ruta)}
+      ${dato('Placa', r.placa)}${dato('Afiliado', r.afiliado)}
+    </div>
+    <div class="iv-bloque"><span>Qué pasó · ${esc(dcF(r.fecha_suceso))}${r.hora_suceso ? ' ' + esc(dcHora(r.hora_suceso)) : ''}</span>
+      <p>${dcaNL(r.novedad || '')}</p></div>
+    ${(x.avisos || []).length ? `<div class="dcx-avisos">${(x.avisos || []).map((a) =>
+    `<div class="${nivel[a.nivel] || nivel.info}">${esc(a.texto)}</div>`).join('')}</div>` : ''}
+
+    <ol class="dcx-riel">${pasos.map(pasoHtml).join('')}</ol>
+
+    ${r.recurso_texto ? `<div class="dcx-rec">
+      <div class="dcx-t">🗣️ Reclamo del trabajador<span class="dcx-f">${esc(dcF(r.sancion_respuesta))}</span></div>
+      <p>${dcaNL(r.recurso_texto)}</p>
+      ${r.recurso_resuelto_en
+    ? `<div class="dcx-d"><span><i>Resuelto</i>${esc(dcF(r.recurso_resuelto_en))}</span>
+         <span><i>Resultado</i>${esc(DCX_RECURSO[r.recurso_resultado] || r.recurso_resultado || '')}</span></div>
+       <div class="dcx-tx"><i>Respuesta</i><p>${dcaNL(r.recurso_motivacion)}</p></div>
+       ${x.puede_editar ? '<div class="dcx-a"><button type="button" class="btn btn-sm" data-dcx="doc:RECURSO">🖨️ Imprimir la respuesta</button></div>' : ''}`
+    : (x.puede_editar ? '<div class="dcx-a"><button type="button" class="btn btn-sm btn-primary" data-dcx="resolver">⚖️ Resolver el reclamo</button></div>' : '')}
+    </div>`
+    : (r.sancion && x.puede_editar && !r.cerrado_en
+      ? '<div class="dcx-min"><button type="button" class="btn btn-sm" data-dcx="recurso">🗣️ El trabajador presentó un reclamo</button></div>' : '')}
+
+    ${ant.length ? `<details class="dcx-det"${antSanc.length ? ' open' : ''}>
+      <summary>📚 Antecedentes de esta persona · ${ant.length} proceso(s), ${antSanc.length} con sanción</summary>
+      <div class="mc-wrap"><table class="mc-tabla dcx-ant"><thead><tr><th>Fecha</th><th>Falta</th><th>Decisión</th></tr></thead><tbody>
+        ${ant.slice(0, 15).map((a) => `<tr><td>${esc(dcF(a.fecha_suceso))}</td>
+          <td>${esc(a.falta || a.falta_grupo || '—')}</td>
+          <td>${a.sancion ? esc(dcSancionCorta(a.sancion)) + (a.sancion_dias ? ' · ' + esc(dcCant(a.sancion_dias, a.sancion_unidad)) : '') : `<span class="muted">${esc(DC_LBL[a.etapa] || a.etapa || '')}</span>`}</td></tr>`).join('')}
+      </tbody></table></div>
+      ${ant.length > 15 ? `<small class="muted">y ${ant.length - 15} más</small>` : ''}
+    </details>` : ''}
+
+    ${docs.length ? `<details class="dcx-det">
+      <summary>📎 Documentos generados · ${docs.length}</summary>
+      <div class="mc-wrap"><table class="mc-tabla"><tbody>${docs.map((d) => `<tr>
+        <td><b>${esc(d.consecutivo)}</b></td><td>${esc(DCX_DOC_LBL[d.tipo] || d.tipo)}</td>
+        <td>${esc(fmtFechaHora(d.generado_en))}</td><td class="muted">${esc(d.generado_por || '')}</td></tr>`).join('')}
+      </tbody></table></div></details>` : ''}
+
+    ${r.observacion ? `<div class="iv-bloque"><span>Observación</span><p>${dcaNL(r.observacion)}</p></div>` : ''}
+    ${r.nota_anulacion ? `<div class="iv-bloque"><span>Anulado porque</span><p>${dcaNL(r.nota_anulacion)}</p></div>` : ''}
+    ${x.puede_editar && !r.anulado_en && !r.cerrado_en
+    ? `<div class="iv-acciones"><button type="button" class="btn btn-sm btn-danger" data-dcx="anular">🚫 Anular el proceso</button></div>` : ''}`;
+
+  m.querySelector('.iv-modal-body').onclick = (ev) => {
+    const b = ev.target.closest('[data-dcx]');
+    if (b) dcxAccion(b.dataset.dcx);
+  };
+}
+
+const DCX_DOC_LBL = { CITACION: 'Citación', ACTA: 'Acta de descargos', SANCION: 'Comunicación de decisión',
+  NO_COMPARECENCIA: 'Constancia de no comparecencia', NOTIFICACION: 'Constancia de notificación',
+  RECURSO: 'Respuesta al reclamo' };
+
+function dcxAccion(act) {
+  const r = _dcx && _dcx.proceso;
+  if (!r) return;
+  if (act.startsWith('doc:')) return dcxDoc(act.slice(4));
+  if (act.startsWith('notif:')) return dcxNotificar(r, act.slice(6));
+  if (act === 'citar') return dcCitar(r);
+  if (act === 'acta') return dcActaAbrir(r);
+  if (act === 'decidir') return dcDecidirModal(r);
+  if (act === 'recurso') return dcxRecurso(r);
+  if (act === 'resolver') return dcxResolver(r);
+  if (act === 'ejecutado') return dcxEjecutado(r);
+  if (act === 'cerrar') return dcxCerrar(r);
+  if (act === 'reabrir') return dcxReabrir(r);
+  if (act === 'editar') return dcFormulario(r.id);
+  if (act === 'anular') return dcAnularModal(r.id);
+}
+
+// Al terminar un paso se vuelve al expediente, que es donde se ve qué sigue.
+const dcxVolver = () => dcExpediente(_dcxId);
+
+// ---------- La entrega de un documento ----------
+function dcxNotificar(r, tipo) {
+  const m = dcModal('dcx-notif-modal', tipo === 'CITACION' ? '📬 Entrega de la citación' : '📬 Notificación de la decisión', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <p class="dc-nota">Queda la constancia de cómo se entregó. Si no recibió o no firmó,
+      <b>hace falta un testigo</b>: es lo único que prueba el intento.</p>
+    <div class="iv-form">
+      <label class="field"><span>Fecha *</span><input type="date" id="dcn-fecha" max="${hoyServidor()}" value="${hoyServidor()}"></label>
+      <label class="field"><span>Hora</span><input type="time" id="dcn-hora"></label>
+      <label class="field"><span>Medio *</span><select id="dcn-medio">
+        ${DCX_MEDIOS.map((x) => `<option>${x}</option>`).join('')}</select></label>
+      <label class="field"><span>¿Cómo resultó? *</span><select id="dcn-res">
+        ${DCX_RESULT.map((x) => `<option>${x}</option>`).join('')}</select></label>
+      <label class="field full"><span>Quién la entrega</span><input id="dcn-quien" value="${esc(r.citacion_responsable || '')}" placeholder="Nombre de quien hace la entrega"></label>
+    </div>
+    <div id="dcn-test" hidden>
+      <div class="dcx-sub">Testigos de la entrega</div>
+      <div class="iv-form">
+        <label class="field"><span>Testigo 1 · nombre *</span><input id="dcn-t1n"></label>
+        <label class="field"><span>Cédula *</span><input id="dcn-t1c" inputmode="numeric"></label>
+        <label class="field"><span>Testigo 2 · nombre</span><input id="dcn-t2n"></label>
+        <label class="field"><span>Cédula</span><input id="dcn-t2c" inputmode="numeric"></label>
+      </div>
+    </div>
+    <div id="dcn-firma-caja">
+      <div class="dcx-sub">Firma de quien recibe <button type="button" class="btn btn-sm" id="dcn-limpiar">Borrar</button></div>
+      <canvas id="dcn-firma" class="dca-canvas"></canvas>
+    </div>
+    <div class="iv-form"><label class="field full"><span>Observación</span><input id="dcn-nota" placeholder="Opcional"></label></div>`;
+
+  const pad = firmaPad($('dcn-firma'));
+  $('dcn-limpiar').onclick = () => pad.limpiar();
+  const alCambiar = () => {
+    const res = $('dcn-res').value;
+    $('dcn-test').hidden = !DCX_CON_TESTIGO.includes(res);
+    $('dcn-firma-caja').hidden = res !== 'RECIBIDO Y FIRMADO';
+  };
+  $('dcn-res').addEventListener('change', alCambiar);
+  alCambiar();
+
+  dcGuardarCon(m, 'Guardar la constancia', async () => sb.rpc('disc_notificar', {
+    p_id: r.id, p_tipo: tipo, p_fecha: $('dcn-fecha').value || null,
+    p_medio: $('dcn-medio').value, p_resultado: $('dcn-res').value,
+    p_hora: $('dcn-hora').value || null, p_quien: $('dcn-quien').value || null,
+    p_t1_nombre: $('dcn-t1n').value || null, p_t1_cedula: $('dcn-t1c').value || null,
+    p_t2_nombre: $('dcn-t2n').value || null, p_t2_cedula: $('dcn-t2c').value || null,
+    p_firma: pad.vacio() ? null : pad.dataUrl(), p_nota: $('dcn-nota').value || null,
+  }), () => {
+    if (!$('dcn-fecha').value) return 'Falta la fecha de la entrega.';
+    if (DCX_CON_TESTIGO.includes($('dcn-res').value)
+      && (!$('dcn-t1n').value.trim() || !$('dcn-t1c').value.trim())) {
+      return 'Si no recibió o no firmó, hace falta un testigo con nombre y cédula.';
+    }
+  }, dcxVolver);
+}
+
+// ---------- Decidir, con los antecedentes a la vista ----------
+function dcDecidirModal(r) {
+  const x = _dcx || {};
+  const gh = (x.pap && x.pap.firmante) || {};
+  const ant = (x.antecedentes || []).filter((a) => a.sancion && !/^NO GENERA/i.test(a.sancion));
+  const mismo = ant.filter((a) => a.falta_grupo && a.falta_grupo === r.falta_grupo);
+  const m = dcModal('dc-paso-modal', '⚖️ Decidir el proceso', 'dcx-card');
+  const faltas = [...new Set(_dc.rows.map((k) => String(k.falta || '').trim()).filter(Boolean))].slice(0, 40);
+
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    ${ant.length ? `<div class="dcx-hist">
+      <b>📚 ${ant.length} sanción(es) anterior(es)${mismo.length ? ` · ${mismo.length} por la misma causa` : ''}</b>
+      <ul>${ant.slice(0, 6).map((a) => `<li>${esc(dcF(a.fecha_suceso))} — ${esc(a.falta || a.falta_grupo || '')}:
+        <b>${esc(dcSancionCorta(a.sancion))}</b>${a.sancion_dias ? ` (${esc(dcCant(a.sancion_dias, a.sancion_unidad))})` : ''}</li>`).join('')}</ul>
+      <small>La proporcionalidad se sostiene en esto: la misma falta por primera vez y por quinta vez no pesan igual.</small>
+    </div>` : '<div class="dcx-hist dcx-hist-nada"><b>📚 Sin sanciones anteriores.</b> <small>Es la primera vez.</small></div>'}
+    ${x.acta && x.acta.version_trabajador ? `<div class="dcx-tx dcx-vers"><i>Lo que dijo en la diligencia</i>
+      <p>${dcaNL(x.acta.version_trabajador)}</p></div>` : ''}
+    <div class="iv-form">
+      <label class="field full"><span>Falta disciplinaria</span><input id="dcs-falta" list="dcs-faltas" value="${esc(r.falta || '')}" placeholder="Como está en el Reglamento Interno"></label>
+      <datalist id="dcs-faltas">${faltas.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
+      <label class="field full"><span>Decisión *</span><select id="dcs-sancion">
+        <option value="">— elige —</option>
+        ${DC_SANCIONES.map((k) => `<option${(r.sancion || '') === k ? ' selected' : ''}>${k}</option>`).join('')}
+      </select></label>
+      <label class="field"><span>Cuánto</span><input type="number" id="dcs-dias" min="0" step="1" value="${esc(r.sancion_dias == null ? '' : r.sancion_dias)}"></label>
+      <label class="field"><span>Días o meses</span><select id="dcs-uni">
+        <option value="DIAS"${(r.sancion_unidad || 'DIAS') === 'DIAS' ? ' selected' : ''}>Días</option>
+        <option value="MESES"${r.sancion_unidad === 'MESES' ? ' selected' : ''}>Meses</option>
+      </select></label>
+      <label class="field"><span>Suspensión desde</span><input type="date" id="dcs-ini" value="${esc(r.suspension_ini || '')}"></label>
+      <label class="field"><span>Hasta</span><input type="date" id="dcs-fin" value="${esc(r.suspension_fin || '')}"></label>
+      <label class="field full"><span>Consideraciones * — por qué se decide así</span>
+        <textarea id="dcs-cons" rows="4" placeholder="Los hechos que se probaron, la gravedad, los antecedentes y por qué se aplica esta sanción y no otra">${esc(r.consideraciones || '')}</textarea></label>
+      <label class="field full"><span>Valoración de los descargos — qué se tuvo en cuenta de lo que dijo</span>
+        <textarea id="dcs-val" rows="3" placeholder="Si su explicación se acepta o no, y por qué. Esto es lo que hace que la diligencia no sea un trámite">${esc(r.valoracion_descargos || '')}</textarea></label>
+      <label class="field"><span>Quién decide *</span><input id="dcs-quien" value="${esc(r.decide_nombre || gh.nombre || '')}"></label>
+      <label class="field"><span>Cargo</span><input id="dcs-cargo" value="${esc(r.decide_cargo || gh.cargo || '')}"></label>
+      <label class="field"><span>Fecha de la decisión</span><input type="date" id="dcs-fecha" value="${esc(r.decision_en || hoyServidor())}"></label>
+    </div>
+    <p class="dc-nota">Si la decisión es que no hay falta, elige <b>NO GENERA SANCIÓN</b>: el proceso queda cerrado igual,
+      y las consideraciones explican por qué se absuelve.</p>`;
+
+  const sinSusp = () => !/^SUSPENSI/i.test($('dcs-sancion').value || '');
+  const alCambiar = () => {
+    const off = sinSusp();
+    ['dcs-dias', 'dcs-ini', 'dcs-fin'].forEach((k) => { $(k).closest('.field').hidden = off; });
+  };
+  $('dcs-sancion').addEventListener('change', alCambiar);
+  alCambiar();
+
+  dcGuardarCon(m, 'Guardar la decisión', async () => sb.rpc('disc_decidir', {
+    p_id: r.id, p_falta: $('dcs-falta').value || null, p_sancion: $('dcs-sancion').value || null,
+    p_consideraciones: $('dcs-cons').value || null, p_decide_nombre: $('dcs-quien').value || null,
+    p_dias: $('dcs-dias').value ? Number($('dcs-dias').value) : null,
+    p_unidad: $('dcs-uni').value || null,
+    p_ini: sinSusp() ? null : ($('dcs-ini').value || null),
+    p_fin: sinSusp() ? null : ($('dcs-fin').value || null),
+    p_valoracion: $('dcs-val').value || null, p_decide_cargo: $('dcs-cargo').value || null,
+    p_fecha: $('dcs-fecha').value || null,
+  }), () => {
+    if (!$('dcs-sancion').value) return 'Elige qué se decide.';
+    if (($('dcs-cons').value || '').trim().length < 40) {
+      return 'Escribe las consideraciones: es lo que responde los descargos y sostiene la decisión.';
+    }
+    if (!($('dcs-quien').value || '').trim()) return 'Falta quién toma la decisión.';
+  }, dcxVolver);
+}
+
+// ---------- El reclamo del trabajador ----------
+function dcxRecurso(r) {
+  const m = dcModal('dcx-rec-modal', '🗣️ Reclamo del trabajador', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <p class="dc-nota">El trabajador puede pedir que se reconsidere la decisión. Se registra tal como lo presentó,
+      y después se le responde por escrito.</p>
+    <div class="iv-form">
+      <label class="field"><span>Fecha en que lo presentó *</span><input type="date" id="dcr-fecha" max="${hoyServidor()}" value="${esc(r.sancion_respuesta || hoyServidor())}"></label>
+      <label class="field full"><span>Qué reclama *</span>
+        <textarea id="dcr-txt" rows="5" placeholder="Lo que alega, en sus palabras">${esc(r.recurso_texto || '')}</textarea></label>
+    </div>`;
+  dcGuardarCon(m, 'Registrar el reclamo', async () => sb.rpc('disc_recurso', {
+    p_id: r.id, p_fecha: $('dcr-fecha').value || null, p_texto: $('dcr-txt').value || null,
+  }), () => { if (!($('dcr-txt').value || '').trim()) return 'Escribe qué está reclamando.'; }, dcxVolver);
+}
+
+function dcxResolver(r) {
+  const m = dcModal('dcx-res-modal', '⚖️ Resolver el reclamo', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <div class="dcx-tx"><i>Lo que reclamó</i><p>${dcaNL(r.recurso_texto)}</p></div>
+    <div class="iv-form">
+      <label class="field"><span>Fecha de la respuesta *</span><input type="date" id="dcq-fecha" value="${hoyServidor()}"></label>
+      <label class="field"><span>Resultado *</span><select id="dcq-res">
+        ${Object.keys(DCX_RECURSO).map((k) => `<option value="${k}">${DCX_RECURSO[k]}</option>`).join('')}
+      </select></label>
+      <label class="field full"><span>Por qué se resuelve así *</span>
+        <textarea id="dcq-mot" rows="4" placeholder="La respuesta que se le entrega al trabajador"></textarea></label>
+    </div>
+    <p class="dc-nota">Si se <b>revoca</b>, la sanción se retira y queda guardado lo que decía.
+      Si se <b>modifica</b>, vuelve a Decidir para dejar escrita la que la reemplaza.</p>`;
+  dcGuardarCon(m, 'Guardar la respuesta', async () => sb.rpc('disc_recurso_resolver', {
+    p_id: r.id, p_fecha: $('dcq-fecha').value || null,
+    p_resultado: $('dcq-res').value, p_motivacion: $('dcq-mot').value || null,
+  }), () => {
+    if (($('dcq-mot').value || '').trim().length < 20) return 'Escribe por qué se resuelve así: es la respuesta al trabajador.';
+  }, dcxVolver);
+}
+
+// ---------- La sanción se cumplió ----------
+function dcxEjecutado(r) {
+  const m = dcModal('dcx-eje-modal', '✅ Cumplimiento de la sanción', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <p class="dc-nota">${r.suspension_ini
+    ? `La suspensión iba del <b>${esc(dcF(r.suspension_ini))}</b> al <b>${esc(dcF(r.suspension_fin))}</b>.`
+    : 'Queda registrado que la decisión se cumplió.'}</p>
+    <div class="iv-form">
+      <label class="field"><span>Se cumplió el *</span><input type="date" id="dce-fecha" value="${esc(r.suspension_fin || hoyServidor())}"></label>
+      <label class="field full"><span>Observación</span><input id="dce-nota" placeholder="Si se corrió de fecha, o cualquier novedad"></label>
+    </div>`;
+  dcGuardarCon(m, 'Marcar cumplida', async () => sb.rpc('disc_ejecutado', {
+    p_id: r.id, p_fecha: $('dce-fecha').value || null, p_nota: $('dce-nota').value || null,
+  }), null, dcxVolver);
+}
+
+// ---------- Archivar ----------
+function dcxCerrar(r) {
+  const m = dcModal('dcx-cer-modal', '📦 Archivar el expediente', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <p class="dc-nota">Archivar es decir que este proceso está terminado y completo. Si falta algo
+      —notificar, resolver un reclamo, marcar la suspensión— no deja archivar y dice qué es.</p>
+    <div class="iv-form">
+      <label class="field full"><span>Nota de cierre</span><input id="dcc-nota" placeholder="Opcional"></label>
+    </div>`;
+  dcGuardarCon(m, 'Archivar', async () => sb.rpc('disc_cerrar', {
+    p_id: r.id, p_nota: $('dcc-nota').value || null,
+  }), null, dcxVolver);
+}
+
+function dcxReabrir(r) {
+  const m = dcModal('dcx-rea-modal', '🔓 Reabrir el expediente', 'perm-card');
+  m.querySelector('.iv-modal-body').innerHTML = dcCab(r) + `
+    <p class="dc-nota">Queda escrito dentro del expediente quién lo reabrió y por qué.</p>
+    <div class="iv-form"><label class="field full"><span>Por qué se reabre *</span>
+      <input id="dcz-nota" placeholder="El motivo queda en el expediente"></label></div>`;
+  dcGuardarCon(m, 'Reabrir', async () => sb.rpc('disc_reabrir_expediente', {
+    p_id: r.id, p_nota: $('dcz-nota').value || null,
+  }), () => { if (!($('dcz-nota').value || '').trim()) return 'Escribe por qué se reabre.'; }, dcxVolver);
+}
+
+// ---------- Imprimir desde el expediente ----------
+async function dcxDoc(tipo) {
+  if (!puedeGestionarDisc() || !_dcx) return;
+  const r = _dcx.proceso;
+  const extra = {};
+  if (tipo === 'NOTIFICACION') {
+    const n = (_dcx.notificaciones || []).filter((k) => k.tipo === 'SANCION')[0]
+      || (_dcx.notificaciones || [])[0];
+    if (!n) { toast('Todavía no hay una entrega registrada.', 'err'); return; }
+    extra.notif = n;
+  }
+  await dcDocGenerar(tipo, r, _dcx.acta || {}, _dcx.pap, extra, () => dcExpediente(_dcxId));
 }
 
 // ===================================================================================

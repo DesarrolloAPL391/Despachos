@@ -2893,3 +2893,52 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
   .dca-fila { grid-template-columns: 1fr 32px; }
   .dca-fila input:nth-child(2), .dca-fila input:nth-child(3) { grid-column: 1; }
 }
+
+/* 📋 Expediente del proceso disciplinario (sql/106) — el riel de pasos */
+.dcx-card { max-width: 880px; }
+.dcx-avisos { display: grid; gap: 6px; margin: 10px 0 4px; }
+.dcx-riel { list-style: none; margin: 14px 0 6px; padding: 0; }
+.dcx-p { display: flex; gap: 12px; position: relative; padding-bottom: 14px; }
+.dcx-p:not(:last-child)::before {
+  content: ''; position: absolute; left: 13px; top: 30px; bottom: 0;
+  width: 2px; background: var(--border);
+}
+.dcx-n {
+  flex: 0 0 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 13px/1 system-ui; background: #e2e8f0; color: #475569; position: relative; z-index: 1;
+}
+.dcx-ok > .dcx-n { background: #16a34a; color: #fff; }
+.dcx-pend > .dcx-n { background: #f59e0b; color: #fff; box-shadow: 0 0 0 4px #fef3c7; }
+.dcx-b { flex: 1 1 auto; min-width: 0; padding-top: 3px; }
+.dcx-t { font: 600 14px system-ui; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dcx-off > .dcx-b .dcx-t { color: var(--muted); font-weight: 500; }
+.dcx-f { font: 400 12px system-ui; color: var(--muted); }
+.dcx-d { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 5px 0 0; font-size: 12.5px; }
+.dcx-d span { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.dcx-d i { color: var(--muted); font-style: normal; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+.dcx-tx { margin: 7px 0 0; padding: 7px 10px; border-radius: 8px; background: #f8fafc; }
+.dcx-tx i { display: block; font-style: normal; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px; }
+.dcx-tx p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.dcx-w { margin: 6px 0 0; font-size: 12.5px; color: #92400e; background: #fffbeb;
+  border-left: 3px solid #f59e0b; padding: 6px 9px; border-radius: 0 7px 7px 0; line-height: 1.45; }
+.dcx-a { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; }
+.dcx-rec { margin: 8px 0; padding: 11px 13px; border: 1px solid var(--border);
+  border-left: 3px solid #6366f1; border-radius: 0 10px 10px 0; background: #f8fafc; }
+.dcx-rec p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.5; }
+.dcx-min { margin: 6px 0 10px; }
+.dcx-det { margin: 10px 0; border: 1px solid var(--border); border-radius: 10px; padding: 8px 11px; }
+.dcx-det summary { cursor: pointer; font: 600 13px system-ui; }
+.dcx-det .mc-tabla { margin-top: 8px; font-size: 12.5px; }
+.dcx-ant td { vertical-align: top; }
+.dcx-sub { font: 600 12.5px system-ui; margin: 12px 0 6px; display: flex; align-items: center;
+  gap: 10px; justify-content: space-between; }
+.dcx-hist { margin: 4px 0 12px; padding: 10px 12px; border-radius: 10px;
+  background: #fef3c7; border: 1px solid #fcd34d; font-size: 13px; }
+.dcx-hist ul { margin: 6px 0; padding-left: 18px; }
+.dcx-hist li { margin-bottom: 3px; line-height: 1.4; }
+.dcx-hist small { color: #78350f; display: block; margin-top: 4px; line-height: 1.4; }
+.dcx-hist-nada { background: #f0fdf4; border-color: #bbf7d0; }
+.dcx-hist-nada small { color: #14532d; }
+.dcx-vers { border-left: 3px solid #6366f1; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+.dc-pend { margin-top: 3px; display: inline-block; }
