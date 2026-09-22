@@ -605,6 +605,9 @@ function buildSidebar() {
   if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gRe, '🚨', 'Estadísticas de restricciones', openRestrStats, 'nav-restrstats');
   if (isAdmin() || isOperaciones() || isAuditor()) addNavAction(gRe, '🔓', `Desbloqueos de documentos${DESBLOQ_PEND ? ` <span class="nav-badge">${DESBLOQ_PEND}</span>` : ''}`, openDesbloqueos, 'nav-desbloq');
   if (isAdmin() || isDespachador() || isAfiliado() || isAuditor()) addNavAction(gRe, '🔧', 'Preventivas', openPreventivas, 'nav-preventivas');
+  // 🛠️ Taller: el mantenimiento de CloudFleet. Va aquí al lado de Preventivas (que es la
+  // revisión del CDA) porque el despachador busca las dos cosas en el mismo sitio.
+  if (puedeVerTaller()) addNavAction(gRe, '🛠️', 'Taller y mantenimiento', () => openTaller(), 'nav-taller');
   if (isAdmin() || isOperaciones()) addNavAction(gRe, '🪪', `Licencias de conductores${LIC_PEND ? ` <span class="nav-badge">${LIC_PEND}</span>` : ''}`, openLicencias, 'nav-licencias');
 
   // ⛽ Combustible: los tanqueos que trae el SCA de la estación (sql/103+104).
@@ -6170,11 +6173,12 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn', 'nd-licwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; s.dataset.licblock = ''; aplicarBloqueosBtn(s); } return; }
+  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn', 'nd-licwarn', 'nd-tallerwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; s.dataset.licblock = ''; aplicarBloqueosBtn(s); } return; }
   avisoRestriccionND(); // aviso de restricción vigente de hoy (por móvil o por conductor)
   avisarBloqueoDocMovil(vr.numero, 'nd-docblk', 'nd-save'); // BLOQUEO por documento vencido (SOAT/tecno/tarjeta)
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
   avisarPreventivaMovil(vr.numero, 'nd-pvwarn', 'nd-save'); // preventiva: bloqueo (rechazada) o recordatorio
+  avisarTallerMovil(vr.numero, 'nd-tallerwarn'); // 🛠️ orden de trabajo abierta / novedades (sql/111): solo avisa
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';
@@ -9702,6 +9706,283 @@ async function dcxDoc(tipo) {
 }
 
 // ===================================================================================
+// 🔧 EL TALLER (CloudFleet, sql/111)
+// El taller trabaja en CloudFleet y la app no sabía nada: se podía despachar un bus con
+// orden de trabajo abierta. Esto trae las órdenes, las novedades y la programación del
+// mantenimiento, avisa en el despacho, y deja que el despachador o el auditor le reporten
+// una falla al taller sin salir de la app.
+//
+// AVISA, NO BLOQUEA (decisión del 22/09/2026): el estado de la orden no basta para decir
+// que el bus está varado — hay órdenes que quedan abiertas días después de que el carro
+// salió. Se avisa fuerte y se mide; volverlo bloqueo después es cambiar dos líneas.
+// ===================================================================================
+
+const TL_PRIO = { high: { l: 'Urgente', c: 'chip-red' }, medium: { l: 'Media', c: 'chip-amber' }, low: { l: 'Baja', c: 'chip-gray' } };
+let _tl = { d: null, cargando: false, tab: 'taller' };
+
+function puedeVerTaller() { return isAdmin() || isOperaciones() || isAuditor(); }
+function puedeReportarTaller() { return isAdmin() || isOperaciones() || isAuditor() || isDespachador(); }
+
+// ---------- El aviso al elegir el móvil (despacho y pantalla SONAR) ----------
+async function avisarTallerMovil(numero, boxId) {
+  const box = $(boxId); if (!box) return;
+  box.hidden = true; box.innerHTML = ''; box.className = 'field full';
+  if (!numero) return;
+  const pedido = String(numero).trim();
+  box.dataset.mov = pedido;
+  try {
+    const { data } = await sb.rpc('taller_estado_movil', { p_movil: pedido });
+    if (box.dataset.mov !== pedido) return;      // cambiaron de móvil mientras consultaba
+    if (!data) return;
+    const ord = data.ordenes || [], nov = data.novedades || [], prog = data.programacion || [];
+    if (!ord.length && !nov.length && !prog.length) return;
+
+    const afecta = Number(data.afectan || 0) > 0;
+    box.className = 'field full sonar-info ' + (afecta ? 'tl-warn-alta' : 'tl-warn');
+    const partes = [];
+    if (ord.length) {
+      partes.push((afecta ? '🔧 <b>ESTE MÓVIL ESTÁ EN EL TALLER</b>' : '🔧 <b>Tiene orden de trabajo abierta</b>')
+        + ` · móvil ${esc(pedido)}`);
+      partes.push(ord.map((o) => {
+        const d = Number(o.dias || 0);
+        return `${o.afecta ? '⛔' : '🔸'} Orden <b>${esc(String(o.numero))}</b>`
+          + ` · ${esc(o.tipo || '')}${d ? ` · abierta hace <b>${d} ${d === 1 ? 'día' : 'días'}</b>` : ' · de hoy'}`
+          + (o.afecta ? ' · <b>fuera de servicio</b>' : '')
+          + (o.motivo ? `<br><span class="tl-motivo">“${esc(o.motivo)}”</span>` : '');
+      }).join('<br>'));
+    }
+    if (nov.length) {
+      const u = nov.filter((n) => n.prioridad === 'high').length;
+      partes.push(`🛠️ <b>${nov.length} ${nov.length === 1 ? 'novedad' : 'novedades'} sin resolver</b>`
+        + (u ? ` (${u} urgente${u === 1 ? '' : 's'})` : '')
+        + '<br>' + nov.slice(0, 3).map((n) => `• ${esc(n.texto || 'sin descripción')}`).join('<br>'));
+    }
+    if (prog.length) {
+      partes.push(`📅 <b>Mantenimiento vencido:</b> ` + prog.slice(0, 3).map((p) => esc(p.trabajo || '')).join(', '));
+    }
+    // Si el espejo está viejo, decirlo: es peor un dato que parece de ahora y no lo es.
+    const min = Number(data.sync_hace_min);
+    if (Number.isFinite(min) && min > 60) {
+      partes.push(`<span class="tl-viejo">⚠️ Dato del taller de hace ${min > 1440
+        ? Math.round(min / 1440) + ' día(s)' : Math.round(min / 60) + ' hora(s)'}: la traída automática no está corriendo.</span>`);
+    }
+    if (puedeReportarTaller()) {
+      partes.push(`<button type="button" class="btn btn-sm tl-rep" data-mov="${esc(pedido)}">🛠️ Reportarle algo al taller</button>`);
+    }
+    box.innerHTML = partes.join('<br>');
+    box.querySelector('.tl-rep')?.addEventListener('click', () => tallerReportar(pedido));
+    box.hidden = false;
+  } catch (e) { /* si falla, el despacho sigue: esto solo informa */ }
+}
+
+// ---------- Reportarle una falla al taller ----------
+function tallerReportar(movil, intervencionId) {
+  if (!puedeReportarTaller()) return;
+  const m = dcModal('tlrep-modal', '🛠️ Reportarle al taller', 'iv-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = `<div class="iv-form">
+    <div class="field"><label>Móvil</label>
+      <input type="text" id="tl-mov" value="${esc(String(movil || ''))}" ${movil ? 'readonly' : ''} placeholder="5001"></div>
+    <div class="field"><label>¿Qué tan urgente es?</label>
+      <select id="tl-pri">
+        <option value="high">Urgente · no puede seguir así</option>
+        <option value="medium" selected>Media · hay que revisarlo pronto</option>
+        <option value="low">Baja · cuando entre a taller</option>
+      </select></div>
+    <div class="field full"><label>¿Qué le pasa?</label>
+      <textarea id="tl-txt" rows="4" placeholder="Ejemplo: la puerta trasera no cierra bien, hay que empujarla dos veces. Se oye un golpe en la suspensión al pasar reductores."></textarea>
+      <small class="muted">Escríbelo como se lo contarías al mecánico. Esto le llega al taller a su bandeja de novedades.</small></div>
+    <div class="field"><label>Kilometraje (si lo sabes)</label>
+      <input type="number" id="tl-odo" placeholder="opcional"></div>
+  </div>`;
+  m.hidden = false;
+  dcGuardarCon(m, 'Enviando…', async () => {
+    const { data, error } = await sb.rpc('taller_novedad_enviar', {
+      p_movil: $('tl-mov').value.trim(),
+      p_prioridad: $('tl-pri').value,
+      p_texto: $('tl-txt').value.trim(),
+      p_odometro: $('tl-odo').value ? Number($('tl-odo').value) : null,
+      p_intervencion: intervencionId || null,
+    });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo enviar.');
+    toast(`Novedad ${data.numero ? '#' + data.numero + ' ' : ''}enviada al taller.`, 'ok');
+  }, () => {
+    const t = $('tl-txt').value.trim();
+    if (!$('tl-mov').value.trim()) return 'Falta el móvil.';
+    if (t.length < 15) return 'Describe la falla: con dos palabras el mecánico no sabe qué revisar.';
+    return null;
+  }, () => { m.hidden = true; if (currentView === 'taller') cargarTaller(); });
+}
+
+// ---------- Traer ahora mismo (admin) ----------
+// El cron trae cada 15 minutos. Este boton es para cuando el taller acaba de cerrar una
+// orden y en la app todavia aparece abierta: evita que alguien crea que el dato es malo.
+async function tallerTraer() {
+  if (!isAdmin()) { toast('Solo administracion puede forzar la traida.', 'err'); return; }
+  const b = $('tl-traer');
+  if (b) { b.disabled = true; b.textContent = 'Trayendo...'; }
+  try {
+    const { data, error } = await sb.rpc('taller_sync_todo');
+    if (error) throw error;
+    const malo = ['ordenes', 'novedades', 'programacion']
+      .map((k) => (data && data[k] && data[k].ok === false ? `${k}: ${data[k].error}` : null))
+      .filter(Boolean);
+    if (malo.length) toast(malo.join(' | '), 'err');
+    else toast('Taller actualizado.', 'ok');
+  } catch (e) {
+    toast('No se pudo traer: ' + (e.message || e), 'err');
+  } finally {
+    if (b) { b.disabled = false; b.textContent = '↻ Traer del taller'; }
+    cargarTaller();
+  }
+}
+
+// ---------- El tablero ----------
+async function openTaller(tab) {
+  if (!puedeVerTaller()) return;
+  if (mapaFlotante) cerrarMapaFlotante();
+  currentView = 'taller';
+  if (tab) _tl.tab = tab;
+  cerrarRecorridoBus();
+  cerrarPanelesFlotantes();
+  if (mapTimer) { clearInterval(mapTimer); mapTimer = null; }
+  document.getElementById('app').classList.remove('view-map');
+  ocultarVistas('tl-view');
+  $('tl-view').hidden = false;
+  document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
+  $('nav-taller')?.classList.add('active');
+  buildBottomNav();
+  await cargarTaller();
+}
+
+async function cargarTaller() {
+  const body = $('tl-body');
+  if (_tl.cargando) return;
+  _tl.cargando = true;
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.rpc('taller_tablero');
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cargar.');
+    _tl.d = data;
+    renderTaller();
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/taller_tablero|taller_/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar <b>sql/111_taller.sql</b>.' : 'No se pudo cargar.'}<br><small>${esc(t)}</small></div>`;
+  } finally { _tl.cargando = false; }
+}
+
+function tlDias(n) { const d = Math.abs(Number(n) || 0); return `${d} ${d === 1 ? 'día' : 'días'}`; }
+
+function renderTaller() {
+  const d = _tl.d || {}; const o = d.ordenes || {}; const p = d.prog || {};
+  const sub = $('tl-sub');
+  if (sub) {
+    const min = Number(d.sync_hace_min);
+    sub.textContent = d.sin_traer ? 'nunca se ha traído'
+      : (Number.isFinite(min) ? (min < 60 ? `al día · hace ${Math.max(min, 1)} min`
+        : `⚠️ último dato de hace ${min > 1440 ? Math.round(min / 1440) + ' día(s)' : Math.round(min / 60) + ' hora(s)'}`) : '');
+  }
+  const tabs = [
+    ['taller', `🔧 En el taller · ${Number(o.abiertas || 0)}`],
+    ['novedades', `🛠️ Novedades · ${(d.novedades || []).length}`],
+    ['prog', `📅 Programación · ${Number(p.vencidas || 0) + Number(p.hoy || 0)}`],
+  ];
+  let h = `<div class="pact-tabs">${tabs.map(([k, l]) =>
+    `<button type="button" class="${_tl.tab === k ? 'on' : ''}" data-tl-tab="${k}">${l}</button>`).join('')}</div>`;
+
+  if (d.sin_traer) {
+    h += `<div class="pf-aviso ambar">Todavía no se ha traído nada del taller. Administración tiene que crear
+      el secreto <b>CF_API_KEY</b> en el Vault y correr la primera traída.</div>`;
+  } else if (d.ultimo_error) {
+    h += `<div class="pf-aviso rojo">Último intento con error: ${esc(d.ultimo_error)}</div>`;
+  }
+
+  if (_tl.tab === 'taller') {
+    h += `<div class="cump-heros">
+      <div class="cump-hero"><div class="ch-val">${Number(o.abiertas || 0)}</div><div class="ch-lbl">Órdenes abiertas</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(o.afectan || 0)}</div><div class="ch-lbl">Fuera de servicio</div>
+        <div class="ch-sub">no deberían estar rodando</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(o.viejas || 0)}</div><div class="ch-lbl">Abiertas +7 días</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(o.cierre_tecnico || 0)}</div><div class="ch-lbl">Esperando cierre</div>
+        <div class="ch-sub">ya salieron del taller</div></div>
+    </div>`;
+    const lista = d.lista || [];
+    h += lista.length ? `<div class="mc-wrap"><table class="mc-tabla tl-tabla"><thead><tr>
+      <th>Móvil</th><th>Orden</th><th>Tipo</th><th>Abierta</th><th>Motivo</th><th></th></tr></thead><tbody>
+      ${lista.map((r) => `<tr class="${r.afecta ? 'tl-fuera' : ''}">
+        <td><b>${esc(r.movil)}</b>${r.grupo ? `<small>${esc(r.grupo)}</small>` : ''}</td>
+        <td>#${esc(String(r.numero))}${(r.etiquetas || []).length ? `<small>${esc((r.etiquetas || []).join(', '))}</small>` : ''}</td>
+        <td><span class="chip ${r.tipo === 'CORRECTIVO' ? 'chip-red' : 'chip-blue'}">${esc(r.tipo || '—')}</span>
+          ${r.afecta ? '<span class="chip chip-red">fuera de servicio</span>' : ''}</td>
+        <td>${esc(tlDias(r.dias))}<small>${esc(fechaLegible(r.desde))}</small></td>
+        <td class="tl-motivo">${esc(r.motivo || '—')}</td>
+        <td class="mc-num">${r.costo ? '$ ' + Math.round(Number(r.costo)).toLocaleString('es-CO') : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="cump-empty">✅ Ningún bus en el taller ahora mismo.</div>';
+
+    const rep = d.represadas || [];
+    if (rep.length) {
+      h += `<details class="dcx-det"><summary>⏳ Salieron del taller pero la orden sigue sin cerrar · ${rep.length}</summary>
+        <div class="cump-subtitle">Mientras la orden no se cierre, ese bus sigue apareciendo con mantenimiento pendiente.</div>
+        <div class="mc-wrap"><table class="mc-tabla"><tbody>
+        ${rep.map((r) => `<tr><td><b>${esc(r.movil)}</b></td><td>#${esc(String(r.numero))}</td>
+          <td class="muted">${esc(r.tipo || '')}</td>
+          <td>cierre técnico hace ${esc(tlDias(r.dias))}</td></tr>`).join('')}
+        </tbody></table></div></details>`;
+    }
+  }
+
+  if (_tl.tab === 'novedades') {
+    const nov = d.novedades || [];
+    h += `<div class="cump-toolbar"><span class="cump-subtitle">Fallas reportadas que el taller todavía no ha
+      resuelto. Las que dicen "del preoperacional" las reportó el conductor en su revisión diaria.</span>
+      <span class="spacer"></span>
+      ${puedeReportarTaller() ? '<button type="button" class="btn btn-primary" id="tl-nueva">🛠️ Reportar una falla</button>' : ''}</div>`;
+    h += nov.length ? `<div class="mc-wrap"><table class="mc-tabla"><thead><tr>
+      <th>Móvil</th><th>Prioridad</th><th>Falla</th><th>Reportó</th><th>Hace</th></tr></thead><tbody>
+      ${nov.map((n) => {
+    const pr = TL_PRIO[n.prioridad] || { l: n.prioridad || '—', c: 'chip-gray' };
+    return `<tr><td><b>${esc(n.movil)}</b></td>
+      <td><span class="chip ${pr.c}">${esc(pr.l)}</span></td>
+      <td class="tl-motivo">${esc(n.texto || '—')}
+        ${n.desde_checklist ? '<small>del preoperacional</small>' : ''}</td>
+      <td class="muted">${esc(n.reporto || '—')}</td>
+      <td>${esc(tlDias(n.dias))}</td></tr>`;
+  }).join('')}</tbody></table></div>` : '<div class="cump-empty">✅ No hay novedades pendientes.</div>';
+  }
+
+  if (_tl.tab === 'prog') {
+    h += `<div class="cump-heros">
+      <div class="cump-hero"><div class="ch-val">${Number(p.vencidas || 0)}</div><div class="ch-lbl">Vencidas</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(p.hoy || 0)}</div><div class="ch-lbl">Vencen hoy</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(p.proximas || 0)}</div><div class="ch-lbl">Próximas</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(p.moviles || 0)}</div><div class="ch-lbl">Móviles por atender</div></div>
+    </div>
+    <div class="cump-subtitle">Esto es el mantenimiento del taller (frenos, engrase, aceite). La revisión
+      técnico-mecánica del CDA va en 🔧 Preventivas, que es otra cosa.</div>`;
+    const pl = d.prog_lista || [];
+    h += pl.length ? `<div class="mc-wrap"><table class="mc-tabla"><thead><tr>
+      <th>Móvil</th><th>Trabajo</th><th>Estado</th><th>Fecha</th><th>Orden</th></tr></thead><tbody>
+      ${pl.map((r) => `<tr><td><b>${esc(r.movil)}</b></td>
+        <td>${esc(r.trabajo || '—')}</td>
+        <td><span class="chip ${r.estado === 'Vencido' ? 'chip-red' : 'chip-amber'}">${esc(r.estado || '')}</span>
+          ${Number(r.dias) < 0 ? `<small>hace ${esc(tlDias(r.dias))}</small>` : ''}</td>
+        <td>${esc(fechaLegible(r.fecha))}</td>
+        <td>${r.orden ? '#' + esc(String(r.orden)) : '<span class="muted">sin orden</span>'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="cump-empty">✅ Nada vencido ni venciendo hoy.</div>';
+  }
+
+  const body = $('tl-body');
+  body.innerHTML = h;
+  body.querySelectorAll('[data-tl-tab]').forEach((b) => {
+    b.onclick = () => { _tl.tab = b.dataset.tlTab; renderTaller(); };
+  });
+  body.querySelector('#tl-nueva')?.addEventListener('click', () => tallerReportar(''));
+}
+
+// ===================================================================================
 // 🎁 ACTIVIDADES Y ENTREGAS — a quién se le dio qué, y con qué respaldo (sql/107)
 // Gestión Humana entrega cosas todo el año (entradas de Comfama, bonos, dotación,
 // regalos) y el registro vivía en una hoja suelta. Aquí se crea la ACTIVIDAD y, a
@@ -10227,6 +10508,10 @@ $('ac-nueva')?.addEventListener('click', () => acFormulario(null));
 $('ac-refresh')?.addEventListener('click', () => cargarActividades());
 $('ac-close')?.addEventListener('click', () => { $('act-view').hidden = true; selectTable(current); });
 $('ac-search')?.addEventListener('input', (e) => { _ac.q = e.target.value; renderActividades(); });
+
+$('tl-refresh')?.addEventListener('click', () => cargarTaller());
+$('tl-traer')?.addEventListener('click', () => tallerTraer());
+$('tl-close')?.addEventListener('click', () => { $('tl-view').hidden = true; selectTable(current); });
 
 // ===================================================================================
 // 🛠️ INTERVENCIONES a los equipos del bus (GPS, sensores de pasajeros, cámaras) — sql/100
@@ -18456,7 +18741,7 @@ async function updateSonarInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const info = $('s-info');
-  if (!vr) { info.hidden = true; ['s-restrwarn', 's-docblk', 's-docwarn', 's-pvwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
+  if (!vr) { info.hidden = true; ['s-restrwarn', 's-docblk', 's-docwarn', 's-pvwarn', 's-tallerwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
   const _drsR = await loadDrivers();
   const _drowR = _drsR.find((d) => d.dr_id === $('s-drv').value);
   avisarRestriccionMovil(vr.numero, _drowR?.nombre || '', 's-restrwarn'); // aviso: móvil (puesto) o conductor (despachos)
@@ -18466,6 +18751,7 @@ async function updateSonarInfo() {
   avisarBloqueoDocMovil(vr.numero, 's-docblk');
   avisarDocsMovil(vr.numero); // aviso de documentos vencidos / por vencer de este móvil
   avisarPreventivaMovil(vr.numero, 's-pvwarn');
+  avisarTallerMovil(vr.numero, 's-tallerwarn'); // 🛠️ taller (sql/111): solo avisa
   const g = await gpsInfoFor(vr.numero);
   if (g) {
     info.hidden = false; info.className = 'field full sonar-info';

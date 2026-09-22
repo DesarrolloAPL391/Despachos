@@ -425,6 +425,20 @@
         </div>
 
         <!-- Actividades y entregas (sql/107): a quien se le dio que, con foto y firma. -->
+        <!-- Taller y mantenimiento: lo que trae CloudFleet (sql/111). Ordenes de trabajo
+             abiertas, novedades sin resolver y programacion del mantenimiento. -->
+        <div id="tl-view" class="malla-view" hidden>
+          <div class="toolbar cump-toolbar">
+            <h2>🛠️ Taller y mantenimiento</h2>
+            <span id="tl-sub" class="cump-subtitle"></span>
+            <span class="spacer"></span>
+            <button id="tl-traer" class="btn">↻ Traer del taller</button>
+            <button id="tl-refresh" class="btn">↻ Actualizar</button>
+            <button id="tl-close" class="btn">← Volver</button>
+          </div>
+          <div id="tl-body" class="malla-body"></div>
+        </div>
+
         <div id="act-view" class="malla-view" hidden>
           <div class="toolbar cump-toolbar">
             <h2>🎁 Actividades y entregas</h2>
@@ -807,6 +821,7 @@
         <div class="field full" id="nd-licwarn" hidden></div>
         <div class="field full" id="nd-docwarn" hidden></div>
         <div class="field full" id="nd-pvwarn" hidden></div>
+        <div class="field full" id="nd-tallerwarn" hidden></div>
         <label class="field"><span>Despachador (tú)</span><input id="nd-desp-name" readonly /></label>
         <input type="hidden" id="nd-desp" />
         <label class="field full"><span>Comentario</span><input id="nd-com" /></label>
@@ -852,6 +867,7 @@
         <div class="field full" id="s-licwarn" hidden></div>
         <div class="field full" id="s-docwarn" hidden></div>
         <div class="field full" id="s-pvwarn" hidden></div>
+        <div class="field full" id="s-tallerwarn" hidden></div>
         <div class="field full"><pre id="sonar-result" class="sonar-result" hidden></pre></div>
       </form>
       <div class="modal-foot">

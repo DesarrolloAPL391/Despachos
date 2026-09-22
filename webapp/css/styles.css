@@ -3074,3 +3074,17 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .av-tabla small { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
 .av-pct { white-space: nowrap; min-width: 120px; }
 .av-pct .crow-track { margin-top: 4px; }
+
+/* ===== 🛠️ Taller y mantenimiento (sql/111) ===== */
+/* El aviso del despacho. Dos intensidades: ámbar si solo hay orden abierta, rojo si la
+   orden deja el bus FUERA DE SERVICIO (affectsVehicleAvailability). No bloquea: avisa. */
+.tl-warn { background: #fffbeb; border: 1px solid #fcd34d; color: #78350f; }
+.tl-warn-alta { background: #fef2f2; border: 1px solid #fca5a5; color: #7f1d1d; }
+.tl-warn .btn, .tl-warn-alta .btn { margin-top: 6px; }
+.tl-motivo { font-style: italic; opacity: .9; }
+.tl-viejo { display: inline-block; margin-top: 4px; font-size: 12px; opacity: .85; }
+
+/* La fila del bus que no debería estar rodando se marca, para que salte a la vista. */
+.tl-tabla tr.tl-fuera > td { background: #fef2f2; }
+.tl-tabla td small { display: block; font-size: 11px; opacity: .7; }
+.tl-tabla .tl-motivo { max-width: 320px; }
