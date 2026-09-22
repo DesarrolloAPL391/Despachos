@@ -11141,6 +11141,7 @@ $('iv-file')?.addEventListener('change', (e) => {
 // (para un aviso que habla de una pantalla nueva, mostrarsela vale mas que describirsela).
 const AVISO_ACCION = {
   'LICENCIAS-2026-09': { l: '❓ Cómo se hace', fn: () => openGuiaLicencias('despachador') },
+  'LICENCIAS-2026-10': { l: '❓ Cómo se hace', fn: () => openGuiaLicencias('despachador') },
   'TALLER-2026-09': { alCerrar: () => { if (puedeVerTaller()) openTaller('taller'); } },
 };
 
