@@ -3040,3 +3040,27 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .lic-num { position: absolute; left: -5px; top: -5px; width: 22px; height: 22px; border-radius: 50%;
   background: #1e293b; color: #fff; font: 700 12px/22px system-ui; text-align: center; z-index: 1; }
 .lic-svg-mini { flex: 0 0 76px; width: 76px; height: auto; }
+
+/* 📢 Aviso de obligatoria respuesta (sql/109) */
+.av-modal { align-items: center; }
+.av-card { max-width: 560px; width: 100%; }
+.av-head { display: flex; align-items: center; gap: 12px; padding: 18px 22px 10px; }
+.av-ico { font-size: 30px; line-height: 1; }
+.av-head h3 { margin: 0; font-size: 18px; line-height: 1.25; }
+.av-body { padding: 0 22px 8px; }
+.av-body p { margin: 0 0 10px; font-size: 14px; line-height: 1.55; }
+.av-puntos { margin: 12px 0; padding: 12px 14px 12px 32px; border-radius: 10px;
+  background: #fffbeb; border: 1px solid #fcd34d; }
+.av-puntos li { font-size: 13.5px; line-height: 1.5; margin-bottom: 6px; }
+.av-puntos li:last-child { margin-bottom: 0; }
+.av-acc { margin: 0 0 12px; }
+.av-chk { display: flex; gap: 9px; align-items: flex-start; padding: 11px 13px;
+  border: 2px solid var(--border); border-radius: 10px; cursor: pointer; font-size: 13.5px;
+  line-height: 1.45; }
+.av-chk input { flex: none; margin-top: 2px; width: 18px; height: 18px; }
+.av-chk:has(input:checked) { border-color: #16a34a; background: #f0fdf4; }
+.av-foot { padding: 14px 22px 18px; display: flex; justify-content: flex-end; }
+.av-foot .btn { font-size: 15px; padding: 10px 20px; }
+.av-tabla small { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.av-pct { white-space: nowrap; min-width: 120px; }
+.av-pct .crow-track { margin-top: 4px; }

@@ -518,8 +518,11 @@ async function showApp(user) {
   checkAsistenciaPendiente(); // avisar si falta marcar el ingreso de hoy
   // El aviso de ✨ Novedades va DESPUÉS de refrescarAlertasDocs: de ahí sale si esta cuenta ve
   // permisos (PERM_OK), y sin eso la lista saldría incompleta.
-  refrescarAlertasDocs().then(avisarNovedades, avisarNovedades); // pase lo que pase, el aviso sale
-  avisarNovedadDesbloqueos(); // novedad v239: cómo desbloquear un móvil con documento vencido
+  // Los avisos de obligatoria respuesta van PRIMERO: son instrucciones, no información.
+  revisarAvisos().then(() => {
+    refrescarAlertasDocs().then(avisarNovedades, avisarNovedades); // pase lo que pase, el aviso sale
+    avisarNovedadDesbloqueos(); // novedad v239: cómo desbloquear un móvil con documento vencido
+  });
 }
 
 $('login-form').addEventListener('submit', async (e) => {
@@ -697,6 +700,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(gAd, '🗂️', 'Puestos hoy', openTablero, 'nav-tablero');
   if (isAdmin()) addNavAction(gAd, '📡', 'Despachos SONAR', openDsonar, 'nav-dsonar');
   if (isAdmin()) addNavAction(gAd, '👥', 'Conectados', openConectados, 'nav-conectados');
+  if (isAdmin()) addNavAction(gAd, '📢', 'Avisos al personal', openAvisos, 'nav-avisos');
   if (isAdmin()) addNavAction(gAd, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(gAd, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
@@ -10732,6 +10736,160 @@ $('iv-file')?.addEventListener('change', (e) => {
 });
 
 // ===================================================================================
+// ===================================================================================
+// 📢 AVISOS DE OBLIGATORIA RESPUESTA (sql/109)
+// Cuando hay una instrucción que todos tienen que cumplir, avisarla por WhatsApp deja
+// dos problemas: nunca se sabe quién se enteró, y el que no cumplió siempre puede decir
+// que no supo. Este modal NO se cierra sin confirmar, y queda registrado quién confirmó
+// y a qué hora. Administración ve quién falta, con nombre, para poder llamarlo.
+// ===================================================================================
+
+// Algunos avisos llevan un botón que abre la guía del tema del que hablan.
+const AVISO_ACCION = {
+  'LICENCIAS-2026-09': { l: '❓ Cómo se hace', fn: () => openGuiaLicencias('despachador') },
+};
+
+async function revisarAvisos() {
+  try {
+    const { data } = await sb.rpc('avisos_pendientes');
+    if (!data || !data.ok) return;
+    for (const a of (data.filas || [])) {
+      await mostrarAvisoObligatorio(a);   // uno tras otro, sin adelantarse
+    }
+  } catch (e) { /* si falla, no se traba la app: el aviso vuelve a salir al siguiente ingreso */ }
+}
+
+function mostrarAvisoObligatorio(a) {
+  return new Promise((resolve) => {
+    let m = $('aviso-modal');
+    if (m) m.remove();                      // siempre limpio: cada aviso trae su contenido
+    m = document.createElement('div');
+    m.id = 'aviso-modal';
+    m.className = 'modal av-modal';
+    // Sin botón de cerrar y sin cerrar al tocar afuera: es de obligatoria respuesta.
+    const acc = AVISO_ACCION[a.codigo];
+    const puntos = Array.isArray(a.puntos) ? a.puntos : [];
+    m.innerHTML = `<div class="modal-card av-card">
+      <div class="av-head"><span class="av-ico">${esc(a.icono || '📢')}</span>
+        <h3>${esc(a.titulo)}</h3></div>
+      <div class="av-body">
+        ${String(a.cuerpo || '').split(/\n{2,}/).map((p) => `<p>${dcaNL(p)}</p>`).join('')}
+        ${puntos.length ? `<ul class="av-puntos">${puntos.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+        ${acc ? `<div class="av-acc"><button type="button" class="btn btn-sm" data-av-guia>${acc.l}</button></div>` : ''}
+        ${a.confirmacion ? `<label class="av-chk">
+          <input type="checkbox" id="av-ok"> <span>${esc(a.confirmacion)}</span></label>` : ''}
+      </div>
+      <div class="av-foot">
+        <button type="button" class="btn btn-primary av-btn" ${a.confirmacion ? 'disabled' : ''}>${esc(a.boton || 'Entendido')}</button>
+      </div></div>`;
+    document.body.appendChild(m);
+
+    const btn = m.querySelector('.av-btn');
+    const chk = m.querySelector('#av-ok');
+    if (chk) chk.addEventListener('change', () => { btn.disabled = !chk.checked; });
+    if (acc) m.querySelector('[data-av-guia]').addEventListener('click', acc.fn);
+
+    // Escape tampoco lo cierra.
+    const bloquearEsc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } };
+    document.addEventListener('keydown', bloquearEsc, true);
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = 'Guardando…';
+      try {
+        const { data, error } = await sb.rpc('aviso_confirmar', { p_id: a.id });
+        if (error) throw error;
+        if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo registrar.');
+      } catch (e) {
+        toast('No se pudo registrar la confirmación: ' + (e.message || e), 'err');
+        btn.disabled = false; btn.textContent = a.boton || 'Entendido';
+        return;                              // sin acuse no se cierra: para eso es obligatorio
+      }
+      document.removeEventListener('keydown', bloquearEsc, true);
+      m.remove();
+      resolve();
+    });
+    m.hidden = false;
+  });
+}
+
+// ---------- Administración: quién leyó y quién falta ----------
+let _avId = null;
+async function openAvisos() {
+  if (!isAdmin()) return;
+  const m = dcModal('avctrl-modal', '📢 Avisos y control de lectura', 'perm-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+  closeMenu();
+  try {
+    const { data, error } = await sb.rpc('aviso_control', { p_id: null });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cargar.');
+    const filas = data.filas || [];
+    body.innerHTML = filas.length
+      ? `<div class="mc-wrap"><table class="mc-tabla av-tabla"><thead><tr>
+          <th>Aviso</th><th>Va para</th><th>Leído</th><th></th></tr></thead><tbody>
+          ${filas.map((a) => {
+    const n = Number(a.leidos || 0), d = Number(a.destinatarios || 0);
+    const pct = d ? Math.round((n / d) * 100) : 0;
+    return `<tr>
+            <td><b>${esc(a.icono || '')} ${esc(a.titulo)}</b>
+              <small>${a.activo ? '' : 'apagado · '}${esc(fmtFechaHora(a.creado_en))}</small></td>
+            <td class="muted">${esc((a.roles || []).join(', '))}</td>
+            <td class="av-pct"><b>${n}</b> de ${d}
+              <div class="crow-track"><div class="crow-fill" style="width:${pct}%;background:${pct === 100 ? '#16a34a' : '#f59e0b'}"></div></div></td>
+            <td><button type="button" class="btn btn-sm" data-av="${a.id}">Ver quién falta</button></td></tr>`;
+  }).join('')}
+        </tbody></table></div>`
+      : '<div class="cump-empty">No hay avisos publicados.</div>';
+    body.querySelectorAll('[data-av]').forEach((b) => {
+      b.onclick = () => avisoDetalle(b.dataset.av);
+    });
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/aviso_control|avisos/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar <b>sql/109_avisos.sql</b>.' : 'No se pudo cargar.'}<br><small>${esc(t)}</small></div>`;
+  }
+}
+
+async function avisoDetalle(id) {
+  _avId = id;
+  const m = dcModal('avdet-modal', '📢 Quién lo ha leído', 'perm-card');
+  const body = m.querySelector('.iv-modal-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  m.querySelector('[data-ok]').hidden = true;
+  m.hidden = false;
+  try {
+    const { data, error } = await sb.rpc('aviso_control', { p_id: Number(id) });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cargar.');
+    const a = data.aviso || {};
+    const leidos = data.leidos || [], faltan = data.faltan || [];
+    body.innerHTML = `
+      <div class="iv-ficha-h"><b>${esc(a.icono || '')} ${esc(a.titulo)}</b>
+        <span class="muted">${esc((a.roles || []).join(', '))}</span></div>
+      <div class="cump-heros">
+        <div class="cump-hero"><div class="ch-val">${leidos.length}</div><div class="ch-lbl">Confirmaron</div></div>
+        <div class="cump-hero"><div class="ch-val">${faltan.length}</div><div class="ch-lbl">Faltan</div>
+          <div class="ch-sub">${faltan.length ? 'hay que llamarlos' : 'todos al día'}</div></div>
+      </div>
+      ${faltan.length ? `<div class="dcx-sub">Faltan por confirmar</div>
+        <div class="mc-wrap"><table class="mc-tabla"><tbody>
+        ${faltan.map((p) => `<tr><td><b>${esc(p.nombre || '—')}</b></td>
+          <td class="muted">${esc(p.rol || '')}</td><td class="muted">${esc(p.correo || '')}</td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="cump-empty">✅ Todos confirmaron.</div>'}
+      ${leidos.length ? `<details class="dcx-det"><summary>✅ Confirmaron · ${leidos.length}</summary>
+        <div class="mc-wrap"><table class="mc-tabla"><tbody>
+        ${leidos.map((p) => `<tr><td><b>${esc(p.nombre || p.correo)}</b></td>
+          <td class="muted">${esc(p.rol || '')}</td>
+          <td class="muted">${esc(fmtFechaHora(p.leido_en))}</td></tr>`).join('')}
+        </tbody></table></div></details>` : ''}`;
+  } catch (e) {
+    body.innerHTML = `<div class="cump-empty">No se pudo cargar.<br><small>${esc(String(e.message || e))}</small></div>`;
+  }
+}
+
 // ✨ NOVEDADES — la lista de puesta en marcha de los módulos nuevos (sql/99)
 // Varios módulos nuevos NO quedan completos hasta que administración hace algo por fuera del
 // código: subir las firmas escaneadas, poner el auxilio de transporte del año, registrar las
