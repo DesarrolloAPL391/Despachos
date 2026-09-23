@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>PQRSF · Autobuses El Poblado</title>
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO para que el usuario del servicio radique su PQRSF (sql/118).
+    Lo único que lee de la base es el catálogo de motivos y la lista de rutas (pqrsf_catalogo,
+    RPC anon). Al enviar, `pqrsf_radicar` clasifica el tipo, asigna el área según el motivo y
+    calcula la fecha límite: la PQRSF entra al sistema ya repartida, sin que nadie la toque.
+
+    Dos decisiones que no son de forma sino de fondo:
+      1. NO se le pregunta si es queja, reclamo o petición. Esa pregunta es la que más ensucia
+         el dato —hay felicitaciones radicadas como queja— y el usuario no tiene por qué saber
+         la diferencia. Elige qué le pasó; el tipo lo pone el sistema.
+      2. El número de radicado se muestra grande y se puede copiar, porque NO se envía ningún
+         correo de acuse: ese número es la única constancia que le queda, y con él (más su
+         correo o celular) puede volver aquí a ver la respuesta.
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 680px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; }
+    h2 { font-size: 16px; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
+    h2 .num { background: var(--rojo); color: #fff; width: 22px; height: 22px; border-radius: 50%; font-size: 13px; display: grid; place-items: center; flex: none; }
+    .sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .full { grid-column: 1 / -1; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; font-weight: 600; color: #333; }
+    label > input, label > select, label > textarea { display: block; margin-top: 5px; }
+    label .req { color: var(--rojo); }
+    input, select, textarea { width: 100%; min-width: 0; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
+    .grid > label, .card, main { min-width: 0; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
+    textarea { min-height: 120px; resize: vertical; }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12px; display: block; margin-top: 4px; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); }
+    .btn:disabled { opacity: .6; cursor: wait; }
+    .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
+    .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .tabs { display: flex; gap: 8px; margin: 0 0 14px; }
+    .tabs button { flex: 1; border: 0; background: rgba(255,255,255,.75); color: #7a1b20; border-radius: 12px; padding: 11px; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+    .tabs button.on { background: #fff; color: var(--rojo); box-shadow: 0 6px 16px rgba(237,28,36,.16); }
+    /* Los motivos: tarjetas grandes porque casi todos entran desde el celular */
+    .gtit { font-size: 12px; font-weight: 800; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+    .gtit:first-of-type { margin-top: 4px; }
+    .mots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    @media (max-width: 560px) { .mots { grid-template-columns: 1fr; } }
+    .mot { display: block; text-align: left; border: 1px solid var(--borde); background: #fff; border-radius: 12px; padding: 11px 12px; font: inherit; cursor: pointer; }
+    .mot:hover { border-color: #f0b8bb; }
+    .mot.on { border-color: var(--rojo); background: #fff5f5; box-shadow: 0 0 0 2px rgba(237,28,36,.12); }
+    .mot b { display: block; font-size: 14px; font-weight: 700; }
+    .mot span { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; line-height: 1.35; }
+    .elegido { background: #fff5f5; border: 1px solid #f7cdd0; border-radius: 12px; padding: 12px 14px; font-size: 14px; }
+    .elegido b { display: block; font-size: 15px; }
+    .elegido button { border: 0; background: none; color: var(--rojo); font: inherit; font-size: 13px; font-weight: 700; padding: 6px 0 0; cursor: pointer; text-decoration: underline; }
+    .files { margin-top: 10px; }
+    .file-l { display: block; border: 1px dashed var(--borde); border-radius: 12px; padding: 14px; text-align: center; cursor: pointer; font-size: 14px; font-weight: 600; color: #444; background: #fafafa; }
+    .adj { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13px; }
+    .adj button { border: 0; background: none; font-size: 18px; cursor: pointer; color: #b3121b; }
+    .chk { display: flex; gap: 10px; align-items: flex-start; background: #fafafa; border: 1px solid var(--borde); border-radius: 12px; padding: 12px; font-size: 14px; margin-top: 12px; }
+    .chk input { width: 20px; height: 20px; flex: none; margin-top: 1px; }
+    .chk b { display: block; }
+    .chk span { color: var(--muted); font-size: 12.5px; }
+    .nota { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; font-size: 13.5px; margin-top: 12px; }
+    .cuenta { text-align: right; color: var(--muted); font-size: 12px; margin-top: 4px; }
+    /* La constancia: es lo único que le queda al usuario */
+    .ok-card { text-align: center; padding: 26px 18px; }
+    .ok-card .big { font-size: 46px; }
+    .rad { font-size: 27px; font-weight: 800; letter-spacing: .02em; color: var(--rojo); background: #fff5f5; border: 2px dashed #f2b6ba; border-radius: 14px; padding: 14px 10px; margin: 12px 0 6px; word-break: break-all; }
+    .plazo { background: #eef7ee; border: 1px solid #cfe8cf; border-radius: 12px; padding: 12px 14px; font-size: 14px; color: #14532d; margin: 12px 0; text-align: left; }
+    .resp { background: #fafafa; border: 1px solid var(--borde); border-radius: 12px; padding: 14px; font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; text-align: left; margin-top: 10px; }
+    .estado { display: inline-block; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-weight: 700; }
+    .e-ok { background: #e7f6e9; color: #14532d; }
+    .e-pend { background: #fff7e6; color: #8a5a00; }
+    footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 28px; }
+    /* Campo trampa: una persona no lo ve ni lo llena; un robot sí */
+    .trampa { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-192.png" alt="Autobuses El Poblado" />
+    <h1>Peticiones, quejas, reclamos y felicitaciones</h1>
+    <p>Cuéntanos qué pasó. Te respondemos dentro del plazo que te vamos a mostrar.</p>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button type="button" id="tab-rad" class="on">Radicar</button>
+      <button type="button" id="tab-con">Consultar la mía</button>
+    </div>
+
+    <!-- ============ RADICAR ============ -->
+    <div id="form-wrap">
+      <div class="card">
+        <h2><span class="num">1</span> ¿Qué pasó?</h2>
+        <p class="sub">Elige lo que más se parezca. Nosotros clasificamos el resto.</p>
+        <label class="full" id="buscar-wrap">
+          <input type="search" id="buscar" placeholder="Escribe aquí para buscar (ej: no paró, robo, objeto olvidado)" autocomplete="off" />
+        </label>
+        <div id="motivos"><p class="sub">Cargando…</p></div>
+        <div id="elegido-wrap" hidden></div>
+      </div>
+
+      <div class="card" id="card-donde" hidden>
+        <h2><span class="num">2</span> ¿Cuándo y en qué bus?</h2>
+        <p class="sub">El número del bus es lo que nos deja saber quién iba manejando.</p>
+        <div class="grid">
+          <label>Día en que pasó <span class="req">*</span>
+            <input type="date" id="fecha" />
+          </label>
+          <label>Hora aproximada
+            <input type="time" id="hora" />
+          </label>
+          <label id="movil-wrap">Número del bus <span class="req" id="movil-req">*</span>
+            <input type="text" id="movil" inputmode="numeric" maxlength="5" placeholder="Ej: 5633" />
+            <span class="hint">Son los 4 dígitos grandes del frente y los costados.</span>
+          </label>
+          <label>Ruta
+            <select id="ruta"><option value="">La que recuerdes…</option></select>
+          </label>
+          <label class="full">¿Dónde fue?
+            <input type="text" id="direccion" maxlength="200" placeholder="Dirección, barrio o estación" />
+          </label>
+        </div>
+      </div>
+
+      <div class="card" id="card-relato" hidden>
+        <h2><span class="num">3</span> Cuéntanos con tus palabras</h2>
+        <p class="sub">Lo que escribas aquí es lo que se investiga. Los detalles importan.</p>
+        <label class="full">Qué pasó <span class="req">*</span>
+          <textarea id="descripcion" maxlength="4000" placeholder="Ejemplo: iba en el bus a las 6:40 de la tarde y el conductor pasó el paradero sin parar, aunque le hice la señal…"></textarea>
+        </label>
+        <div class="cuenta"><span id="cuenta">0</span> / 4.000</div>
+        <div class="files">
+          <label class="file-l" for="file">📎 Adjuntar una foto o un video corto (opcional)</label>
+          <input type="file" id="file" accept="image/*,video/*,application/pdf" style="display:none" />
+          <div id="adjuntos"></div>
+          <span class="hint">Hasta 3 archivos. Las fotos se reducen aquí mismo antes de enviarse.</span>
+        </div>
+      </div>
+
+      <div class="card" id="card-quien" hidden>
+        <h2><span class="num">4</span> ¿A quién le respondemos?</h2>
+        <p class="sub">Con estos datos te buscamos para contarte en qué quedó.</p>
+        <div class="grid" id="datos-grid">
+          <label class="full">Tu nombre <span class="req">*</span>
+            <input type="text" id="nombre" maxlength="120" autocomplete="name" />
+          </label>
+          <label>Correo
+            <input type="email" id="correo" maxlength="120" autocomplete="email" placeholder="tucorreo@ejemplo.com" />
+          </label>
+          <label>Celular
+            <input type="tel" id="telefono" maxlength="15" inputmode="numeric" autocomplete="tel" />
+          </label>
+        </div>
+        <span class="hint">Necesitamos al menos uno de los dos: correo o celular.</span>
+        <label class="chk">
+          <input type="checkbox" id="anonima" />
+          <span><b>Prefiero no dejar mis datos</b>
+          <span>La radicamos igual y queda para investigación, pero no vas a recibir respuesta ni vas a poder consultarla después.</span></span>
+        </label>
+        <div class="trampa"><label>No llenar<input type="text" id="trampa" tabindex="-1" autocomplete="off" /></label></div>
+        <div class="nota" id="nota-plazo"></div>
+        <div id="err" class="err" hidden></div>
+        <button type="button" class="btn" id="enviar" style="margin-top:12px">Enviar mi PQRSF</button>
+      </div>
+    </div>
+
+    <!-- ============ CONFIRMACIÓN ============ -->
+    <div class="card ok-card" id="ok" hidden>
+      <div class="big">✅</div>
+      <h2 style="display:block">Quedó radicada</h2>
+      <p class="sub">Guarda este número: es tu constancia y con él consultas la respuesta.</p>
+      <div class="rad" id="ok-rad">—</div>
+      <button type="button" class="btn btn-sec" id="copiar" style="max-width:220px;margin:0 auto">📋 Copiar el número</button>
+      <div class="plazo" id="ok-plazo"></div>
+      <button type="button" class="btn btn-sec" id="otra">Radicar otra</button>
+    </div>
+
+    <!-- ============ CONSULTAR ============ -->
+    <div id="con-wrap" hidden>
+      <div class="card">
+        <h2>🔎 Consultar mi PQRSF</h2>
+        <p class="sub">Con el número que te dimos y el correo o celular que dejaste.</p>
+        <div class="grid">
+          <label class="full">Número de radicado
+            <input type="text" id="c-rad" placeholder="PQR-2026-0001" autocomplete="off" />
+          </label>
+          <label class="full">Tu correo o tu celular
+            <input type="text" id="c-con" placeholder="tucorreo@ejemplo.com" autocomplete="off" />
+          </label>
+        </div>
+        <div id="c-err" class="err" hidden></div>
+        <button type="button" class="btn" id="c-btn" style="margin-top:12px">Consultar</button>
+        <div id="c-res"></div>
+      </div>
+    </div>
+
+    <footer>
+      Autobuses El Poblado S.A. · Si lo tuyo es urgente y necesitas hablar con alguien,
+      llámanos: quedará radicado igual.
+    </footer>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const error = (el, msg) => { el.hidden = !msg; el.textContent = msg || ''; if (msg) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+
+    let MOTIVOS = [];
+    let elegido = null;
+    let adjuntos = [];
+
+    // ---- Pestañas ----
+    const verTab = (cual) => {
+      $('tab-rad').classList.toggle('on', cual === 'rad');
+      $('tab-con').classList.toggle('on', cual === 'con');
+      $('form-wrap').hidden = cual !== 'rad';
+      $('con-wrap').hidden = cual !== 'con';
+      $('ok').hidden = true;
+    };
+    $('tab-rad').addEventListener('click', () => verTab('rad'));
+    $('tab-con').addEventListener('click', () => verTab('con'));
+
+    // ---- El catálogo ----
+    (async () => {
+      try {
+        const { data, error: e } = await sb.rpc('pqrsf_catalogo');
+        if (e) throw e;
+        MOTIVOS = (data && data.motivos) || [];
+        const rutas = (data && data.rutas) || [];
+        const sel = $('ruta');
+        rutas.forEach((r) => { const o = document.createElement('option'); o.value = r; o.textContent = r; sel.appendChild(o); });
+        pintarMotivos('');
+      } catch (e) {
+        $('motivos').innerHTML = '<div class="err">No pudimos cargar el formulario. Revisa tu conexión y vuelve a entrar.</div>';
+      }
+    })();
+
+    const GRUPOS = ['EL SERVICIO', 'COMO MANEJA', 'ALGO GRAVE', 'EL BUS', 'TRAMITES', 'OTROS'];
+    const GTIT = {
+      'EL SERVICIO': 'Con el servicio y el recorrido',
+      'COMO MANEJA': 'Con la forma de manejar',
+      'ALGO GRAVE': 'Algo grave: seguridad, agresión, accidente',
+      'EL BUS': 'Con el estado del bus',
+      'TRAMITES': 'Trámites, reclamos y felicitaciones',
+      'OTROS': 'Otros',
+    };
+
+    function pintarMotivos(filtro) {
+      const f = String(filtro || '').trim().toLowerCase();
+      const cont = $('motivos');
+      cont.innerHTML = '';
+      let hay = 0;
+      GRUPOS.forEach((g) => {
+        const lista = MOTIVOS.filter((m) => (m.grupo || 'OTROS') === g
+          && (!f || (m.titulo + ' ' + (m.ayuda || '') + ' ' + m.motivo).toLowerCase().includes(f)));
+        if (!lista.length) return;
+        hay += lista.length;
+        const t = document.createElement('div'); t.className = 'gtit'; t.textContent = GTIT[g] || g;
+        cont.appendChild(t);
+        const caja = document.createElement('div'); caja.className = 'mots';
+        lista.forEach((m) => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'mot';
+          b.innerHTML = `<b>${esc(m.titulo)}</b><span>${esc(m.ayuda || '')}</span>`;
+          b.addEventListener('click', () => elegir(m));
+          caja.appendChild(b);
+        });
+        cont.appendChild(caja);
+      });
+      if (!hay) cont.innerHTML = '<p class="sub">Nada se parece a lo que buscas. Elige <b>Quiero pedir o preguntar algo</b> y cuéntanoslo con tus palabras.</p>';
+    }
+    $('buscar').addEventListener('input', (e) => pintarMotivos(e.target.value));
+
+    function elegir(m) {
+      elegido = m;
+      $('motivos').hidden = true;
+      $('buscar-wrap').hidden = true;
+      const w = $('elegido-wrap');
+      w.hidden = false;
+      w.innerHTML = `<div class="elegido"><b>${esc(m.titulo)}</b>
+        <span class="hint">${esc(m.ayuda || '')}</span>
+        <button type="button" id="cambiar">Elegir otra cosa</button></div>`;
+      $('cambiar').addEventListener('click', () => {
+        elegido = null; w.hidden = true; $('motivos').hidden = false; $('buscar-wrap').hidden = false;
+        ['card-donde', 'card-relato', 'card-quien'].forEach((k) => { $(k).hidden = true; });
+      });
+      ['card-donde', 'card-relato', 'card-quien'].forEach((k) => { $(k).hidden = false; });
+      // Hay motivos que sin el número del bus no se pueden investigar, y otros a los que no aplica
+      $('movil-wrap').hidden = false;
+      $('movil-req').hidden = !m.pide_movil;
+      $('card-donde').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // Fechas: de hoy hasta tres meses atrás (lo más viejo no se puede investigar bien)
+    const hoy = new Date();
+    const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    $('fecha').max = iso(hoy);
+    $('fecha').min = iso(new Date(hoy.getTime() - 90 * 86400000));
+    $('fecha').value = iso(hoy);
+
+    $('descripcion').addEventListener('input', (e) => { $('cuenta').textContent = e.target.value.length; });
+
+    // Anónima: si no quiere dejar datos, se le dice claro qué pierde
+    $('anonima').addEventListener('change', (e) => {
+      const on = e.target.checked;
+      $('datos-grid').style.opacity = on ? '.45' : '';
+      ['nombre', 'correo', 'telefono'].forEach((k) => { $(k).disabled = on; });
+      $('nota-plazo').innerHTML = on
+        ? '⚠️ <b>Sin datos no hay respuesta.</b> Tu PQRSF queda registrada y se investiga, pero no vas a poder consultarla ni vamos a poder contarte en qué quedó.'
+        : NOTA;
+    });
+    const NOTA = 'Al enviar te damos un <b>número de radicado</b>. Guárdalo: con ese número y tu correo o celular puedes volver aquí a ver la respuesta. No enviamos correos de confirmación.';
+    $('nota-plazo').innerHTML = NOTA;
+
+    // ---- Adjuntos: la gente sube fotos de 5 MB ----
+    const comprimir = (file) => new Promise((res) => {
+      if (!/^image\//.test(file.type)) {
+        const fr = new FileReader();
+        fr.onload = () => res({ nombre: file.name, tipo_mime: file.type, archivo: fr.result });
+        fr.onerror = () => res(null);
+        fr.readAsDataURL(file);
+        return;
+      }
+      const fr = new FileReader();
+      fr.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const f = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+          const cv = document.createElement('canvas');
+          cv.width = Math.round(img.naturalWidth * f); cv.height = Math.round(img.naturalHeight * f);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          res({ nombre: file.name, tipo_mime: 'image/jpeg', archivo: cv.toDataURL('image/jpeg', 0.72) });
+        };
+        img.onerror = () => res(null);
+        img.src = fr.result;
+      };
+      fr.onerror = () => res(null);
+      fr.readAsDataURL(file);
+    });
+
+    const pintarAdjuntos = () => {
+      $('adjuntos').innerHTML = '';
+      adjuntos.forEach((a, i) => {
+        const d = document.createElement('div');
+        d.className = 'adj';
+        d.innerHTML = `<span>📎 ${esc(a.nombre.slice(0, 38))} · ${Math.round(a.archivo.length / 1400)} KB</span>`;
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = '✕'; b.title = 'Quitar';
+        b.addEventListener('click', () => { adjuntos.splice(i, 1); pintarAdjuntos(); });
+        d.appendChild(b);
+        $('adjuntos').appendChild(d);
+      });
+    };
+
+    $('file').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!f) return;
+      if (adjuntos.length >= 3) return error($('err'), 'Máximo 3 archivos.');
+      if (f.size > 12 * 1024 * 1024) return error($('err'), 'Ese archivo pesa demasiado (máximo 12 MB).');
+      error($('err'), '');
+      const a = await comprimir(f);
+      if (!a) return error($('err'), 'No pudimos leer ese archivo.');
+      if (a.archivo.length > 2000000) {
+        return error($('err'), 'Ese archivo quedó muy pesado. Si es un video, mándanos mejor una foto; si es una foto, tómala con menos calidad.');
+      }
+      adjuntos.push(a);
+      pintarAdjuntos();
+    });
+
+    // ---- Enviar ----
+    $('enviar').addEventListener('click', async () => {
+      const err = $('err');
+      if (!elegido) return error(err, 'Primero dinos qué pasó.');
+      const anon = $('anonima').checked;
+      const desc = ($('descripcion').value || '').trim();
+      const mov = ($('movil').value || '').replace(/\D/g, '');
+      if (!$('fecha').value) return error(err, '¿Qué día pasó?');
+      if (elegido.pide_movil && (mov.length < 3 || mov.length > 5)) {
+        return error(err, 'Nos falta el número del bus: son los 4 dígitos grandes del frente y los costados.');
+      }
+      if (desc.length < 20) return error(err, 'Cuéntanos qué pasó con un poco más de detalle: al menos 20 letras.');
+      if (!anon) {
+        if (($('nombre').value || '').trim().length < 3) return error(err, 'Escribe tu nombre.');
+        const cor = ($('correo').value || '').trim();
+        const tel = ($('telefono').value || '').replace(/\D/g, '');
+        if (!/^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/.test(cor) && (tel.length < 7 || tel.length > 12)) {
+          return error(err, 'Déjanos un correo o un celular para poder responderte, o marca la casilla de no dejar datos.');
+        }
+      }
+      error(err, '');
+      const b = $('enviar'); b.disabled = true; b.textContent = 'Enviando…';
+      try {
+        const { data, error: e } = await sb.rpc('pqrsf_radicar', {
+          p_datos: {
+            motivo: elegido.motivo,
+            descripcion: desc,
+            fecha_suceso: $('fecha').value,
+            hora_suceso: $('hora').value || null,
+            movil: mov,
+            ruta: $('ruta').value || '',
+            direccion: ($('direccion').value || '').trim(),
+            nombre: anon ? '' : ($('nombre').value || '').trim(),
+            correo: anon ? '' : ($('correo').value || '').trim(),
+            telefono: anon ? '' : ($('telefono').value || '').trim(),
+            anonima: anon,
+            trampa: ($('trampa').value || '').trim(),
+            agente: navigator.userAgent,
+          },
+          p_adjuntos: adjuntos,
+        });
+        if (e) throw e;
+        if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo radicar.');
+        $('form-wrap').hidden = true;
+        $('ok').hidden = false;
+        $('ok-rad').textContent = data.radicado;
+        const f = data.fecha_limite ? new Date(data.fecha_limite + 'T12:00:00') : null;
+        const dia = f ? f.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' }) : '';
+        $('ok-plazo').innerHTML = data.anonima
+          ? 'Quedó radicada de forma anónima: la vamos a investigar, pero no hay a quién responderle.'
+          : `Tenemos hasta el <b>${esc(dia)}</b> para responderte.<br>
+             Si no sabes nada para esa fecha, vuelve a esta página, entra a <b>Consultar la mía</b> y escribe tu número de radicado.`;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (ex) {
+        error(err, String(ex.message || ex));
+      } finally {
+        b.disabled = false; b.textContent = 'Enviar mi PQRSF';
+      }
+    });
+
+    $('copiar').addEventListener('click', async () => {
+      const t = $('ok-rad').textContent;
+      try { await navigator.clipboard.writeText(t); $('copiar').textContent = '✅ Copiado'; }
+      catch { $('copiar').textContent = t; }
+    });
+    $('otra').addEventListener('click', () => { location.reload(); });
+
+    // ---- Consultar ----
+    $('c-btn').addEventListener('click', async () => {
+      const err = $('c-err'); const res = $('c-res');
+      res.innerHTML = '';
+      const rad = ($('c-rad').value || '').trim();
+      const con = ($('c-con').value || '').trim();
+      if (!rad || !con) return error(err, 'Escribe el número de radicado y el correo o celular que dejaste.');
+      error(err, '');
+      const b = $('c-btn'); b.disabled = true; b.textContent = 'Consultando…';
+      try {
+        const { data, error: e } = await sb.rpc('pqrsf_consultar', { p_radicado: rad, p_contacto: con });
+        if (e) throw e;
+        if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo consultar.');
+        const fl = data.fecha_limite ? new Date(data.fecha_limite + 'T12:00:00')
+          .toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+        res.innerHTML = `
+          <div class="plazo" style="background:#fff;border-color:var(--borde);color:var(--txt)">
+            <b>${esc(data.radicado)}</b> · ${esc(data.motivo || '')}<br>
+            <span class="estado ${data.respondida ? 'e-ok' : 'e-pend'}">
+              ${data.respondida ? 'Respondida' : 'En trámite'}</span>
+            <span class="hint">${data.respondida ? '' : `Plazo de respuesta: ${esc(fl)}`}</span>
+          </div>
+          ${data.respondida ? `<div class="resp">${esc(data.respuesta)}</div>`
+            : '<p class="sub">Todavía la estamos revisando. Si el plazo ya pasó, llámanos y menciona tu número de radicado.</p>'}`;
+      } catch (ex) {
+        error(err, String(ex.message || ex));
+      } finally {
+        b.disabled = false; b.textContent = 'Consultar';
+      }
+    });
+  </script>
+</body>
+</html>

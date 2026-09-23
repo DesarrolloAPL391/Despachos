@@ -3104,3 +3104,23 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .tlh-fila:hover > td { background: #f1f5f9; }
 /* .cump-subtitle capitaliza cada palabra (sirve para etiquetas cortas); estas son frases. */
 .tlh-nota { text-transform: none; }
+
+/* ===== PQRSF: el link público y el reparto automático (sql/118) ===== */
+.pqr-link { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.pqr-link code { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; background: #f6f5f5;
+  border: 1px solid var(--border, #e6dada); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
+.tl-tabla tr.pqr-grp > td { background: #faf7f7; font-size: 11.5px; font-weight: 800; letter-spacing: .04em;
+  text-transform: uppercase; color: #6b6b6b; padding-top: 10px; }
+.pqr-chk { display: flex; gap: 6px; align-items: center; font-size: 12px; white-space: nowrap; }
+.pqr-chk + .pqr-chk { margin-top: 4px; }
+.pqr-chk input { width: 16px; height: 16px; }
+input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; padding: 6px 8px;
+  border: 1px solid var(--border, #e6dada); border-radius: 8px; }
+/* Las pruebas que sube el usuario del servicio */
+.pqr-adjs { display: flex; flex-wrap: wrap; gap: 10px; }
+.pqr-adj { display: flex; flex-direction: column; gap: 4px; width: 132px; text-decoration: none; color: inherit;
+  border: 1px solid var(--border, #e6dada); border-radius: 10px; padding: 8px; background: #fff; }
+.pqr-adj img { width: 100%; height: 92px; object-fit: cover; border-radius: 6px; display: block; }
+.pqr-adj-ic { font-size: 34px; text-align: center; line-height: 92px; }
+.pqr-adj span { font-size: 12px; overflow-wrap: anywhere; }
+.pqr-adj small { display: block; color: #6b6b6b; font-size: 11px; }

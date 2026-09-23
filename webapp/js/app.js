@@ -672,6 +672,8 @@ function buildSidebar() {
       const aviso = b.key === 'pendientes' && n ? ` <span class="nav-badge">${n}</span>` : '';
       addNavAction(gPs, b.icon, b.label + aviso, () => openPqrsfStats(b.key), 'nav-pqs-' + b.key);
     });
+    // El link del usuario y el reparto automático (sql/118)
+    addNavAction(gPq, '🌐', 'Radicación del usuario', () => openPqrRuteo(), 'nav-pqr-ruteo');
   }
 
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
@@ -12478,6 +12480,8 @@ function openPqrsf(row) {
     row.estado ? `<span class="chip ${row.estado === 'CERRADA' ? 'chip-green' : 'chip-violet'}">${esc(row.estado)}</span>` : '',
     row.estado_app ? `<span class="chip chip-blue">${esc(row.estado_app)}</span>` : '',
     row.urgencia ? `<span class="chip chip-amber">${esc(row.urgencia)}</span>` : '',
+    row.origen === 'WEB' ? '<span class="chip chip-green">🌐 La radicó el usuario</span>' : '',
+    row.anonima ? '<span class="chip chip-gray">ANÓNIMA</span>' : '',
   ].filter(Boolean).join(' ');
   const wa = (tel) => {
     const t = String(tel || '').replace(/\D/g, '');
@@ -12531,11 +12535,187 @@ function openPqrsf(row) {
       ['D\u00f3nde est\u00e1n', 'Los archivos siguen en AppSheet; aqu\u00ed queda el nombre con el que se guardaron.']])
     : ''}
     </div>`;
+  // Las pruebas que subió el usuario por el formulario (sql/118): se piden aparte
+  const adj = pstEl('div', 'pqr-adj-wrap');
+  adj.hidden = true;
+  body.appendChild(adj);
+  pqrPintarAdjuntos(row.key, adj);
   // Responder, asignar y el historial (se llena aparte: consulta la base)
   const panel = pstEl('div', 'pqr-gestion');
   body.appendChild(panel);
   pqrPanelGestion(panel, row);
   m.hidden = false;
+}
+
+// ===================================================================================
+// 🌐 EL FORMULARIO PÚBLICO Y EL RUTEO AUTOMÁTICO (sql/118)
+// ===================================================================================
+// El usuario del servicio radica en pqrsf.html y la PQRSF entra a la base ya clasificada y
+// ya asignada: el tipo y el área los pone el catálogo `pqrsf_motivos`, no una persona.
+// Esta pantalla es donde administración decide ese reparto: qué motivo le toca a quién.
+// El destino se sembró aprendiéndolo del histórico —quién atendió cada motivo la mayoría de
+// las veces— así que arranca con lo que ya se hacía; aquí se corrige.
+
+// El link que se le pasa al usuario (se pega en la página web y se imprime en el QR del bus)
+function pqrLinkPublico() {
+  return location.origin + location.pathname.replace(/[^/]*$/, '') + 'pqrsf.html';
+}
+function puedeRutearPqrsf() { return isAdmin() || isTalentoHumano(); }
+
+let _pqrRut = { d: null, cambios: {} };
+
+async function openPqrRuteo() {
+  if (!puedeVerPqrsf()) return;
+  currentView = 'pqrruteo';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
+  $('nav-pqr-ruteo')?.classList.add('active');
+  buildBottomNav();
+  const tit = $('pst-title'); if (tit) tit.textContent = '📣 PQRSF · Radicación del usuario';
+  const body = $('pst-body');
+  body.innerHTML = '<div class="loading">Cargando el ruteo…</div>';
+  try {
+    const { data, error } = await sb.rpc('pqrsf_ruteo_ver');
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin permiso.');
+    _pqrRut = { d: data, cambios: {} };
+    renderPqrRuteo();
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/pqrsf_ruteo_ver/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar <b>sql/118_pqrsf_formulario.sql</b> en la base.' : 'No se pudo cargar.'}<br><small>${esc(t)}</small></div>`;
+  }
+}
+
+function renderPqrRuteo() {
+  const d = _pqrRut.d || {}; const w = d.web || {}; const body = $('pst-body');
+  const mots = d.motivos || []; const dest = d.destinos || [];
+  const link = pqrLinkPublico();
+  const GT = {
+    'EL SERVICIO': 'Con el servicio y el recorrido',
+    'COMO MANEJA': 'Con la forma de manejar',
+    'ALGO GRAVE': 'Algo grave: seguridad, agresión, accidente',
+    'EL BUS': 'Con el estado del bus',
+    'TRAMITES': 'Trámites, reclamos y felicitaciones',
+  };
+  let h = '';
+
+  // El link, que es lo primero que alguien va a venir a buscar acá
+  h += `<div class="cump-card">
+    <div class="cump-subtitle">El link para el usuario del servicio</div>
+    <div class="pqr-link"><code id="pqr-link-t">${esc(link)}</code>
+      <button type="button" class="btn btn-sm" id="pqr-link-c">📋 Copiar</button>
+      <a class="btn btn-sm" href="${esc(link)}" target="_blank" rel="noopener">👁️ Abrirlo</a></div>
+    <div class="tlh-nota cump-subtitle">Se pega en la página web y sirve para el QR de los buses.
+      Lo que entre por ahí llega directo a la bandeja, ya asignada.</div>
+  </div>`;
+
+  h += `<div class="cump-heros">
+    <div class="cump-hero"><div class="ch-val">${Number(w.total || 0)}</div><div class="ch-lbl">Radicadas por el link</div></div>
+    <div class="cump-hero"><div class="ch-val">${Number(w.semana || 0)}</div><div class="ch-lbl">Esta semana</div>
+      <div class="ch-sub">${Number(w.hoy || 0)} hoy</div></div>
+    <div class="cump-hero"><div class="ch-val">${Number(w.anonimas || 0)}</div><div class="ch-lbl">Anónimas</div>
+      <div class="ch-sub">sin a quién responder</div></div>
+    <div class="cump-hero"><div class="ch-val">${mots.filter((m) => m.activo).length}</div><div class="ch-lbl">Motivos activos</div>
+      <div class="ch-sub">de ${mots.length}</div></div>
+  </div>`;
+
+  if (!w.total) {
+    h += `<div class="pf-aviso ambar">Todavía no ha entrado ninguna por el link. Mientras no se publique,
+      las PQRSF siguen llegando por AppSheet y se traen con 🔄 Traer PQRSF, como hasta ahora.</div>`;
+  }
+
+  // La tabla del reparto
+  const filas = [];
+  let grupo = '';
+  mots.forEach((m) => {
+    if (m.grupo !== grupo) {
+      grupo = m.grupo;
+      filas.push(`<tr class="pqr-grp"><td colspan="6">${esc(GT[grupo] || grupo)}</td></tr>`);
+    }
+    filas.push(`<tr data-mot="${esc(m.motivo)}"${m.activo ? '' : ' class="tl-viejo"'}>
+      <td><b>${esc(m.titulo)}</b><small>${esc(m.motivo)}</small></td>
+      <td><span class="chip ${m.tipo === 'QUEJA' ? 'chip-red' : m.tipo === 'FELICITACIONES' ? 'chip-green' : 'chip-blue'}">${esc(m.tipo)}</span></td>
+      <td><input type="text" class="pqr-dest" list="pqr-destinos" value="${esc(m.destino || '')}" placeholder="Sin asignar" /></td>
+      <td class="mc-num">${Number(m.usadas || 0)}<small>${Number(m.por_web || 0)} por el link</small></td>
+      <td><label class="pqr-chk"><input type="checkbox" class="pqr-mov"${m.pide_movil ? ' checked' : ''} /> pide el bus</label>
+          <label class="pqr-chk"><input type="checkbox" class="pqr-urg"${m.urgente ? ' checked' : ''} /> urgente</label></td>
+      <td><label class="pqr-chk"><input type="checkbox" class="pqr-act"${m.activo ? ' checked' : ''} /> se ofrece</label></td>
+    </tr>`);
+  });
+
+  h += `<div class="cump-card">
+    <div class="cump-subtitle">A quién le toca cada motivo</div>
+    <div class="tlh-nota cump-subtitle">El destino arrancó copiado de lo que ya hacían: quien más veces
+      atendió ese motivo. Cámbialo y guarda; desde ahí en adelante el reparto es automático.
+      Si un motivo se desmarca, deja de ofrecerse en el formulario (lo viejo no se toca).</div>
+    <datalist id="pqr-destinos">${dest.map((x) => `<option value="${esc(x)}"></option>`).join('')}</datalist>
+    <div class="mc-wrap"><table class="mc-tabla tl-tabla"><thead><tr>
+      <th>Qué le pasó al usuario</th><th>Tipo</th><th>Se le asigna a</th><th>PQRSF</th><th>Al radicar</th><th>Activo</th>
+    </tr></thead><tbody>${filas.join('')}</tbody></table></div>
+    ${d.admin ? `<div class="cump-toolbar"><button type="button" class="btn" id="pqr-rut-guardar">💾 Guardar el reparto</button>
+      <span class="cump-subtitle" id="pqr-rut-est"></span></div>`
+    : '<div class="cump-subtitle">Solo administración y Gestión Humana pueden cambiar el reparto.</div>'}
+  </div>`;
+
+  body.innerHTML = h;
+  $('pqr-link-c')?.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(link); toast('Link copiado.', 'ok'); }
+    catch { toast('Cópialo a mano: ' + link, 'info'); }
+  });
+  $('pqr-rut-guardar')?.addEventListener('click', guardarPqrRuteo);
+}
+
+async function guardarPqrRuteo() {
+  const b = $('pqr-rut-guardar'); if (!b) return;
+  const filas = [];
+  document.querySelectorAll('#pst-body tr[data-mot]').forEach((tr) => {
+    filas.push({
+      motivo: tr.dataset.mot,
+      destino: (tr.querySelector('.pqr-dest')?.value || '').trim(),
+      pide_movil: !!tr.querySelector('.pqr-mov')?.checked,
+      urgente: !!tr.querySelector('.pqr-urg')?.checked,
+      activo: !!tr.querySelector('.pqr-act')?.checked,
+    });
+  });
+  const sinDest = filas.filter((f) => f.activo && !f.destino);
+  if (sinDest.length) {
+    toast(`${sinDest.length} motivo(s) activos quedarían sin dueño. Asígnalos o desactívalos.`, 'err');
+    return;
+  }
+  b.disabled = true; b.textContent = 'Guardando…';
+  try {
+    const { data, error } = await sb.rpc('pqrsf_ruteo_guardar', { p_motivos: filas });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo guardar.');
+    toast(`Reparto guardado (${data.guardados} motivos).`, 'ok');
+    openPqrRuteo();
+  } catch (e) {
+    toast('No se pudo guardar: ' + (e.message || e), 'err');
+  } finally {
+    b.disabled = false; b.textContent = '💾 Guardar el reparto';
+  }
+}
+
+// Las pruebas que adjuntó el usuario en el formulario: viven en la base (sql/118), no en AppSheet
+async function pqrPintarAdjuntos(key, cont) {
+  if (!cont) return;
+  try {
+    const { data, error } = await sb.from('pqrsf_adjuntos')
+      .select('id,nombre,tipo_mime,archivo,bytes').eq('pqrsf_key', key).order('id');
+    if (error) throw error;
+    if (!data || !data.length) { cont.hidden = true; return; }
+    cont.hidden = false;
+    cont.innerHTML = `<section class="pf-sec"><h4>📎 Lo que adjuntó el usuario</h4><div class="pqr-adjs">${
+      data.map((a) => {
+        const img = /^image\//.test(a.tipo_mime || '');
+        return `<a class="pqr-adj" href="${a.archivo}" ${img ? 'target="_blank" rel="noopener"' : `download="${esc(a.nombre || 'prueba')}"`}>
+          ${img ? `<img src="${a.archivo}" alt="${esc(a.nombre || '')}" />` : '<span class="pqr-adj-ic">📄</span>'}
+          <span>${esc((a.nombre || 'archivo').slice(0, 28))}<small>${Math.round((a.bytes || 0) / 1400)} KB</small></span></a>`;
+      }).join('')}</div></section>`;
+  } catch (e) {
+    cont.hidden = true;
+  }
 }
 
 // ===================================================================================
