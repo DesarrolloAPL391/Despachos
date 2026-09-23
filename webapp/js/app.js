@@ -9906,6 +9906,7 @@ function renderTaller() {
     ['taller', `🔧 En el taller · ${Number(o.abiertas || 0)}`],
     ['novedades', `🛠️ Novedades · ${(d.novedades || []).length}`],
     ['prog', `📅 Programación · ${Number(p.vencidas || 0) + Number(p.hoy || 0)}`],
+    ['hist', '📚 Histórico'],
   ];
   let h = `<div class="pact-tabs">${tabs.map(([k, l]) =>
     `<button type="button" class="${_tl.tab === k ? 'on' : ''}" data-tl-tab="${k}">${l}</button>`).join('')}</div>`;
@@ -10007,12 +10008,171 @@ function renderTaller() {
       </tbody></table></div>` : '<div class="cump-empty">✅ Nada vencido ni venciendo hoy.</div>';
   }
 
+  if (_tl.tab === 'hist') {
+    const r = tlhRango();
+    h += `<div class="cump-toolbar">
+      <span class="iv-rango">
+        <label class="cump-fecha-lbl">📅 <input type="date" id="tlh-desde" value="${esc(r.desde)}"></label>
+        <label class="cump-fecha-lbl">a <input type="date" id="tlh-hasta" value="${esc(r.hasta)}"></label>
+      </span>
+      <button type="button" class="btn btn-sm" id="tlh-ver">Ver</button>
+      <span class="spacer"></span></div>
+      <div id="tlh-body"><div class="loading">Cargando…</div></div>`;
+  }
+
   const body = $('tl-body');
   body.innerHTML = h;
+  if (_tl.tab === 'hist') {
+    body.querySelector('#tlh-ver').onclick = () => {
+      _tlh.desde = $('tlh-desde').value || null;
+      _tlh.hasta = $('tlh-hasta').value || null;
+      cargarHistorial(_tlh.movil);
+    };
+    cargarHistorial(_tlh.movil);
+  }
   body.querySelectorAll('[data-tl-tab]').forEach((b) => {
     b.onclick = () => { _tl.tab = b.dataset.tlTab; renderTaller(); };
   });
   body.querySelector('#tl-nueva')?.addEventListener('click', () => tallerReportar(''));
+}
+
+
+// ---------- Histórico: qué le han hecho a cada bus (sql/117) ----------
+// La pregunta que no se podía responder antes: ¿este carro cuántas veces ha entrado?
+// El ranking ordena por entradas, que es como se ve cuál se vara más.
+let _tlh = { d: null, movil: null, cargando: false, desde: null, hasta: null };
+
+function tlhRango() {
+  const hoy = new Date();
+  const ayer = new Date(hoy.getTime() - 365 * 86400000);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { desde: _tlh.desde || iso(ayer), hasta: _tlh.hasta || iso(hoy) };
+}
+
+async function cargarHistorial(movil) {
+  const cont = $('tlh-body');
+  if (!cont || _tlh.cargando) return;
+  _tlh.cargando = true;
+  _tlh.movil = movil || null;
+  cont.innerHTML = '<div class="loading">Cargando…</div>';
+  const r = tlhRango();
+  try {
+    const { data, error } = await sb.rpc('taller_historial', {
+      p_desde: r.desde, p_hasta: r.hasta, p_movil: _tlh.movil,
+    });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo cargar.');
+    _tlh.d = data;
+    renderHistorial();
+  } catch (e) {
+    const t = String(e.message || e);
+    cont.innerHTML = `<div class="cump-empty">${/taller_historial/.test(t) && /exist/i.test(t)
+      ? 'Falta ejecutar <b>sql/117_taller_historico.sql</b>.' : 'No se pudo cargar.'}<br><small>${esc(t)}</small></div>`;
+  } finally { _tlh.cargando = false; }
+}
+
+function renderHistorial() {
+  const d = _tlh.d || {}; const s = d.resumen || {}; const cont = $('tlh-body');
+  const pesos = (n) => (n == null ? '' : '$ ' + Math.round(Number(n)).toLocaleString('es-CO'));
+  let h = '';
+
+  // Lo que hay guardado, dicho sin rodeos: si el rango pedido se sale de lo traído, el
+  // número de abajo no es "no pasó nada", es "no lo hemos traído".
+  const g = d.rango_guardado || {};
+  if (g.desde) {
+    h += `<div class="cump-subtitle tlh-nota">Guardado en la app: ${esc(fechaLegible(g.desde))} a
+      ${esc(fechaLegible(g.hasta))} · ${Number(g.ordenes || 0)} órdenes.
+      ${isAdmin() ? '<button type="button" class="btn btn-sm" id="tlh-traer">⬇️ Traer más histórico</button>' : ''}</div>`;
+  } else if (isAdmin()) {
+    h += `<div class="pf-aviso ambar">Todavía no se ha traído histórico.
+      <button type="button" class="btn btn-sm" id="tlh-traer">⬇️ Traer el último año</button></div>`;
+  }
+
+  if (_tlh.movil) {
+    // La hoja de vida de un bus
+    const det = d.detalle || [];
+    h += `<div class="cump-toolbar"><button type="button" class="btn btn-sm" id="tlh-volver">← Todos los móviles</button>
+      <span class="cump-subtitle tlh-nota">Móvil <b>${esc(_tlh.movil)}</b> · ${det.length} entrada(s) al taller</span></div>`;
+    h += `<div class="cump-heros">
+      <div class="cump-hero"><div class="ch-val">${Number(s.ordenes || 0)}</div><div class="ch-lbl">Entradas</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(s.correctivas || 0)}</div><div class="ch-lbl">Correctivas</div>
+        <div class="ch-sub">se dañó</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(s.preventivas || 0)}</div><div class="ch-lbl">Preventivas</div>
+        <div class="ch-sub">programadas</div></div>
+      ${d.admin ? `<div class="cump-hero"><div class="ch-val">${pesos(s.costo || 0)}</div><div class="ch-lbl">Costo</div>
+        <div class="ch-sub">solo órdenes cerradas</div></div>` : ''}</div>`;
+    h += det.length ? `<div class="mc-wrap"><table class="mc-tabla tl-tabla"><thead><tr>
+      <th>Orden</th><th>Tipo</th><th>Entró</th><th>Duró</th><th>Motivo</th>${d.admin ? '<th>Costo</th>' : ''}</tr></thead><tbody>
+      ${det.map((r) => `<tr class="${r.afecta ? 'tl-fuera' : ''}">
+        <td>#${esc(String(r.numero))}<small>${esc(r.estado === 'closed' ? 'cerrada'
+    : r.estado === 'onTechnicalCompletion' ? 'sin cerrar' : r.estado === 'opened' ? 'ABIERTA' : esc(r.estado || ''))}</small></td>
+        <td><span class="chip ${r.tipo === 'CORRECTIVO' ? 'chip-red' : 'chip-blue'}">${esc(r.tipo || '—')}</span></td>
+        <td>${esc(fechaLegible(r.desde))}${r.odometro ? `<small>${Number(r.odometro).toLocaleString('es-CO')} km</small>` : ''}</td>
+        <td>${esc(tlDias(r.dias))}</td>
+        <td class="tl-motivo">${esc(r.motivo || '—')}</td>
+        ${d.admin ? `<td class="mc-num">${r.costo ? pesos(r.costo) : ''}</td>` : ''}</tr>`).join('')}
+      </tbody></table></div>` : '<div class="cump-empty">Este móvil no entró al taller en el periodo.</div>';
+  } else {
+    // El ranking: quién se vara más
+    const pm = d.por_movil || [];
+    h += `<div class="cump-heros">
+      <div class="cump-hero"><div class="ch-val">${Number(s.ordenes || 0)}</div><div class="ch-lbl">Entradas al taller</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(s.moviles || 0)}</div><div class="ch-lbl">Móviles distintos</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(s.correctivas || 0)}</div><div class="ch-lbl">Correctivas</div>
+        <div class="ch-sub">daños, no programados</div></div>
+      <div class="cump-hero"><div class="ch-val">${Number(s.cerradas || 0)}</div><div class="ch-lbl">Órdenes cerradas</div>
+        <div class="ch-sub">de ${Number(s.ordenes || 0)}</div></div></div>`;
+    // Esto hay que decirlo cada vez que alguien mire costos: solo se puede sumar lo cerrado.
+    if (d.admin && Number(s.sin_cerrar || 0) > Number(s.cerradas || 0)) {
+      h += `<div class="pf-aviso ambar">Hay <b>${Number(s.sin_cerrar)}</b> órdenes sin cerrar contra
+        <b>${Number(s.cerradas)}</b> cerradas. El costo de abajo suma <b>solo lo cerrado</b>, así que está
+        muy por debajo de lo que de verdad se gastó. Eso se arregla cerrando las órdenes en el taller.</div>`;
+    }
+    h += pm.length ? `<div class="mc-wrap"><table class="mc-tabla tl-tabla"><thead><tr>
+      <th>Móvil</th><th>Entradas</th><th>Correctivas</th><th>Días en taller</th><th>Última</th>${d.admin ? '<th>Costo</th>' : ''}</tr></thead><tbody>
+      ${pm.map((r) => `<tr data-tlh-mov="${esc(r.movil)}" class="tlh-fila">
+        <td><b>${esc(r.movil)}</b></td>
+        <td><b>${Number(r.entradas)}</b>${Number(r.fuera_servicio) ? `<small>${Number(r.fuera_servicio)} fuera de servicio</small>` : ''}</td>
+        <td>${Number(r.correctivas) ? `<span class="chip chip-red">${Number(r.correctivas)}</span>` : '—'}</td>
+        <td>${esc(tlDias(r.dias))}</td>
+        <td>${esc(fechaLegible(r.ultima))}</td>
+        ${d.admin ? `<td class="mc-num">${r.costo ? pesos(r.costo) : ''}</td>` : ''}</tr>`).join('')}
+      </tbody></table></div>
+      <div class="cump-subtitle tlh-nota">Toca un móvil para ver su hoja de vida.</div>`
+      : '<div class="cump-empty">No hay órdenes en ese periodo.</div>';
+  }
+
+  cont.innerHTML = h;
+  cont.querySelectorAll('[data-tlh-mov]').forEach((tr) => {
+    tr.onclick = () => cargarHistorial(tr.dataset.tlhMov);
+  });
+  cont.querySelector('#tlh-volver')?.addEventListener('click', () => cargarHistorial(null));
+  cont.querySelector('#tlh-traer')?.addEventListener('click', () => tallerTraerHistorico());
+}
+
+// Traer hacia atrás (admin). Va por tramos de 175 días porque la API no acepta rangos de
+// 180 o más; el año entero son unas 6 llamadas.
+async function tallerTraerHistorico() {
+  if (!isAdmin()) return;
+  const ok = await confirmAction({
+    title: '⬇️ Traer histórico del taller',
+    lead: 'Se le van a pedir a CloudFleet las órdenes ya cerradas del último año.',
+    message: 'Tarda unos segundos. No borra nada: lo que ya está se actualiza y se agrega lo que falte.',
+    okLabel: 'Traer',
+  });
+  if (!ok) return;
+  const b = $('tlh-traer');
+  if (b) { b.disabled = true; b.textContent = 'Trayendo…'; }
+  try {
+    const { data, error } = await sb.rpc('taller_sync_historico', { p_desde: null, p_hasta: null });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo traer.');
+    toast(`Histórico: ${data.filas} órdenes (${data.nuevas} nuevas).`, 'ok');
+  } catch (e) {
+    toast('No se pudo traer el histórico: ' + (e.message || e), 'err');
+  } finally {
+    cargarHistorial(_tlh.movil);
+  }
 }
 
 // ===================================================================================

@@ -3098,3 +3098,9 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
   border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
 .tl-alerta-sub { font-size: 12px; opacity: .85; margin: 2px 0 8px; }
 .tl-alerta .mc-tabla td { background: transparent; }
+
+/* Histórico del taller: cada fila del ranking abre la hoja de vida de ese bus. */
+.tlh-fila { cursor: pointer; }
+.tlh-fila:hover > td { background: #f1f5f9; }
+/* .cump-subtitle capitaliza cada palabra (sirve para etiquetas cortas); estas son frases. */
+.tlh-nota { text-transform: none; }
