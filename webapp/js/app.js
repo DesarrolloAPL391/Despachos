@@ -5043,10 +5043,33 @@ function _armarAutoLaur() {
     _laurTimer = setInterval(() => { if (currentView === 'laureles') cargarLaureles(true); }, 60000);
   }
 }
+// El control en vía lee un caché que refresca un cron cada 2 minutos (sql/119): el tablero ya
+// no llama a SONAR desde el navegador, así que no puede volver a darse el timeout de los 8 s.
+// Lo que sí hay que decirle al controlador es qué tan fresco es lo que está viendo.
+function ctrlFrescura(d) {
+  if (!d || d.edad_seg == null || !d.en_vivo) return '';
+  const s = Number(d.edad_seg);
+  const txt = s < 90 ? 'hace un momento'
+    : s < 3600 ? `hace ${Math.round(s / 60)} min`
+      : `hace ${Math.round(s / 3600)} h`;
+  // Pasados ~7 minutos el cron debió haber corrido tres veces: si no, algo está fallando.
+  return ` · actualizado ${txt}${s > 420 ? ' ⚠️' : ''}`;
+}
+
+// El error de una pantalla que ya no consulta SONAR no puede decir que SONAR falló.
+function ctrlErrorHtml(t, falta) {
+  const timeout = /statement timeout|canceling statement/i.test(t);
+  return `<div class="cump-empty">${falta
+    ? 'Falta ejecutar <b>sql/119_control_vivo_cache.sql</b> en la base.'
+    : timeout
+      ? 'La consulta se pasó de tiempo. Si acaba de ejecutarse sql/119, espera dos minutos a que el refresco automático llene el tablero.'
+      : 'No se pudo leer el tablero.'}<br><small>${esc(t)}</small></div>`;
+}
+
 async function cargarLaureles(silencioso) {
   const body = $('laur-body');
   const fecha = $('laur-fecha').value || hoyServidor();
-  if (!silencioso) body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  if (!silencioso) body.innerHTML = '<div class="cump-empty">Cargando el tablero…</div>';
   try {
     const { data, error } = await sb.rpc('control_laureles', { p_fecha: fecha });
     if (error) throw error;
@@ -5054,7 +5077,8 @@ async function cargarLaureles(silencioso) {
     _laurUltimo = data;
     renderLaureles();
   } catch (e) {
-    if (!silencioso) body.innerHTML = `<div class="cump-empty">No se pudo consultar SONAR.<br><small>${esc(e.message || e)}</small></div>`;
+    const t = String(e.message || e);
+    if (!silencioso) body.innerHTML = ctrlErrorHtml(t, /control_laureles/.test(t) && /exist/i.test(t));
   }
 }
 // Minutos del día de una celda (para ordenar por hora de ingreso)
@@ -5218,7 +5242,7 @@ function renderLaureles() {
   const total = (d.viajes || []).length;
   const escan = (d.viajes || []).filter((v) => v.chk).length;
   const soloLectura = (d.fecha !== hoyServidor());
-  if (sub) sub.textContent = `${total} buses · ${escan} escaneados · ${d.punto_ingreso || 'ingreso'} → ${d.punto_salida || 'salida'} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}${soloLectura ? ' · solo lectura' : ''}`;
+  if (sub) sub.textContent = `${total} buses · ${escan} escaneados · ${d.punto_ingreso || 'ingreso'} → ${d.punto_salida || 'salida'} · ${typeof fechaLegible === 'function' ? fechaLegible(d.fecha) : d.fecha}${soloLectura ? ' · solo lectura' : ''}${ctrlFrescura(d)}`;
 
   // Modo CUMPLIMIENTO (auditor/admin): dashboard de medidas, sin tabla escaneable.
   if (_laurModo === 'cumplimiento') {
@@ -5528,7 +5552,7 @@ function _armarAutoOr() {
 async function cargarOriental(silencioso) {
   const body = $('or-body');
   const fecha = $('or-fecha').value || hoyServidor();
-  if (!silencioso) body.innerHTML = '<div class="cump-empty">Consultando SONAR…</div>';
+  if (!silencioso) body.innerHTML = '<div class="cump-empty">Cargando el tablero…</div>';
   try {
     const { data, error } = await sb.rpc('control_oriental', { p_fecha: fecha });
     if (error) throw error;
@@ -5537,10 +5561,7 @@ async function cargarOriental(silencioso) {
     renderOriental();
   } catch (e) {
     const t = String(e.message || e);
-    if (!silencioso) {
-      body.innerHTML = `<div class="cump-empty">${/control_oriental/.test(t)
-        ? 'Falta ejecutar sql/98.' : 'No se pudo consultar SONAR.'}<br><small>${esc(t)}</small></div>`;
-    }
+    if (!silencioso) body.innerHTML = ctrlErrorHtml(t, /control_oriental/.test(t) && /exist/i.test(t));
   }
 }
 
@@ -5552,7 +5573,7 @@ function renderOriental() {
   const sub = $('or-sub');
   if (sub) {
     sub.textContent = `${total} buses · ${escan} escaneados · ${d.punto || 'CONTROL AV. ORIENTAL'}`
-      + ` · ${fechaLegible(d.fecha)}${soloLectura ? ' · solo lectura' : ''}`;
+      + ` · ${fechaLegible(d.fecha)}${soloLectura ? ' · solo lectura' : ''}${ctrlFrescura(d)}`;
   }
 
   if (_orModo === 'cumplimiento') {
