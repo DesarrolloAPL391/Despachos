@@ -164,12 +164,21 @@ revoke all on function public.control_vivo_traer(text, date) from public, anon;
 grant execute on function public.control_vivo_traer(text, date) to authenticated;
 
 -- ---------- 5) El cron ----------
--- Cada 2 minutos entre las 4 a.m. y las 11 p.m. Fuera de esa franja no hay operación que
--- controlar y no tiene sentido seguirle pidiendo datos a SONAR.
+-- Cada 2 minutos entre las 4:00 a.m. y las 11:59 p.m. DE COLOMBIA. Fuera de esa franja no hay
+-- operación que controlar y no tiene sentido seguirle pidiendo datos a SONAR.
+--
+-- OJO CON LA HORA: pg_cron programa en la zona de la base, que en Supabase es UTC. Colombia
+-- es UTC-5, así que la franja se escribe corrida: 09-23 UTC son las 4:00 a.m.–6:59 p.m. de
+-- Colombia, y 00-04 UTC son las 7:00–11:59 p.m. Escribirla como '4-23' —que fue el error de
+-- la primera versión de este archivo, corregido el 29/09/2026— deja el tablero sin refrescar
+-- entre las 7 y las 11 de la noche, que es operación, y lo pone a trabajar de madrugada,
+-- cuando no hay un solo bus rodando. Se comprobó con cron.job_run_details: había corridas a
+-- las 05, 06, 07 y 08 UTC (medianoche a 4 a.m. de Colombia).
+-- Los demás crons del sistema ya estaban escritos en UTC a propósito (ver sql/81).
 select cron.unschedule('refrescar-control-vivo')
  where exists (select 1 from cron.job where jobname = 'refrescar-control-vivo');
 
-select cron.schedule('refrescar-control-vivo', '*/2 4-23 * * *',
+select cron.schedule('refrescar-control-vivo', '*/2 0-4,9-23 * * *',
   $$ select public.control_vivo_refrescar(); $$);
 
 -- Primer llenado, para no dejar la pantalla vacía hasta el próximo minuto par.
