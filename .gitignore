@@ -22,3 +22,12 @@ desktop.ini
 .vscode/
 .idea/
 node_modules/
+
+# cargas de preventivas: traen nombre y correo de los afiliados (repo publico)
+cargar_preventivas_*.sql
+PROGRAMACION DE PREVENTIVAS*
+
+# informes y manuales: cifras internas de la empresa
+Informe_*.docx
+Manual_*.docx
+informe_capturas/

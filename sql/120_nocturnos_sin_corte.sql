@@ -1,0 +1,68 @@
+-- ===================================================================================
+-- 120: LOS DOS PROCESOS NOCTURNOS SE ESTABAN CORTANDO A LOS 2 MINUTOS
+-- ===================================================================================
+-- CÓMO SE DESCUBRIÓ. Midiendo los tiempos reales de producción (pg_stat_statements,
+-- 07/10/2026) aparecieron dos funciones con el peor caso clavado en el mismo número:
+--
+--     eventos_bus_nocturno          media 67.906 ms   peor caso 119.941 ms
+--     sync_despachos_sonar_nocturno media 44.093 ms   peor caso 119.969 ms
+--
+-- Dos funciones distintas terminando a 40 y 30 milésimas de los 120.000 ms exactos no es
+-- casualidad: las está cortando un tope de 2 minutos. Ninguna de las dos fija su propio
+-- `statement_timeout`, así que heredan el del rol con el que corre pg_cron, que en
+-- Supabase son 120 segundos.
+--
+-- LO GRAVE NO ES QUE NO TERMINEN: ES QUE PIERDEN EL TRABAJO. Todo lo que hace una función
+-- ocurre dentro de una sola transacción. Cuando el tope la cancela, Postgres revierte
+-- TODO lo que había insertado. Esos dos minutos no quedan a medias: quedan en nada. Y
+-- nadie se entera, porque el cron simplemente vuelve a intentar a la siguiente vuelta.
+--
+-- ESTO YA ESTABA RESUELTO EN sql/119, donde `control_vivo_refrescar` abre con
+-- `set_config('statement_timeout','0',true)` justo por esto. A estas dos se les olvidó.
+--
+-- POR QUÉ CON `alter function` Y NO REESCRIBIENDO LA FUNCIÓN: el ajuste se le cuelga a la
+-- función y rige mientras ella corre, incluidas las funciones que llama por dentro
+-- (`eventos_bus_core`, `sync_despachos_sonar_core`). No hay que tocar una sola línea de la
+-- lógica, que es la forma más segura de arreglar algo que está en producción.
+--
+-- POR QUÉ UN TOPE ALTO Y NO CERO: sin tope, un proceso colgado se queda corriendo para
+-- siempre. Se le deja a cada uno un techo cómodo pero finito, calculado para que no
+-- alcance a pisarse con su propia siguiente corrida.
+-- ===================================================================================
+
+-- ---------- 1) El barrido de eventos de conducción ----------
+-- Corre cada 10 minutos entre las 2:00 y las 6:50 de Colombia. El techo se pone en 8
+-- minutos: le sobra tiempo (hoy promedia 68 segundos) y aun así termina antes de que
+-- arranque la corrida siguiente, así que nunca puede haber dos encimadas.
+alter function public.eventos_bus_nocturno() set statement_timeout = '8min';
+
+-- ---------- 2) La sincronización nocturna de despachos ----------
+-- Corre una sola vez al día, a la 1:10 de la mañana. No tiene con qué chocar, así que se
+-- le deja un techo amplio.
+alter function public.sync_despachos_sonar_nocturno() set statement_timeout = '15min';
+
+-- ---------- 3) De paso, el que sí quedó bien, para dejar constancia ----------
+-- `control_vivo_refrescar` (sql/119) ya levanta el tope por dentro y por eso puede tardar
+-- sus 39 segundos del peor caso sin que nadie lo corte. No se toca.
+
+-- ===================================================================================
+-- PARA VERIFICAR QUE QUEDÓ PUESTO:
+--   select p.proname, p.proconfig
+--     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--    where n.nspname = 'public'
+--      and p.proname in ('eventos_bus_nocturno','sync_despachos_sonar_nocturno');
+--   -- debe aparecer {statement_timeout=8min} y {statement_timeout=15min}
+--
+-- PARA COMPROBAR MAÑANA QUE YA NO SE CORTA (después de que corran de madrugada):
+--   select jobname, status, return_message, start_time, end_time,
+--          end_time - start_time as duro
+--     from cron.job_run_details
+--    where jobname in ('eventos-bus-nocturno','sync-sonar-nocturno')
+--      and start_time > now() - interval '2 days'
+--    order by start_time desc;
+--   -- no debe haber ningun 'canceling statement due to statement timeout'
+--
+-- LO QUE ESTO HABILITA: el barrido de conducción estaba limitado a 7 días
+-- (eventos_bus_config.dias_backfill) y ya rozaba el techo. Ampliarlo a 30, que es algo
+-- que estaba pendiente, era imposible mientras el corte siguiera ahí.
+-- ===================================================================================

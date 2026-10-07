@@ -277,8 +277,17 @@ function fmt(v) {
   if (Array.isArray(v)) return v.join(', ');
   if (v === true) return 'Sí';
   if (v === false) return 'No';
+  const s = String(v);
+  // La base guarda las fechas como "2026-10-07"; en pantalla se leen como en Colombia:
+  // "07/10/2026". La conversión se hace sobre el TEXTO, nunca con new Date(): esa función
+  // interpreta "2026-10-07" como medianoche UTC y, estando en UTC-5, mostraría el día anterior.
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (d) return `${d[3]}/${d[2]}/${d[1]}`;
+  // Marca de tiempo completa → "07/10/2026, 11:22", con la misma función que ya usa el
+  // resto de la app. (Se comprueba que la fecha sea válida para no volver a entrar aquí.)
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s) && !isNaN(toDate(s))) return fmtFechaHora(s);
   // Quitar los segundos a las horas (HH:MM:SS -> HH:MM), tanto en horas sueltas como en fechas+hora
-  return String(v).replace(/(\b\d{1,2}:\d{2}):\d{2}(\.\d+)?/g, '$1');
+  return s.replace(/(\b\d{1,2}:\d{2}):\d{2}(\.\d+)?/g, '$1');
 }
 // Escapa también las comillas: esc() se usa dentro de atributos (title="...", href="..."),
 // y sin escaparlas un dato guardado podía cerrar el atributo e inyectar código.
