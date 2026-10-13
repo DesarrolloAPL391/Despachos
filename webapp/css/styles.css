@@ -301,7 +301,7 @@ tbody tr:hover { background: #faf8ff; }
   position: absolute; right: 10px; top: 6px; width: 30px; height: 30px; border: 0; border-radius: 8px;
   background: #eef0f4; color: var(--text); font-size: 15px; line-height: 1;
 }
-.veh-sheet-body { overflow-y: auto; padding: 2px 18px 18px; -webkit-overflow-scrolling: touch; }
+.veh-sheet-body { overflow-y: auto; overscroll-behavior: contain; padding: 2px 18px 18px; -webkit-overflow-scrolling: touch; }
 .veh-sheet-body .map-popup { min-width: 0; font-size: 13.5px; }
 .veh-sheet-body .pi-row b { max-width: 62vw; }
 .veh-sheet-acts { display: flex; gap: 10px; margin-top: 14px; }
@@ -317,7 +317,7 @@ tbody tr:hover { background: #faf8ff; }
   padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .evt-chip:hover { background: #f3f4f6; }
 .evt-chip.evt-on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
-.evt-lista { max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; }
+.evt-lista { max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 10px; }
 .evt-lista .empty { padding: 18px; text-align: center; }
 .evt-it { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-bottom: 1px solid #f1f3f6; font-size: 13px; }
 .evt-it:last-child { border-bottom: 0; }
@@ -397,7 +397,11 @@ tbody tr:hover { background: #faf8ff; }
 .rec-tab.on { background: var(--primary, #ED1C24); color: #fff; border-color: var(--primary, #ED1C24); }
 .rec-tab:disabled { opacity: .5; cursor: default; }
 /* La lista solo se ve cuando el panel está "abierto" (botón ☰) */
-.rec-panel-list { display: none; overflow-y: auto; padding: 6px; -webkit-overflow-scrolling: touch; }
+/* `overscroll-behavior: contain` evita el "scroll chaining": sin eso, al llegar al
+   final de la lista el navegador le pasa el movimiento a lo que esté debajo y el mapa
+   se desplazaba o hacía zoom solo mientras uno leía los eventos. */
+.rec-panel-list { display: none; overflow-y: auto; overscroll-behavior: contain;
+  padding: 6px; -webkit-overflow-scrolling: touch; }
 .rec-panel.list-open .rec-panel-list { display: block; flex: 1 1 auto; min-height: 0; }
 /* Fila de PARADA larga en la lista */
 .rec-stop { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "ic t dur" "ic d d"; gap: 2px 8px;
@@ -475,7 +479,7 @@ tbody tr:hover { background: #faf8ff; }
 .map-lista[hidden] { display: none; }
 .ml-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: #f7f9fc; }
 .ml-search { flex: 1; border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; font-size: 14px; }
-.ml-items { flex: 1; overflow-y: auto; min-height: 60px; }
+.ml-items { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 60px; }
 .ml-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #eef0f5; cursor: pointer; }
 .ml-item:hover { background: #f6f4fd; }
 .ml-item.sel { background: #ede7fb; }
@@ -878,7 +882,7 @@ tbody tr:hover { background: #faf8ff; }
 .map-puestos-panel[hidden] { display: none; }
 .mp-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: #f7f9fc; }
 .mp-search { flex: 1; border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; font-size: 14px; }
-.mp-items { flex: 1; overflow-y: auto; min-height: 60px; }
+.mp-items { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 60px; }
 .mp-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #eef0f5; cursor: pointer; }
 .mp-item:hover { background: #f6f4fd; }
 .mp-item input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #7c3aed; cursor: pointer; }
@@ -1561,7 +1565,7 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .side-panel-head .spacer { flex: 1; }
 .sp-count { font-size: 12px; color: #666; }
 .sp-hint { padding: 8px 12px; font-size: 12.5px; background: #fff8e1; color: #7a5b00; border-bottom: 1px solid #f0e2b0; }
-.sp-list { overflow-y: auto; padding: 6px; }
+.sp-list { overflow-y: auto; overscroll-behavior: contain; padding: 6px; }
 .sp-empty { padding: 14px; font-size: 13px; color: #666; text-align: center; }
 
 /* Ítems del ETA */

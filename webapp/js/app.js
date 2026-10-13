@@ -20719,6 +20719,17 @@ let _recTripsLoaded = false; // ¿ya se consultaron los despachos? (si no, no af
 let _recRange = null;      // {from,to}: límites del reproductor cuando se elige un viaje; null = todo
 let _recLatLng = [];       // [[lat,lon],…] del recorrido, para resaltar el tramo de un viaje
 let _recTripHi = null;     // capa Leaflet del viaje resaltado en verde
+// Cuándo tocó el usuario la lista o el mapa por última vez. Mientras está revisando el
+// recorrido a mano, ni la lista se desplaza sola ni el mapa se recentra debajo de él:
+// eso era lo que no dejaba mirar el trayecto con calma. Se escuchan `wheel`/`touchmove`
+// y el arrastre del mapa, que son gestos de la persona; el desplazamiento que hace el
+// propio programa no cuenta y por eso no se mira el evento `scroll`.
+let _recUsoLista = 0;
+let _recUsoMapa = 0;
+const REC_ESPERA_LISTA = 4000;  // ms que la lista queda quieta tras tocarla
+const REC_ESPERA_MAPA = 6000;   // ms que el mapa no se recentra tras moverlo a mano
+function _recMarcarUsoLista() { _recUsoLista = Date.now(); }
+function _recMarcarUsoMapa() { _recUsoMapa = Date.now(); }
 let _recParadas = [];      // paradas largas detectadas {ini,fin,durMin,lat,lon,dir,...}
 let _recParadaMarks = [];  // marcadores 🅿️ en el mapa (paralelo a _recParadas)
 let _recTab = 'ev';        // pestaña activa de la lista: 'ev' eventos | 'st' paradas
@@ -20900,8 +20911,11 @@ function recGoto(i) {
   const p = _recPts[i]; if (!p || !flotaMap) return;
   const ll = [p.lat, p.lon];
   if (_recCursor) _recCursor.setLatLng(ll);
-  // No recentra en cada paso (eso "sacaba de contexto"): solo desplaza si el punto se acerca al borde.
-  try { if (!flotaMap.getBounds().pad(-0.18).contains(ll)) flotaMap.panTo(ll, { animate: false }); } catch (e) {}
+  // No recentra en cada paso (eso "sacaba de contexto"): solo desplaza si el punto se
+  // acerca al borde, y únicamente si el usuario no acaba de mover el mapa con la mano.
+  if (Date.now() - _recUsoMapa > REC_ESPERA_MAPA) {
+    try { if (!flotaMap.getBounds().pad(-0.18).contains(ll)) flotaMap.panTo(ll, { animate: false }); } catch (e) {}
+  }
   const det = (p.vel ?? 0) === 0 ? 'detenido' : `${p.vel} km/h`;
   const ti = _tripOf(p.t);
   let trip = '';
@@ -20918,7 +20932,11 @@ function recGoto(i) {
   const list = $('rec-panel-list');
   list.querySelectorAll('.rec-pt.sel').forEach((x) => x.classList.remove('sel'));
   const it = list.querySelector(`.rec-pt[data-i="${i}"]`);
-  if (it) { it.classList.add('sel'); it.scrollIntoView({ block: 'nearest' }); }
+  // La lista acompaña al cursor sola, salvo que la persona la esté recorriendo a mano.
+  if (it) {
+    it.classList.add('sel');
+    if (Date.now() - _recUsoLista > REC_ESPERA_LISTA) it.scrollIntoView({ block: 'nearest' });
+  }
 }
 function renderRecPanel(pts, movil) {
   const pn = $('rec-panel'); if (!pn) return;
@@ -21400,6 +21418,12 @@ function ensureFlotaMap() {
   flotaLayer = L.layerGroup().addTo(flotaMap);
   flotaMap.on('click', closeVehSheet); // tocar el mapa cierra el panel
   flotaMap.on('click', onMapClickGeo); // en modo "agregar geocerca", el clic la coloca
+  // Si la persona mueve el mapa con la mano mientras revisa un recorrido, el reproductor
+  // deja de recentrarlo por unos segundos (ver REC_ESPERA_MAPA). `dragstart` es siempre
+  // del usuario; el zoom con la rueda se toma del contenedor para no confundirlo con el
+  // zoom que hace el propio programa al ajustar la vista.
+  flotaMap.on('dragstart', _recMarcarUsoMapa);
+  flotaMap.getContainer().addEventListener('wheel', _recMarcarUsoMapa, { passive: true });
   loadGeocercas(); // dibuja origen/destino/controles (piloto Laureles)
 }
 // (Capa de tráfico de TomTom retirada: el botón 🚦 del mapa se eliminó por pedido.)
@@ -21848,6 +21872,11 @@ $('map-lista-btn')?.addEventListener('click', () => toggleListaMoviles());
 // buscaba acá, que es donde tiene sentido: el botón 🛣️ Recorrido de la ficha del móvil
 // solo sirve para los despachos de HOY.
 $('map-recfechas-btn')?.addEventListener('click', () => abrirEventosMovil());
+// Mientras se recorre la lista de puntos a mano, no se la desplaza sola por debajo.
+// Se escuchan los gestos (rueda y dedo), no el evento `scroll`, porque ese tambien lo
+// dispara el desplazamiento automatico y se anularia a si mismo.
+['wheel', 'touchmove'].forEach((ev) =>
+  $('rec-panel-list')?.addEventListener(ev, _recMarcarUsoLista, { passive: true }));
 $('ml-close')?.addEventListener('click', () => toggleListaMoviles(false));
 $('ml-clear')?.addEventListener('click', limpiarSeguidos);
 $('ml-ver')?.addEventListener('click', () => {
