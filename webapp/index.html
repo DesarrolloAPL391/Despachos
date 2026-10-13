@@ -198,6 +198,12 @@
             </div>
             <input type="search" id="map-search" class="map-search" placeholder="Buscar móvil(es) o placa…" />
             <button id="map-lista-btn" class="btn" title="Elegir móviles de una lista">📋 Lista</button>
+            <!-- Recorrido de un carro entre dos fechas. Abre el mismo visor que vive en
+                 "📈 Cumplimiento y análisis → 🔎 Eventos del bus": aquí está porque es
+                 donde la gente lo busca, en el mapa. Solo afiliado, auditor y admin;
+                 se muestra desde showMapView(). -->
+            <button id="map-recfechas-btn" class="btn" hidden
+                    title="Elegir un carro y ver su recorrido entre dos fechas y horas">🔎 Recorrido por fechas</button>
             <span class="spacer"></span>
             <span id="map-count" class="page-info"></span>
             <button id="rec-clear" class="btn" hidden>🛣️✕ Quitar recorrido</button>

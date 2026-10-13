@@ -21634,6 +21634,11 @@ async function showMapView() {
   $('table-view').hidden = true;
   ocultarVistas('map-view');
   $('map-view').hidden = false;
+  // "Recorrido por fechas": los mismos roles que lo tienen en el menú de análisis.
+  // El RPC valida el acceso por su cuenta (sql/123), así que esto es solo para no
+  // mostrarle el botón a quien no lo puede usar.
+  const bRecF = $('map-recfechas-btn');
+  if (bRecF) bRecF.hidden = !(isAdmin() || isAuditor() || isAfiliado());
   closeVehSheet();
   limpiarRecorrido(); // entra al mapa sin recorrido previo dibujado
   // resaltar la opción del menú
@@ -21838,6 +21843,11 @@ function renderListaItems() {
   syncListaSel();
 }
 $('map-lista-btn')?.addEventListener('click', () => toggleListaMoviles());
+// Recorrido por fechas desde el mapa: abre el visor donde se elige el carro y el rango
+// (el mismo de "🔎 Eventos del bus"). Estaba solo en el menú de análisis y la gente lo
+// buscaba acá, que es donde tiene sentido: el botón 🛣️ Recorrido de la ficha del móvil
+// solo sirve para los despachos de HOY.
+$('map-recfechas-btn')?.addEventListener('click', () => abrirEventosMovil());
 $('ml-close')?.addEventListener('click', () => toggleListaMoviles(false));
 $('ml-clear')?.addEventListener('click', limpiarSeguidos);
 $('ml-ver')?.addEventListener('click', () => {
