@@ -21877,6 +21877,17 @@ $('map-recfechas-btn')?.addEventListener('click', () => abrirEventosMovil());
 // dispara el desplazamiento automatico y se anularia a si mismo.
 ['wheel', 'touchmove'].forEach((ev) =>
   $('rec-panel-list')?.addEventListener(ev, _recMarcarUsoLista, { passive: true }));
+
+// Con el puntero encima de un panel flotante, la rueda es de ese panel y de nadie mas:
+// se le quita al mapa la capacidad de reaccionar a la rueda mientras el cursor este ahi,
+// y se le devuelve al salir. Es a prueba de todo: no importa si el evento se propaga o
+// desde donde llegue, estando sobre la lista el mapa no se mueve ni hace zoom.
+['rec-panel', 'veh-sheet', 'map-lista', 'map-rutas-panel', 'map-puestos-panel'].forEach((id) => {
+  const el = $(id); if (!el) return;
+  const rueda = (on) => { try { if (flotaMap) flotaMap.scrollWheelZoom[on ? 'enable' : 'disable'](); } catch (e) { /* el mapa aun no existe */ } };
+  el.addEventListener('mouseenter', () => rueda(false));
+  el.addEventListener('mouseleave', () => rueda(true));
+});
 $('ml-close')?.addEventListener('click', () => toggleListaMoviles(false));
 $('ml-clear')?.addEventListener('click', limpiarSeguidos);
 $('ml-ver')?.addEventListener('click', () => {
