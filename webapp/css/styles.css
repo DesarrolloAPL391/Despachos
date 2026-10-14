@@ -1417,6 +1417,21 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .asis-horario { margin-top: 7px; font-size: 13px; font-weight: 600; color: var(--text, #1c1c1c);
   background: rgba(0,0,0,.04); border-radius: 8px; padding: 5px 10px; display: inline-block; }
 .asis-horario-none { color: var(--muted, #777); font-weight: 500; }
+/* Aviso propio dentro de la tarjeta: "marcaste tarde" */
+.asis-tarde-aviso { margin-top: 7px; font-size: 13.5px; font-weight: 700; color: #b91c1c;
+  background: #fee2e2; border-radius: 8px; padding: 6px 11px; display: inline-block; }
+/* Resumen de puntualidad sobre la tabla (lo ve sobre todo el monitor) */
+.asis-alerta { margin: 0 0 12px; }
+.asis-alerta-card { border: 1px solid var(--border, #e3e3e3); border-radius: 12px; padding: 11px 14px; font-size: 14px; }
+.asis-alerta-card.ok { background: #f2fbf5; border-color: #bfe6cb; color: #15803d; font-weight: 600; }
+.asis-alerta-card.none { background: #f7f8fa; color: var(--muted, #666); }
+.asis-alerta-card.tarde { background: #fff6f6; border-color: #f3c0c0; }
+.asis-alerta-tit { font-weight: 800; color: #b91c1c; font-size: 15px; }
+.asis-alerta-list { margin: 7px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; }
+.asis-alerta-list li { font-size: 13.5px; }
+.asis-tarde { color: #b91c1c; font-weight: 700; }
+.asis-alerta-mas { font-size: 13px; color: var(--muted, #666); margin-top: 4px; }
+.asis-alerta-pie { font-size: 12.5px; color: var(--muted, #666); margin-top: 8px; border-top: 1px solid rgba(0,0,0,.07); padding-top: 6px; }
 .asis-big { flex: 0 0 auto; font-size: 16px; font-weight: 800; padding: 12px 20px; border-radius: 12px; }
 .asis-todo { background: linear-gradient(180deg,#fff,#fff6f6); border-color: #f3c0c0; }
 .asis-en   { background: linear-gradient(180deg,#fff,#eefaf0); border-color: #b6e3c2; }

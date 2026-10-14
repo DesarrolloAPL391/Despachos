@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v317';
+export const APP_VERSION = 'v318';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -551,6 +551,7 @@ export const TABLES = {
     label: 'Inicio y fin de labores',
     icon: '🕘',
     despachador: true, // visible para los despachadores (ven solo lo suyo por RLS)
+    monitor: true, // los monitores (auditor/control) marcan lo suyo y VEN a todos (sql/124)
     asistenciaMarcar: true, // muestra los botones "Marcar ingreso/salida"
     readonly: true, // no se edita a mano; el ingreso/salida se marcan con los botones
     pk: 'id', pkEditable: false,
@@ -563,9 +564,13 @@ export const TABLES = {
     columns: [
       { key: 'fecha', label: 'Fecha', m: true },
       { key: 'hora_ingreso', label: 'Ingreso', m: true },
+      // Estas dos NO están en la tabla: se calculan cruzando con el horario del día (ver
+      // cruzarPuntualidad en app.js). 'prevista' es la hora a la que debía empezar.
+      { key: 'prevista', label: 'Debía entrar' },
+      { key: 'puntualidad', label: 'Puntualidad', punt: true, m: true },
       { key: 'hora_salida', label: 'Salida', m: true },
       { key: 'horas', label: 'Horas', m: true },
-      { key: 'nombre', label: 'Despachador', m: true },
+      { key: 'nombre', label: 'Nombre', m: true },
       { key: 'email', label: 'Correo' },
       { key: 'ubic_ingreso', label: 'Ubic. ingreso', maps: true },
       { key: 'ubic_salida', label: 'Ubic. salida', maps: true },

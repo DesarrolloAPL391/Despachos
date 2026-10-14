@@ -186,7 +186,9 @@ function visibleTablesBase() {
   // donde revisa los incompletos) + Resumen (consolidado, con descarga a Excel) + las tablas
   // de puesto donde tiene despachos de sus rutas (así audita TODO lo suyo, esté en la vista
   // general o en cualquier tabla de puesto).
-  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'restricciones_rutas', 'eventos_bus', ...(CTX?.auditTables || [])];
+  // 'asistencia': el monitor marca su propia jornada y además controla la puntualidad del
+  // ingreso de los despachadores (ve todas las marcaciones por RLS, sql/124).
+  if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'asistencia', 'restricciones_rutas', 'eventos_bus', ...(CTX?.auditTables || [])];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -918,6 +920,7 @@ function selectTable(name, filtroInicial) {
   // Asistencia: los botones de marcación los maneja la tarjeta dinámica (abajo), no la barra
   $('marcar-in-btn').hidden = true;
   $('marcar-out-btn').hidden = true;
+  { const al = $('asis-alerta'); if (al) { al.hidden = true; al.innerHTML = ''; } } // la repinta loadData
   actualizarEstadoAsistencia();
   $('dsonar-btn').hidden = true;   // "Despachos SONAR" (consulta puntual): oculto por ahora (sin utilidad práctica)
   // "Traer TODO de SONAR": barrido completo de TODOS los móviles de un día (no solo los
@@ -1517,28 +1520,58 @@ function transcurrido(desdeISO) {
   const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
   return h ? `${h} h ${_pad2(m)} min` : `${m} min`;
 }
+// El horario de HOY del propio usuario. El despachador lo trae en mi_contexto; el monitor
+// no, así que se lee de `horarios` (legible para cualquier autenticado).
+let _miHorarioHoy = null;
+async function cargarMiHorarioHoy() {
+  _miHorarioHoy = null;
+  try {
+    const { data } = await sb.from('horarios').select('hora_inicio, hora_fin')
+      .eq('fecha', hoyServidor()).ilike('email', miCorreo()).limit(10);
+    const con = (data || []).filter((h) => h.hora_inicio);
+    if (con.length) _miHorarioHoy = con.sort((a, b) => String(a.hora_inicio).localeCompare(String(b.hora_inicio)));
+  } catch { /* sin horario, la tarjeta lo dice */ }
+}
 async function actualizarEstadoAsistencia() {
   const box = $('asis-estado'); if (!box) return;
   if (_asisTimer) { clearInterval(_asisTimer); _asisTimer = null; }
-  if (current !== 'asistencia' || !(CTX?.rol === 'despachador' || CTX?.rol === 'admin')) { box.hidden = true; box.innerHTML = ''; return; }
+  // Marcan su jornada: despachadores, monitores (auditor/control) y el admin.
+  if (current !== 'asistencia' || !(CTX?.rol === 'despachador' || CTX?.rol === 'auditor' || CTX?.rol === 'admin')) { box.hidden = true; box.innerHTML = ''; return; }
   box.hidden = false;
   box.innerHTML = '<div class="asis-card asis-todo"><div class="asis-main"><div class="asis-sub">Cargando tu jornada…</div></div></div>';
   try {
     await refrescarFechaServidor();
     const email = miCorreo();
+    await cargarMiHorarioHoy();
     const { data: ab } = await sb.from('asistencia').select('*').eq('email', email).is('hora_salida', null)
       .order('ingreso_en', { ascending: false }).limit(1);
     const abierta = (ab || [])[0];
     const { data: hoyRows } = await sb.from('asistencia').select('*').eq('email', email).eq('fecha', hoyServidor())
       .order('ingreso_en', { ascending: false });
     const completas = (hoyRows || []).filter((r) => r.hora_salida);
-    renderAsisCard(box, abierta, completas);
+    // ¿El ingreso de hoy fue tarde? Se mira la PRIMERA marcación del día (la lista viene de
+    // la más reciente a la más antigua, así que es la última).
+    let tarde = null;
+    const delDia = (hoyRows || []).slice();
+    if (delDia.length) {
+      try {
+        await cruzarPuntualidad(delDia);
+        const primera = delDia[delDia.length - 1];
+        if (primera && primera.puntTarde != null && primera.puntTarde > TOLERANCIA_TARDE_MIN) {
+          tarde = { min: primera.puntTarde, prevista: primera.prevista, marcada: String(primera.hora_ingreso || '').slice(0, 5) };
+        }
+      } catch { /* sin horarios no se avisa nada */ }
+    }
+    renderAsisCard(box, abierta, completas, tarde);
   } catch { box.innerHTML = '<div class="asis-card asis-todo"><div class="asis-main"><div class="asis-sub">No se pudo cargar tu jornada. Reintenta con ↻.</div></div></div>'; }
 }
-// Línea con el horario asignado de HOY (solo despachadores; viene de mi_contexto).
+// Línea con el horario asignado de HOY (despachadores y monitores; el admin no tiene turno).
 function horarioHoyChip() {
-  if (CTX?.rol !== 'despachador') return '';
-  const ini = CTX?.hora_inicio, fin = CTX?.hora_fin, pst = CTX?.puesto;
+  if (CTX?.rol !== 'despachador' && CTX?.rol !== 'auditor') return '';
+  const h0 = (_miHorarioHoy || [])[0];
+  const ini = CTX?.hora_inicio || (h0?.hora_inicio ? String(h0.hora_inicio).slice(0, 5) : null);
+  const fin = CTX?.hora_fin || (h0?.hora_fin ? String(h0.hora_fin).slice(0, 5) : null);
+  const pst = CTX?.puesto;
   if (ini || fin) {
     const rango = `${ini || '—'}${fin ? ' – ' + fin : ''}`;
     return `<div class="asis-horario">🕒 Horario de hoy: <b>${esc(rango)}</b>${pst ? ' · 📌 ' + esc(pst) : ''}</div>`;
@@ -1546,9 +1579,14 @@ function horarioHoyChip() {
   if (pst) return `<div class="asis-horario">📌 Puesto de hoy: <b>${esc(pst)}</b></div>`;
   return `<div class="asis-horario asis-horario-none">🕒 Hoy no tienes un horario asignado.</div>`;
 }
-function renderAsisCard(box, abierta, completas) {
+function renderAsisCard(box, abierta, completas, tarde) {
   const nombre = CTX?.nombre || miCorreo();
-  const hor = horarioHoyChip();
+  // Aviso propio: si el ingreso de hoy quedó por fuera de la hora del turno, se dice aquí
+  // mismo, sin que la persona tenga que ir a buscarlo en la tabla.
+  const avisoTarde = tarde
+    ? `<div class="asis-tarde-aviso">⚠️ Hoy marcaste tu ingreso <b>${esc(fmtRetraso(tarde.min))} tarde</b>: entraste a las ${esc(tarde.marcada)} y tu turno empezaba a las ${esc(tarde.prevista)}.</div>`
+    : '';
+  const hor = horarioHoyChip() + avisoTarde;
   if (abierta) {
     const hi = fmt(abierta.hora_ingreso) || '—';
     box.innerHTML = `<div class="asis-card asis-en">
@@ -1598,7 +1636,7 @@ function renderAsisCard(box, abierta, completas) {
 // Aviso visual (no bloqueante): si el despachador no ha marcado su INGRESO de hoy, muestra el banner.
 async function checkAsistenciaPendiente() {
   const banner = $('asis-banner'); if (!banner) return;
-  if (CTX?.rol !== 'despachador') { banner.hidden = true; return; } // solo despachadores
+  if (CTX?.rol !== 'despachador' && CTX?.rol !== 'auditor') { banner.hidden = true; return; } // despachadores y monitores
   try {
     const { data } = await sb.from('asistencia').select('id').eq('email', miCorreo()).eq('fecha', hoyServidor()).limit(1);
     banner.hidden = !!(data && data.length); // si ya marcó hoy → ocultar; si no → mostrar
@@ -1610,6 +1648,93 @@ $('asis-banner-btn').addEventListener('click', async () => {
   try { await marcarIngreso(); } finally { b.dataset.busy = '0'; }
   checkAsistenciaPendiente();
 });
+
+// ---------- Puntualidad del ingreso (cruce con el horario del día) ----------
+// `asistencia` guarda a qué hora marcó cada quien; `horarios` dice a qué hora DEBÍA empezar
+// ese día. El cruce se hace aquí, en el cliente, porque `horarios` es legible para cualquier
+// usuario autenticado (política horarios_select) y así no hay que duplicar el dato ni
+// congelarlo: si administración corrige el turno, la puntualidad se recalcula sola.
+const TOLERANCIA_TARDE_MIN = 5; // minutos de gracia antes de contar el ingreso como tarde
+
+function _minDeHora(h) { // '07:35:00' → 455 (minutos desde medianoche)
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(h || ''));
+  return m ? (+m[1]) * 60 + (+m[2]) : null;
+}
+// Diferencia entre dos horas por el camino más corto del reloj: un turno que arranca a las
+// 23:50 con marcación a las 00:05 son 15 minutos tarde, no 1.425.
+function _difReloj(a, b) {
+  let d = a - b;
+  while (d > 720) d -= 1440;
+  while (d < -720) d += 1440;
+  return d;
+}
+function fmtRetraso(min) {
+  const m = Math.round(min);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h} h ${r} min` : `${h} h`;
+}
+// Agrega a cada fila las columnas calculadas 'prevista' y 'puntualidad' (+ 'puntTarde' en
+// minutos, que usa el render para el color). No lanza: si los horarios no cargan, las filas
+// quedan sin la columna y la tabla se ve igual que antes.
+async function cruzarPuntualidad(rows) {
+  if (!rows || !rows.length) return;
+  const fechas = rows.map((r) => r.fecha).filter(Boolean).sort();
+  if (!fechas.length) return;
+  const { data } = await sb.from('horarios').select('email, fecha, hora_inicio')
+    .gte('fecha', fechas[0]).lte('fecha', fechas[fechas.length - 1]).limit(5000);
+  const turnos = new Map(); // 'correo|fecha' → [hora_inicio, …]
+  for (const h of (data || [])) {
+    if (!h.hora_inicio) continue;
+    const k = String(h.email || '').trim().toLowerCase() + '|' + h.fecha;
+    if (!turnos.has(k)) turnos.set(k, []);
+    turnos.get(k).push(h.hora_inicio);
+  }
+  for (const r of rows) {
+    const mios = turnos.get(String(r.email || '').trim().toLowerCase() + '|' + r.fecha) || [];
+    const ing = _minDeHora(r.hora_ingreso);
+    r.prevista = ''; r.puntTarde = null;
+    if (!mios.length || ing == null) { r.puntualidad = mios.length ? '' : 'Sin horario'; continue; }
+    // Con varios turnos el mismo día (turno partido), se compara contra el que empieza más
+    // cerca de la marcación: es el turno al que esa entrada corresponde.
+    let mejor = null, dif = null;
+    for (const t of mios) {
+      const ini = _minDeHora(t); if (ini == null) continue;
+      const d = _difReloj(ing, ini);
+      if (dif == null || Math.abs(d) < Math.abs(dif)) { dif = d; mejor = t; }
+    }
+    if (mejor == null) { r.puntualidad = 'Sin horario'; continue; }
+    r.prevista = String(mejor).slice(0, 5);
+    r.puntTarde = dif;
+    r.puntualidad = dif > TOLERANCIA_TARDE_MIN ? `Tarde ${fmtRetraso(dif)}` : 'A tiempo';
+  }
+}
+// Resumen sobre la tabla: cuántos ingresos tarde hay en lo que se está viendo.
+// El monitor y el admin ven la lista de quién; el despachador ve solo lo suyo (su RLS).
+function pintarAlertaPuntualidad(rows) {
+  const box = $('asis-alerta'); if (!box) return;
+  if (current !== 'asistencia' || !rows || !rows.length) { box.hidden = true; box.innerHTML = ''; return; }
+  const conHorario = rows.filter((r) => r.puntTarde != null);
+  const tarde = conHorario.filter((r) => r.puntTarde > TOLERANCIA_TARDE_MIN)
+    .sort((a, b) => b.puntTarde - a.puntTarde);
+  const supervisa = isAdmin() || isAuditor();
+  if (!tarde.length) {
+    box.hidden = false;
+    box.innerHTML = conHorario.length
+      ? `<div class="asis-alerta-card ok">✅ Sin ingresos tarde en lo que estás viendo (${conHorario.length} marcación(es) con horario asignado).</div>`
+      : `<div class="asis-alerta-card none">🕒 Ninguna de estas marcaciones tiene horario asignado ese día, así que no hay con qué comparar la hora de ingreso.</div>`;
+    return;
+  }
+  const sinHorario = rows.length - conHorario.length;
+  const lista = tarde.slice(0, 10).map((r) => `<li><b>${esc(r.nombre || r.email || '—')}</b> · ${esc(fmt(r.fecha))} · marcó ${esc(String(r.hora_ingreso || '').slice(0, 5))} y debía entrar ${esc(r.prevista)} <span class="asis-tarde">(${esc(fmtRetraso(r.puntTarde))} tarde)</span></li>`).join('');
+  const mas = tarde.length > 10 ? `<div class="asis-alerta-mas">y ${tarde.length - 10} más…</div>` : '';
+  box.hidden = false;
+  box.innerHTML = `<div class="asis-alerta-card tarde">
+    <div class="asis-alerta-tit">⚠️ ${tarde.length} ingreso(s) tarde ${supervisa ? '' : 'tuyo(s) '}en lo que estás viendo</div>
+    <ul class="asis-alerta-list">${lista}</ul>${mas}
+    <div class="asis-alerta-pie">Se cuenta como tarde a partir de ${TOLERANCIA_TARDE_MIN} minutos después de la hora de inicio del turno.${sinHorario ? ` · ${sinHorario} marcación(es) sin horario ese día.` : ''}</div>
+  </div>`;
+}
 
 // ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
 async function openAsignarPuesto() {
@@ -1924,6 +2049,9 @@ async function loadData() {
   if ((cfg.columns || []).some((c) => c.qr)) { try { await ensureQRGen(); await ensureLogo(); } catch { /* */ } }
   // Estado GPS de los móviles (color junto al número), igual que en el mapa
   if (cfg.dispatchable) { try { await cargarEstadoMoviles(cfg); } catch { /* */ } }
+  // Inicio y fin de labores: cruza con el horario del día para saber quién entró tarde
+  if (current === 'asistencia') { try { await cruzarPuntualidad(rows); } catch { /* sin horarios, la tabla se ve igual */ } }
+  pintarAlertaPuntualidad(rows); // se oculta sola si la tabla no es asistencia
   renderTable(cfg, rows, total, diaSel);
   actualizarContadorAuditoria(); // barra de avance de auditoría (solo Auditoría SONAR)
 }
@@ -2142,6 +2270,16 @@ function renderTable(cfg, rows, count, diaSel = false) {
       } else if (c.band) {
         const b = docBand(val);
         td.innerHTML = `<span class="doc-chip ${b.cls}" title="${b.dias == null ? 'Sin dato' : b.dias < 0 ? 'Vencido hace ' + (-b.dias) + ' día(s)' : 'Vence en ' + b.dias + ' día(s)'}">${esc(b.txt)}</span>`;
+      } else if (c.punt) {
+        // Puntualidad del ingreso: verde a tiempo, rojo tarde, gris cuando ese día no había turno
+        if (!val) { td.textContent = ''; }
+        else if (row.puntTarde != null && row.puntTarde > TOLERANCIA_TARDE_MIN) {
+          td.innerHTML = `<span class="chip chip-red" title="Debía entrar a las ${esc(row.prevista || '—')}">⚠️ ${esc(String(val))}</span>`;
+        } else if (val === 'Sin horario') {
+          td.innerHTML = `<span class="chip chip-gray" title="Ese día no tiene horario asignado, no hay con qué comparar">${esc(String(val))}</span>`;
+        } else {
+          td.innerHTML = `<span class="chip chip-green" title="Debía entrar a las ${esc(row.prevista || '—')}">✅ ${esc(String(val))}</span>`;
+        }
       } else if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
       } else if (cfg.dispatchable && (c.path === 'veh.numero' || c.path === 'vehp.numero') && val != null && String(val).trim() !== '') {
@@ -2284,10 +2422,16 @@ function renderTable(cfg, rows, count, diaSel = false) {
       // Asistencia: botón por fila para marcar la SALIDA de una jornada abierta (sin salida aún)
       const act = document.createElement('td');
       act.className = 'row-actions'; act.dataset.label = 'Acciones';
-      if (!row.hora_salida) {
+      // La salida solo la marca el dueño de la jornada (o el admin): el monitor ve las
+      // marcaciones de los despachadores para controlarlas, no para cerrárselas — y la RLS
+      // de UPDATE tampoco se lo permitiría, así que el botón ni siquiera se le muestra.
+      const esMia = String(row.email || '').toLowerCase() === String(miCorreo() || '').toLowerCase();
+      if (!row.hora_salida && (esMia || isAdmin())) {
         const out = Object.assign(document.createElement('button'), { className: 'btn btn-sm btn-danger', textContent: '🔴 Marcar salida' });
         out.onclick = () => marcarSalida(row, out);
         act.appendChild(out);
+      } else if (!row.hora_salida) {
+        act.appendChild(Object.assign(document.createElement('span'), { className: 'chip chip-amber', textContent: 'Jornada abierta' }));
       } else {
         act.appendChild(Object.assign(document.createElement('span'), { className: 'chip chip-green', textContent: 'Jornada cerrada' }));
       }
@@ -4093,6 +4237,9 @@ async function exportarExcel() {
       if (lote.length < 1000) break;
     }
     if (!filas.length) { toast('No hay datos para exportar con los filtros actuales.', 'err'); return; }
+    // La puntualidad no vive en la tabla: se calcula también para el Excel, si no el archivo
+    // saldría con las columnas "Debía entrar" y "Puntualidad" vacías.
+    if (current === 'asistencia') { try { await cruzarPuntualidad(filas); } catch { /* */ } }
     // Cabeceras + filas usando las columnas visibles (resuelve rutas anidadas tipo "ruta.nombre")
     const cab = cols.map((c) => c.label || c.key || c.path);
     const aoa = [cab, ...filas.map((r) => cols.map((c) => {
