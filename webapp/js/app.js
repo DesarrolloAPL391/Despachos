@@ -608,7 +608,7 @@ function buildSidebar() {
   if (isAdmin() || isAuditor()) addNavAction(gAn, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   if (puedeVerOriental()) addNavAction(gAn, '🛂', 'Control Av. Oriental', () => openOriental('control'), 'nav-or');
   if (puedeCumplimientoOriental()) addNavAction(gAn, '📊', 'Cumplimiento Av. Oriental', () => openOriental('cumplimiento'), 'nav-orcump');
-  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+  if (isAdmin() || isAfiliado() || isOperaciones() || isAuditor()) addNavAction(gAn, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
 
   // 🚫 Restricciones y documentos (tabla del módulo + acciones)
   const gRe = addNavGroup(nav, '🚫', 'Restricciones y documentos', 'restr');
@@ -6572,7 +6572,9 @@ $('integ-body')?.addEventListener('click', (e) => { const b = e.target.closest('
 
 // ===== Vista "🧑‍🤝‍🧑 Pasajeros" (solo admin): conteo de pasajeros por móvil y día desde SONAR =====
 async function openPasajeros() {
-  if (!isAdmin() && !isAfiliado() && !isOperaciones()) return;
+  // El monitor (auditor/control) consulta cualquier móvil de la flota, como en los eventos
+  // del bus y en las tablas de puesto (sql/42); el permiso real lo da sql/125.
+  if (!isAdmin() && !isAfiliado() && !isOperaciones() && !isAuditor()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'pasajeros';
   cerrarRecorridoBus();
