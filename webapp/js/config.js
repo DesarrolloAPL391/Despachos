@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v319';
+export const APP_VERSION = 'v320';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -771,6 +771,10 @@ export const TABLES = {
     pkEditable: false,
     select: '*',
     searchCols: ['numero_interno', 'placa', 'ruta', 'propietario', 'marca'],
+    privateCols: ['propietario'], // no se busca por el dueño si el rol no puede verlo
+    // Sin permiso para ver al dueño, los datos personales NI SIQUIERA se piden: la consulta
+    // enumera las demás columnas en vez de traer '*', así no viajan al navegador.
+    selectSinPrivados: 'id,numero_interno,placa,centro_costos,sistema_ruta,ruta,marca,combustible,tecnologia_emision,clase_vehiculo,tipo_carroceria,color,cap_sentados,cap_pie,capacidad_to,linea,cilindraje,modelo,fecha_matricula,num_matricula,num_tarjeta_operacion,vence_tarjeta_operacion,num_soat,vence_soat,aseguradora_soat,num_tecnomecanica,vence_tecnomecanica,estado',
     defaultOrder: { col: 'numero_interno', asc: true },
     baseFilter: [{ col: 'estado', op: 'neq', val: 'Desvinculado' }], // ocultar desvinculados
     filters: [
@@ -806,13 +810,15 @@ export const TABLES = {
       { key: 'cap_sentados', label: 'Cap. sentados', type: 'number', section: 'Técnico' },
       { key: 'cap_pie', label: 'Cap. de pie', type: 'number', section: 'Técnico' },
       { key: 'capacidad_to', label: 'Capacidad T.O.', type: 'number', section: 'Técnico' },
-      { key: 'propietario', label: 'Propietario', type: 'text', section: 'Propietario' },
-      { key: 'identificacion', label: 'Identificación', type: 'text', section: 'Propietario' },
-      { key: 'direccion', label: 'Dirección', type: 'text', section: 'Propietario' },
-      { key: 'telefono', label: 'Teléfono', type: 'text', section: 'Propietario' },
-      { key: 'correo', label: 'Correo', type: 'text', section: 'Propietario' },
-      { key: 'administrador', label: 'Administrador', type: 'text', section: 'Propietario' },
-      { key: 'correo_admin', label: 'Correo administrador', type: 'text', section: 'Propietario' },
+      // `privado`: datos personales del dueño del bus. Los ven administración y operaciones,
+      // que son quienes gestionan con el afiliado; el resto de roles ni los ve ni busca por ellos.
+      { key: 'propietario', label: 'Propietario', type: 'text', section: 'Propietario', privado: true },
+      { key: 'identificacion', label: 'Identificación', type: 'text', section: 'Propietario', privado: true },
+      { key: 'direccion', label: 'Dirección', type: 'text', section: 'Propietario', privado: true },
+      { key: 'telefono', label: 'Teléfono', type: 'text', section: 'Propietario', privado: true },
+      { key: 'correo', label: 'Correo', type: 'text', section: 'Propietario', privado: true },
+      { key: 'administrador', label: 'Administrador', type: 'text', section: 'Propietario', privado: true },
+      { key: 'correo_admin', label: 'Correo administrador', type: 'text', section: 'Propietario', privado: true },
       { key: 'fecha_matricula', label: 'Fecha matrícula', type: 'date', section: 'Documentos' },
       { key: 'num_matricula', label: 'N° matrícula', type: 'text', section: 'Documentos' },
       { key: 'num_tarjeta_operacion', label: 'N° tarjeta operación', type: 'text', section: 'Documentos' },
@@ -862,6 +868,8 @@ export const TABLES = {
     pkEditable: false,
     select: '*',
     searchCols: ['vehiculo', 'conductor', 'ruta', 'novedad', 'propietario'],
+    privateCols: ['propietario'],
+    selectSinPrivados: 'id,key_origen,ruta,fecha_novedad,fecha_restriccion,vehiculo,novedad,conductor,viajes_hora,hora_inicial,hora_finalizacion,estado,observaciones,usuario,accion_usuario,despachador_am,numero_am,despachador_pm,numero_pm,creado_en,ruta_restringida,modo,tabla,hora_viaje',
     defaultOrder: { col: 'id', asc: false },   // la ultima que se monto, de primera (creado_en empata en las 815 del CSV)
     filters: [
       { col: 'estado', label: 'Estado', options: ['VIGENTE', 'CANCELADA'] },
@@ -893,9 +901,9 @@ export const TABLES = {
       { key: 'viajes_hora', label: 'Detalle (texto libre)', type: 'text', section: 'Restricción', hint: 'Opcional, p. ej. "se restringe viaje 10:45 ruta 192".' },
       { key: 'estado', label: 'Estado', type: 'enum', options: ['VIGENTE', 'CANCELADA'], required: true, section: 'Restricción' },
       { key: 'observaciones', label: 'Observaciones', type: 'text', section: 'Restricción' },
-      { key: 'propietario', label: 'Propietario', type: 'text', section: 'Propietario' },
-      { key: 'correo_propietario', label: 'Correo propietario', type: 'text', section: 'Propietario' },
-      { key: 'celular_propietario', label: 'Celular propietario', type: 'text', section: 'Propietario' },
+      { key: 'propietario', label: 'Propietario', type: 'text', section: 'Propietario', privado: true },
+      { key: 'correo_propietario', label: 'Correo propietario', type: 'text', section: 'Propietario', privado: true },
+      { key: 'celular_propietario', label: 'Celular propietario', type: 'text', section: 'Propietario', privado: true },
       { key: 'despachador_am', label: 'Despachador AM', type: 'text', section: 'Despacho' },
       { key: 'numero_am', label: 'Número AM', type: 'text', section: 'Despacho' },
       { key: 'despachador_pm', label: 'Despachador PM', type: 'text', section: 'Despacho' },

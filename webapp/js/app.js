@@ -76,6 +76,13 @@ function isOperaciones() { return isAdmin() || (isDespachador() && /operaciones/
 // Subadministrador (operaciones): base despachador + gestión acotada (usuarios no-admin,
 // parque completo, pantallas de análisis). Equivale a operaciones o admin.
 function isSubadmin() { return isAdmin() || isOperaciones(); }
+// DATOS DEL DUEÑO DEL VEHÍCULO (nombre, cédula, dirección, teléfono y correo del propietario
+// y del administrador). El MONITOR (auditor/control) no los ve: audita la operación —móvil,
+// ruta, hora—, y para eso no necesita saber de quién es el bus ni cómo contactarlo.
+// Los campos marcados `privado` en config.js se le ocultan y tampoco se busca por ellos; las
+// fichas de preventivas, intervenciones, restricciones y siniestros omiten ese bloque.
+// Se usa el rol EFECTIVO, así el admin en "ver como auditor" comprueba lo que ellos ven.
+function puedeVerDatosAfiliado() { return !efIsAuditor(); }
 // El afiliado nunca crea/edita/despacha: sus tablas se muestran en solo lectura.
 function afiliadoSoloLectura() { return isAfiliado() || (PREVIEW && PREVIEW.rol === 'afiliado'); }
 // Restricciones de rutas: SOLO el auditor (y admin) las crea/edita; despachador/afiliado las ven.
@@ -1257,7 +1264,12 @@ function applyQueryFilters(qy, opts = {}) {
     // (la coma separa condiciones, los paréntesis agrupan). Se sustituyen por espacio;
     // un término de búsqueda no los necesita.
     const safe = term.replace(/[,()"\\]/g, ' ').trim();
-    if (safe) qy = qy.or(cfg.searchCols.map((c) => `${c}.ilike.%${safe}%`).join(','));
+    // Quien no puede VER los datos del dueño tampoco puede BUSCAR por ellos: si no, escribiendo
+    // un nombre o una cédula en el buscador se sabría de quién es cada carro sin ver la columna.
+    const buscables = puedeVerDatosAfiliado()
+      ? cfg.searchCols
+      : cfg.searchCols.filter((c) => !(cfg.privateCols || []).includes(c));
+    if (safe && buscables.length) qy = qy.or(buscables.map((c) => `${c}.ilike.%${safe}%`).join(','));
   }
   for (const [key, val] of Object.entries(filters)) { // eq, rango de fecha (::gte/::lte) o lista (::in)
     if (key.endsWith('::gte')) {
@@ -1981,6 +1993,11 @@ function rowMatchesTerm(cfg, row, t) {
   vals.push(getPath(row, 'veh.placa'), getPath(row, 'vehp.placa'));
   return vals.some((v) => v != null && String(v).toLowerCase().includes(q));
 }
+// Columnas a pedir para una tabla: si trae datos personales del dueño y este rol no puede
+// verlos, se usa la lista sin esas columnas, de modo que no lleguen al navegador.
+function selectDe(cfg) {
+  return (cfg.selectSinPrivados && !puedeVerDatosAfiliado()) ? cfg.selectSinPrivados : cfg.select;
+}
 async function loadData() {
   const cfg = TABLES[current];
   const reqTabla = current, reqPage = page; // firma de la petición: si cambia durante el await, se descarta
@@ -1994,7 +2011,7 @@ async function loadData() {
   const useClientSearch = diaSel && !!term;
   const from = page * PAGE_SIZE, to = from + PAGE_SIZE - 1;
 
-  let qy = sb.from(current).select(cfg.select, { count: 'exact' })
+  let qy = sb.from(current).select(selectDe(cfg), { count: 'exact' })
     .order(cfg.defaultOrder.col, { ascending: cfg.defaultOrder.asc, nullsFirst: false });
   if (cfg.defaultOrder.then) { // orden secundario (ej. desempatar por hora dentro del mismo día)
     qy = qy.order(cfg.defaultOrder.then.col, { ascending: cfg.defaultOrder.then.asc, nullsFirst: false });
@@ -2161,7 +2178,8 @@ function renderTable(cfg, rows, count, diaSel = false) {
   // solo las ven el admin y el auditor; al despachador se le ocultan.
   const cols = cfg.columns.filter((c) =>
     !(c.auditCol && !efIsAdmin() && !efIsAuditor()) &&
-    !(c.despHide && !efIsAdmin() && !efIsAuditor()));
+    !(c.despHide && !efIsAdmin() && !efIsAuditor()) &&
+    !(c.privado && !puedeVerDatosAfiliado())); // datos personales del dueño del vehículo
   // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
   const hasMobile = cols.some((c) => c.m);
   cols.forEach((c) => {
@@ -3706,6 +3724,9 @@ async function _openEditorInterno(row) {
     if (f.editOnly && !editing) continue;
     // auditOnly: campos de control que solo ven el auditor y el admin (el despachador no)
     if (f.auditOnly && !isAdmin() && !soyAuditor) continue;
+    // privado: datos personales del dueño del vehículo (nombre, cédula, dirección, teléfono,
+    // correo). Solo administración y operaciones, que son quienes gestionan con el afiliado.
+    if (f.privado && !puedeVerDatosAfiliado()) continue;
     // encabezado de sección
     if (f.section && f.section !== lastSection) {
       lastSection = f.section;
@@ -4218,7 +4239,9 @@ async function exportarExcel() {
   const cfg = TABLES[current];
   // Si la tabla define exportCols, la descarga sale COMPLETA con esas columnas
   // (p. ej. Auditoría SONAR agrega auditor, fecha de auditoría y comentario).
-  const cols = cfg.exportCols || cfg.columns || [];
+  // El Excel sale con las mismas columnas que la pantalla: si los datos del dueño están
+  // ocultos para este rol, tampoco se van en la descarga.
+  const cols = (cfg.exportCols || cfg.columns || []).filter((c) => !(c.privado && !puedeVerDatosAfiliado()));
   if (!cols.length) { toast('Esta tabla no tiene columnas para exportar.', 'err'); return; }
   const btn = $('export-btn'); const prev = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Generando…';
@@ -4226,7 +4249,7 @@ async function exportarExcel() {
     // Trae TODAS las filas que cumplen los filtros activos (paginando de a 1000)
     const filas = [];
     for (let desde = 0; desde <= 100000; desde += 1000) {
-      let qy = sb.from(current).select(cfg.select)
+      let qy = sb.from(current).select(selectDe(cfg))
         .order(cfg.defaultOrder.col, { ascending: cfg.defaultOrder.asc, nullsFirst: false });
       if (cfg.defaultOrder.then) qy = qy.order(cfg.defaultOrder.then.col, { ascending: cfg.defaultOrder.then.asc, nullsFirst: false });
       qy = applyQueryFilters(qy).range(desde, desde + 999);
@@ -6766,7 +6789,7 @@ function renderPreventivas() {
       return `<div class="${cardCls}" data-id="${r.id}">`
         + '<div class="pv-info">'
         + `<div class="pv-top"><span class="pv-int">🚌 ${esc(r.interno)}</span>${r.placa ? `<span class="pv-placa">${esc(r.placa)}</span>` : ''}${r.ruta ? `<span class="pv-ruta">${esc(r.ruta)}</span>` : ''}${bReprog}</div>`
-        + `${r.propietario ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
+        + `${(r.propietario && puedeVerDatosAfiliado()) ? `<div class="pv-prop">${esc(r.propietario)}</div>` : ''}`
         + `<div class="pv-estado">${bNotif}${bRes}${bRtm}</div>${meta}`
         + '</div>'
         + (btns.length ? `<div class="pv-actions">${btns.join('')}</div>` : '')
@@ -11173,7 +11196,7 @@ function ivFicha(id) {
       <span class="muted">${esc(fechaLegible(r.fecha))}${ivHora(r) ? ' · ' + esc(ivHora(r)) : ''}</span></div>
     <div class="iv-datos">
       ${dato('Placa', r.placa)}${dato('Ruta', r.ruta)}
-      ${dato('Propietario', r.propietario)}${dato('Celular', r.celular)}${dato('Correo', r.correo)}
+      ${puedeVerDatosAfiliado() ? `${dato('Propietario', r.propietario)}${dato('Celular', r.celular)}${dato('Correo', r.correo)}` : ''}
     </div>
     <div class="iv-bloque"><span>Motivo</span><p>${esc(r.motivo || '')}</p></div>
     ${r.observacion ? `<div class="iv-bloque"><span>Lo que se hizo</span><p>${esc(r.observacion)}</p></div>` : ''}
@@ -12028,7 +12051,9 @@ function openRestriccion(r) {
     restrDonde(r) ? `<span class="chip chip-gray">${esc(restrDonde(r))}</span>` : '',
   ].filter(Boolean).join(' ');
   m.querySelector('h3').textContent = `🚫 Restricción${r.vehiculo ? ` · móvil ${r.vehiculo}` : ''}`;
-  const contactos = !afiliadoSoloLectura(); // el afiliado no ve los teléfonos del personal
+  // El afiliado no ve los teléfonos del personal; el monitor tampoco los del dueño del bus.
+  const contactos = !afiliadoSoloLectura();
+  const verDueno = contactos && puedeVerDatosAfiliado();
   body.innerHTML = `
     <header class="pf-top">
       <div class="pf-av cond">${esc(r.vehiculo || '—')}</div>
@@ -12058,7 +12083,7 @@ function openRestriccion(r) {
     ['Qué incumplió', esc(r.novedad || '')],
     ['Observaciones', esc(r.observaciones || '')]])}
       ${sinBloque('🧑‍✈️ Conductor', [['Nombre', esc(r.conductor || '')]])}
-      ${contactos ? sinBloque('🧑‍💼 Propietario del móvil', [
+      ${verDueno ? sinBloque('🧑‍💼 Propietario del móvil', [
     ['Nombre', esc(r.propietario || '')],
     ['Correo', esc(r.correo_propietario || '')],
     ['Celular', wa(r.celular_propietario)]]) : ''}
@@ -12686,8 +12711,8 @@ function openPqrsf(row) {
     ['Hora del suceso', esc(hr(row.hora_suceso))], ['Direcci\u00f3n', esc(row.direccion_suceso || '')],
     ['Descripci\u00f3n', esc(row.descripcion || '')]])}
       ${sinBloque('\ud83d\ude8c Veh\u00edculo', [['M\u00f3vil', esc(row.numero_interno || '')], ['Placa', esc(row.placa || '')],
-    ['Ruta', esc(row.ruta || '')], ['Propietario', esc(row.propietario || '')],
-    ['Identificaci\u00f3n', esc(row.identificacion || '')], ['Conductor', esc(row.conductor || '')],
+    ['Ruta', esc(row.ruta || '')], ...(puedeVerDatosAfiliado() ? [['Propietario', esc(row.propietario || '')]] : []),
+    ...(puedeVerDatosAfiliado() ? [['Identificaci\u00f3n', esc(row.identificacion || '')]] : []), ['Conductor', esc(row.conductor || '')],
     ['C\u00e9dula', esc(row.conductor_cedula || '')]])}
       ${sinBloque('\ud83d\udc64 Usuario', [['Nombre', esc(row.usuario_nombre || '')],
     ['Correo', row.usuario_correo ? `<a href="mailto:${esc(row.usuario_correo)}">${esc(row.usuario_correo)}</a>` : ''],
