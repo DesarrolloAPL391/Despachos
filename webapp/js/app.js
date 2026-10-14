@@ -1695,34 +1695,79 @@ function fmtRetraso(min) {
 // Agrega a cada fila las columnas calculadas 'prevista' y 'puntualidad' (+ 'puntTarde' en
 // minutos, que usa el render para el color). No lanza: si los horarios no cargan, las filas
 // quedan sin la columna y la tabla se ve igual que antes.
+// Horarios de los PUNTOS de despacho (sql/126): a qué hora se entra a cada punto, por turno.
+// Se cargan una vez por sesión: son 36 filas que casi nunca cambian.
+let _horariosPunto = null;
+async function cargarHorariosPunto() {
+  if (_horariosPunto) return _horariosPunto;
+  try {
+    const { data } = await sb.from('puesto_horarios').select('puesto, punto, turno, tipo_dia, hora_inicio');
+    _horariosPunto = data || [];
+  } catch { _horariosPunto = []; }
+  return _horariosPunto;
+}
+function _normPuesto(s) { // "Estacion aguacatala" y "ESTACIÓN AGUACATALA " son el mismo puesto
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+}
+// A qué hora DEBÍA estar en el punto. Manda el cuadro de la empresa, no la franja de entrada
+// al aplicativo que guarda `horarios` (esa es 03:30/12:30 y es solo el permiso de acceso).
+// Hoy la hora de entrada es la misma en todos los puntos (AM 5:00, PM 13:00, también domingo),
+// así que un puesto sin fila propia se mide igual de bien con la del turno.
+function horaEntradaPunto(puestos, turno, esDomingo) {
+  const filas = (_horariosPunto || []).filter((p) => p.turno === turno);
+  if (!filas.length) return null;
+  const tipo = esDomingo ? 'DOMINGO' : 'HABIL';
+  for (const nom of puestos) {
+    const n = _normPuesto(nom); if (!n) continue;
+    const f = filas.find((p) => p.puesto && p.tipo_dia === tipo && _normPuesto(p.puesto) === n)
+           || filas.find((p) => p.puesto && _normPuesto(p.puesto) === n); // sin cuadro de domingo, vale el hábil
+    if (f) return { hora: f.hora_inicio, punto: f.punto };
+  }
+  const f = filas.find((p) => p.tipo_dia === tipo) || filas[0];
+  return { hora: f.hora_inicio, punto: null }; // hora estándar del turno
+}
+// Agrega a cada fila las columnas calculadas 'prevista' y 'puntualidad' (+ 'puntTarde' en
+// minutos y 'puntPunto' con el punto de referencia). No lanza: si algo falla, las filas
+// quedan sin esas columnas y la tabla se ve como antes.
 async function cruzarPuntualidad(rows) {
   if (!rows || !rows.length) return;
   const fechas = rows.map((r) => r.fecha).filter(Boolean).sort();
   if (!fechas.length) return;
-  const { data } = await sb.from('horarios').select('email, fecha, hora_inicio')
-    .gte('fecha', fechas[0]).lte('fecha', fechas[fechas.length - 1]).limit(5000);
-  const turnos = new Map(); // 'correo|fecha' → [hora_inicio, …]
+  const [{ data }] = await Promise.all([
+    sb.from('horarios').select('email, fecha, hora_inicio, observacion')
+      .gte('fecha', fechas[0]).lte('fecha', fechas[fechas.length - 1]).limit(5000),
+    cargarHorariosPunto(),
+  ]);
+  const turnos = new Map(); // 'correo|fecha' → [{ turno, puestos }, …]
   for (const h of (data || [])) {
     if (!h.hora_inicio) continue;
     const k = String(h.email || '').trim().toLowerCase() + '|' + h.fecha;
     if (!turnos.has(k)) turnos.set(k, []);
-    turnos.get(k).push(h.hora_inicio);
+    // El turno sale de la franja asignada: antes del mediodía es AM, de ahí en adelante PM.
+    turnos.get(k).push({
+      turno: (_minDeHora(h.hora_inicio) || 0) < 720 ? 'AM' : 'PM',
+      puestos: String(h.observacion || '').split(',').map((x) => x.trim()).filter(Boolean),
+    });
   }
   for (const r of rows) {
     const mios = turnos.get(String(r.email || '').trim().toLowerCase() + '|' + r.fecha) || [];
     const ing = _minDeHora(r.hora_ingreso);
-    r.prevista = ''; r.puntTarde = null;
+    r.prevista = ''; r.puntTarde = null; r.puntPunto = '';
     if (!mios.length || ing == null) { r.puntualidad = mios.length ? '' : 'Sin horario'; continue; }
-    // Con varios turnos el mismo día (turno partido), se compara contra el que empieza más
-    // cerca de la marcación: es el turno al que esa entrada corresponde.
+    let domingo = false;
+    try { domingo = new Date(r.fecha + 'T12:00:00').getDay() === 0; } catch { /* */ }
+    // Con dos turnos el mismo día se compara contra aquel cuya entrada queda más cerca de la
+    // marcación: es el turno al que corresponde esa entrada.
     let mejor = null, dif = null;
     for (const t of mios) {
-      const ini = _minDeHora(t); if (ini == null) continue;
-      const d = _difReloj(ing, ini);
-      if (dif == null || Math.abs(d) < Math.abs(dif)) { dif = d; mejor = t; }
+      const ref = horaEntradaPunto(t.puestos, t.turno, domingo);
+      const h0 = ref && _minDeHora(ref.hora); if (h0 == null) continue;
+      const d = _difReloj(ing, h0);
+      if (dif == null || Math.abs(d) < Math.abs(dif)) { dif = d; mejor = ref; }
     }
     if (mejor == null) { r.puntualidad = 'Sin horario'; continue; }
-    r.prevista = String(mejor).slice(0, 5);
+    r.prevista = String(mejor.hora).slice(0, 5);
+    r.puntPunto = mejor.punto || '';
     r.puntTarde = dif;
     r.puntualidad = dif > TOLERANCIA_TARDE_MIN ? `Tarde ${fmtRetraso(dif)}` : 'A tiempo';
   }
@@ -1750,7 +1795,7 @@ function pintarAlertaPuntualidad(rows) {
   box.innerHTML = `<div class="asis-alerta-card tarde">
     <div class="asis-alerta-tit">⚠️ ${tarde.length} ingreso(s) tarde ${supervisa ? '' : 'tuyo(s) '}en lo que estás viendo</div>
     <ul class="asis-alerta-list">${lista}</ul>${mas}
-    <div class="asis-alerta-pie">Se cuenta como tarde a partir de ${TOLERANCIA_TARDE_MIN} minutos después de la hora de inicio del turno.${sinHorario ? ` · ${sinHorario} marcación(es) sin horario ese día.` : ''}</div>
+    <div class="asis-alerta-pie">Se compara contra la hora de entrada del <b>punto de despacho</b> (turno AM 5:00 · PM 13:00), no contra la franja de acceso al aplicativo. Se cuenta tarde a partir de ${TOLERANCIA_TARDE_MIN} minutos.${sinHorario ? ` · ${sinHorario} marcación(es) sin horario ese día.` : ''}</div>
   </div>`;
 }
 
@@ -2299,11 +2344,11 @@ function renderTable(cfg, rows, count, diaSel = false) {
         // Puntualidad del ingreso: verde a tiempo, rojo tarde, gris cuando ese día no había turno
         if (!val) { td.textContent = ''; }
         else if (row.puntTarde != null && row.puntTarde > TOLERANCIA_TARDE_MIN) {
-          td.innerHTML = `<span class="chip chip-red" title="Debía entrar a las ${esc(row.prevista || '—')}">⚠️ ${esc(String(val))}</span>`;
+          td.innerHTML = `<span class="chip chip-red" title="Debía entrar a las ${esc(row.prevista || '—')}${row.puntPunto ? ' · ' + esc(row.puntPunto) : ''}">⚠️ ${esc(String(val))}</span>`;
         } else if (val === 'Sin horario') {
           td.innerHTML = `<span class="chip chip-gray" title="Ese día no tiene horario asignado, no hay con qué comparar">${esc(String(val))}</span>`;
         } else {
-          td.innerHTML = `<span class="chip chip-green" title="Debía entrar a las ${esc(row.prevista || '—')}">✅ ${esc(String(val))}</span>`;
+          td.innerHTML = `<span class="chip chip-green" title="Debía entrar a las ${esc(row.prevista || '—')}${row.puntPunto ? ' · ' + esc(row.puntPunto) : ''}">✅ ${esc(String(val))}</span>`;
         }
       } else if (c.badge && val != null && String(val).trim() !== '') {
         td.innerHTML = `<span class="${chipClass(val)}">${esc(fmt(val))}</span>`;
