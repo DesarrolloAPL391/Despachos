@@ -83,6 +83,12 @@ function isSubadmin() { return isAdmin() || isOperaciones(); }
 // fichas de preventivas, intervenciones, restricciones y siniestros omiten ese bloque.
 // Se usa el rol EFECTIVO, así el admin en "ver como auditor" comprueba lo que ellos ven.
 function puedeVerDatosAfiliado() { return !efIsAuditor(); }
+// PUNTUALIDAD DEL INGRESO: es informacion de CONTROL, no se le muestra al despachador.
+// Que un despachador vea en su pantalla "marcaste tarde" convierte la herramienta en un
+// reproche automatico; quien debe mirar la puntualidad y decidir que hacer es el monitor.
+// Afecta a las columnas "Debia entrar" y "Puntualidad", al resumen de arriba, al Excel y
+// al aviso de la tarjeta propia. Sin esto tampoco se consultan los horarios.
+function puedeVerPuntualidad() { return efIsAdmin() || efIsAuditor(); }
 // El afiliado nunca crea/edita/despacha: sus tablas se muestran en solo lectura.
 function afiliadoSoloLectura() { return isAfiliado() || (PREVIEW && PREVIEW.rol === 'afiliado'); }
 // Restricciones de rutas: SOLO el auditor (y admin) las crea/edita; despachador/afiliado las ven.
@@ -1565,7 +1571,7 @@ async function actualizarEstadoAsistencia() {
     // la más reciente a la más antigua, así que es la última).
     let tarde = null;
     const delDia = (hoyRows || []).slice();
-    if (delDia.length) {
+    if (delDia.length && puedeVerPuntualidad()) {
       try {
         await cruzarPuntualidad(delDia);
         const primera = delDia[delDia.length - 1];
@@ -1725,7 +1731,7 @@ async function cruzarPuntualidad(rows) {
 // El monitor y el admin ven la lista de quién; el despachador ve solo lo suyo (su RLS).
 function pintarAlertaPuntualidad(rows) {
   const box = $('asis-alerta'); if (!box) return;
-  if (current !== 'asistencia' || !rows || !rows.length) { box.hidden = true; box.innerHTML = ''; return; }
+  if (current !== 'asistencia' || !rows || !rows.length || !puedeVerPuntualidad()) { box.hidden = true; box.innerHTML = ''; return; }
   const conHorario = rows.filter((r) => r.puntTarde != null);
   const tarde = conHorario.filter((r) => r.puntTarde > TOLERANCIA_TARDE_MIN)
     .sort((a, b) => b.puntTarde - a.puntTarde);
@@ -2067,7 +2073,7 @@ async function loadData() {
   // Estado GPS de los móviles (color junto al número), igual que en el mapa
   if (cfg.dispatchable) { try { await cargarEstadoMoviles(cfg); } catch { /* */ } }
   // Inicio y fin de labores: cruza con el horario del día para saber quién entró tarde
-  if (current === 'asistencia') { try { await cruzarPuntualidad(rows); } catch { /* sin horarios, la tabla se ve igual */ } }
+  if (current === 'asistencia' && puedeVerPuntualidad()) { try { await cruzarPuntualidad(rows); } catch { /* sin horarios, la tabla se ve igual */ } }
   pintarAlertaPuntualidad(rows); // se oculta sola si la tabla no es asistencia
   renderTable(cfg, rows, total, diaSel);
   actualizarContadorAuditoria(); // barra de avance de auditoría (solo Auditoría SONAR)
@@ -2179,7 +2185,8 @@ function renderTable(cfg, rows, count, diaSel = false) {
   const cols = cfg.columns.filter((c) =>
     !(c.auditCol && !efIsAdmin() && !efIsAuditor()) &&
     !(c.despHide && !efIsAdmin() && !efIsAuditor()) &&
-    !(c.privado && !puedeVerDatosAfiliado())); // datos personales del dueño del vehículo
+    !(c.privado && !puedeVerDatosAfiliado()) && // datos personales del dueño del vehículo
+    !(c.soloControl && !puedeVerPuntualidad()));  // puntualidad del ingreso (no la ve el despachador)
   // En móvil solo se muestran las columnas marcadas con m:true (si la tabla define alguna)
   const hasMobile = cols.some((c) => c.m);
   cols.forEach((c) => {
@@ -4241,7 +4248,8 @@ async function exportarExcel() {
   // (p. ej. Auditoría SONAR agrega auditor, fecha de auditoría y comentario).
   // El Excel sale con las mismas columnas que la pantalla: si los datos del dueño están
   // ocultos para este rol, tampoco se van en la descarga.
-  const cols = (cfg.exportCols || cfg.columns || []).filter((c) => !(c.privado && !puedeVerDatosAfiliado()));
+  const cols = (cfg.exportCols || cfg.columns || [])
+    .filter((c) => !(c.privado && !puedeVerDatosAfiliado()) && !(c.soloControl && !puedeVerPuntualidad()));
   if (!cols.length) { toast('Esta tabla no tiene columnas para exportar.', 'err'); return; }
   const btn = $('export-btn'); const prev = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Generando…';
@@ -4262,7 +4270,7 @@ async function exportarExcel() {
     if (!filas.length) { toast('No hay datos para exportar con los filtros actuales.', 'err'); return; }
     // La puntualidad no vive en la tabla: se calcula también para el Excel, si no el archivo
     // saldría con las columnas "Debía entrar" y "Puntualidad" vacías.
-    if (current === 'asistencia') { try { await cruzarPuntualidad(filas); } catch { /* */ } }
+    if (current === 'asistencia' && puedeVerPuntualidad()) { try { await cruzarPuntualidad(filas); } catch { /* */ } }
     // Cabeceras + filas usando las columnas visibles (resuelve rutas anidadas tipo "ruta.nombre")
     const cab = cols.map((c) => c.label || c.key || c.path);
     const aoa = [cab, ...filas.map((r) => cols.map((c) => {

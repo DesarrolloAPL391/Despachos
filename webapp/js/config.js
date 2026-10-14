@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v320';
+export const APP_VERSION = 'v321';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -566,8 +566,8 @@ export const TABLES = {
       { key: 'hora_ingreso', label: 'Ingreso', m: true },
       // Estas dos NO están en la tabla: se calculan cruzando con el horario del día (ver
       // cruzarPuntualidad en app.js). 'prevista' es la hora a la que debía empezar.
-      { key: 'prevista', label: 'Debía entrar' },
-      { key: 'puntualidad', label: 'Puntualidad', punt: true, m: true },
+      { key: 'prevista', label: 'Debía entrar', soloControl: true },
+      { key: 'puntualidad', label: 'Puntualidad', punt: true, m: true, soloControl: true },
       { key: 'hora_salida', label: 'Salida', m: true },
       { key: 'horas', label: 'Horas', m: true },
       { key: 'nombre', label: 'Nombre', m: true },
