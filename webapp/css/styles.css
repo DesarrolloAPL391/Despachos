@@ -285,6 +285,13 @@ tbody tr:hover { background: #faf8ff; }
 
 .table-view, .map-view, .cump-view, .rutas-view, .malla-view { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .map-view { position: relative; }
+/* En el mapa la pantalla NO se desplaza.
+   `.app` usa `min-height`, asi que con un menu lateral largo (el del auditor mide ~1900px)
+   la aplicacion entera crecia mas que la ventana y la pagina quedaba con scroll: al leer la
+   lista del recorrido el documento se corria y el mapa se iba de la vista. Fijando la altura
+   a la ventana, el menu se desplaza dentro de si mismo y la lista dentro de si misma. */
+.app.view-map { height: 100%; }
+.app.view-map .main { overflow: hidden; }
 
 /* Panel inferior deslizable con la info del móvil */
 .veh-sheet {
