@@ -13,9 +13,9 @@
 -- (12:00, 13:00, 20:00, 20:40 o 21:00), que se guarda para poder medirla mas adelante.
 --
 -- `puesto` es el nombre EXACTO del puesto en public.puestos, para poder cruzar; `punto` es
--- como lo llama el cuadro de la empresa. Donde el nombre del cuadro no corresponde sin dudas
--- a un puesto de la app, `puesto` queda en null: esa fila sirve de referencia y no se usa
--- para medir a nadie (ver la nota del final).
+-- como lo llama el cuadro de la empresa. Dos nombres del cuadro no se parecen al puesto y los
+-- confirmo el usuario (14/10/2026): EXPOSICIONES = puesto 136II, y AVENIDA ORIENTAL POBLADO
+-- (el del domingo) = puesto CONTROL ORIENTAL.
 
 create table if not exists public.puesto_horarios (
   id          bigserial primary key,
@@ -75,8 +75,8 @@ insert into public.puesto_horarios (punto, puesto, turno, tipo_dia, hora_inicio,
   ('AV. ORIENTAL CONTROL ( 130-134-135-136-136A)',     'CONTROL ORIENTAL',    'PM', 'HABIL', '13:00', '20:00'),
   ('AV. ORIENTAL CONTROL ( 190-192)',                  'CONTROL LAURELES',    'AM', 'HABIL', '05:00', '12:00'),
   ('AV. ORIENTAL CONTROL ( 190-192)',                  'CONTROL LAURELES',    'PM', 'HABIL', '13:00', '20:00'),
-  ('EXPOSICIONES',                                     null,                  'AM', 'HABIL', '05:00', '13:00'),
-  ('EXPOSICIONES',                                     null,                  'PM', 'HABIL', '13:00', '20:00'),
+  ('EXPOSICIONES',                                     '136II',               'AM', 'HABIL', '05:00', '13:00'),
+  ('EXPOSICIONES',                                     '136II',               'PM', 'HABIL', '13:00', '20:00'),
   -- Domingo
   ('CIRCULAR SUR 302',                                 'CIRCULAR',            'AM', 'DOMINGO', '05:00', '13:00'),
   ('CIRCULAR SUR 302',                                 'CIRCULAR',            'PM', 'DOMINGO', '13:00', '20:40'),
@@ -84,8 +84,8 @@ insert into public.puesto_horarios (punto, puesto, turno, tipo_dia, hora_inicio,
   ('TERMINAL DEL NORTE 287-313',                       '287 TERMINAL',        'PM', 'DOMINGO', '13:00', '20:00'),
   ('ALMERIA LAURELES 190, 191, 192 Y 193.',            'Laureles',            'AM', 'DOMINGO', '05:00', '12:00'),
   ('ALMERIA LAURELES 190, 191, 192 Y 193.',            'Laureles',            'PM', 'DOMINGO', '13:00', '20:00'),
-  ('AVENIDA ORIENTAL POBLADO 130,132, 134, 135, 136.', null,                  'AM', 'DOMINGO', '05:00', '12:00'),
-  ('AVENIDA ORIENTAL POBLADO 130,132, 134, 135, 136.', null,                  'PM', 'DOMINGO', '13:00', '20:00')
+  ('AVENIDA ORIENTAL POBLADO 130,132, 134, 135, 136.', 'CONTROL ORIENTAL',    'AM', 'DOMINGO', '05:00', '12:00'),
+  ('AVENIDA ORIENTAL POBLADO 130,132, 134, 135, 136.', 'CONTROL ORIENTAL',    'PM', 'DOMINGO', '13:00', '20:00')
 on conflict (punto, turno, tipo_dia) do update
   set puesto      = excluded.puesto,
       hora_inicio = excluded.hora_inicio,
