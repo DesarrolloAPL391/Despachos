@@ -456,6 +456,12 @@ async function verificarSesionVigente() {
   if (!sessionUser) return false;
   const t0 = Date.now();
   refrescarGps();
+  // Alertas de GPS: cada 5 minutos (el cron las abre cada 10). Sin await, para no demorar
+  // el latido si la red va lenta.
+  if ((isAdmin() || isAuditor()) && Date.now() - _gpsAlertPedido > 300000) {
+    _gpsAlertPedido = Date.now();
+    refrescarGpsAlertas(true);
+  }
   // Reporta la latencia medida en el heartbeat anterior + la versión de app en uso
   // (para que el admin vea en "Conectados" quién va lento o quedó en versión vieja).
   const { data, error } = await sb.rpc('heartbeat', {
@@ -630,7 +636,10 @@ function buildSidebar() {
   // 🚦 Operación en vivo
   const gOp = addNavGroup(nav, '🚦', 'Operación en vivo', 'op');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
-  if (isAdmin() || isAuditor()) addNavAction(gOp, '🛰️', 'Salud del GPS', openGpsSalud, 'nav-gpssalud');
+  if (isAdmin() || isAuditor()) {
+    const avGps = GPS_ALERTAS ? ` <span class="nav-badge">${GPS_ALERTAS}</span>` : '';
+    addNavAction(gOp, '🛰️', 'Salud del GPS' + avGps, openGpsSalud, 'nav-gpssalud');
+  }
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
 
   // 📈 Cumplimiento y análisis
@@ -1993,7 +2002,38 @@ async function openPreopEnvio() {
   };
 }
 
-// ---------- Salud del GPS (sql/135 + sql/136) ----------
+// ---------- Vigilancia del GPS (sql/137) ----------
+// La base revisa cada 10 minutos los carros que SONAR tiene operando y abre una alerta cuando
+// uno deja de entregar posición. Aquí se trae ese número para el menú y se avisa en el momento:
+// una alerta que hay que ir a buscar no sirve de nada al que está en la vía.
+let GPS_ALERTAS = 0, _gpsAlertasVistas = null, _gpsAlertPedido = 0;
+
+async function refrescarGpsAlertas(rebuild = true) {
+  if (!isAdmin() && !isAuditor()) { GPS_ALERTAS = 0; return; }
+  let d = null;
+  try {
+    const { data, error } = await sb.rpc('gps_alertas_abiertas');
+    if (error) throw error;
+    d = data;
+  } catch (e) { return; }           // sin red se deja el número anterior, no se borra
+  if (!d || !d.ok) return;
+  GPS_ALERTAS = d.sin_ver || 0;
+
+  // Avisa solo de lo que NO estaba antes: al entrar no suena por las que ya venían de ayer.
+  const ids = new Set((d.lista || []).filter((a) => !a.vista).map((a) => a.id));
+  if (_gpsAlertasVistas) {
+    const nuevas = (d.lista || []).filter((a) => !a.vista && !_gpsAlertasVistas.has(a.id));
+    if (nuevas.length === 1) {
+      toast(`🛰️ El bus ${nuevas[0].movil} dejó de reportar posición`, 'err');
+    } else if (nuevas.length > 1) {
+      toast(`🛰️ ${nuevas.length} buses dejaron de reportar posición`, 'err');
+    }
+  }
+  _gpsAlertasVistas = ids;
+  if (rebuild) buildSidebar();
+}
+
+// ---------- Salud del GPS (sql/135 + sql/136 + sql/137) ----------
 // Un bus que sale a rodar con el GPS mudo no se ve en el mapa, y nadie se entera hasta que
 // alguien lo busca. Lo importante de esta pantalla es que SEPARA: un GPS quieto en un carro que
 // hoy no salió no es una falla (el bus no se movió); uno quieto en un carro que hizo 8 viajes
@@ -2006,21 +2046,39 @@ async function openGpsSalud() {
   m.querySelector('.modal-head h3').textContent = '🛰️ Salud del GPS';
   body.innerHTML = '<div class="loading">Revisando…</div>';
   m.hidden = false;
-  let d = null;
+  let d = null, al = null;
   try {
-    const { data, error } = await sb.rpc('gps_salud');
-    if (error) throw error;
-    d = data;
+    const [r1, r2] = await Promise.all([sb.rpc('gps_salud'), sb.rpc('gps_alertas_abiertas')]);
+    if (r1.error) throw r1.error;
+    d = r1.data; al = r2.error ? null : r2.data;
   } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo revisar.</div>'; return; }
   if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
   _gpsUltimo = d;
 
-  const op = d.operando || [], resto = d.resto || [];
+  const op = d.operando || [], resto = d.resto || [], alertas = (al && al.ok && al.lista) || [];
   const fila = (x, conViajes) => `<tr><td><b>${esc(x.movil || '—')}</b></td><td>${esc(x.placa || '')}</td>
     <td class="gs-mid">${esc(x.mid || '—')}</td><td>${esc(x.ultimo || 'nunca')}</td>
     <td class="gs-hace">${esc(x.hace || '')}</td>${conViajes ? `<td>${x.viajes || ''}</td>` : ''}</tr>`;
 
   body.innerHTML = `
+    ${alertas.length
+      ? `<div class="gs-alertas">
+          <h4>🔔 ${alertas.length} carro(s) dejaron de reportar estando en operación</h4>
+          <div class="gs-nota">Los abre la vigilancia sola, cada 10 minutos, sobre los carros que
+          SONAR tiene con viaje en curso. Se cierran solas cuando el equipo vuelve a dar señal.</div>
+          ${alertas.map((a) => `
+            <div class="gs-alerta${a.vista ? ' vista' : ''}" data-id="${a.id}">
+              <div class="gs-a-cab"><b>${esc(a.movil)}</b> ${esc(a.placa || '')}
+                ${a.ruta ? `<span class="gs-ruta">Ruta ${esc(a.ruta)}</span>` : ''}
+                <span class="spacer"></span><span class="gs-hace">hace ${esc(a.hace)}</span></div>
+              <div class="gs-a-det">Último reporte: ${esc(a.ultimo)}
+                ${a.desfase_min ? ` · <b>desfase de ${a.desfase_min} min con SONAR</b>` : ''}</div>
+              ${a.vista
+                ? `<div class="gs-a-vista">✔️ Vista por ${esc(a.vista_por || '')}${a.nota ? ' — ' + esc(a.nota) : ''}</div>`
+                : `<button type="button" class="btn gs-vista" data-id="${a.id}">Marcar como vista</button>`}
+            </div>`).join('')}
+         </div>`
+      : ''}
     <div class="pp-tarjetas">
       <div class="pp-card"><b>${d.salieron_hoy}</b><span>Salieron hoy</span></div>
       <div class="pp-card ok"><b>${d.frescos_15min}</b><span>Reportando</span></div>
@@ -2060,6 +2118,21 @@ async function openGpsSalud() {
       : ''}`;
   const btn = body.querySelector('#gs-xls');
   if (btn) btn.addEventListener('click', descargarGpsMudos);
+  body.querySelectorAll('.gs-vista').forEach((b) => b.addEventListener('click', () => marcarAlertaVista(b.dataset.id)));
+}
+
+// Dejar constancia de que un auditor ya la vio. No cierra la alerta: eso lo hace el equipo
+// cuando vuelve a reportar, que es el único hecho que prueba que se arregló.
+async function marcarAlertaVista(id) {
+  const nota = prompt('¿Qué se hizo o qué se supo del carro? (opcional)') || '';
+  try {
+    const { data, error } = await sb.rpc('gps_alerta_vista', { p_id: Number(id), p_nota: nota });
+    if (error) throw error;
+    if (!data || !data.ok) { toast((data && data.error) || 'No se pudo marcar.', 'err'); return; }
+    toast('Alerta marcada como vista.', 'ok');
+    await refrescarGpsAlertas(true);
+    openGpsSalud();
+  } catch (e) { toast('No se pudo marcar: ' + (e.message || e), 'err'); }
 }
 
 // La lista sale en Excel para poder enviarla: lleva el id del equipo en SONAR, que es por donde
@@ -4015,6 +4088,7 @@ async function refrescarAlertasDocs() {
   await refrescarLicencias(false);
   await refrescarTaller(false);
   await refrescarPreop(false);
+  await refrescarGpsAlertas(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
