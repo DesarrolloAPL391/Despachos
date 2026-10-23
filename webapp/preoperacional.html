@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Inspección preoperacional · Autobuses El Poblado</title>
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO del conductor (sql/127). No lee nada de la base por tabla: todo pasa por tres
+    RPC (preop_identificar, preop_movil, preop_guardar) que validan la cédula contra el perfil.
+    Se entra SOLO con la cédula, por eso identificar devuelve únicamente el nombre.
+    Pensado para el celular y para usarse todos los días: pocos toques, letra grande y la
+    pregunta completa a la vista (el conductor responde por lo que lee, no de memoria).
+  -->
+  <style>
+    :root {
+      --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b;
+      --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; --okbg: #e9f8ee;
+      --mal: #dc2626; --malbg: #fdecec; --na: #94a3b8;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+           background: var(--fondo); color: var(--txt); font-size: 16px; overflow-x: hidden; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%);
+             color: #fff; padding: 20px 16px 52px; text-align: center; }
+    header img { width: 58px; height: 58px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 20px; margin: 10px 0 3px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 640px; margin: -38px auto 40px; padding: 0 14px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10);
+            padding: 18px; margin-bottom: 14px; }
+    h2 { font-size: 17px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+    label { display: block; font-weight: 600; font-size: 14px; margin: 0 0 6px; }
+    input[type=text], input[type=tel], input[type=number], textarea {
+      width: 100%; padding: 14px; border: 1px solid var(--borde); border-radius: 12px;
+      font-size: 17px; font-family: inherit; background: #fff; color: var(--txt); }
+    input:focus, textarea:focus { outline: 2px solid var(--rojo); outline-offset: 1px; }
+    .grande { font-size: 24px; text-align: center; letter-spacing: 2px; font-weight: 700; }
+    .btn { width: 100%; padding: 16px; border: 0; border-radius: 14px; font-size: 17px;
+           font-weight: 800; cursor: pointer; background: var(--rojo); color: #fff; }
+    .btn:disabled { opacity: .5; }
+    .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); font-weight: 600; }
+    .err { color: var(--mal); font-size: 14px; margin-top: 8px; min-height: 18px; font-weight: 600; }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+    /* --- Saludo --- */
+    .hola { display: flex; align-items: center; gap: 12px; background: var(--okbg);
+            border: 1px solid #bfe6cb; border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+    .hola .ini { width: 42px; height: 42px; border-radius: 50%; background: var(--ok); color: #fff;
+                 display: grid; place-items: center; font-weight: 800; font-size: 17px; flex: 0 0 auto; }
+    .hola b { display: block; font-size: 15px; }
+    .hola span { font-size: 13px; color: #15803d; }
+
+    /* --- Progreso pegado arriba --- */
+    .prog { position: sticky; top: 0; z-index: 20; background: #fff; border-radius: 0 0 14px 14px;
+            padding: 10px 14px 12px; box-shadow: 0 6px 18px rgba(0,0,0,.08); margin: 0 -14px 14px; }
+    .prog-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; }
+    .prog-top b { font-size: 15px; }
+    .barra { height: 8px; background: #eee; border-radius: 99px; margin-top: 7px; overflow: hidden; }
+    .barra i { display: block; height: 100%; width: 0; background: var(--ok); border-radius: 99px;
+               transition: width .25s ease; }
+
+    /* --- Pregunta --- */
+    .grupo { font-size: 12px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+             color: var(--muted); margin: 18px 4px 8px; }
+    .q { background: #fff; border-radius: 14px; border: 1px solid var(--borde); padding: 14px;
+         margin-bottom: 10px; }
+    .q.resp-bien { border-color: #bfe6cb; background: linear-gradient(0deg, #fbfffc, #fff); }
+    .q.resp-mal  { border-color: #f3c0c0; background: linear-gradient(0deg, #fffbfb, #fff); }
+    .q-top { display: flex; gap: 11px; align-items: flex-start; }
+    .q-ico { font-size: 26px; line-height: 1; flex: 0 0 auto; }
+    .q-tit { font-weight: 800; font-size: 16px; }
+    .q-txt { font-size: 13.5px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+    .q-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+    .rb { padding: 13px 8px; border-radius: 12px; border: 2px solid var(--borde); background: #fff;
+          font-size: 15px; font-weight: 800; cursor: pointer; color: var(--muted); }
+    .rb.bien.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+    .rb.mal.on  { background: var(--mal); border-color: var(--mal); color: #fff; }
+    /* No hay "no aplica": cada punto se responde Bien o Mal (regla del 22/10/2026). */
+    .q-com { margin-top: 11px; display: none; }
+    .q.resp-mal .q-com { display: block; }
+    .q-com textarea { min-height: 72px; font-size: 15px; }
+
+    /* --- Foto (no hay firma: la quitó el usuario el 22/10/2026) --- */
+    .foto-prev { width: 100%; border-radius: 12px; margin-top: 10px; display: none; }
+    .req { font-weight: 400; color: var(--mal); }
+    .opc { font-weight: 400; color: var(--muted); }
+
+    /* --- Elegir el bus: QR o la lista de vehículos activos --- */
+    .btn-qr { background: #1d4ed8; display: flex; align-items: center; justify-content: center; gap: 9px; }
+    .o-sep { display: flex; align-items: center; gap: 10px; color: var(--muted);
+             font-size: 13px; font-weight: 700; margin: 14px 0 12px; }
+    .o-sep::before, .o-sep::after { content: ''; flex: 1; height: 1px; background: var(--borde); }
+    .buscar { background: #fff url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%236b6b6b' stroke-width='2'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M12.5 12.5 17 17'/%3E%3C/svg%3E") no-repeat 13px center;
+              padding-left: 40px !important; }
+    .lista-buses { border: 1px solid var(--borde); border-radius: 12px; overflow: hidden; margin-top: 9px; }
+    .lista-buses .cab { background: #faf7f7; border-bottom: 1px solid var(--borde); padding: 9px 13px;
+                        font-size: 12.5px; font-weight: 700; color: var(--muted); }
+    .lb-scroll { max-height: 264px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .lb-scroll button { display: flex; width: 100%; gap: 10px; align-items: baseline; text-align: left;
+                        padding: 13px 14px; border: 0; border-top: 1px solid #f4eeee; background: #fff;
+                        font-size: 16px; font-family: inherit; cursor: pointer; color: var(--txt); }
+    .lb-scroll button:first-child { border-top: 0; }
+    .lb-scroll button b { font-size: 17px; min-width: 60px; }
+    .lb-scroll button span { color: var(--muted); font-size: 14px; }
+    .lb-scroll button.sel { background: #eaf4ff; }
+    .lb-scroll button.sel::after { content: '✓'; margin-left: auto; color: #1d4ed8; font-weight: 800; }
+    .lb-vacio { padding: 16px 14px; color: var(--muted); font-size: 14px; }
+
+    /* --- Guía: qué tiene que hacer ahora --- */
+    .pasos { display: flex; gap: 6px; justify-content: center; margin: 14px auto 0; max-width: 340px; }
+    .pasos div { flex: 1; font-size: 10px; font-weight: 800; letter-spacing: .3px;
+                 text-transform: uppercase; color: rgba(255,255,255,.6); text-align: center; }
+    .pasos i { display: block; height: 5px; border-radius: 99px; background: rgba(255,255,255,.28);
+               margin-bottom: 5px; transition: background .25s ease; }
+    .pasos div.hecho i { background: rgba(255,255,255,.8); }
+    .pasos div.on { color: #fff; }
+    .pasos div.on i { background: #fff; }
+    .guia { display: flex; gap: 10px; align-items: flex-start; background: #eff6ff;
+            border: 1px solid #c8ddfd; border-radius: 12px; padding: 12px 13px; margin-bottom: 14px;
+            font-size: 14px; line-height: 1.42; color: #1e3a8a; }
+    .guia .ic { font-size: 18px; line-height: 1.2; }
+    .guia b { display: block; margin-bottom: 1px; }
+    .chk { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 700;
+           color: var(--muted); margin-top: 9px; }
+    .chk.ok { color: #15803d; }
+
+    /* --- Movimiento (se respeta a quien lo tenga desactivado) --- */
+    @keyframes entra { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+    @keyframes late  { 0%,100% { transform: none; } 40% { transform: scale(1.04); } }
+    .anim { animation: entra .3s ease both; }
+    .q.late { animation: late .3s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .anim, .q.late { animation: none; }
+      * { transition: none !important; }
+    }
+
+    /* --- Pantallas grandes y pantallas chicas --- */
+    @media (min-width: 720px) {
+      main { max-width: 720px; }
+      header { padding: 26px 16px 58px; }
+      header h1 { font-size: 23px; }
+      .card { padding: 24px; }
+      .lb-scroll { max-height: 340px; }
+    }
+    @media (max-width: 340px) {
+      .grande { font-size: 20px; letter-spacing: 1px; }
+      .btn { padding: 14px; font-size: 16px; }
+      .q-ico { font-size: 22px; }
+    }
+
+    /* --- Cámara del QR --- */
+    .qr-cap { position: fixed; inset: 0; background: #000; z-index: 60; display: none;
+              flex-direction: column; }
+    .qr-cap.on { display: flex; }
+    .qr-cap video { flex: 1; width: 100%; object-fit: cover; }
+    .qr-marco { position: absolute; top: 50%; left: 50%; width: 65vw; height: 65vw;
+                max-width: 290px; max-height: 290px; transform: translate(-50%, -50%);
+                border: 3px solid rgba(255,255,255,.9); border-radius: 20px;
+                box-shadow: 0 0 0 100vmax rgba(0,0,0,.45); }
+    .qr-pie { padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); background: #000; }
+    .qr-pie p { color: #fff; text-align: center; margin: 0 0 12px; font-size: 15px; }
+
+    /* --- Dibujo animado: así debe quedar la foto --- */
+    .demo-foto { background: #f3f6fb; border: 1px solid #dde6f3; border-radius: 14px;
+                 padding: 10px; margin: 0 0 12px; }
+    .demo-foto svg { display: block; width: 100%; height: auto; border-radius: 10px; }
+    .demo-pie { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 7px; font-weight: 600; }
+    .d-paisaje { animation: pasa 7s linear infinite; }
+    .d-encuadre { animation: encuadra 2.8s ease-in-out infinite; transform-origin: 200px 110px; }
+    .d-flash { animation: flash 2.8s ease-in-out infinite; }
+    .d-brazo { animation: alza 2.8s ease-in-out infinite; transform-origin: 232px 120px; }
+    .d-pin { animation: cae 2.8s ease-in-out infinite; transform-origin: 300px 40px; }
+    @keyframes pasa     { from { transform: translateX(0); } to { transform: translateX(-70px); } }
+    @keyframes encuadra { 0% { opacity: .35; transform: scale(1.16); }
+                          32%, 100% { opacity: 1; transform: scale(1); } }
+    @keyframes flash    { 0%, 70% { opacity: 0; } 74% { opacity: .9; } 100% { opacity: 0; } }
+    @keyframes alza     { 0% { transform: translateY(14px) rotate(7deg); opacity: .55; }
+                          30%, 100% { transform: none; opacity: 1; } }
+    @keyframes cae      { 0% { opacity: .25; transform: translateY(-9px); }
+                          80%, 100% { opacity: 1; transform: translateY(0); } }
+    @media (prefers-reduced-motion: reduce) {
+      .d-paisaje, .d-encuadre, .d-flash, .d-brazo, .d-pin { animation: none; }
+      .d-encuadre, .d-brazo, .d-pin { opacity: 1; }
+    }
+    /* Guía ovalada dentro de la cámara */
+    .foto-guia { position: absolute; top: 44%; left: 50%; width: 58vw; height: 74vw;
+                 max-width: 250px; max-height: 320px; transform: translate(-50%, -50%);
+                 border: 3px dashed rgba(255,255,255,.85); border-radius: 50%;
+                 box-shadow: 0 0 0 100vmax rgba(0,0,0,.4); pointer-events: none; }
+
+    /* --- Pie legal --- */
+    .legal { text-align: center; color: var(--muted); font-size: 12px; line-height: 1.5;
+             padding: 4px 10px 10px; }
+
+    /* --- Resumen y gracias --- */
+    .res { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .res div { border-radius: 12px; padding: 12px; text-align: center; }
+    .res .b { background: var(--okbg); color: #15803d; }
+    .res .m { background: var(--malbg); color: #b91c1c; }
+    .res b { display: block; font-size: 26px; }
+    .res span { font-size: 12.5px; font-weight: 700; }
+    .gracias { text-align: center; padding: 26px 18px; }
+    .gracias .tick { font-size: 54px; }
+    .gracias h2 { font-size: 21px; margin: 8px 0; }
+    .lista-mal { text-align: left; background: var(--malbg); border-radius: 12px; padding: 12px;
+                 margin-top: 14px; font-size: 14px; }
+    .lista-mal b { display: block; margin-bottom: 6px; color: #b91c1c; }
+    .lista-mal ul { margin: 0; padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/logo.png" alt="APL" />
+    <h1>Inspección preoperacional</h1>
+    <p id="hd-sub">Antes de salir a ruta</p>
+    <div class="pasos" id="pasos">
+      <div data-p="1"><i></i>Tú</div>
+      <div data-p="2"><i></i>El bus</div>
+      <div data-p="3"><i></i>Revisión</div>
+      <div data-p="4"><i></i>Foto</div>
+    </div>
+  </header>
+
+  <main>
+    <!-- PASO 1 · cédula -->
+    <section class="card" id="p1">
+      <h2>👋 Empecemos</h2>
+      <div class="guia">
+        <span class="ic">1️⃣</span>
+        <div><b>Escribe tu número de cédula.</b>Con ella te identificamos: no necesitas usuario ni clave.</div>
+      </div>
+      <label for="cedula">Cédula</label>
+      <input type="tel" id="cedula" class="grande" inputmode="numeric" autocomplete="off" placeholder="1 0 2 4 …" />
+      <div class="err" id="e1"></div>
+      <button class="btn" id="b1">Continuar</button>
+    </section>
+
+    <!-- PASO 2 · bus y kilometraje -->
+    <section class="card" id="p2" hidden>
+      <div class="hola"><div class="ini" id="ini">—</div><div><b id="nom">—</b><span>Conductor identificado</span></div></div>
+      <h2>🚌 ¿Qué bus vas a revisar?</h2>
+      <div class="guia">
+        <span class="ic">2️⃣</span>
+        <div><b>Lee el QR que el bus tiene junto a la placa.</b>Si no se deja leer, búscalo en la lista de abajo y tócalo.</div>
+      </div>
+
+      <button class="btn btn-qr" id="b-qr">📷 Escanear el QR del bus</button>
+      <div class="o-sep"><span>o elígelo de la lista</span></div>
+
+      <input type="text" id="movil" class="buscar" inputmode="text" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" placeholder="Buscar por número o placa" />
+      <div class="lista-buses">
+        <div class="cab" id="lb-cab">Cargando los vehículos activos…</div>
+        <div class="lb-scroll" id="lb-scroll"></div>
+      </div>
+
+      <div id="placa-ok" class="hola" style="display:none;margin-top:12px">
+        <div class="ini" style="background:#1d4ed8">🚌</div>
+        <div><b id="placa-txt">—</b><span>Este es el bus que vas a revisar</span></div>
+      </div>
+      <div style="margin-top:14px">
+        <label for="kms">Kilometraje de hoy <span class="opc">(si lo tienes a la mano)</span></label>
+        <input type="tel" id="kms" inputmode="numeric" autocomplete="off" placeholder="Ej. 254300" />
+      </div>
+      <div class="err" id="e2"></div>
+      <button class="btn" id="b2" disabled>Primero elige el bus</button>
+      <button class="btn btn-sec" id="b2v" style="margin-top:8px">Volver</button>
+    </section>
+
+    <!-- PASO 3 · preguntas -->
+    <section id="p3" hidden>
+      <div class="prog">
+        <div class="prog-top"><b id="pg-txt">0 de 14</b><span id="pg-sub">Marca cada punto</span></div>
+        <div class="barra"><i id="pg-barra"></i></div>
+      </div>
+      <div class="guia">
+        <span class="ic">3️⃣</span>
+        <div><b>Revisa el bus punto por punto.</b>Marca <b style="display:inline">Bien</b> o <b style="display:inline">Mal</b> en cada uno. Si marcas Mal, cuéntanos qué pasa: eso es lo que lee el taller.</div>
+      </div>
+      <div id="preguntas"></div>
+      <div class="err" id="e3" style="padding:0 4px"></div>
+      <button class="btn" id="b3" disabled>Te faltan puntos por marcar</button>
+      <button class="btn btn-sec" id="b3v" style="margin-top:8px">Volver</button>
+    </section>
+
+    <!-- PASO 4 · firma y envío -->
+    <section class="card" id="p4" hidden>
+      <h2>📸 Para terminar</h2>
+      <div class="guia">
+        <span class="ic">4️⃣</span>
+        <div><b>Falta una sola cosa: tu foto dentro del bus.</b>Se toma aquí mismo con la cámara y queda con el sitio donde estás.
+          <div class="chk" id="ck-foto">⬜ Foto dentro del bus</div>
+          <div class="chk" id="ck-sitio">📍 Buscando dónde estás…</div>
+        </div>
+      </div>
+      <div class="res">
+        <div class="b"><b id="r-bien">0</b><span>EN BUEN ESTADO</span></div>
+        <div class="m"><b id="r-mal">0</b><span>CON NOVEDAD</span></div>
+      </div>
+      <div id="r-lista"></div>
+      <div style="margin-top:6px">
+        <label>📸 Foto tuya dentro del bus <span class="req">(obligatoria)</span></label>
+        <p class="hint" style="margin:0 0 10px">Tómatela en el puesto del conductor. Es la constancia de que la revisión se hizo en el carro, por eso se toma en el momento y no se pueden subir fotos guardadas.</p>
+        <!-- Dibujo animado: así tiene que quedar la foto. Se mueve solo, para que se entienda
+             sin leer (muchos conductores revisan esto de afán y con el celular en una mano). -->
+        <div class="demo-foto" aria-hidden="true">
+          <svg viewBox="0 0 360 200" role="img">
+            <defs>
+              <clipPath id="cv"><rect x="22" y="12" width="316" height="78" rx="11" /></clipPath>
+              <linearGradient id="cielo" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#cfe8fb" /><stop offset="1" stop-color="#eaf5ff" />
+              </linearGradient>
+            </defs>
+            <rect width="360" height="200" rx="10" fill="#e7eef8" />
+            <!-- Ventana del bus, con el paisaje pasando -->
+            <rect x="22" y="12" width="316" height="78" rx="11" fill="url(#cielo)" />
+            <g clip-path="url(#cv)">
+              <g class="d-paisaje">
+                <path d="M22 90 L70 48 L118 90 Z" fill="#b9d5c3" />
+                <path d="M96 90 L150 40 L204 90 Z" fill="#a9ccb6" />
+                <path d="M182 90 L232 50 L282 90 Z" fill="#b9d5c3" />
+                <path d="M262 90 L312 42 L362 90 Z" fill="#a9ccb6" />
+                <path d="M342 90 L392 50 L442 90 Z" fill="#b9d5c3" />
+                <g fill="#9bb0c4">
+                  <rect x="58" y="54" width="4" height="36" /><rect x="168" y="50" width="4" height="40" />
+                  <rect x="278" y="54" width="4" height="36" /><rect x="388" y="50" width="4" height="40" />
+                </g>
+              </g>
+            </g>
+            <rect x="22" y="12" width="316" height="78" rx="11" fill="none" stroke="#b7c6d8" stroke-width="3" />
+            <!-- Tablero y volante (quedan detrás del conductor) -->
+            <path d="M0 108 Q180 92 360 108 L360 200 L0 200 Z" fill="#33415a" />
+            <g stroke="#8fa3bd" fill="none">
+              <ellipse cx="68" cy="152" rx="38" ry="17" stroke-width="7" />
+              <path d="M38 149 H98 M68 135 V169" stroke-width="5" />
+            </g>
+            <!-- El conductor, de frente, como lo ve la cámara -->
+            <path d="M138 200 q62 -62 124 0 Z" fill="#ED1C24" />
+            <rect x="186" y="112" width="28" height="22" rx="8" fill="#eeb98f" />
+            <circle cx="200" cy="92" r="31" fill="#f6cfae" />
+            <path d="M170 86 q30 -36 60 0 q-8 -28 -30 -28 q-22 0 -30 28 Z" fill="#45342a" />
+            <g fill="#3f3328"><circle cx="189" cy="90" r="3" /><circle cx="211" cy="90" r="3" /></g>
+            <path d="M190 104 q10 9 20 0" stroke="#3f3328" stroke-width="2.6" fill="none" stroke-linecap="round" />
+            <!-- Brazo con el celular -->
+            <g class="d-brazo">
+              <path d="M252 192 q36 -30 30 -62" stroke="#f6cfae" stroke-width="14"
+                    stroke-linecap="round" fill="none" />
+              <rect x="268" y="104" width="26" height="40" rx="5" fill="#1f2937" />
+              <rect x="271" y="108" width="20" height="32" rx="3" fill="#7cb8f7" />
+            </g>
+            <!-- Encuadre y destello -->
+            <rect class="d-encuadre" x="146" y="48" width="108" height="124" rx="12"
+                  fill="none" stroke="#1d4ed8" stroke-width="3" stroke-dasharray="13 10" />
+            <rect class="d-flash" width="360" height="200" rx="10" fill="#fff" />
+            <!-- La ubicación queda con la foto -->
+            <g class="d-pin">
+              <path d="M314 24 a13 13 0 0 1 13 13 c0 10 -13 23 -13 23 s-13 -13 -13 -23 a13 13 0 0 1 13 -13 Z"
+                    fill="#16a34a" />
+              <circle cx="314" cy="37" r="5" fill="#fff" />
+            </g>
+          </svg>
+          <div class="demo-pie">Tú, en el puesto del conductor, con el bus de fondo</div>
+        </div>
+        <button class="btn btn-qr" id="b-foto">📷 Tomar la foto ahora</button>
+        <img id="foto-prev" class="foto-prev" alt="Foto del conductor dentro del bus" />
+        <button class="btn btn-sec" id="b-refoto" style="margin-top:8px" hidden>🔄 Repetir la foto</button>
+      </div>
+      <div class="err" id="e4"></div>
+      <button class="btn" id="b4" style="margin-top:12px" disabled>Firma y tómate la foto</button>
+      <button class="btn btn-sec" id="b4v" style="margin-top:8px">Volver</button>
+    </section>
+
+    <!-- PASO 5 · gracias -->
+    <section class="card gracias" id="p5" hidden>
+      <div class="tick" id="g-ico">✅</div>
+      <h2 id="g-tit">¡Listo!</h2>
+      <p class="sub" id="g-txt"></p>
+      <div id="g-lista"></div>
+    </section>
+
+    <p class="legal">
+      Alistamiento diario del vehículo · Resolución 315 de 2013 del Ministerio de Transporte, artículo 4.<br />
+      Autobuses El Poblado S.A.
+    </p>
+  </main>
+
+  <!-- Cámara: sirve para leer el QR del bus y para tomar la foto del conductor.
+       La foto se toma AQUÍ, no con el selector de archivos: así no se puede subir una
+       imagen vieja de la galería. -->
+  <div class="qr-cap" id="qr-cap">
+    <video id="qr-video" playsinline muted></video>
+    <div class="qr-marco" id="qr-marco"></div>
+    <div class="foto-guia" id="foto-guia" hidden></div>
+    <div class="qr-pie">
+      <p id="qr-msg">Apunta la cámara al QR del bus…</p>
+      <button class="btn" id="qr-tomar" hidden>📸 Tomar la foto</button>
+      <button class="btn btn-sec" id="qr-cerrar" style="margin-top:8px">Cancelar</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const $ = (id) => document.getElementById(id);
+    const err = (el, m) => { $(el).textContent = m || ''; };
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    // Cambiar de paso: se marca arriba dónde va y la tarjeta entra con un pequeño movimiento,
+    // para que se note que avanzó (el conductor lo hace de afán, en la calle).
+    const paso = (n) => {
+      [1, 2, 3, 4, 5].forEach((i) => { $('p' + i).hidden = (i !== n); });
+      const vis = $('p' + n);
+      vis.classList.remove('anim'); void vis.offsetWidth; vis.classList.add('anim');
+      document.querySelectorAll('#pasos div').forEach((d) => {
+        const p = Number(d.dataset.p);
+        d.classList.toggle('on', p === n);
+        d.classList.toggle('hecho', p < n || n === 5);
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    paso(1);
+
+    let CED = '', NOMBRE = '', MOVIL = '', PLACA = '', PREGUNTAS = [];
+    const RESP = new Map(); // orden → { respuesta, comentario }
+
+    // ---------- Paso 1: identificarse con la cédula ----------
+    $('b1').addEventListener('click', async () => {
+      const ced = ($('cedula').value || '').replace(/\D/g, '');
+      if (ced.length < 4) return err('e1', 'Escribe tu número de cédula.');
+      err('e1', '');
+      $('b1').disabled = true; $('b1').textContent = 'Buscando…';
+      try {
+        const { data, error } = await sb.rpc('preop_identificar', { p_cedula: ced });
+        if (error) throw error;
+        if (!data || !data.ok) return err('e1', (data && data.error) || 'No se pudo verificar la cédula.');
+        CED = ced; NOMBRE = data.nombre || ''; PREGUNTAS = data.preguntas || [];
+        $('nom').textContent = NOMBRE;
+        $('ini').textContent = (NOMBRE.trim()[0] || '?').toUpperCase();
+        pintarPreguntas();
+        paso(2);
+      } catch (ex) { err('e1', 'No se pudo conectar. Revisa la señal e intenta otra vez.'); }
+      finally { $('b1').disabled = false; $('b1').textContent = 'Continuar'; }
+    });
+    $('cedula').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('b1').click(); });
+
+    // ---------- Paso 2: el bus (QR, lista o escribiéndolo) ----------
+    // La lista de buses activos se trae una vez: con ella la búsqueda es instantánea y el QR
+    // se empareja aquí mismo, sin depender de la señal mientras el conductor está en el patio.
+    let BUSES = [], FILTRADOS = [];
+    const normP = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    (async () => {
+      try {
+        const { data } = await sb.rpc('preop_buses');
+        BUSES = Array.isArray(data) ? data : [];
+      } catch (ex) { BUSES = []; } // sin lista: se valida contra el servidor al escribir
+      pintarLista('');
+    })();
+
+    // La lista está siempre a la vista: son los vehículos ACTIVOS del parque, los únicos
+    // que se pueden revisar. El buscador la filtra; tocar una fila elige el bus.
+    function pintarLista(filtro) {
+      const cont = $('lb-scroll'), cab = $('lb-cab');
+      if (!BUSES.length) {
+        cab.textContent = 'No se pudo cargar la lista';
+        cont.innerHTML = '<div class="lb-vacio">Sin señal para traer los vehículos. Escribe el número del bus y sigue.</div>';
+        return;
+      }
+      const t = normP(filtro);
+      FILTRADOS = t ? BUSES.filter((b) => normP(b.movil).startsWith(t) || normP(b.placa).includes(t)) : BUSES;
+      cab.textContent = t
+        ? FILTRADOS.length + ' de ' + BUSES.length + ' vehículos activos coinciden'
+        : BUSES.length + ' vehículos activos de la compañía';
+      cont.innerHTML = FILTRADOS.length
+        ? FILTRADOS.map((b, i) => '<button type="button" data-i="' + i + '"'
+            + (b.movil === MOVIL ? ' class="sel"' : '') + '><b>' + esc(b.movil)
+            + '</b><span>' + esc(b.placa || '') + '</span></button>').join('')
+        : '<div class="lb-vacio">Ningún vehículo activo coincide con «' + esc(filtro) + '».</div>';
+    }
+    $('lb-scroll').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-i]'); if (!b) return;
+      const item = FILTRADOS[Number(b.dataset.i)];
+      if (item) elegirBus(item, true);
+    });
+
+    function limpiarBus() {
+      MOVIL = ''; PLACA = '';
+      $('placa-ok').style.display = 'none';
+      $('b2').disabled = true; $('b2').textContent = 'Primero elige el bus';
+      $('lb-scroll').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+    }
+    function elegirBus(b, desdeLista) {
+      MOVIL = b.movil; PLACA = b.placa || '';
+      $('placa-txt').textContent = 'Bus ' + b.movil + (b.placa ? ' · ' + b.placa : '');
+      const caja = $('placa-ok');
+      caja.style.display = 'flex';
+      caja.classList.remove('anim'); void caja.offsetWidth; caja.classList.add('anim');
+      $('b2').disabled = false; $('b2').textContent = '✅ Revisar el bus ' + b.movil;
+      err('e2', '');
+      $('lb-scroll').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+      const i = FILTRADOS.findIndex((x) => x.movil === b.movil);
+      const el = i >= 0 ? $('lb-scroll').children[i] : null;
+      if (el && el.tagName === 'BUTTON') {
+        el.classList.add('sel');
+        if (!desdeLista) el.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    let _tMovil = null;
+    $('movil').addEventListener('input', () => {
+      clearTimeout(_tMovil);
+      limpiarBus();
+      const txt = $('movil').value;
+      pintarLista(txt);
+      const t = normP(txt);
+      if (!t) return err('e2', '');
+
+      if (BUSES.length) { // con la lista cargada: todo local, sin esperar al servidor
+        const exacto = BUSES.find((b) => normP(b.movil) === t) || BUSES.find((b) => normP(b.placa) === t);
+        if (exacto) elegirBus(exacto, false);
+        return;
+      }
+      // Respaldo si la lista no cargó: se valida el número contra el servidor
+      _tMovil = setTimeout(async () => {
+        try {
+          const { data } = await sb.rpc('preop_movil', { p_movil: $('movil').value.trim() });
+          if (data && data.ok) elegirBus({ movil: data.movil, placa: data.placa }, false);
+          else err('e2', (data && data.error) || '');
+        } catch (ex) { /* sin señal: se valida al enviar */ }
+      }, 400);
+    });
+
+    // --- Leer el QR que lleva el bus junto a la placa ---
+    // No se exige un formato fijo del sticker: sirve el número, la placa, una URL que la
+    // contenga o un JSON. Si no se reconoce, se muestra lo leído y se puede buscar a mano.
+    function emparejarQr(texto) {
+      let cands = [String(texto).trim()];
+      try {
+        const j = JSON.parse(cands[0]);
+        if (j && typeof j === 'object') {
+          const c = [j.movil, j.numero, j.numero_interno, j.placa, j.plate, j.bus]
+            .filter((x) => x != null).map(String);
+          if (c.length) cands = c;
+        }
+      } catch (ex) { /* no era JSON */ }
+      for (const c of cands) {
+        const t = normP(c); if (!t) continue;
+        const m = BUSES.find((b) => normP(b.placa) && normP(b.placa) === t)
+          || BUSES.find((b) => normP(b.movil) === t)
+          || BUSES.find((b) => { const p = normP(b.placa); return p.length >= 5 && t.includes(p); });
+        if (m) return m;
+      }
+      return null;
+    }
+    $('b-qr').addEventListener('click', async () => {
+      const t = await leerQr();
+      if (!t) return;
+      if (!BUSES.length) return err('e2', 'No pude cargar la lista de buses. Escribe el número.');
+      const b = emparejarQr(t);
+      if (!b) return err('e2', 'No reconocí ese QR («' + t.slice(0, 30) + '»). Búscalo en la lista.');
+      $('movil').value = b.movil;
+      pintarLista(b.movil);
+      elegirBus(b, false);
+    });
+
+    let qrStream = null, qrRAF = null, qrRes = null;
+    function ensureJsQR() {
+      if (window.jsQR) return Promise.resolve();
+      return new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'js/jsqr.min.js'; s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    function pararQr() {
+      if (qrRAF) { cancelAnimationFrame(qrRAF); qrRAF = null; }
+      if (qrStream) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; }
+      $('qr-video').srcObject = null;
+    }
+    function cerrarQr(texto) {
+      pararQr(); $('qr-cap').classList.remove('on');
+      const r = qrRes; qrRes = null; if (r) r(texto || null);
+    }
+    $('qr-cerrar').addEventListener('click', () => cerrarQr(null));
+
+    // Arranca la cámara en el overlay. 'environment' = la de atrás (QR), 'user' = la frontal (foto).
+    async function arrancarCam(facing, pista, sinPermiso) {
+      const cap = $('qr-cap'), video = $('qr-video'), msg = $('qr-msg');
+      pararQr(); // sana una cámara que hubiera quedado abierta
+      msg.textContent = 'Iniciando cámara…';
+      cap.classList.add('on');
+      try {
+        qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } } });
+      } catch (ex) { msg.textContent = sinPermiso; return false; }
+      if (!cap.classList.contains('on')) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; return false; }
+      video.srcObject = qrStream;
+      try { await video.play(); } catch (ex) { /* algunos navegadores lo bloquean y siguen */ }
+      msg.textContent = pista;
+      return true;
+    }
+
+    // Foto del conductor: se congela el cuadro del video, se reduce y se devuelve en base64.
+    function tomarSelfie() {
+      return new Promise((resolve) => {
+        qrRes = resolve;
+        $('qr-marco').hidden = true;
+        $('foto-guia').hidden = false;
+        $('qr-tomar').hidden = false;
+        $('qr-tomar').onclick = () => {
+          const v = $('qr-video');
+          if (!v.videoWidth) return;
+          const max = 1024, f = Math.min(1, max / Math.max(v.videoWidth, v.videoHeight));
+          const c = document.createElement('canvas');
+          c.width = Math.round(v.videoWidth * f); c.height = Math.round(v.videoHeight * f);
+          c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+          cerrarQr(c.toDataURL('image/jpeg', 0.6));
+        };
+        arrancarCam('user', 'Ponte en el puesto del conductor y toma la foto',
+          'No se pudo abrir la cámara. Dale permiso: la foto se toma aquí, no se pueden subir fotos guardadas.');
+      });
+    }
+
+    function leerQr() {
+      const cap = $('qr-cap'), video = $('qr-video'), msg = $('qr-msg');
+      $('qr-marco').hidden = false;
+      $('foto-guia').hidden = true;
+      $('qr-tomar').hidden = true;
+      return new Promise((resolve) => {
+        qrRes = resolve;
+        (async () => {
+          const ok = await arrancarCam('environment', 'Apunta la cámara al QR del bus…',
+            'No se pudo abrir la cámara. Dale permiso o busca el bus en la lista.');
+          if (!ok) return;
+
+          let nativo = null;
+          if ('BarcodeDetector' in window) {
+            try {
+              const f = await window.BarcodeDetector.getSupportedFormats();
+              if (f.includes('qr_code')) nativo = new window.BarcodeDetector({ formats: ['qr_code'] });
+            } catch (ex) { /* se usa jsQR */ }
+          }
+          if (!nativo) {
+            try { await ensureJsQR(); }
+            catch (ex) { msg.textContent = 'No se pudo cargar el lector. Busca el bus en la lista.'; return; }
+          }
+
+          const c = document.createElement('canvas');
+          const ctx2 = c.getContext('2d', { willReadFrequently: true });
+          const tick = async () => {
+            if (!cap.classList.contains('on') || !qrStream) return;
+            if (video.readyState >= 2 && video.videoWidth) {
+              let txt = null;
+              try {
+                if (nativo) {
+                  const codes = await nativo.detect(video);
+                  if (codes && codes.length) txt = codes[0].rawValue;
+                } else if (window.jsQR) {
+                  c.width = video.videoWidth; c.height = video.videoHeight;
+                  ctx2.drawImage(video, 0, 0, c.width, c.height);
+                  const img = ctx2.getImageData(0, 0, c.width, c.height);
+                  const r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+                  if (r) txt = r.data;
+                }
+              } catch (ex) { /* un cuadro ilegible no detiene la lectura */ }
+              if (txt && txt.trim()) { cerrarQr(txt.trim()); return; }
+            }
+            qrRAF = requestAnimationFrame(tick);
+          };
+          qrRAF = requestAnimationFrame(tick);
+        })();
+      });
+    }
+
+    // El kilometraje NO detiene la revisión; el bus sí tiene que estar confirmado.
+    $('b2').addEventListener('click', async () => {
+      if (!MOVIL || !PLACA) {
+        const m = ($('movil').value || '').trim();
+        if (!m) return err('e2', 'Escanea el QR del bus o búscalo en la lista.');
+        try {
+          const { data } = await sb.rpc('preop_movil', { p_movil: m });
+          if (data && data.ok) elegirBus({ movil: data.movil, placa: data.placa }, false);
+          else return err('e2', (data && data.error) || 'Ese bus no aparece activo. Revísalo.');
+        } catch (ex) { return err('e2', 'No hay señal para confirmar el bus. Intenta otra vez.'); }
+      }
+      err('e2', '');
+      $('hd-sub').textContent = 'Bus ' + MOVIL + ' · ' + PLACA;
+      paso(3);
+    });
+    $('b2v').addEventListener('click', () => { cerrarSugs(); paso(1); });
+
+    // ---------- Paso 3: las preguntas ----------
+    function pintarPreguntas() {
+      const cont = $('preguntas'); cont.innerHTML = '';
+      let grupoActual = '';
+      for (const q of PREGUNTAS) {
+        if (q.grupo && q.grupo !== grupoActual) {
+          grupoActual = q.grupo;
+          const h = document.createElement('div');
+          h.className = 'grupo'; h.textContent = grupoActual;
+          cont.appendChild(h);
+        }
+        const d = document.createElement('div');
+        d.className = 'q'; d.dataset.orden = q.orden;
+        d.innerHTML = `
+          <div class="q-top">
+            <div class="q-ico">${esc(q.icono || '🔎')}</div>
+            <div>
+              <div class="q-tit">${esc(q.corto || ('Punto ' + q.orden))}</div>
+              <div class="q-txt">${esc(q.texto)}</div>
+            </div>
+          </div>
+          <div class="q-btns">
+            <button type="button" class="rb bien" data-r="BIEN">✅ Bien</button>
+            <button type="button" class="rb mal"  data-r="MAL">⚠️ Mal</button>
+          </div>
+          <div class="q-com">
+            <label>¿Qué le pasa? <span style="font-weight:400;color:var(--muted)">(lo lee el taller)</span></label>
+            <textarea placeholder="Describe la falla con el mayor detalle que puedas"></textarea>
+          </div>`;
+        d.querySelectorAll('[data-r]').forEach((b) => {
+          b.addEventListener('click', () => marcar(d, q.orden, b.dataset.r));
+        });
+        d.querySelector('textarea').addEventListener('input', (e) => {
+          const r = RESP.get(q.orden) || {};
+          RESP.set(q.orden, { respuesta: r.respuesta || 'MAL', comentario: e.target.value });
+          progreso(); // el botón se habilita en cuanto explica la novedad
+        });
+        cont.appendChild(d);
+      }
+      progreso();
+    }
+    function marcar(div, orden, r) {
+      const prev = RESP.get(orden) || {};
+      RESP.set(orden, { respuesta: r, comentario: prev.comentario || '' });
+      div.classList.toggle('resp-bien', r === 'BIEN');
+      div.classList.toggle('resp-mal', r === 'MAL');
+      div.querySelectorAll('.rb').forEach((b) => b.classList.toggle('on', b.dataset.r === r));
+      if (r === 'MAL') {
+        setTimeout(() => div.querySelector('textarea').focus(), 120);
+      } else {
+        // Al dejar un punto en orden, la página lleva sola al siguiente que falta.
+        div.classList.remove('late'); void div.offsetWidth; div.classList.add('late');
+        const sig = siguienteSinResponder(orden);
+        if (sig) setTimeout(() => sig.scrollIntoView({ behavior: 'smooth', block: 'center' }), 170);
+      }
+      progreso();
+    }
+    function siguienteSinResponder(desde) {
+      const q = PREGUNTAS.find((x) => x.orden > desde && !RESP.has(x.orden))
+        || PREGUNTAS.find((x) => !RESP.has(x.orden));
+      return q ? document.querySelector('.q[data-orden="' + q.orden + '"]') : null;
+    }
+    // El botón dice en todo momento qué falta; no deja seguir hasta que esté completo.
+    function progreso() {
+      const n = RESP.size, t = PREGUNTAS.length || 14;
+      $('pg-txt').textContent = n + ' de ' + t;
+      $('pg-barra').style.width = Math.round((n / t) * 100) + '%';
+      const vals = [...RESP.values()];
+      const mal = vals.filter((x) => x.respuesta === 'MAL').length;
+      const sinCom = vals.filter((x) => x.respuesta === 'MAL' && !String(x.comentario || '').trim()).length;
+      $('pg-sub').textContent = n < t ? 'Faltan ' + (t - n) : (mal ? mal + ' con novedad' : 'Todo en orden');
+      const b = $('b3');
+      b.disabled = n < t || sinCom > 0;
+      b.textContent = n < t ? 'Te faltan ' + (t - n) + ' punto' + (t - n === 1 ? '' : 's') + ' por marcar'
+        : sinCom > 0 ? 'Cuéntanos qué pasa con ' + sinCom + ' punto' + (sinCom === 1 ? '' : 's')
+        : 'Continuar';
+    }
+    $('b3').addEventListener('click', () => {
+      const faltan = PREGUNTAS.filter((q) => !RESP.has(q.orden));
+      if (faltan.length) {
+        err('e3', 'Te faltan ' + faltan.length + ' punto(s) por marcar.');
+        const d = document.querySelector('.q[data-orden="' + faltan[0].orden + '"]');
+        if (d) d.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      const sinCom = PREGUNTAS.filter((q) => {
+        const r = RESP.get(q.orden);
+        return r && r.respuesta === 'MAL' && !String(r.comentario || '').trim();
+      });
+      if (sinCom.length) {
+        err('e3', 'Cuéntanos qué pasa con: ' + sinCom.map((q) => q.corto).join(', '));
+        const d = document.querySelector('.q[data-orden="' + sinCom[0].orden + '"]');
+        if (d) { d.scrollIntoView({ behavior: 'smooth', block: 'center' }); d.querySelector('textarea').focus(); }
+        return;
+      }
+      err('e3', '');
+      const mal = PREGUNTAS.filter((q) => RESP.get(q.orden).respuesta === 'MAL');
+      $('r-bien').textContent = PREGUNTAS.filter((q) => RESP.get(q.orden).respuesta === 'BIEN').length;
+      $('r-mal').textContent = mal.length;
+      $('r-lista').innerHTML = mal.length
+        ? '<div class="lista-mal"><b>Lo que reportas con novedad</b><ul>'
+          + mal.map((q) => '<li>' + esc(q.corto) + ' — ' + esc(RESP.get(q.orden).comentario) + '</li>').join('')
+          + '</ul></div>'
+        : '';
+      estadoFinal();
+      if (!SITIO) pedirSitio();
+      paso(4);
+    });
+    $('b3v').addEventListener('click', () => paso(2));
+
+    // ---------- Foto del conductor dentro del bus ----------
+    // Se toma con la cámara de la propia página: no hay selector de archivos, así que no se
+    // puede mandar una foto vieja de la galería. Es la constancia de que estuvo en el carro.
+    let FOTO = null, SITIO = null;
+
+    // Dónde se tomó la foto. Se intenta en cuanto llega al último paso y otra vez al tomarla,
+    // pero NO bloquea: en un patio techado el GPS puede no responder, y dejar a un conductor
+    // sin poder despachar por eso sería peor. Cuando falta, el admin lo ve como "sin ubicación".
+    function pedirSitio() {
+      if (!navigator.geolocation) { pintarSitio('no'); return; }
+      pintarSitio('buscando');
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          SITIO = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6),
+                    prec: Math.round(p.coords.accuracy || 0) };
+          pintarSitio('ok');
+        },
+        () => pintarSitio('no'),
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+      );
+    }
+    function pintarSitio(estado) {
+      const c = $('ck-sitio');
+      if (estado === 'ok') {
+        c.textContent = '✅ Sitio registrado' + (SITIO && SITIO.prec ? ' (±' + SITIO.prec + ' m)' : '');
+        c.classList.add('ok');
+      } else if (estado === 'buscando') {
+        c.textContent = '📍 Buscando dónde estás…'; c.classList.remove('ok');
+      } else {
+        c.textContent = '📍 Sin ubicación (puedes enviar igual)'; c.classList.remove('ok');
+      }
+    }
+
+    async function pedirFoto() {
+      const d = await tomarSelfie();
+      if (!d) return;
+      FOTO = d;
+      if (!SITIO) pedirSitio(); // segundo intento: ya tuvo tiempo de enganchar el GPS
+      $('foto-prev').src = d; $('foto-prev').style.display = 'block';
+      $('b-foto').hidden = true; $('b-refoto').hidden = false;
+      err('e4', '');
+      estadoFinal();
+    }
+    $('b-foto').addEventListener('click', pedirFoto);
+    $('b-refoto').addEventListener('click', pedirFoto);
+
+    // Estado del último paso: qué falta y si ya se puede enviar.
+    function estadoFinal() {
+      const c = $('ck-foto');
+      c.textContent = (FOTO ? '✅' : '⬜') + ' Foto dentro del bus';
+      c.classList.toggle('ok', !!FOTO);
+      const b = $('b4');
+      b.disabled = !FOTO;
+      b.textContent = FOTO ? 'Enviar inspección' : 'Primero tómate la foto';
+    }
+
+    // ---------- Enviar ----------
+    $('b4').addEventListener('click', async () => {
+      if (!FOTO) {
+        err('e4', 'Falta la foto tuya dentro del bus.');
+        $('b-foto').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      err('e4', '');
+      const items = PREGUNTAS.map((q) => {
+        const r = RESP.get(q.orden);
+        return { orden: q.orden, respuesta: r.respuesta, comentario: r.comentario || null };
+      });
+      $('b4').disabled = true; $('b4').textContent = 'Enviando…';
+      try {
+        const { data, error } = await sb.rpc('preop_guardar', {
+          p_cedula: CED, p_movil: MOVIL, p_kms: Number(($('kms').value || '').replace(/\D/g, '')) || null,
+          p_items: items, p_foto: FOTO,
+          p_lat: SITIO ? SITIO.lat : null, p_lon: SITIO ? SITIO.lon : null,
+          p_prec: SITIO ? SITIO.prec : null,
+        });
+        if (error) throw error;
+        if (!data || !data.ok) { err('e4', (data && data.error) || 'No se pudo enviar.'); return; }
+        const mal = Number(data.novedades || 0);
+        $('g-ico').textContent = mal ? '🛠️' : '✅';
+        $('g-tit').textContent = mal ? 'Reporte enviado al taller' : '¡Todo en orden!';
+        $('g-txt').innerHTML = mal
+          ? 'Reportaste <b>' + mal + ' novedad(es)</b> del bus ' + esc(MOVIL) + '. Taller ya las tiene y te darán respuesta.'
+          : 'El bus ' + esc(MOVIL) + ' quedó revisado y sin novedades. Buen viaje.';
+        $('g-lista').innerHTML = '<p class="hint">Inspección N.° ' + esc(String(data.id)) + ' · ' + esc(NOMBRE) + '</p>';
+        paso(5);
+      } catch (ex) { err('e4', 'No se pudo enviar. Revisa la señal e intenta otra vez.'); }
+      finally { estadoFinal(); }
+    });
+    $('b4v').addEventListener('click', () => paso(3));
+  </script>
+</body>
+</html>

@@ -3150,3 +3150,74 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .pqr-adj-ic { font-size: 34px; text-align: center; line-height: 92px; }
 .pqr-adj span { font-size: 12px; overflow-wrap: anywhere; }
 .pqr-adj small { display: block; color: #6b6b6b; font-size: 11px; }
+
+/* ===== Preoperacional (sql/127): ficha del admin y envío del link a los conductores ===== */
+.pr-alerta { background: #fff1f1; border: 1px solid #f3c0c0; color: #b91c1c; border-radius: 12px;
+  padding: 10px 13px; font-size: 14px; margin: 12px 0; }
+.pr-ok { background: #f2fbf5; border: 1px solid #bfe6cb; color: #15803d; border-radius: 12px;
+  padding: 10px 13px; font-size: 14px; margin: 12px 0; font-weight: 600; }
+.pr-tabla { width: 100%; border-collapse: collapse; font-size: 14px; }
+.pr-tabla td { padding: 9px 8px; border-bottom: 1px solid #f0f0f3; vertical-align: top; }
+.pr-nota { font-size: 13px; color: #b91c1c; background: #fff5f5; border-radius: 8px;
+  padding: 6px 9px; margin-top: 5px; }
+.pr-firma { margin-top: 14px; }
+.pr-firma span { display: block; font-size: 12.5px; font-weight: 700; color: var(--muted); margin-bottom: 5px; }
+.pr-firma img { max-width: 100%; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.pr-sitio { display: inline-block; margin-top: 7px; font-size: 13px; font-weight: 700;
+            color: #1d4ed8; text-decoration: none; }
+.pr-sitio:hover { text-decoration: underline; }
+.pr-sinsitio { color: var(--muted); font-weight: 600; }
+
+/* ===== Control del día del preoperacional (sql/132) ===== */
+.pp-fecha { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+.pp-fecha input { flex: 1; min-width: 0; }
+.pp-tarjetas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.pp-card { background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+           padding: 11px 8px; text-align: center; }
+.pp-card b { display: block; font-size: 22px; line-height: 1.1; }
+.pp-card span { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.pp-card.ok { background: #e9f8ee; border-color: #bfe6cb; } .pp-card.ok b { color: #15803d; }
+.pp-card.mal { background: #fdecec; border-color: #f3c0c0; } .pp-card.mal b { color: #b91c1c; }
+.pp-barra { position: relative; height: 22px; background: #eee; border-radius: 99px;
+            overflow: hidden; margin-bottom: 12px; }
+.pp-barra i { display: block; height: 100%; background: #16a34a; border-radius: 99px; }
+.pp-barra span { position: absolute; inset: 0; display: grid; place-items: center;
+                 font-size: 12px; font-weight: 700; color: #263; }
+.pp-atras { background: #fff7ed; border: 1px solid #fcd9a8; border-radius: 10px;
+            padding: 10px 12px; font-size: 13.5px; margin-bottom: 12px; }
+.pp-alerta { background: #fdecec; border: 1px solid #f3c0c0; border-radius: 12px;
+             padding: 12px; margin-bottom: 14px; }
+.pp-alerta h4 { margin: 0 0 9px; font-size: 15px; color: #b91c1c; }
+.pp-inc { background: #fff; border-radius: 9px; padding: 9px 11px; margin-bottom: 7px; }
+.pp-inc-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.pp-inc-cond { color: var(--muted); font-size: 13px; }
+.pp-punto { font-size: 13px; margin-top: 5px; padding-left: 4px; color: #7f1d1d; }
+.pp-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+.pp-tabs button { flex: 1; padding: 10px; border: 1px solid var(--border); background: var(--surface);
+                  border-radius: 10px; font-size: 13.5px; font-weight: 700; cursor: pointer;
+                  color: var(--muted); font-family: inherit; }
+.pp-tabs button.on { background: var(--primary); border-color: transparent; color: #fff; }
+.pp-tabla { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.pp-tabla th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px;
+               color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.pp-tabla td { padding: 9px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.pp-pla { color: var(--muted); font-size: 12.5px; }
+.pp-nosalio { font-size: 11px; background: #eef2f7; color: #64748b; border-radius: 6px;
+              padding: 1px 6px; margin-left: 5px; font-weight: 700; }
+@media (max-width: 560px) {
+  .pp-tarjetas { grid-template-columns: repeat(2, 1fr); }
+}
+.pr-taller { margin-top: 18px; border-top: 2px solid var(--border); padding-top: 14px; }
+.pr-taller h4 { margin: 0 0 10px; font-size: 15px; }
+.pr-taller label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+.pr-taller input, .pr-taller textarea { width: 100%; padding: 10px; border: 1px solid var(--border);
+  border-radius: 10px; font-size: 14px; font-family: inherit; }
+.pr-taller textarea { min-height: 72px; }
+.pr-link { background: #f7f9fc; border: 1px solid var(--border); border-radius: 12px; padding: 13px; margin: 12px 0; }
+.pr-link label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.pr-link input { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13px; background: #fff; margin-bottom: 8px; }
+.pr-lista { max-height: 50vh; overflow-y: auto; overscroll-behavior: contain; }
+.pr-cond { display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  padding: 9px 4px; border-bottom: 1px solid #f0f0f3; }
+.pr-cond b { font-size: 14px; }

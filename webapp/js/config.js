@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v322';
+export const APP_VERSION = 'v323';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -28,6 +28,7 @@ export const TABLE_ORDER = [
   'siniestros',
   'pqrsf',
   'eventos_bus',
+  'preoperacionales',   // inspeccion preoperacional (sql/127) — por ahora SOLO el admin la ve
 ];
 
 // Listas unificadas del PERFIL SOCIODEMOGRÁFICO. Las usan el formulario del admin y el link público
@@ -574,6 +575,34 @@ export const TABLES = {
       { key: 'email', label: 'Correo' },
       { key: 'ubic_ingreso', label: 'Ubic. ingreso', maps: true },
       { key: 'ubic_salida', label: 'Ubic. salida', maps: true },
+    ],
+    fields: [],
+  },
+
+  // INSPECCION PREOPERACIONAL (sql/127). La llena el conductor por link publico
+  // (webapp/preoperacional.html) y aqui se revisa. Sin flag de rol => solo la ve el admin.
+  preoperacionales: {
+    label: 'Preoperacional',
+    icon: '🧰',
+    pk: 'id', pkEditable: false,
+    readonly: true,              // no se edita a mano: cada fila abre la ficha completa
+    fichaDetalle: true,          // el ojito abre el detalle con las 12 respuestas
+    select: '*',
+    searchCols: ['movil', 'placa', 'nombre', 'cedula'],
+    defaultOrder: { col: 'fecha', asc: false, then: { col: 'creado_en', asc: false } },
+    filters: [
+      { col: 'fecha', label: 'Fecha', type: 'daterange' },
+      { col: 'estado', label: 'Estado', options: ['SIN NOVEDAD', 'PENDIENTE', 'ATENDIDO'] },
+    ],
+    columns: [
+      { key: 'fecha', label: 'Fecha', m: true },
+      { key: 'movil', label: 'Bus', m: true },
+      { key: 'placa', label: 'Placa' },
+      { key: 'nombre', label: 'Conductor', m: true },
+      { key: 'kms', label: 'Kilometraje' },
+      { key: 'novedades', label: 'Novedades', m: true },
+      { key: 'estado', label: 'Estado', badge: true, m: true },
+      { key: 'atendido_por', label: 'Atendido por' },
     ],
     fields: [],
   },

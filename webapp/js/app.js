@@ -590,7 +590,7 @@ function buildSidebar() {
   const TBL_GROUP = {
     ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
     restricciones_rutas: 'restr',
-    siniestros: 'vial', eventos_bus: 'vial',
+    siniestros: 'vial', eventos_bus: 'vial', preoperacionales: 'vial',
     horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin', tablas_despacho: 'admin',
     perfilsociodemografico: 'th', perfil_vinculaciones: 'th',
   };
@@ -679,6 +679,13 @@ function buildSidebar() {
       addNavAction(gVial, '🚦', 'Excesos de velocidad', () => abrirConduccion('VELOCIDAD'), 'nav-evb-vel');
       addNavAction(gVial, '🚪', 'Puertas abiertas', () => abrirConduccion('PUERTA ABIERTA'), 'nav-evb-pue');
     }
+    // Preoperacional: el control del día (quién la hizo y quién falta) y el envío del enlace.
+    // Va aquí porque es seguridad vial: es la revisión del carro antes de salir (Res. 315/2013).
+    if (isAdmin()) {
+      const aviso = PREOP_PEND ? ` <span class="nav-badge">${PREOP_PEND}</span>` : '';
+      addNavAction(gVial, '📋', 'Control del día' + aviso, openPreopPanel, 'nav-preop-panel');
+      addNavAction(gVial, '📲', 'Enviar preoperacional', openPreopEnvio, 'nav-preop-envio');
+    }
     if (isTalentoHumano()) {
       const gSs = addNavGroup(gVial, '📊', 'Estadísticas', 'vialstats');
       SST_BLOQUES.filter((b) => !b.soloOperacion || isAdmin() || isAuditor())
@@ -732,6 +739,7 @@ function buildSidebar() {
   if (isAdmin()) addNavAction(gAd, '📢', 'Avisos al personal', openAvisos, 'nav-avisos');
   if (isAdmin()) addNavAction(gAd, '🔐', 'Auditoría de accesos', openAuditoria, 'nav-auditoria');
   if (isAdmin()) addNavAction(gAd, '⭐', 'Integradas', openIntegradas, 'nav-integradas');
+  if (isAdmin()) addNavAction(gAd, '🔄', 'Personal desde la hoja', openSyncPersonal, 'nav-sync-personal');
   const am = $('nav-mapa'); if (am) am.classList.toggle('active', currentView === 'mapa');
   const ai = $('nav-integradas'); if (ai) ai.classList.toggle('active', currentView === 'integradas');
   const ap = $('nav-pasajeros'); if (ap) ap.classList.toggle('active', currentView === 'pasajeros');
@@ -1799,6 +1807,350 @@ function pintarAlertaPuntualidad(rows) {
   </div>`;
 }
 
+
+// ===== PREOPERACIONAL (sql/127): lo llena el conductor por link publico y aqui se revisa =====
+// Mientras esta en pruebas lo ve SOLO el admin (regla del 22/10/2026).
+const PREOP_LINK = location.origin + location.pathname.replace(/index\.html$/, '') + 'preoperacional.html';
+
+// Incidencias de vehículo sin atender: es el número rojo del menú. Una novedad reportada por
+// un conductor no sirve de nada si nadie la ve, así que se cuenta aparte y se muestra siempre.
+let PREOP_PEND = 0;
+async function refrescarPreop(rebuild = true) {
+  if (!isAdmin()) { PREOP_PEND = 0; return; }
+  try {
+    const { count, error } = await sb.from('preoperacionales')
+      .select('id', { count: 'exact', head: true }).eq('estado', 'PENDIENTE');
+    PREOP_PEND = error ? 0 : (count || 0);
+  } catch (e) { PREOP_PEND = 0; }
+  if (rebuild) buildSidebar();
+}
+
+function preopModal() {
+  let m = $('preop-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'preop-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🧰 Preoperacional</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+// Ficha completa: las 12 respuestas tal como las dejo el conductor + la atencion del taller.
+async function openPreop(row) {
+  if (!isAdmin()) return;
+  const m = preopModal(), body = m.querySelector('.pf-body');
+  m.querySelector('.modal-head h3').textContent = '🧰 Preoperacional'; // puede venir del panel
+  body.innerHTML = '<div class="loading">Cargando la inspección…</div>';
+  m.hidden = false;
+  let items = [];
+  try {
+    const { data } = await sb.from('preoperacional_items').select('*').eq('preop_id', row.id).order('orden');
+    items = data || [];
+  } catch (e) { /* se muestra la cabecera igual */ }
+
+  const chipEstado = row.estado === 'PENDIENTE' ? 'chip chip-red'
+    : row.estado === 'ATENDIDO' ? 'chip chip-green' : 'chip chip-gray';
+  const fila = (it) => {
+    const mal = it.respuesta === 'MAL';
+    const cls = mal ? 'chip chip-red' : it.respuesta === 'NO APLICA' ? 'chip chip-gray' : 'chip chip-green';
+    const ico = mal ? '⚠️ ' : it.respuesta === 'NO APLICA' ? '' : '✅ ';
+    return '<tr><td style="width:34px;text-align:center;color:#999">' + it.orden + '</td>'
+      + '<td>' + esc(it.pregunta) + (it.comentario ? '<div class="pr-nota">🛠️ ' + esc(it.comentario) + '</div>' : '') + '</td>'
+      + '<td style="white-space:nowrap"><span class="' + cls + '">' + ico + esc(it.respuesta) + '</span></td></tr>';
+  };
+  const malas = items.filter((i) => i.respuesta === 'MAL');
+
+  body.innerHTML = `
+    <header class="pf-top">
+      <div><h4>Bus ${esc(row.movil)} · ${esc(row.placa || '')}</h4>
+        <div class="pf-sub">${esc(fmt(row.fecha))} · ${esc(row.nombre || '')}${row.kms ? ' · ' + esc(String(row.kms)) + ' km' : ''}</div></div>
+      <span class="${chipEstado}">${esc(row.estado)}</span>
+    </header>
+    ${malas.length
+      ? '<div class="pr-alerta">⚠️ <b>' + malas.length + ' novedad(es)</b> reportada(s) por el conductor</div>'
+      : '<div class="pr-ok">✅ El conductor no reportó novedades</div>'}
+    <table class="pr-tabla">${items.map(fila).join('')}</table>
+    ${row.firma ? '<div class="pr-firma"><span>Firma del conductor</span><img src="' + esc(row.firma) + '" alt="Firma" /></div>' : ''}
+    ${row.selfie ? '<div class="pr-firma"><span>El conductor dentro del bus</span><img src="' + esc(row.selfie) + '" alt="Foto del conductor dentro del bus" />'
+      + (row.lat && row.lon
+        ? '<a class="pr-sitio" target="_blank" rel="noopener" href="https://www.google.com/maps?q='
+          + esc(String(row.lat)) + ',' + esc(String(row.lon)) + '">📍 Ver dónde se tomó'
+          + (row.precision_m ? ' (±' + esc(String(Math.round(row.precision_m))) + ' m)' : '') + '</a>'
+        : '<div class="pr-sitio pr-sinsitio">📍 Sin ubicación: el celular no la entregó</div>')
+      + '</div>' : ''}
+    <div class="pr-taller">
+      <h4>🛠️ Atención del taller</h4>
+      <label>Atendido por</label>
+      <input type="text" id="pr-at" value="${esc(row.atendido_por || '')}" placeholder="Nombre de quien atiende" />
+      <label>Comentarios del taller</label>
+      <textarea id="pr-com" placeholder="Qué se revisó y qué se hizo">${esc(row.comentarios_taller || '')}</textarea>
+      <div class="pf-sub" id="pr-fecha">${row.atendido_en ? 'Atendido el ' + esc(fmtFechaHora(row.atendido_en)) : ''}</div>
+      <button class="btn btn-primary" id="pr-guardar" style="margin-top:10px">Guardar y marcar atendido</button>
+      <div class="err" id="pr-err"></div>
+    </div>`;
+
+  $('pr-guardar').onclick = async () => {
+    const b = $('pr-guardar'); b.disabled = true; b.textContent = 'Guardando…';
+    try {
+      const { error } = await sb.from('preoperacionales').update({
+        atendido_por: ($('pr-at').value || '').trim() || null,
+        comentarios_taller: ($('pr-com').value || '').trim() || null,
+        atendido_en: new Date().toISOString(),
+        estado: 'ATENDIDO',
+      }).eq('id', row.id);
+      if (error) throw error;
+      toast('✅ Preoperacional marcado como atendido', 'ok');
+      m.hidden = true;
+      if (current === 'preoperacionales') loadData();
+    } catch (ex) {
+      $('pr-err').textContent = 'No se pudo guardar: ' + (ex.message || ex);
+    } finally { b.disabled = false; b.textContent = 'Guardar y marcar atendido'; }
+  };
+}
+
+// Pantalla para ORGANIZAR a los conductores y mandarles el link del preoperacional.
+// El numero sale del perfil; a quien no lo tenga, se avisa aqui mismo (no se puede enviar).
+async function openPreopEnvio() {
+  if (!isAdmin()) return;
+  const m = preopModal(), body = m.querySelector('.pf-body');
+  m.querySelector('.modal-head h3').textContent = '📲 Enviar el preoperacional';
+  body.innerHTML = '<div class="loading">Cargando conductores…</div>';
+  m.hidden = false;
+  let cond = [], hechos = new Set();
+  try {
+    const [{ data: c }, { data: h }] = await Promise.all([
+      sb.from('perfilsociodemografico').select('cedula, nombre, celular')
+        .eq('cargo', 'CONDUCTOR').eq('estado', 'ACTIVO').order('nombre').limit(2000),
+      sb.from('preoperacionales').select('cedula').eq('fecha', hoyServidor()).limit(2000),
+    ]);
+    cond = c || [];
+    hechos = new Set((h || []).map((x) => String(x.cedula || '').replace(/\D/g, '')));
+  } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo cargar la lista.</div>'; return; }
+
+  const limpio = (t) => String(t || '').replace(/\D/g, '');
+  const conCel = cond.filter((c) => limpio(c.celular).length === 10);
+  const sinCel = cond.filter((c) => limpio(c.celular).length !== 10);
+  const msg = 'Buen dia. Antes de salir a ruta, por favor realiza la INSPECCION PREOPERACIONAL del bus en este enlace: ' + PREOP_LINK + ' Ingresas con tu numero de cedula. Gracias.';
+
+  body.innerHTML = `
+    <header class="pf-top"><div><h4>Preoperacional de hoy</h4>
+      <div class="pf-sub">${hechos.size} de ${cond.length} conductores activos ya lo hicieron</div></div></header>
+    <div class="pr-link">
+      <label>Enlace para los conductores</label>
+      <input type="text" id="pr-url" readonly value="${esc(PREOP_LINK)}" />
+      <button class="btn" id="pr-copiar">📋 Copiar enlace</button>
+      <div class="pf-sub">Entran con su número de cédula. No necesitan usuario ni clave.</div>
+    </div>
+    <div class="pr-alerta" ${sinCel.length ? '' : 'hidden'}>⚠️ <b>${sinCel.length}</b> conductor(es) activos no tienen celular registrado: a ellos hay que darles el enlace de otra forma, o cargarles el número en el perfil.</div>
+    <h4 style="margin:14px 0 6px">Enviar por WhatsApp (${conCel.length})</h4>
+    <div class="pr-lista" id="pr-lista"></div>`;
+
+  const lista = $('pr-lista');
+  lista.innerHTML = conCel.map((c) => {
+    const ya = hechos.has(limpio(c.cedula));
+    return `<div class="pr-cond">
+      <div><b>${esc(c.nombre || '')}</b>
+        <div class="pf-sub">${ya ? '✅ ya lo hizo hoy' : '⏳ pendiente hoy'}</div></div>
+      <a class="btn btn-sm" target="_blank" rel="noopener"
+         href="https://wa.me/57${esc(limpio(c.celular))}?text=${encodeURIComponent(msg)}">💬 Enviar</a>
+    </div>`;
+  }).join('') || '<div class="cump-empty">Ningún conductor activo tiene celular registrado.</div>';
+
+  $('pr-copiar').onclick = async () => {
+    try { await navigator.clipboard.writeText(PREOP_LINK); toast('📋 Enlace copiado', 'ok'); }
+    catch (e) { $('pr-url').select(); toast('Copia el enlace con Ctrl+C', 'err'); }
+  };
+}
+
+// ---------- Personal desde la hoja de Gestión Humana (sql/133) ----------
+// Corre sola dos veces al día (cron 'sync-personal-hoja'). Esta pantalla sirve para empujarla
+// a mano cuando acaban de contratar a alguien, y para ver si el automático está trabajando.
+function syncModal() {
+  let m = $('sync-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'sync-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🔄 Personal desde la hoja</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openSyncPersonal() {
+  if (!isAdmin()) return;
+  const m = syncModal(), body = m.querySelector('.pf-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  m.hidden = false;
+  let log = [];
+  try {
+    const { data } = await sb.from('perfil_sync_log').select('*').order('corrio_en', { ascending: false }).limit(8);
+    log = data || [];
+  } catch (e) { /* se muestra igual */ }
+
+  body.innerHTML = `
+    <p class="sub">Trae los <b>administrativos</b> y los <b>conductores</b> de la hoja de Gestión
+      Humana. Se ejecuta sola a las <b>4:30 a.m.</b> y a las <b>12:30 p.m.</b></p>
+    <div class="pp-tarjetas" id="sy-res" hidden></div>
+    <div style="display:flex;gap:8px;margin:12px 0">
+      <button class="btn" id="sy-sim" style="flex:1">👀 Simular</button>
+      <button class="btn btn-primary" id="sy-ok" style="flex:1">🔄 Sincronizar ahora</button>
+    </div>
+    <div class="err" id="sy-err"></div>
+    <h4 style="margin:16px 0 6px">Últimas corridas</h4>
+    ${log.length ? `<table class="pp-tabla"><thead><tr><th>Cuándo</th><th>Hoja</th><th>Leídas</th>
+        <th>Nuevas</th><th>Cambios</th><th></th></tr></thead><tbody>
+      ${log.map((r) => `<tr><td>${esc(fmtFechaHora(r.corrio_en))}</td><td>${esc(r.hoja || '')}</td>
+        <td>${r.leidas}</td><td>${r.nuevas}</td><td>${r.cambios}</td>
+        <td><span class="chip ${r.aplicado ? 'chip-green' : 'chip-gray'}">${r.aplicado ? 'aplicado' : 'simulacro'}</span></td></tr>`).join('')}
+      </tbody></table>`
+      : '<div class="cump-empty">Todavía no ha corrido.</div>'}`;
+
+  const correr = async (aplicar) => {
+    const b = $(aplicar ? 'sy-ok' : 'sy-sim'), txt = b.textContent;
+    b.disabled = true; b.textContent = 'Trabajando…'; $('sy-err').textContent = '';
+    try {
+      const { data, error } = await sb.rpc('perfil_sync', { p_aplicar: aplicar });
+      if (error) throw error;
+      if (!data || !data.ok) { $('sy-err').textContent = (data && data.error) || 'No se pudo.'; return; }
+      const c = $('sy-res');
+      c.hidden = false;
+      c.innerHTML = `
+        <div class="pp-card ${data.nuevas ? 'ok' : ''}"><b>${data.nuevas}</b><span>Personas nuevas</span></div>
+        <div class="pp-card ${data.cambios ? 'ok' : ''}"><b>${data.cambios}</b><span>Con cambios</span></div>
+        <div class="pp-card"><b>${(data.hojas || []).reduce((s, h) => s + (h.leidas || 0), 0)}</b><span>Filas leídas</span></div>
+        <div class="pp-card ${data.en_las_dos_hojas ? 'mal' : ''}"><b>${data.en_las_dos_hojas || 0}</b><span>En las dos hojas</span></div>`;
+      toast(aplicar ? `✅ Personal actualizado: ${data.nuevas} nuevas, ${data.cambios} cambios` : '👀 Simulacro: no se guardó nada', 'ok');
+      if (aplicar) openSyncPersonal(); // refresca el registro
+    } catch (ex) {
+      $('sy-err').textContent = 'No se pudo: ' + (ex.message || ex);
+    } finally { b.disabled = false; b.textContent = txt; }
+  };
+  $('sy-sim').onclick = () => correr(false);
+  $('sy-ok').onclick = () => correr(true);
+}
+
+// ---------- Control del día: quién la hizo, quién falta y qué vehículo tiene novedad ----------
+// Todo lo calcula el servidor (preop_panel, sql/132): quiénes "debían" hacerla son los
+// vehículos que REALMENTE salieron ese día, no los 315 del parque.
+const _pp = { fecha: null, data: null, vista: 'faltan' };
+
+async function openPreopPanel(fecha) {
+  if (!isAdmin()) return;
+  const m = preopModal(), body = m.querySelector('.pf-body');
+  m.querySelector('.modal-head h3').textContent = '📋 Control del día · Preoperacional';
+  body.innerHTML = '<div class="loading">Cargando el día…</div>';
+  m.hidden = false;
+  _pp.fecha = fecha || _pp.fecha || hoyServidor();
+  try {
+    const { data, error } = await sb.rpc('preop_panel', { p_fecha: _pp.fecha });
+    if (error) throw error;
+    if (!data || !data.ok) { body.innerHTML = `<div class="cump-empty">${esc((data && data.error) || 'Sin datos.')}</div>`; return; }
+    _pp.data = data;
+  } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo cargar el panel.</div>'; return; }
+  pintarPreopPanel();
+}
+
+function pintarPreopPanel() {
+  const d = _pp.data, r = d.resumen, body = preopModal().querySelector('.pf-body');
+  const hechas = d.hechas || [], faltan = d.faltan || [], inc = d.incidencias || [];
+  const pct = r.salieron ? Math.round(((r.salieron - r.faltan) / r.salieron) * 100) : 0;
+
+  const alerta = inc.length ? `
+    <div class="pp-alerta">
+      <h4>🚨 ${inc.length} vehículo${inc.length === 1 ? '' : 's'} con novedad ${esc(fmt(_pp.fecha))}</h4>
+      ${inc.map((x) => `<div class="pp-inc">
+        <div class="pp-inc-top"><b>Bus ${esc(x.movil)}</b> · ${esc(x.placa || '')}
+          <span class="pp-inc-cond">${esc(x.conductor || '')}</span>
+          <span class="chip ${x.estado === 'ATENDIDO' ? 'chip-green' : 'chip-red'}">${esc(x.estado)}</span>
+          <button type="button" class="btn btn-sm" data-ficha="${x.id}">Ver ficha</button></div>
+        ${(x.puntos || []).map((p) => `<div class="pp-punto">⚠️ <b>${esc(p.pregunta)}</b>${p.comentario ? ' — ' + esc(p.comentario) : ''}</div>`).join('')}
+      </div>`).join('')}
+    </div>` : '<div class="pr-ok">✅ Ningún vehículo reportó novedades ese día</div>';
+
+  const atras = r.pendientes_atras
+    ? `<div class="pp-atras">🛠️ Hay <b>${r.pendientes_atras}</b> novedad(es) de días anteriores que el taller todavía no ha atendido.</div>`
+    : '';
+
+  body.innerHTML = `
+    <div class="pp-fecha">
+      <button type="button" class="btn btn-sm" id="pp-ant">◀</button>
+      <input type="date" id="pp-f" value="${esc(_pp.fecha)}" />
+      <button type="button" class="btn btn-sm" id="pp-sig">▶</button>
+      <button type="button" class="btn btn-sm" id="pp-hoy">Hoy</button>
+    </div>
+    <div class="pp-tarjetas">
+      <div class="pp-card"><b>${r.salieron}</b><span>Salieron a ruta</span></div>
+      <div class="pp-card ok"><b>${r.salieron - r.faltan}</b><span>La hicieron</span></div>
+      <div class="pp-card ${r.faltan ? 'mal' : ''}"><b>${r.faltan}</b><span>Faltan</span></div>
+      <div class="pp-card ${r.con_novedad ? 'mal' : ''}"><b>${r.con_novedad}</b><span>Con novedad</span></div>
+    </div>
+    <div class="pp-barra"><i style="width:${pct}%"></i><span>${pct}% de los que salieron</span></div>
+    ${atras}
+    ${alerta}
+    <div class="pp-tabs">
+      <button type="button" data-v="faltan" class="${_pp.vista === 'faltan' ? 'on' : ''}">Faltan (${faltan.length})</button>
+      <button type="button" data-v="hechas" class="${_pp.vista === 'hechas' ? 'on' : ''}">Ya la hicieron (${hechas.length})</button>
+    </div>
+    <div id="pp-lista"></div>`;
+
+  const lista = $('pp-lista');
+  if (_pp.vista === 'faltan') {
+    lista.innerHTML = faltan.length
+      ? `<table class="pp-tabla"><thead><tr><th>Bus</th><th>Placa</th><th>Conductor</th><th>Viajes</th></tr></thead><tbody>
+         ${faltan.map((x) => `<tr><td><b>${esc(x.movil)}</b></td><td>${esc(x.placa || '')}</td>
+           <td>${esc(x.conductor || '—')}</td><td>${x.viajes}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="pr-ok">✅ Todos los vehículos que salieron hicieron el preoperacional</div>';
+  } else {
+    lista.innerHTML = hechas.length
+      ? `<table class="pp-tabla"><thead><tr><th>Hora</th><th>Bus</th><th>Conductor</th><th>Estado</th><th></th></tr></thead><tbody>
+         ${hechas.map((x) => `<tr><td>${esc(x.hora || '')}</td>
+           <td><b>${esc(x.movil)}</b> <span class="pp-pla">${esc(x.placa || '')}</span>
+             ${x.salio ? '' : '<span class="pp-nosalio" title="Ese día no tuvo despachos">no salió</span>'}</td>
+           <td>${esc(x.conductor || '')}</td>
+           <td><span class="chip ${x.estado === 'PENDIENTE' ? 'chip-red' : x.estado === 'ATENDIDO' ? 'chip-green' : 'chip-gray'}">${esc(x.estado)}</span></td>
+           <td><button type="button" class="btn btn-sm" data-ficha="${x.id}">Ver</button>
+             ${x.lat && x.lon ? `<a class="btn btn-sm" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${esc(String(x.lat))},${esc(String(x.lon))}">📍</a>` : ''}</td></tr>`).join('')}
+         </tbody></table>`
+      : '<div class="cump-empty">Ese día no se hizo ningún preoperacional.</div>';
+  }
+
+  const mover = (dias) => {
+    const f = new Date(_pp.fecha + 'T12:00:00');
+    f.setDate(f.getDate() + dias);
+    openPreopPanel(f.toISOString().slice(0, 10));
+  };
+  $('pp-ant').onclick = () => mover(-1);
+  $('pp-sig').onclick = () => mover(1);
+  $('pp-hoy').onclick = () => openPreopPanel(hoyServidor());
+  $('pp-f').onchange = (e) => { if (e.target.value) openPreopPanel(e.target.value); };
+  body.querySelectorAll('.pp-tabs button').forEach((b) => {
+    b.onclick = () => { _pp.vista = b.dataset.v; pintarPreopPanel(); };
+  });
+  body.querySelectorAll('[data-ficha]').forEach((b) => {
+    b.onclick = () => abrirPreopPorId(Number(b.dataset.ficha));
+  });
+}
+
+// Abre la ficha completa desde el panel (el panel solo trae el resumen, no la foto)
+async function abrirPreopPorId(id) {
+  try {
+    const { data, error } = await sb.from('preoperacionales').select('*').eq('id', id).single();
+    if (error || !data) throw error || new Error('sin fila');
+    await openPreop(data);
+  } catch (e) { toast('No se pudo abrir la inspección', 'err'); }
+}
+
 // ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
 async function openAsignarPuesto() {
   $('pst-error').hidden = true;
@@ -2479,13 +2831,15 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       tr.appendChild(act);
     } else if (cfg.fichaDetalle && ((current === 'siniestros' && isTalentoHumano())
+                                    || (current === 'preoperacionales' && isAdmin())
                                     || (current === 'pqrsf' && puedeVerPqrsf()))) {
       // Siniestros y PQRSF: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
       const act = document.createElement('td');
       act.className = 'row-actions'; act.dataset.label = 'Acciones';
       const ver = Object.assign(document.createElement('button'),
         { className: 'act act-ver', innerHTML: '👁️', title: 'Ver el reporte completo' });
-      ver.onclick = () => (current === 'pqrsf' ? openPqrsf(row) : openSiniestro(row));
+      ver.onclick = () => (current === 'pqrsf' ? openPqrsf(row)
+        : current === 'preoperacionales' ? openPreop(row) : openSiniestro(row));
       act.appendChild(ver);
       tr.appendChild(act);
     } else if (cfg.asistenciaMarcar) {
@@ -3538,6 +3892,7 @@ async function refrescarAlertasDocs() {
   await refrescarActividades(false);
   await refrescarLicencias(false);
   await refrescarTaller(false);
+  await refrescarPreop(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
@@ -14883,7 +15238,7 @@ function permFormatoHtml(r, logo) {
           <td><div><b>GERENCIA:</b> ${esc(dec(r.ger_estado, r.ger_por, r.ger_en, r.ger_nota))}</div>
               <div style="margin-top:8px"><b>GESTIÓN HUMANA:</b> ${esc(dec(r.gh_estado, r.gh_por, r.gh_en, r.gh_nota))}</div></td></tr>
       </table>
-      <table class="pf-firmas"><tr>
+      <table class="pr-firmas"><tr>
         <td>FIRMA EMPLEADO</td><td>FIRMA JEFE INMEDIATO</td><td>FIRMA GESTIÓN HUMANA</td>
       </tr></table>
     </div>`;
@@ -14906,8 +15261,8 @@ const PERM_FORMATO_CSS = `
     .pf-sec { text-align: center; font-weight: 700; background: #f1f1f1; width: auto; }
     .pf-ul { margin: 0; padding-left: 18px; font-weight: 400; font-size: 9.5pt; }
     .pf-ul li { margin-bottom: 3px; }
-    .pf-firmas { margin-top: 64px; }
-    .pf-firmas td { border-top: 1px solid #000; padding-top: 6px; text-align: center; font-size: 9pt; width: 33%; }
+    .pr-firmas { margin-top: 64px; }
+    .pr-firmas td { border-top: 1px solid #000; padding-top: 6px; text-align: center; font-size: 9pt; width: 33%; }
 `;
 
 async function permImprimir(r) {
