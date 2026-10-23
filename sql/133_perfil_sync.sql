@@ -186,6 +186,9 @@ begin
     if v_st <> 200 then v_txt_c := null; end if;
   end if;
 
+  -- 'if exists' porque dos llamadas dentro de la MISMA transaccion chocarian:
+  -- la temp table se borra al commit, no al salir de la funcion.
+  drop table if exists _dup;
   create temp table _dup on commit drop as
   select cedula from (
     select distinct regexp_replace(coalesce(j->>'CEDULA',''), '\D', '', 'g') as cedula, 'A' as h
@@ -332,6 +335,8 @@ begin
     v_total_cambios := v_total_cambios + v_cambios;
     drop table _f; drop table _ok;
   end loop;
+
+  drop table if exists _dup;
 
   if p_aplicar then
     update public.perfil_fuente

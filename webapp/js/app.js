@@ -432,12 +432,36 @@ async function cerrarSesionCon(msg) {
 // El servidor es la autoridad: solo cierra si dice 'reemplazada'/'fuera_horario', así que
 // se puede llamar de forma reactiva (p.ej. al recibir datos vacíos) sin riesgo de falsos cierres.
 let _lastLatencia = null; // ms del último heartbeat (round-trip a Supabase); se reporta en el siguiente
+
+// Ubicación para la pantalla de Conectados (sql/134). El latido corre cada 12 s, pero el GPS
+// se refresca cada 3 minutos: pedirlo en cada latido gastaría batería sin aportar nada.
+// Se pide en baja precisión a propósito (basta para saber en qué punto está, no hace falta
+// el metro exacto). El permiso ya se pide hoy al iniciar sesión para la auditoría de accesos,
+// así que a quien ya lo concedió no le aparece ningún diálogo nuevo.
+let _gps = null, _gpsPedido = 0;
+function refrescarGps() {
+  if (!navigator.geolocation || Date.now() - _gpsPedido < 180000) return;
+  _gpsPedido = Date.now();
+  navigator.geolocation.getCurrentPosition(
+    (p) => {
+      _gps = { lat: +p.coords.latitude.toFixed(6), lon: +p.coords.longitude.toFixed(6),
+               prec: Math.round(p.coords.accuracy || 0) };
+    },
+    () => { /* sin permiso o sin señal: se sigue sin ubicación, nunca se inventa */ },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 120000 }
+  );
+}
+
 async function verificarSesionVigente() {
   if (!sessionUser) return false;
   const t0 = Date.now();
+  refrescarGps();
   // Reporta la latencia medida en el heartbeat anterior + la versión de app en uso
   // (para que el admin vea en "Conectados" quién va lento o quedó en versión vieja).
-  const { data, error } = await sb.rpc('heartbeat', { p_latencia_ms: _lastLatencia, p_version: APP_VERSION });
+  const { data, error } = await sb.rpc('heartbeat', {
+    p_latencia_ms: _lastLatencia, p_version: APP_VERSION,
+    p_lat: _gps ? _gps.lat : null, p_lon: _gps ? _gps.lon : null, p_prec: _gps ? _gps.prec : null,
+  });
   _lastLatencia = Date.now() - t0;
   if (error) return true;         // error de red: no expulsar (se reintenta luego)
   const estado = (typeof data === 'boolean') ? (data ? 'ok' : 'reemplazada') : (data?.estado || 'ok');
@@ -20584,6 +20608,28 @@ function _verBadge(v) {
   const old = v !== APP_VERSION;
   return `<span class="con-ver ${old ? 'con-ver-old' : 'con-ver-ok'}" title="Versión de la app${old ? ' — desactualizada; pídele Ctrl+F5' : ' (al día)'}">${esc(v)}</span>`;
 }
+// Dónde está (sql/134). Se distingue a propósito la posición EN VIVO del latido de la del
+// INGRESO: un punto de hace cinco horas no dice dónde está la persona ahora, y presentarlos
+// igual llevaría a reclamarle a alguien por un dato viejo.
+function _gpsLinea(r) {
+  if (r.lat == null || r.lon == null) {
+    return '<div class="con-gps con-gps-na">📍 Sin ubicación (no dio permiso)</div>';
+  }
+  const vivo = r.gps_origen === 'en vivo';
+  let edad = '';
+  if (r.gps_en) {
+    const f = new Date(r.gps_en);
+    if (!isNaN(f.getTime())) edad = tiempoRelativo(f);
+  }
+  const prec = vivo && r.gps_prec ? ` ±${Math.round(r.gps_prec)} m` : '';
+  const etiqueta = vivo ? `Dónde está${prec}` : 'Desde dónde ingresó';
+  return `<div class="con-gps ${vivo ? 'con-gps-vivo' : ''}">
+    <a href="https://www.google.com/maps?q=${esc(String(r.lat))},${esc(String(r.lon))}"
+       target="_blank" rel="noopener">📍 ${esc(etiqueta)}</a>
+    ${edad ? `<span class="con-gps-edad">${esc(edad)}</span>` : ''}
+  </div>`;
+}
+
 async function cargarConectados() {
   $('con-error').hidden = true;
   $('con-results').innerHTML = '<div class="loading">Cargando…</div>';
@@ -20615,6 +20661,7 @@ async function cargarConectados() {
         <div class="con-name">${esc(nombre)}<span class="con-chip ${rolChipCls(r.rol)}">${esc(r.rol || '—')}</span></div>
         <div class="con-mail">${esc(r.email || '')}</div>
         ${infoLine}
+        ${_gpsLinea(r)}
         ${perfLine}
       </div>
       <div class="con-meta">
