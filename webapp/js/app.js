@@ -630,6 +630,7 @@ function buildSidebar() {
   // 🚦 Operación en vivo
   const gOp = addNavGroup(nav, '🚦', 'Operación en vivo', 'op');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🟢', 'Rutas en vivo', openRutasVivo, 'nav-rutas');
+  if (isAdmin() || isAuditor()) addNavAction(gOp, '🛰️', 'Salud del GPS', openGpsSalud, 'nav-gpssalud');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
 
   // 📈 Cumplimiento y análisis
@@ -1992,6 +1993,45 @@ async function openPreopEnvio() {
   };
 }
 
+// ---------- Salud del GPS (sql/135) ----------
+// Un bus que despacha pero cuyo GPS no reporta no se ve en el mapa, y nadie se entera hasta
+// que alguien lo busca. Esta pantalla lo dice de frente: cuántos están al día, cuáles llevan
+// horas mudos y cuáles tienen un GPS que SONAR ya no reconoce (el caso del equipo cambiado).
+async function openGpsSalud() {
+  if (!isAdmin() && !isAuditor()) return;
+  const m = syncModal(), body = m.querySelector('.pf-body');
+  m.querySelector('.modal-head h3').textContent = '🛰️ Salud del GPS';
+  body.innerHTML = '<div class="loading">Revisando…</div>';
+  m.hidden = false;
+  let d = null;
+  try {
+    const { data, error } = await sb.rpc('gps_salud');
+    if (error) throw error;
+    d = data;
+  } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo revisar.</div>'; return; }
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+
+  const lista = d.detalle || [];
+  body.innerHTML = `
+    <div class="pp-tarjetas">
+      <div class="pp-card"><b>${d.total}</b><span>Equipos</span></div>
+      <div class="pp-card ok"><b>${d.frescos_15min}</b><span>Al día</span></div>
+      <div class="pp-card ${d.pegados_2h ? 'mal' : ''}"><b>${d.pegados_2h}</b><span>Mudos +2 h</span></div>
+      <div class="pp-card ${d.fantasmas ? 'mal' : ''}"><b>${d.fantasmas}</b><span>Desconocidos</span></div>
+    </div>
+    ${d.fantasmas || d.duplicados
+      ? `<div class="pp-alerta"><h4>🚨 Hay ${d.fantasmas} equipo(s) que SONAR ya no reconoce</h4>
+          <div class="pp-punto">Suele pasar cuando le cambian el GPS a un bus: el equipo retirado se queda
+          clavado en el mapa y el bus aparece en dos sitios. Se arregla con <b>Vehículos GPS → Sincronizar</b>.</div></div>`
+      : '<div class="pr-ok">✅ Todos los equipos del mapa son conocidos por SONAR</div>'}
+    <h4 style="margin:16px 0 6px">Equipos a revisar (${lista.length})</h4>
+    ${lista.length
+      ? `<table class="pp-tabla"><thead><tr><th>Bus</th><th>Placa</th><th>Último reporte</th><th>Qué pasa</th></tr></thead><tbody>
+         ${lista.map((x) => `<tr><td><b>${esc(x.movil || '—')}</b></td><td>${esc(x.placa || '')}</td>
+           <td>${esc(x.ultimo || '')}</td><td>${esc(x.problema)}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="pr-ok">✅ Ningún equipo lleva más de 2 horas sin reportar</div>'}`;
+}
+
 // ---------- Personal desde la hoja de Gestión Humana (sql/133) ----------
 // Corre sola dos veces al día (cron 'sync-personal-hoja'). Esta pantalla sirve para empujarla
 // a mano cuando acaban de contratar a alguien, y para ver si el automático está trabajando.
@@ -2014,6 +2054,7 @@ function syncModal() {
 async function openSyncPersonal() {
   if (!isAdmin()) return;
   const m = syncModal(), body = m.querySelector('.pf-body');
+  m.querySelector('.modal-head h3').textContent = '🔄 Personal desde la hoja';
   body.innerHTML = '<div class="loading">Cargando…</div>';
   m.hidden = false;
   let log = [];
