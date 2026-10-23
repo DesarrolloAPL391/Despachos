@@ -3214,6 +3214,19 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 @media (max-width: 560px) {
   .pp-tarjetas { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Salud del GPS (sql/136). La tabla se lee en el celular del auditor: el id del equipo va en
+   monoespaciada porque son codigos como ADXW o 0190 y se dictan por telefono. */
+.gs-mid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+          color: var(--muted); letter-spacing: .5px; }
+.gs-hace { font-weight: 700; color: #b91c1c; white-space: nowrap; }
+.gs-acciones { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+.gs-mas { margin-top: 18px; border-top: 2px solid var(--border); padding-top: 12px; }
+.gs-mas > summary { cursor: pointer; font-weight: 700; font-size: 14px; padding: 4px 0;
+                    color: var(--muted); }
+.gs-mas > summary:hover { color: var(--text); }
+.gs-mas .gs-hace { color: var(--muted); font-weight: 600; }
+.gs-nota { font-size: 12.5px; color: var(--muted); margin: 6px 0 10px; }
 .pr-taller { margin-top: 18px; border-top: 2px solid var(--border); padding-top: 14px; }
 .pr-taller h4 { margin: 0 0 10px; font-size: 15px; }
 .pr-taller label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }

@@ -1993,10 +1993,13 @@ async function openPreopEnvio() {
   };
 }
 
-// ---------- Salud del GPS (sql/135) ----------
-// Un bus que despacha pero cuyo GPS no reporta no se ve en el mapa, y nadie se entera hasta
-// que alguien lo busca. Esta pantalla lo dice de frente: cuántos están al día, cuáles llevan
-// horas mudos y cuáles tienen un GPS que SONAR ya no reconoce (el caso del equipo cambiado).
+// ---------- Salud del GPS (sql/135 + sql/136) ----------
+// Un bus que sale a rodar con el GPS mudo no se ve en el mapa, y nadie se entera hasta que
+// alguien lo busca. Lo importante de esta pantalla es que SEPARA: un GPS quieto en un carro que
+// hoy no salió no es una falla (el bus no se movió); uno quieto en un carro que hizo 8 viajes
+// hoy, sí. Hoy son 13 de 52. Esos 13 son los que van para taller o para el proveedor.
+let _gpsUltimo = null;
+
 async function openGpsSalud() {
   if (!isAdmin() && !isAuditor()) return;
   const m = syncModal(), body = m.querySelector('.pf-body');
@@ -2010,26 +2013,80 @@ async function openGpsSalud() {
     d = data;
   } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo revisar.</div>'; return; }
   if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+  _gpsUltimo = d;
 
-  const lista = d.detalle || [];
+  const op = d.operando || [], resto = d.resto || [];
+  const fila = (x, conViajes) => `<tr><td><b>${esc(x.movil || '—')}</b></td><td>${esc(x.placa || '')}</td>
+    <td class="gs-mid">${esc(x.mid || '—')}</td><td>${esc(x.ultimo || 'nunca')}</td>
+    <td class="gs-hace">${esc(x.hace || '')}</td>${conViajes ? `<td>${x.viajes || ''}</td>` : ''}</tr>`;
+
   body.innerHTML = `
     <div class="pp-tarjetas">
-      <div class="pp-card"><b>${d.total}</b><span>Equipos</span></div>
-      <div class="pp-card ok"><b>${d.frescos_15min}</b><span>Al día</span></div>
-      <div class="pp-card ${d.pegados_2h ? 'mal' : ''}"><b>${d.pegados_2h}</b><span>Mudos +2 h</span></div>
+      <div class="pp-card"><b>${d.salieron_hoy}</b><span>Salieron hoy</span></div>
+      <div class="pp-card ok"><b>${d.frescos_15min}</b><span>Reportando</span></div>
+      <div class="pp-card ${op.length ? 'mal' : ''}"><b>${op.length}</b><span>Mudos operando</span></div>
       <div class="pp-card ${d.fantasmas ? 'mal' : ''}"><b>${d.fantasmas}</b><span>Desconocidos</span></div>
     </div>
-    ${d.fantasmas || d.duplicados
-      ? `<div class="pp-alerta"><h4>🚨 Hay ${d.fantasmas} equipo(s) que SONAR ya no reconoce</h4>
-          <div class="pp-punto">Suele pasar cuando le cambian el GPS a un bus: el equipo retirado se queda
-          clavado en el mapa y el bus aparece en dos sitios. Se arregla con <b>Vehículos GPS → Sincronizar</b>.</div></div>`
-      : '<div class="pr-ok">✅ Todos los equipos del mapa son conocidos por SONAR</div>'}
-    <h4 style="margin:16px 0 6px">Equipos a revisar (${lista.length})</h4>
-    ${lista.length
-      ? `<table class="pp-tabla"><thead><tr><th>Bus</th><th>Placa</th><th>Último reporte</th><th>Qué pasa</th></tr></thead><tbody>
-         ${lista.map((x) => `<tr><td><b>${esc(x.movil || '—')}</b></td><td>${esc(x.placa || '')}</td>
-           <td>${esc(x.ultimo || '')}</td><td>${esc(x.problema)}</td></tr>`).join('')}</tbody></table>`
-      : '<div class="pr-ok">✅ Ningún equipo lleva más de 2 horas sin reportar</div>'}`;
+    ${op.length
+      ? `<div class="pp-alerta">
+          <h4>🚨 ${op.length} bus(es) salieron hoy y no se ven en el mapa</h4>
+          <div class="pp-punto">Están rodando pero su GPS no reporta. Esto no se arregla desde la
+          aplicación: es el equipo (antena, energía, SIM). Esta es la lista para taller o para el
+          proveedor — el <b>GPS</b> es el identificador con el que ellos lo buscan en SONAR.</div>
+         </div>
+         <table class="pp-tabla"><thead><tr><th>Bus</th><th>Placa</th><th>GPS</th>
+           <th>Último reporte</th><th>Sin reportar</th><th>Viajes hoy</th></tr></thead>
+           <tbody>${op.map((x) => fila(x, true)).join('')}</tbody></table>
+         <div class="gs-acciones">
+           <button type="button" class="btn" id="gs-xls">⬇️ Descargar la lista</button>
+         </div>`
+      : '<div class="pr-ok">✅ Todos los buses que salieron hoy están reportando</div>'}
+    ${d.fantasmas
+      ? `<div class="pp-alerta" style="margin-top:14px">
+          <h4>${d.fantasmas} equipo(s) que SONAR ya no reconoce</h4>
+          <div class="pp-punto">Pasa cuando le cambian el GPS a un bus: el equipo retirado se queda
+          clavado en el mapa. Se limpia solo en la próxima sincronización; si urge,
+          <b>Vehículos GPS → Sincronizar</b>.</div></div>`
+      : ''}
+    ${resto.length
+      ? `<details class="gs-mas">
+          <summary>${resto.length} equipo(s) quietos en carros que hoy no salieron</summary>
+          <div class="gs-nota">Un GPS no reporta si el bus no se movió: mantenimiento, sin
+          programación o carro quieto. Solo hay que mirarlos si el carro debería estar rodando.</div>
+          <table class="pp-tabla"><thead><tr><th>Bus</th><th>Placa</th><th>GPS</th>
+            <th>Último reporte</th><th>Sin reportar</th></tr></thead>
+            <tbody>${resto.map((x) => fila(x, false)).join('')}</tbody></table>
+         </details>`
+      : ''}`;
+  const btn = body.querySelector('#gs-xls');
+  if (btn) btn.addEventListener('click', descargarGpsMudos);
+}
+
+// La lista sale en Excel para poder enviarla: lleva el id del equipo en SONAR, que es por donde
+// el proveedor lo busca, y los viajes del día, que es el argumento de por qué urge.
+async function descargarGpsMudos() {
+  const d = _gpsUltimo;
+  if (!d || !(d.operando || []).length) { toast('No hay equipos para descargar.', 'ok'); return; }
+  const aoa = [['Bus', 'Placa', 'GPS (id en SONAR)', 'Último reporte', 'Sin reportar hace', 'Viajes del día', 'Qué pasa'],
+    ...d.operando.map((x) => [x.movil || '', x.placa || '', x.mid || '', x.ultimo_largo || x.ultimo || 'nunca',
+      x.hace || '', x.viajes || '', x.problema || ''])];
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 8 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 13 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'GPS sin senal');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `gps_sin_senal_${d.fecha || ''}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${d.operando.length} equipo(s).`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
+  }
 }
 
 // ---------- Personal desde la hoja de Gestión Humana (sql/133) ----------
