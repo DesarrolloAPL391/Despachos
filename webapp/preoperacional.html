@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="robots" content="noindex, nofollow" />
   <meta name="theme-color" content="#ED1C24" />
+  <!-- Para que Chrome permita instalarla en el celular del conductor: sin manifiesto
+       decia "No se puede instalar esta app". El icono grande tambien sirve en iPhone. -->
+  <link rel="manifest" href="preoperacional.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Preoperacional" />
   <title>Inspección preoperacional · Autobuses El Poblado</title>
   <link rel="icon" href="icons/icon-192.png" />
   <!--
@@ -944,6 +950,16 @@
       finally { estadoFinal(); }
     });
     $('b4v').addEventListener('click', () => paso(3));
+
+    // El service worker es lo que hace que Chrome ofrezca “Instalar”, y de paso deja que
+    // la pantalla abra sin señal. Se registra con un ambito mas estrecho que el de la
+    // aplicacion para no pisarse con el suyo.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw-preop.js', { scope: 'preoperacional.html' })
+          .catch(() => { /* sin service worker la pagina funciona igual, solo no se instala */ });
+      });
+    }
 
     // ---------- Al terminar: poder hacer otra ----------
     // Se recarga la pagina entera a proposito. Reiniciar a mano cada cosa (la foto, las
