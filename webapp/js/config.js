@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v328';
+export const APP_VERSION = 'v329';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -979,7 +979,9 @@ export const TABLES = {
     noDelete: true, // una persona no se borra: se pasa a INACTIVO (borrarla también borraría su historial)
     select: '*',
     searchCols: ['nombre', 'cedula', 'codigo', 'placa', 'cargo', 'celular'],
-    defaultOrder: { col: 'nombre', asc: true },
+    // Del ingreso mas reciente al mas antiguo: lo que se consulta a diario es quien entro
+    // ultimo. Los que no tienen fecha van al final, no de primeros.
+    defaultOrder: { col: 'fecha_ingreso', asc: false, then: { col: 'nombre', asc: true } },
     filters: [
       { col: 'estado', label: 'Estado', options: PL.estado, chips: true },
       { col: 'tipo', label: 'Tipo', options: PL.tipo, chips: true },

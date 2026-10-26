@@ -2008,6 +2008,110 @@ async function openPreopEnvio() {
   };
 }
 
+// ---------- Reingreso: la persona ya trabajó aquí (sql/143) ----------
+// La cédula es única, así que agregar a alguien que ya estuvo moría con un error de clave
+// duplicada y ahí se acababa el camino. Ahora ese error se convierte en lo que de verdad es:
+// un REINGRESO. Se muestra el historial para que vean a quién están volviendo a vincular, y el
+// alta deja la ficha INACTIVA a propósito, para que Gestión Humana termine de organizarla
+// antes de activarla.
+function esErrorDuplicado(e) {
+  return !!e && (e.code === '23505'
+    || /duplicate key|llave duplicada|ya existe/i.test(e.message || ''));
+}
+
+function reingModal() {
+  let m = $('reing-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'reing-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🔁 Esta persona ya trabajó aquí</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function ofrecerReingreso(payload) {
+  const ced = String(payload.cedula || '').replace(/\D/g, '');
+  const m = reingModal(), body = m.querySelector('.pf-body');
+  body.innerHTML = '<div class="loading">Buscando su historial…</div>';
+  m.hidden = false;
+  let d = null;
+  try {
+    const { data, error } = await sb.rpc('perfil_buscar_cedula', { p_cedula: ced });
+    if (error) throw error;
+    d = data;
+  } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo consultar.</div>'; return; }
+  if (!d || !d.ok || !d.existe) {
+    body.innerHTML = '<div class="cump-empty">No se encontró esa cédula. Intenta guardar de nuevo.</div>';
+    return;
+  }
+
+  const h = d.historial || [];
+  body.innerHTML = `
+    <div class="rg-ficha">
+      <b>${esc(d.nombre || '')}</b>
+      <span>C.C. ${esc(d.cedula)} · ${esc(d.cargo || d.tipo || '')}</span>
+      <span class="rg-estado ${d.estado === 'ACTIVO' ? 'act' : ''}">${esc(d.estado)}</span>
+    </div>
+    ${h.length ? `
+      <h4 class="rg-tit">Historial en la empresa</h4>
+      <table class="pp-tabla"><thead><tr><th>Vinculación</th><th>Cargo</th><th>Entró</th>
+        <th>Salió</th><th>Motivo</th></tr></thead><tbody>
+        ${h.map((v) => `<tr><td><b>${esc(v.tipo_ingreso || '')}</b></td><td>${esc(v.cargo || '')}</td>
+          <td>${esc(v.ingreso || '')}</td><td>${esc(v.retiro || '—')}</td>
+          <td class="rg-mot">${esc(v.novedad || '')}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="gs-nota">No tiene vinculaciones registradas.</div>'}
+    ${d.puede_reingresar
+      ? `<div class="rg-form">
+          <h4 class="rg-tit">Registrar el reingreso</h4>
+          <div class="gs-nota">Queda <b>INACTIVO</b> para que terminen de organizarlo; el periodo
+          anterior se conserva en el historial. Después lo activan desde la ficha.</div>
+          <label>Fecha de ingreso
+            <input type="date" id="rg-fecha" value="${esc(payload.fecha_ingreso || '')}"></label>
+          <label>Cargo <input type="text" id="rg-cargo" value="${esc(payload.cargo || d.cargo || '')}"></label>
+          <label>Área <input type="text" id="rg-area" value="${esc(payload.area || d.area || '')}"></label>
+          <div class="err" id="rg-err" hidden></div>
+          <div class="gs-acciones">
+            <button type="button" class="btn" id="rg-ok">🔁 Registrar el reingreso</button>
+          </div>
+         </div>`
+      : `<div class="pp-alerta" style="margin-top:14px">
+          <h4>Está ACTIVA, no es un reingreso</h4>
+          <div class="pp-punto">Esta persona ya figura trabajando. Si se retiró, primero hay que
+          registrarle el retiro en su ficha; después sí se puede volver a vincular.</div></div>`}`;
+
+  const b = body.querySelector('#rg-ok');
+  if (b) b.addEventListener('click', () => registrarReingreso(d.cedula));
+}
+
+async function registrarReingreso(cedula) {
+  const e = $('rg-err'), b = $('rg-ok');
+  const fecha = ($('rg-fecha') || {}).value || '';
+  if (!fecha) { e.textContent = 'Indica la fecha de ingreso.'; e.hidden = false; return; }
+  e.hidden = true;
+  b.disabled = true; b.textContent = 'Registrando…';
+  try {
+    const { data, error } = await sb.rpc('perfil_reingreso', {
+      p_cedula: cedula, p_fecha_ingreso: fecha,
+      p_cargo: ($('rg-cargo') || {}).value || null,
+      p_area: ($('rg-area') || {}).value || null,
+      p_activar: false,
+    });
+    if (error) throw error;
+    if (!data || !data.ok) { e.textContent = (data && data.error) || 'No se pudo registrar.'; e.hidden = false; return; }
+    $('reing-modal').hidden = true;
+    toast(`Reingreso registrado. ${data.nota || ''}`, 'ok');
+    if (current === 'perfilsociodemografico') load();
+  } catch (ex) {
+    e.textContent = 'No se pudo registrar: ' + (ex.message || ex); e.hidden = false;
+  } finally { b.disabled = false; b.textContent = '🔁 Registrar el reingreso'; }
+}
+
 // ---------- Vigilancia del GPS (sql/137) ----------
 // La base revisa cada 10 minutos los carros que SONAR tiene operando y abre una alerta cuando
 // uno deja de entregar posición. Aquí se trae ese número para el menú y se avisa en el momento:
@@ -4692,7 +4796,17 @@ $('modal-save').addEventListener('click', async () => {
     saveBtn.dataset.busy = '0'; saveBtn.disabled = false;
   }
 
-  if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
+  if (res.error) {
+    // Agregar a alguien que ya trabajó aquí no es un error de quien lo está digitando: es un
+    // REINGRESO. En vez del mensaje de clave duplicada, se muestra su historial y se ofrece
+    // registrarlo (sql/143).
+    if (!editing && current === 'perfilsociodemografico' && esErrorDuplicado(res.error)) {
+      closeModal();
+      await ofrecerReingreso(payload);
+      return;
+    }
+    err.textContent = res.error.message; err.hidden = false; return;
+  }
   // Update que no afectó ninguna fila: casi siempre la sesión fue desplazada (RLS devolvió
   // vacío). Verificar: si está muerta, ya salió al login; si no, avisar sin dejarlo en silencio.
   if (editing && (res.data || []).length === 0) {
