@@ -206,6 +206,19 @@
     .gracias { text-align: center; padding: 26px 18px; }
     .gracias .tick { font-size: 54px; }
     .gracias h2 { font-size: 21px; margin: 8px 0; }
+    /* `hidden` no oculta nada si la regla de ese elemento fija un display (le paso a la
+       guia del QR, que es flex). Esta linea hace que hidden signifique oculto, siempre. */
+    [hidden] { display: none !important; }
+    /* La sugerencia del bus: lo primero que ve, grande y con una salida clara al lado. */
+    .sug { background: #eef6ff; border: 1px solid #bcd9f7; border-radius: 14px;
+           padding: 14px; margin-bottom: 14px; }
+    .sug-cab { display: flex; align-items: center; gap: 11px; margin-bottom: 11px; }
+    .sug-ic { font-size: 30px; }
+    .sug-cab b { display: block; font-size: 19px; color: #0b3d7a; }
+    .sug-cab span { font-size: 13px; color: #40618a; }
+    .sug .btn { margin-top: 0; }
+    .sug .btn-sec { margin-top: 8px; }
+    .g-acciones { display: grid; gap: 8px; margin-top: 18px; text-align: left; }
     .lista-mal { text-align: left; background: var(--malbg); border-radius: 12px; padding: 12px;
                  margin-top: 14px; font-size: 14px; }
     .lista-mal b { display: block; margin-bottom: 6px; color: #b91c1c; }
@@ -243,7 +256,18 @@
     <section class="card" id="p2" hidden>
       <div class="hola"><div class="ini" id="ini">—</div><div><b id="nom">—</b><span>Conductor identificado</span></div></div>
       <h2>🚌 ¿Qué bus vas a revisar?</h2>
-      <div class="guia">
+
+      <!-- El bus que probablemente le toca, para que no tenga que buscarlo. Es una SUGERENCIA:
+           uno de cada ocho conductores cambia de carro y firmar la revision del bus equivocado
+           es justo lo que la Resolucion 315 trata de evitar. Por eso hay que confirmarlo. -->
+      <div class="sug" id="sug" hidden>
+        <div class="sug-cab"><span class="sug-ic">🚌</span>
+          <div><b id="sug-bus">—</b><span id="sug-txt">—</span></div></div>
+        <button class="btn" id="sug-si">✅ Sí, voy en este</button>
+        <button class="btn btn-sec" id="sug-no">Es otro bus</button>
+      </div>
+
+      <div class="guia" id="guia-qr">
         <span class="ic">2️⃣</span>
         <div><b>Lee el QR que el bus tiene junto a la placa.</b>Si no se deja leer, búscalo en la lista de abajo y tócalo.</div>
       </div>
@@ -380,6 +404,12 @@
       <h2 id="g-tit">¡Listo!</h2>
       <p class="sub" id="g-txt"></p>
       <div id="g-lista"></div>
+      <!-- Sin esto la pantalla es un callejon sin salida: el conductor que cambia de carro en
+           el dia no puede hacer la segunda, y el celular prestado no puede pasar al siguiente. -->
+      <div class="g-acciones">
+        <button class="btn" id="b-otro">🚌 Revisar otro bus</button>
+        <button class="btn btn-sec" id="b-otra">👤 Es otra persona</button>
+      </div>
     </section>
 
     <p class="legal">
@@ -442,6 +472,7 @@
         $('nom').textContent = NOMBRE;
         $('ini').textContent = (NOMBRE.trim()[0] || '?').toUpperCase();
         pintarPreguntas();
+        mostrarSugerencia(data.sugerido);
         paso(2);
       } catch (ex) { err('e1', 'No se pudo conectar. Revisa la señal e intenta otra vez.'); }
       finally { $('b1').disabled = false; $('b1').textContent = 'Continuar'; }
@@ -493,6 +524,27 @@
       $('b2').disabled = true; $('b2').textContent = 'Primero elige el bus';
       $('lb-scroll').querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
     }
+    // El servidor propone el bus mirando, en este orden: el despacho de HOY (exacto), el
+    // ultimo bus que manejo (acierta 87 de cada 100) y la ultima liquidacion (64 de cada 100).
+    // Si acierta, el conductor pasa del paso 1 al 3 con un solo toque.
+    function mostrarSugerencia(sg) {
+      const caja = $('sug');
+      if (!sg || !sg.movil) { caja.hidden = true; return; }
+      $('sug-bus').textContent = 'Bus ' + sg.movil + (sg.placa ? ' · ' + sg.placa : '');
+      $('sug-txt').textContent = sg.texto || '';
+      caja.hidden = false;
+      $('guia-qr').hidden = true;        // no se le dan dos instrucciones a la vez
+      $('sug-si').onclick = () => {
+        elegirBus({ movil: sg.movil, placa: sg.placa || '' }, false);
+        $('b2').click();                 // confirmar y seguir: un solo toque
+      };
+      $('sug-no').onclick = () => {
+        caja.hidden = true;
+        $('guia-qr').hidden = false;
+        $('movil').focus();
+      };
+    }
+
     function elegirBus(b, desdeLista) {
       MOVIL = b.movil; PLACA = b.placa || '';
       $('placa-txt').textContent = 'Bus ' + b.movil + (b.placa ? ' · ' + b.placa : '');
@@ -892,6 +944,26 @@
       finally { estadoFinal(); }
     });
     $('b4v').addEventListener('click', () => paso(3));
+
+    // ---------- Al terminar: poder hacer otra ----------
+    // Se recarga la pagina entera a proposito. Reiniciar a mano cada cosa (la foto, las
+    // respuestas, la ubicacion, el bus elegido, los botones) deja estado sucio tarde o
+    // temprano; recargar es la unica forma segura de empezar limpio.
+    // La cedula se conserva en la pestana para el caso comun -- el mismo conductor que cambia
+    // de carro -- y se borra cuando el celular pasa a otra persona.
+    $('b-otro').addEventListener('click', () => {
+      try { sessionStorage.setItem('preop_ced', CED); } catch (e) { /* modo privado */ }
+      location.reload();
+    });
+    $('b-otra').addEventListener('click', () => {
+      try { sessionStorage.removeItem('preop_ced'); } catch (e) { /* modo privado */ }
+      location.reload();
+    });
+    // Si viene de hacer una, no tiene por que volver a teclear 10 digitos en plena calle.
+    try {
+      const ced0 = sessionStorage.getItem('preop_ced');
+      if (ced0) $('cedula').value = ced0;
+    } catch (e) { /* modo privado: se escribe a mano y ya */ }
   </script>
 </body>
 </html>

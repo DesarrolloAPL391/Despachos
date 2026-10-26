@@ -675,6 +675,12 @@ function buildSidebar() {
     addNavAction(gCb, '🚌', 'Consumo por carro', () => openComb('carros'), 'nav-cb-carros');
   }
 
+  // 💵 Liquidaciones de vehículos (sql/138-140). Solo administración.
+  if (isAdmin()) {
+    const gLq = addNavGroup(nav, '💵', 'Liquidaciones', 'liq');
+    addNavAction(gLq, '💵', 'Historial y soportes', openLiquidaciones, 'nav-liq');
+  }
+
   // ⚖️ Procesos disciplinarios (sql/102). El auditor no entra aquí: solo reporta el hecho.
   if (puedeVerDisc()) {
     const gDc = addNavGroup(nav, '⚖️', 'Disciplinarios', 'disc');
@@ -14047,6 +14053,295 @@ async function pqrPanelGestion(cont, row) {
 }
 
 // ---- Ficha del siniestro: el reporte completo, ordenado ----
+// ---------- Liquidaciones de vehículos (sql/138-140) ----------
+// 28.918 liquidaciones desde enero de 2025: una por vehículo, fecha y ruta. La pantalla lista
+// DÍAS-VEHÍCULO (27.350) porque el papel que se firma es el del día, y es ahí donde se monta la
+// foto del soporte.
+// El paginado y los totales los hace el servidor: traerse 29.000 filas al celular para cortarlas
+// allá no tiene sentido, y los totales de arriba son de TODO el filtro, no de la página visible
+// — si no, el número engañaría.
+let _liqF = { desde: '', hasta: '', movil: '', ruta: '', punto: '', sinFoto: false, pagina: 1, tam: 25 };
+let _liqCat = null;
+
+function liqModal() {
+  let m = $('liq-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'liq-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>💵 Liquidaciones</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+const liqPlata = (v) => '$' + Number(v || 0).toLocaleString('es-CO');
+
+async function openLiquidaciones() {
+  if (!isAdmin()) return;
+  _liqF = { desde: '', hasta: '', movil: '', ruta: '', punto: '', sinFoto: false, pagina: 1, tam: 25 };
+  const m = liqModal();
+  m.querySelector('.pf-body').innerHTML = '<div class="loading">Cargando…</div>';
+  m.hidden = false;
+  if (!_liqCat) {
+    try {
+      const { data, error } = await sb.rpc('liquidaciones_resumen');
+      if (error) throw error;
+      _liqCat = data;
+    } catch (e) { m.querySelector('.pf-body').innerHTML = '<div class="cump-empty">No se pudo cargar.</div>'; return; }
+  }
+  if (!_liqCat || !_liqCat.ok) {
+    m.querySelector('.pf-body').innerHTML = `<div class="cump-empty">${esc((_liqCat && _liqCat.error) || 'Sin datos.')}</div>`;
+    return;
+  }
+  pintarLiqArmazon();
+  await cargarLiqPagina();
+}
+
+function pintarLiqArmazon() {
+  const c = _liqCat, body = liqModal().querySelector('.pf-body');
+  const opts = (arr, sel) => '<option value="">Todas</option>' +
+    (arr || []).map((x) => `<option value="${esc(x)}"${x === sel ? ' selected' : ''}>${esc(x)}</option>`).join('');
+  body.innerHTML = `
+    <div class="liq-cab">
+      <div class="liq-card"><b>${Number(c.filas).toLocaleString('es-CO')}</b><span>Liquidaciones</span></div>
+      <div class="liq-card"><b>${Number(c.dias).toLocaleString('es-CO')}</b><span>Días-vehículo</span></div>
+      <div class="liq-card"><b>${c.vehiculos}</b><span>Vehículos</span></div>
+      <div class="liq-card ok"><b>${liqPlata(c.dinero)}</b><span>Total liquidado</span></div>
+    </div>
+    <div class="liq-nota">Del ${esc(c.desde)} al ${esc(c.hasta)}
+      ${c.ultima_sync && c.ultima_sync.cuando ? ' · última actualización ' + esc(c.ultima_sync.cuando) : ''}
+      · <button type="button" class="lnk" id="liq-sync">Traer lo nuevo de la hoja</button></div>
+    ${c.sin_cedula || c.no_cuadran ? `
+      <div class="liq-avisos">
+        ${c.sin_cedula ? `<div class="liq-aviso"><b>${c.sin_cedula}</b> liquidación(es) sin cédula del conductor:
+          el nombre de la hoja no coincide con ninguno del perfil
+          (${(c.nombres_sin_cedula || []).map((x) => esc(x)).join(', ')}). Se corrige en la hoja.</div>` : ''}
+        ${c.no_cuadran ? `<div class="liq-aviso"><b>${c.no_cuadran}</b> fila(s) donde la propia hoja no cuadra
+          (unidades − descontados ≠ total). Se marcan con ⚠️ en la lista.</div>` : ''}
+      </div>` : ''}
+    <div class="liq-filtros">
+      <label>Desde<input type="date" id="lf-desde"></label>
+      <label>Hasta<input type="date" id="lf-hasta"></label>
+      <label>Bus<select id="lf-movil">${opts(c.moviles)}</select></label>
+      <label>Ruta<select id="lf-ruta">${opts(c.rutas)}</select></label>
+      <label>Punto<select id="lf-punto">${opts(c.puntos)}</select></label>
+      <label class="liq-chk"><input type="checkbox" id="lf-sinfoto"> Solo sin foto</label>
+      <button type="button" class="btn" id="lf-buscar">Buscar</button>
+      <button type="button" class="btn btn-sec" id="lf-limpiar">Limpiar</button>
+    </div>
+    <div id="liq-tot" class="liq-tot"></div>
+    <div id="liq-lista"></div>
+    <div id="liq-pag" class="liq-pag"></div>`;
+
+  body.querySelector('#lf-buscar').addEventListener('click', () => {
+    _liqF.desde = $('lf-desde').value; _liqF.hasta = $('lf-hasta').value;
+    _liqF.movil = $('lf-movil').value; _liqF.ruta = $('lf-ruta').value;
+    _liqF.punto = $('lf-punto').value; _liqF.sinFoto = $('lf-sinfoto').checked;
+    _liqF.pagina = 1;
+    cargarLiqPagina();
+  });
+  body.querySelector('#lf-limpiar').addEventListener('click', () => {
+    ['lf-desde', 'lf-hasta'].forEach((i) => { $(i).value = ''; });
+    ['lf-movil', 'lf-ruta', 'lf-punto'].forEach((i) => { $(i).value = ''; });
+    $('lf-sinfoto').checked = false;
+    _liqF = { desde: '', hasta: '', movil: '', ruta: '', punto: '', sinFoto: false, pagina: 1, tam: _liqF.tam };
+    cargarLiqPagina();
+  });
+  body.querySelector('#liq-sync').addEventListener('click', sincronizarLiq);
+}
+
+async function cargarLiqPagina() {
+  const lista = $('liq-lista'), tot = $('liq-tot'), pag = $('liq-pag');
+  if (!lista) return;
+  lista.innerHTML = '<div class="loading">Buscando…</div>';
+  let d = null;
+  try {
+    const { data, error } = await sb.rpc('liquidaciones_listar', {
+      p_desde: _liqF.desde || null, p_hasta: _liqF.hasta || null,
+      p_movil: _liqF.movil || null, p_cedula: null,
+      p_ruta: _liqF.ruta || null, p_punto: _liqF.punto || null,
+      p_sin_foto: !!_liqF.sinFoto, p_pagina: _liqF.pagina, p_tam: _liqF.tam,
+    });
+    if (error) throw error;
+    d = data;
+  } catch (e) { lista.innerHTML = '<div class="cump-empty">No se pudo buscar.</div>'; return; }
+  if (!d || !d.ok) { lista.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+
+  const t = d.totales || {};
+  tot.innerHTML = `<b>${Number(d.total_dias).toLocaleString('es-CO')}</b> día(s) ·
+    <b>${Number(t.filas || 0).toLocaleString('es-CO')}</b> liquidación(es) ·
+    <b>${Number(t.viajes || 0).toLocaleString('es-CO')}</b> viajes ·
+    <b>${Number(t.unidades || 0).toLocaleString('es-CO')}</b> pasajeros ·
+    <b class="liq-plata">${liqPlata(t.dinero)}</b> ·
+    ${t.con_foto || 0} con foto`;
+
+  const fs = d.filas || [];
+  lista.innerHTML = fs.length
+    ? `<table class="pp-tabla liq-tabla"><thead><tr>
+        <th>Fecha</th><th>Bus</th><th>Ruta</th><th>Viajes</th><th>Pasajeros</th>
+        <th>Se paga</th><th>Dinero</th><th>Conductor</th><th>Soporte</th></tr></thead><tbody>
+        ${fs.map((f) => `<tr class="liq-fila" data-movil="${esc(f.movil)}" data-fecha="${esc(f.fecha_iso)}">
+          <td>${esc(f.fecha)}</td>
+          <td><b>${esc(f.movil)}</b>${f.no_cuadran ? ' <span title="La hoja no cuadra">⚠️</span>' : ''}</td>
+          <td>${esc(f.rutas || '')}</td>
+          <td>${f.viajes || 0}</td>
+          <td>${Number(f.unidades || 0).toLocaleString('es-CO')}</td>
+          <td>${Number(f.liquidar || 0).toLocaleString('es-CO')}</td>
+          <td class="liq-plata">${liqPlata(f.dinero)}</td>
+          <td class="liq-cond">${esc(f.conductor || '—')}${f.sin_cedula ? ' <span title="Sin cédula">❓</span>' : ''}</td>
+          <td>${f.foto ? '📎' : '<span class="liq-falta">—</span>'}</td>
+        </tr>`).join('')}</tbody></table>`
+    : '<div class="cump-empty">No hay liquidaciones con esos filtros.</div>';
+  lista.querySelectorAll('.liq-fila').forEach((tr) => tr.addEventListener('click',
+    () => abrirLiqDia(tr.dataset.movil, tr.dataset.fecha)));
+
+  const p = d.pagina, n = d.paginas;
+  pag.innerHTML = n > 1
+    ? `<button type="button" class="btn btn-sec" ${p <= 1 ? 'disabled' : ''} data-ir="1">« Primera</button>
+       <button type="button" class="btn btn-sec" ${p <= 1 ? 'disabled' : ''} data-ir="${p - 1}">‹ Anterior</button>
+       <span class="liq-pagn">Página ${p} de ${n}</span>
+       <button type="button" class="btn btn-sec" ${p >= n ? 'disabled' : ''} data-ir="${p + 1}">Siguiente ›</button>
+       <button type="button" class="btn btn-sec" ${p >= n ? 'disabled' : ''} data-ir="${n}">Última »</button>`
+    : '';
+  pag.querySelectorAll('[data-ir]').forEach((b) => b.addEventListener('click', () => {
+    _liqF.pagina = Number(b.dataset.ir); cargarLiqPagina();
+    $('liq-lista').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+}
+
+// ---------- El día de un vehículo: sus rutas y el soporte ----------
+async function abrirLiqDia(movil, fechaIso) {
+  const m = liqModal(), body = m.querySelector('.pf-body');
+  const volver = body.innerHTML;
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  let d = null;
+  try {
+    const { data, error } = await sb.rpc('liquidaciones_dia', { p_movil: movil, p_fecha: fechaIso });
+    if (error) throw error;
+    d = data;
+  } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo abrir.</div>'; return; }
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+
+  const fs = d.filas || [], f0 = fs[0] || {};
+  const suma = (k) => fs.reduce((a, x) => a + Number(x[k] || 0), 0);
+  body.innerHTML = `
+    <button type="button" class="btn btn-sec" id="liq-volver">‹ Volver a la lista</button>
+    <h3 class="liq-tit">Bus ${esc(d.movil)} · ${esc(d.fecha)}</h3>
+    <div class="liq-cond-box">
+      <b>${esc(f0.conductor || 'Sin conductor')}</b>
+      ${f0.cedula ? `<span class="liq-ced">C.C. ${esc(f0.cedula)}</span>`
+                  : '<span class="liq-falta">sin cédula — el nombre no coincide con el perfil</span>'}
+    </div>
+    <table class="pp-tabla"><thead><tr><th>Ruta</th><th>Punto</th><th>Viajes</th>
+      <th>Pasajeros</th><th>Descontados</th><th>Total</th><th>Se paga</th><th>Dinero</th></tr></thead>
+      <tbody>${fs.map((x) => `<tr${x.cuadra === false ? ' class="liq-malo"' : ''}>
+        <td><b>${esc(x.ruta || '')}</b></td><td>${esc(x.punto || '')}</td><td>${x.viajes || 0}</td>
+        <td>${Number(x.unidades || 0).toLocaleString('es-CO')}</td>
+        <td>${x.descontar || 0}</td>
+        <td>${Number(x.total_liquidar || 0).toLocaleString('es-CO')}${x.cuadra === false ? ' ⚠️' : ''}</td>
+        <td>${Number(x.liquidar || 0).toLocaleString('es-CO')}</td>
+        <td class="liq-plata">${liqPlata(x.dinero)}</td></tr>`).join('')}
+      <tr class="liq-suma"><td colspan="2">Total del día</td><td>${suma('viajes')}</td>
+        <td>${suma('unidades').toLocaleString('es-CO')}</td><td>${suma('descontar')}</td>
+        <td>${suma('total_liquidar').toLocaleString('es-CO')}</td>
+        <td>${suma('liquidar').toLocaleString('es-CO')}</td>
+        <td class="liq-plata">${liqPlata(suma('dinero'))}</td></tr></tbody></table>
+    <section class="liq-foto">
+      <h4>📎 Soporte de la liquidación</h4>
+      ${d.foto
+        ? `<div class="liq-foto-hay">Montado por ${esc(d.foto.por || '')} el ${esc(d.foto.cuando || '')}
+             ${d.foto.nota ? '<div class="liq-nota2">' + esc(d.foto.nota) + '</div>' : ''}
+             <div class="gs-acciones">
+               <button type="button" class="btn" id="liq-ver">Ver el soporte</button>
+               <button type="button" class="btn btn-sec" id="liq-cambiar">Cambiar</button>
+             </div></div>`
+        : `<div class="liq-nota">Todavía no tiene foto.</div>
+           <div class="gs-acciones"><button type="button" class="btn" id="liq-montar">📷 Montar la foto</button></div>`}
+      <input type="file" id="liq-file" accept="image/*,application/pdf" hidden>
+    </section>`;
+
+  body.querySelector('#liq-volver').addEventListener('click', () => { body.innerHTML = volver; reengancharLiq(); });
+  const file = body.querySelector('#liq-file');
+  const pedir = () => file.click();
+  const bm = body.querySelector('#liq-montar'); if (bm) bm.addEventListener('click', pedir);
+  const bc = body.querySelector('#liq-cambiar'); if (bc) bc.addEventListener('click', pedir);
+  const bv = body.querySelector('#liq-ver');
+  if (bv) bv.addEventListener('click', () => verLiqFoto(d.foto.path));
+  file.addEventListener('change', () => subirLiqFoto(movil, fechaIso, file.files[0]));
+}
+
+// Vuelve a enganchar los eventos de la lista cuando se regresa del detalle.
+function reengancharLiq() {
+  const body = liqModal().querySelector('.pf-body');
+  const b1 = body.querySelector('#lf-buscar');
+  if (!b1) { cargarLiqPagina(); return; }
+  pintarLiqArmazon();
+  cargarLiqPagina();
+}
+
+async function verLiqFoto(path) {
+  try {
+    const { data, error } = await sb.storage.from('liquidaciones').createSignedUrl(path, 3600);
+    if (error) throw error;
+    window.open(data.signedUrl, '_blank', 'noopener');
+  } catch (e) { toast('No se pudo abrir el soporte.', 'err'); }
+}
+
+// El archivo va al bucket privado y en la base queda solo la ruta, quién lo montó y cuándo.
+async function subirLiqFoto(movil, fechaIso, file) {
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { toast('El archivo pasa de 10 MB.', 'err'); return; }
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+  const path = `${fechaIso.slice(0, 7)}/${movil}_${fechaIso}_${Date.now()}.${ext}`;
+  toast('Subiendo…', 'ok');
+  try {
+    const up = await sb.storage.from('liquidaciones').upload(path, file, {
+      upsert: false, contentType: file.type || undefined,
+    });
+    if (up.error) throw up.error;
+    const { data, error } = await sb.rpc('liquidacion_foto_guardar', {
+      p_movil: movil, p_fecha: fechaIso, p_path: path, p_nota: null,
+    });
+    if (error) throw error;
+    if (!data || !data.ok) { toast((data && data.error) || 'No se pudo guardar.', 'err'); return; }
+    toast('Soporte montado.', 'ok');
+    abrirLiqDia(movil, fechaIso);
+  } catch (e) { toast('No se pudo subir: ' + (e.message || e), 'err'); }
+}
+
+// Traer lo nuevo de la hoja: son dos pasos porque Google tarda más de dos minutos en generar
+// este CSV (3,85 MB). Se pide, se espera y se procesa; mientras tanto se avisa en pantalla.
+async function sincronizarLiq() {
+  const b = $('liq-sync');
+  if (!b) return;
+  b.disabled = true; b.textContent = 'Pidiendo la hoja…';
+  try {
+    const p = await sb.rpc('liquidaciones_pedir');
+    if (p.error) throw p.error;
+    if (!p.data || !p.data.ok) { toast((p.data && p.data.error) || 'No se pudo pedir.', 'err'); return; }
+    for (let i = 1; i <= 20; i++) {
+      b.textContent = `Descargando… (${i * 15}s)`;
+      await new Promise((r) => setTimeout(r, 15000));
+      const q = await sb.rpc('liquidaciones_procesar');
+      if (q.error) throw q.error;
+      const d = q.data || {};
+      if (d.esperando) continue;
+      if (!d.ok) { toast(d.error || 'No se pudo procesar.', 'err'); return; }
+      toast(`Listo: ${d.nuevas || 0} nueva(s), ${d.actualizadas || 0} actualizada(s).`, 'ok');
+      _liqCat = null;
+      await openLiquidaciones();
+      return;
+    }
+    toast('La hoja está tardando más de lo normal. Se intentará sola mañana a las 5:40 a.m.', 'err');
+  } catch (e) { toast('No se pudo actualizar: ' + (e.message || e), 'err'); }
+  finally { if ($('liq-sync')) { $('liq-sync').disabled = false; $('liq-sync').textContent = 'Traer lo nuevo de la hoja'; } }
+}
+
 let _sinRow = null;
 function sinModal() {
   let m = $('sin-modal');

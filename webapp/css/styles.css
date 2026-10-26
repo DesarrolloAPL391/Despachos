@@ -3243,6 +3243,59 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .gs-ruta { font-size: 11.5px; background: #eef2f7; color: #475569; border-radius: 6px;
            padding: 1px 7px; font-weight: 700; }
 .gs-alerta .btn { margin-top: 8px; padding: 5px 11px; font-size: 12.5px; }
+
+/* --- Liquidaciones (sql/138-140) --- */
+/* La plata va en una sola columna, alineada a la derecha y en monoespaciada: asi se comparan
+   las cifras de un vistazo sin tener que leerlas numero por numero. */
+.liq-cab { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.liq-card { background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+            padding: 10px 8px; text-align: center; }
+.liq-card b { display: block; font-size: 19px; line-height: 1.15; }
+.liq-card span { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.liq-card.ok { background: #e9f8ee; border-color: #bfe6cb; } .liq-card.ok b { color: #15803d; }
+.liq-nota { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+.liq-nota2 { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.lnk { background: none; border: 0; padding: 0; color: var(--primary); font: inherit;
+       font-weight: 600; cursor: pointer; text-decoration: underline; }
+.liq-avisos { margin-bottom: 10px; }
+.liq-aviso { background: #fff8e6; border: 1px solid #f3e0b0; border-radius: 10px;
+             padding: 9px 11px; font-size: 12.5px; color: #92650a; margin-bottom: 6px; }
+.liq-filtros { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end;
+               padding: 10px; background: var(--bg); border-radius: 12px; margin-bottom: 10px; }
+.liq-filtros label { display: flex; flex-direction: column; font-size: 11.5px; font-weight: 600;
+                     color: var(--muted); gap: 3px; }
+.liq-filtros input[type="date"], .liq-filtros select {
+  padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; font: inherit;
+  font-size: 13px; background: #fff; }
+.liq-chk { flex-direction: row !important; align-items: center; gap: 6px !important;
+           font-size: 12.5px; color: var(--text); }
+.liq-tot { font-size: 13px; color: var(--muted); margin-bottom: 8px; line-height: 1.7; }
+.liq-tot b { color: var(--text); }
+.liq-plata { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right;
+             white-space: nowrap; font-weight: 600; }
+.liq-tabla tbody tr { cursor: pointer; }
+.liq-tabla tbody tr:hover { background: var(--bg); }
+.liq-cond { font-size: 12.5px; color: var(--muted); max-width: 190px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+.liq-falta { color: #b45309; font-size: 12px; }
+.liq-malo td { background: #fdf3f3; }
+.liq-suma td { font-weight: 700; border-top: 2px solid var(--border); background: var(--bg); }
+.liq-pag { display: flex; gap: 6px; align-items: center; justify-content: center;
+           flex-wrap: wrap; margin-top: 12px; }
+.liq-pag .btn { padding: 5px 10px; font-size: 12.5px; }
+.liq-pagn { font-size: 12.5px; color: var(--muted); font-weight: 600; padding: 0 6px; }
+.liq-tit { margin: 12px 0 6px; font-size: 17px; }
+.liq-cond-box { background: var(--bg); border-radius: 10px; padding: 9px 12px; margin-bottom: 10px;
+                font-size: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.liq-ced { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.liq-foto { margin-top: 18px; border-top: 2px solid var(--border); padding-top: 12px; }
+.liq-foto h4 { margin: 0 0 6px; font-size: 15px; }
+.liq-foto-hay { font-size: 13px; color: var(--muted); }
+@media (max-width: 720px) {
+  .liq-cab { grid-template-columns: repeat(2, 1fr); }
+  .liq-filtros label { flex: 1 1 44%; }
+  .liq-cond { max-width: 110px; }
+}
 .pr-taller { margin-top: 18px; border-top: 2px solid var(--border); padding-top: 14px; }
 .pr-taller h4 { margin: 0 0 10px; font-size: 15px; }
 .pr-taller label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
