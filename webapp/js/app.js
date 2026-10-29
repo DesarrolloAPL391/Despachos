@@ -12456,28 +12456,30 @@ function novSecs(st) {
 
   // ✍️ Certificado laboral ----------------------------------------------------------------------
   const c = st.cert || {};
+  // Quien firma el certificado es Gestión Humana, salvo que se haya configurado la Gerencia:
+  // solo se reclama la firma que de verdad va a salir impresa.
+  const firmaGte = c.firma_rol === 'GERENTE';
   const itC = [
-    novLi(c.titular1, 'Está registrado quién es hoy el Gerente que firma',
-      'Registra al <b>Gerente</b> que firma (queda con fecha de vigencia: cuando cambie, se cambia ahí y el documento sale actualizado solo)'),
-    novLi(c.firma1, 'La firma del Gerente está cargada',
-      'Sube la <b>foto de la firma del Gerente</b> — la app le quita el fondo, la recorta y la deja ubicar sobre la línea'),
-    novLi(c.titular2, 'Está registrado quién firma por Gestión Humana',
-      'Registra a quien firma por <b>Gestión Humana</b>'),
-    novLi(c.firma2, 'La firma de Gestión Humana está cargada',
-      'Sube la <b>foto de la firma de Gestión Humana</b>'),
-    novLi(c.smmlv, 'El salario mínimo del año está puesto',
-      'Falta el <b>salario mínimo</b> del año (se usa cuando el certificado va sin el salario de la persona)'),
-    novLi(c.auxilio, 'El auxilio de transporte del año está puesto',
-      'Falta el <b>auxilio de transporte</b> del año'),
+    firmaGte
+      ? novLi(c.titular1, 'Está registrado quién es hoy el Gerente que firma',
+        'Registra al <b>Gerente</b> que firma (queda con fecha de vigencia: cuando cambie, se cambia ahí y el documento sale actualizado solo)')
+      : novLi(c.titular2, 'Está registrado quién firma por Gestión Humana',
+        'Registra a quien firma por <b>Gestión Humana</b> (queda con fecha de vigencia: cuando cambie, se cambia ahí y el documento sale actualizado solo)'),
+    firmaGte
+      ? novLi(c.firma1, 'La firma del Gerente está cargada',
+        'Sube la <b>foto de la firma del Gerente</b> — la app le quita el fondo, la recorta y la deja ubicar sobre la línea')
+      : novLi(c.firma2, 'La firma de Gestión Humana está cargada',
+        'Sube la <b>foto de la firma de Gestión Humana</b> — la app le quita el fondo, la recorta y la deja ubicar sobre la línea'),
+    novLi(c.suscrito, 'Está puesto el cargo de quien suscribe',
+      'Falta el <b>cargo de quien suscribe</b>, el que va en «El suscrito… de la compañía»'),
     novLi(c.telefono, 'El teléfono de contacto que se imprime está puesto',
       'Falta el <b>teléfono</b> que va al pie del certificado'),
+    novLi(c.correo, 'El correo para verificar el certificado está puesto',
+      'Falta el <b>correo</b> al que escriben a confirmar el certificado'),
+    novLi(c.membrete, 'El membrete está completo (dirección y correo)',
+      'Falta la <b>dirección</b> o el <b>correo</b> de la empresa: el encabezado de la hoja sale incompleto'),
   ];
-  // El año de los valores solo se cuestiona cuando ya hay valores que cuestionar.
-  if (c.smmlv && c.auxilio) {
-    itC.push(novLi(Number(c.anio) === Number(c.anio_hoy), `Los valores son los de ${c.anio_hoy}`,
-      `Los valores guardados son de <b>${c.anio || 'un año sin decir'}</b>: confírmalos para <b>${c.anio_hoy}</b>`));
-  }
-  secs.push(novSec('✍️', 'Certificado laboral', 'v280', 'Se genera desde la ficha de la persona, en el Perfil, con el logo de la empresa. La redacción se ajusta sola según esté activa o retirada (y al género), la cifra va también en letras, y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario.</b>',
+  secs.push(novSec('✍️', 'Certificado laboral', 'v331', 'Se genera desde la ficha de la persona, en el Perfil, con el formato que entregó Talento Humano: membrete con el logo, la fecha arriba y una sola firma. La redacción se ajusta sola según esté activa o retirada (y al género), y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario.</b>',
     itC,
     c.expedidos ? [`Certificados expedidos hasta hoy: <b>${c.expedidos}</b>.`] : [],
     [novBtn('cert', '✍️ Abrir Firmas del certificado', true)]));
@@ -14812,38 +14814,15 @@ let _certRow = null;   // persona del certificado abierto
 const CERT_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
   'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
-// Cifra en letras, como se acostumbra en un certificado ("UN MILLÓN SETECIENTOS CINCUENTA MIL…").
-function numeroALetras(n) {
-  n = Math.floor(Math.abs(Number(n) || 0));
-  if (!n) return 'CERO';
-  const U = ['', 'UN', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE', 'DIEZ',
-    'ONCE', 'DOCE', 'TRECE', 'CATORCE', 'QUINCE', 'DIECISÉIS', 'DIECISIETE', 'DIECIOCHO', 'DIECINUEVE',
-    'VEINTE', 'VEINTIUNO', 'VEINTIDÓS', 'VEINTITRÉS', 'VEINTICUATRO', 'VEINTICINCO', 'VEINTISÉIS',
-    'VEINTISIETE', 'VEINTIOCHO', 'VEINTINUEVE'];
-  const D = ['', '', '', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
-  const C = ['', 'CIENTO', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS',
-    'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
-  const tramo = (x) => {
-    if (x === 100) return 'CIEN';
-    const c = Math.floor(x / 100), r = x % 100;
-    let t = c ? C[c] : '';
-    if (r) {
-      const dd = Math.floor(r / 10), uu = r % 10;
-      t += (t ? ' ' : '') + (r < 30 ? U[r] : D[dd] + (uu ? ' Y ' + U[uu] : ''));
-    }
-    return t;
-  };
-  const apocope = (t) => t.replace(/UNO$/, 'ÚN'); // "VEINTIUNO MIL" no existe: es "VEINTIÚN MIL"
-  const mill = Math.floor(n / 1e6), resto = n % 1e6;
-  const miles = Math.floor(resto / 1000), unid = resto % 1000;
-  const p = [];
-  if (mill) p.push(mill === 1 ? 'UN MILLÓN' : apocope(tramo(mill)) + ' MILLONES');
-  if (miles) p.push(miles === 1 ? 'MIL' : apocope(tramo(miles)) + ' MIL');
-  if (unid) p.push(tramo(unid));
-  return p.join(' ');
-}
-
 const certPesos = (n) => '$' + Number(n || 0).toLocaleString('es-CO');
+
+// "15 de abril de 2026", como van las fechas en el formato. `fechaLegible` da dd/mm/aaaa, que
+// sirve en una tabla pero no en una carta.
+function certFechaLarga(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+  if (!m) return String(v || '');
+  return `${Number(m[3])} de ${CERT_MESES[Number(m[2]) - 1]} de ${m[1]}`;
+}
 
 // El logo, ya convertido a imagen embebida: si se imprime desde otra ventana, una ruta relativa
 // no resolvería y el certificado saldría sin membrete.
@@ -14867,118 +14846,126 @@ async function certLeerConfig() {
 }
 
 // ---- El documento ----
+// Reproduce el formato que entregó Talento Humano (octubre de 2026): membrete con el logo a la
+// derecha, la fecha arriba, "El suscrito <cargo> … CERTIFICA QUE", el periodo en dos líneas y
+// una sola firma. Lo único que se aparta del modelo es lo que el modelo no podía prever:
+//   · si la persona está retirada dice "laboró" y la fecha de retiro real, no "Contrato vigente";
+//   · si se expide sin salario, se omite ese pedazo de la frase;
+//   · si la ficha dice el sexo, concuerda ("El señor" / "La señora") en vez de "El(la) señor(a)".
 function certDocHtml(row, cfg, opts) {
   const o = opts || {};
   const inactivo = row.estado === 'INACTIVO';
   const sexo = String(row.sexo || '').toUpperCase();
-  const trato = sexo.startsWith('F') ? 'La señora' : sexo.startsWith('M') ? 'El señor' : 'El(La) señor(a)';
+  const trato = sexo.startsWith('F') ? 'La señora' : sexo.startsWith('M') ? 'El señor' : 'El(la) señor(a)';
   const ido = sexo.startsWith('F') ? 'identificada' : sexo.startsWith('M') ? 'identificado' : 'identificado(a)';
   const emp = cfg.empresa_nombre || 'AUTOBUSES EL POBLADO LAURELES S.A.';
-
-  // Verbos: en presente si sigue trabajando, en pasado si ya se retiró.
-  const v = inactivo
-    ? { labora: 'laboró', desempena: 'Desempeñó', devengando: 'devengando' }
-    : { labora: 'labora', desempena: 'Desempeña', devengando: 'devengando' };
-
-  // La fórmula "para vehículos de propiedad de…" solo aplica a quien trabaja sobre el vehículo.
-  const donde = (row.tipo === 'CONDUCTOR'
-    ? `para vehículos de propiedad de ${esc(emp)}`
-    : `en ${esc(emp)}`).replace(/\.$/, ''); // "S.A." ya trae punto: evita el "S.A.." del modelo viejo
-
-  // Salario: si coincide con el mínimo del año, se nombra como tal (es lo que pide el banco).
-  let frase = '';
-  if (o.conSalario && row.salario) {
-    const sal = Number(row.salario);
-    const esMin = cfg.smmlv && Math.abs(sal - Number(cfg.smmlv)) < 1;
-    const cifra = `${certPesos(sal)} (${numeroALetras(sal)} PESOS M/CTE)`;
-    frase = esMin
-      ? `, ${v.devengando} un <b>Salario Mínimo Mensual Legal Vigente</b> de ${cifra}`
-      : `, ${v.devengando} un salario mensual de <b>${cifra}</b>`;
-    // Auxilio de transporte: por ley lo recibe quien gana hasta 2 salarios mínimos.
-    if (o.conAuxilio && cfg.auxilio_transporte && (!cfg.smmlv || sal <= Number(cfg.smmlv) * 2)) {
-      frase += `, más auxilio de transporte de ${certPesos(cfg.auxilio_transporte)}`;
-    }
-  }
+  const labora = inactivo ? 'laboró' : 'labora';
 
   const contrato = row.tipo_contrato
-    ? ` bajo un contrato laboral a término <b>${esc(row.tipo_contrato)}</b>`
+    ? `, desempeñando sus labores bajo un contrato laboral a Término <b>${esc(row.tipo_contrato)}</b>`
+    : '';
+  const frase = (o.conSalario && row.salario)
+    ? ` y devengando un Salario de <b>${certPesos(row.salario)}</b>`
     : '';
 
   const hoy = new Date();
-  const fechaTexto = `${cfg.ciudad || 'Medellín'}, a los ${hoy.getDate()} días del mes de `
-    + `${CERT_MESES[hoy.getMonth()]} de ${hoy.getFullYear()}`;
-  const motivo = o.dirigidoA
-    ? `Se expide a solicitud del interesado, con destino a <b>${esc(o.dirigidoA)}</b>.`
-    : 'Se expide a solicitud del interesado.';
+  const fechaHoy = `${cfg.ciudad || 'Medellín'}, ${hoy.getDate()} de ${CERT_MESES[hoy.getMonth()]} `
+    + `de ${hoy.getFullYear()}.`;
 
-  // La firma se imprime con el tamano y la posicion que se dejaron configurados (sql/94),
-  // para que salga igual en todos los certificados.
-  const firma = (nom, cargo, img, alto, dx, dy) => nom
-    ? `<div class="cl-f">${img
-      ? `<img src="${esc(img)}" alt="" style="height:${Number(alto) || 58}px;transform:translate(${Number(dx) || 0}px,${Number(dy) || 0}px)">`
-      : '<div class="cl-fl"></div>'}
-         <div class="cl-fn">${esc(nom)}</div><div class="cl-fc">${esc(cargo || '')}</div></div>`
+  // Quien firma es el que diga la configuración (sql/144): el formato nuevo lo firma Talento
+  // Humano, no la Gerencia, pero eso se cambia sin tocar el código.
+  const n = cfg.firma_rol === 'GERENTE' ? '1' : '2';
+  const fNom = cfg['firmante' + n + '_nombre'];
+  const fCargo = cfg['firmante' + n + '_cargo'];
+  const fImg = cfg['firmante' + n + '_firma'];
+  const fAlto = Number(cfg['firmante' + n + '_alto']) || 58;
+  const fDx = Number(cfg['firmante' + n + '_dx']) || 0;
+  const fDy = Number(cfg['firmante' + n + '_dy']) || 0;
+
+  // El pie de verificación: teléfono con extensiones y el correo a donde escriben a confirmar.
+  const tel = [cfg.telefono, cfg.telefono_ext ? `Ext. ${cfg.telefono_ext}` : '']
+    .filter(Boolean).join(' ');
+  const pie = (tel || cfg.correo_contacto)
+    ? 'Cualquier información con gusto será suministrada comunicándose al '
+      + `${esc(tel)}${cfg.correo_contacto ? ` o al correo ${esc(cfg.correo_contacto)}` : ''}`
     : '';
+
+  const web = String(cfg.empresa_web || '').replace(/^https?:\/\//, '');
 
   return `
   <div class="cl-hoja">
-    ${o.logo ? `<div class="cl-logo"><img src="${o.logo}" alt=""></div>` : ''}
-    <div class="cl-emp">${esc(emp)}</div>
-    <div class="cl-nit">${esc(cfg.empresa_nit || '')}</div>
+    <div class="cl-mb">
+      <div class="cl-mbt">
+        <div class="cl-emp">${esc(emp)}</div>
+        <div class="cl-nit">${esc(cfg.empresa_nit || '')}</div>
+        <div class="cl-dir">${esc(cfg.empresa_direccion || '')}
+          ${cfg.empresa_correo ? esc(cfg.empresa_correo) : ''}
+          ${web ? esc(web) : ''}</div>
+        ${cfg.empresa_whatsapp ? `<div class="cl-dir">WhatsApp ${esc(cfg.empresa_whatsapp)}</div>` : ''}
+      </div>
+      ${o.logo ? `<img class="cl-logo" src="${o.logo}" alt="">` : ''}
+    </div>
+
+    <p class="cl-p cl-fecha">${esc(fechaHoy)}</p>
+
+    <p class="cl-p cl-suscrito"><b>El suscrito ${esc(cfg.suscrito_cargo || '')} de la compañía
+      ${esc(emp)} con ${esc(cfg.empresa_nit || '')}</b></p>
 
     <div class="cl-tit">CERTIFICA QUE:</div>
 
     <p class="cl-p">
-      ${trato} <b>${esc(row.nombre || '')}</b>, ${ido} con cédula de ciudadanía
-      No. <b>${esc(row.cedula || '')}</b>, ${v.labora} como <b>${esc(row.cargo || '')}</b> ${donde}.
-      ${v.desempena} sus labores${contrato}${frase}.
+      ${trato} <u><b>${esc(row.nombre || '')}</b></u> ${ido} con cédula de ciudadanía
+      No. <u><b>${esc(row.cedula || '')}</b></u> ${labora} para la compañía como
+      <b>${esc(row.cargo || '')}</b>${contrato}${frase}, para el siguiente periodo:
     </p>
 
     <div class="cl-fechas">
-      <div><span>Fecha de ingreso:</span> <b>${row.fecha_ingreso ? fechaLegible(row.fecha_ingreso) : '—'}</b></div>
-      <div><span>Fecha de retiro:</span> <b>${row.fecha_retiro ? fechaLegible(row.fecha_retiro) : (inactivo ? '—' : '')}</b></div>
+      <div><span>Fecha de Ingreso:</span>${row.fecha_ingreso ? certFechaLarga(row.fecha_ingreso) + '.' : '—'}</div>
+      <div><span>Fecha de retiro:</span>${row.fecha_retiro ? certFechaLarga(row.fecha_retiro) + '.'
+    : (inactivo ? '—' : 'Contrato vigente.')}</div>
     </div>
 
-    <p class="cl-p">${fechaTexto}. ${motivo}</p>
+    ${pie ? `<p class="cl-p cl-tel">${pie}</p>` : ''}
 
-    ${cfg.telefono ? `<p class="cl-p cl-tel">Cualquier información con gusto será suministrada
-      comunicándose al ${esc(cfg.telefono)} – ${esc(cfg.ciudad || 'Medellín')}.</p>` : ''}
-    ${cfg.nota_pie ? `<p class="cl-p cl-nota">${esc(cfg.nota_pie)}</p>` : ''}
+    <p class="cl-p cl-cord">Cordialmente,</p>
 
-    <div class="cl-firmas">
-      ${firma(cfg.firmante1_nombre, cfg.firmante1_cargo, cfg.firmante1_firma,
-    cfg.firmante1_alto, cfg.firmante1_dx, cfg.firmante1_dy)}
-      ${firma(cfg.firmante2_nombre, cfg.firmante2_cargo, cfg.firmante2_firma,
-    cfg.firmante2_alto, cfg.firmante2_dx, cfg.firmante2_dy)}
+    <div class="cl-f">
+      ${fImg
+    ? `<img src="${esc(fImg)}" alt="" style="height:${fAlto}px;transform:translate(${fDx}px,${fDy}px)">`
+    : '<div class="cl-fl"></div>'}
+      <div class="cl-fn">${esc(fNom || '')}</div>
+      <div class="cl-fn">${esc(fCargo || '')}</div>
+      <div class="cl-fn">${esc(emp)}</div>
     </div>
-    ${o.consecutivo ? `<div class="cl-cons">${esc(o.consecutivo)}</div>` : ''}
   </div>`;
 }
 
 // Estilos del documento: van embebidos porque se imprime en una ventana aparte.
+// Los márgenes son los de la plantilla de Word (el derecho es ancho a propósito: el membrete
+// y el logo se salen a ese costado, el texto no).
 const CERT_CSS = `
-  @page { size: letter; margin: 2.2cm 2.4cm; }
+  @page { size: letter; margin: 1.5cm 4.2cm 1.3cm 1.9cm; }
   body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
-  .cl-hoja { font-size: 12.5pt; line-height: 1.55; }
-  .cl-logo { text-align: center; margin-bottom: 10px; }
-  .cl-logo img { height: 74px; }
-  .cl-emp, .cl-nit, .cl-tit { text-align: center; font-weight: 700; }
-  .cl-emp { font-size: 13.5pt; }
-  .cl-nit { font-size: 12pt; margin-top: 6px; }
-  .cl-tit { margin: 54px 0 40px; letter-spacing: .5px; }
-  .cl-p { text-align: justify; margin: 0 0 22px; }
-  .cl-fechas { margin: 30px 0 34px; }
-  .cl-fechas div { margin-bottom: 12px; }
-  .cl-fechas span { display: inline-block; min-width: 160px; font-weight: 700; }
-  .cl-tel, .cl-nota { margin-top: 34px; }
-  .cl-nota { font-size: 11pt; }
-  .cl-firmas { display: flex; gap: 40px; margin-top: 80px; }
-  .cl-f { flex: 1; text-align: center; }
-  .cl-f img { height: 58px; display: block; margin: 0 auto 4px; }
-  .cl-fl { height: 58px; }
-  .cl-fn { border-top: 1px solid #000; padding-top: 6px; font-weight: 700; font-size: 11.5pt; }
-  .cl-fc { font-size: 11pt; }
-  .cl-cons { margin-top: 40px; font-size: 9.5pt; color: #444; }
+  .cl-hoja { font-size: 12pt; line-height: 1.5; }
+  .cl-mb { display: flex; align-items: flex-start; gap: 14px; margin: 0 -3.4cm 26px 0; }
+  .cl-mbt { flex: 1; padding-top: 4px; }
+  .cl-logo { width: 3.5cm; flex: none; }
+  .cl-emp { font-weight: 700; font-size: 11pt; }
+  .cl-nit { font-weight: 700; font-size: 10pt; }
+  .cl-dir { font-size: 8.5pt; line-height: 1.35; }
+  .cl-p { text-align: justify; margin: 0 0 16px; }
+  .cl-fecha { margin-bottom: 30px; }
+  .cl-suscrito { margin-bottom: 20px; }
+  .cl-tit { text-align: center; font-weight: 700; margin: 0 0 20px; }
+  .cl-fechas { margin: 22px 0 26px; font-weight: 700; }
+  .cl-fechas div { margin-bottom: 4px; }
+  .cl-fechas span { display: inline-block; min-width: 4.6cm; }
+  .cl-tel { margin-top: 26px; }
+  .cl-cord { margin: 34px 0 0; }
+  .cl-f { margin-top: 64px; }
+  .cl-f img { display: block; margin-bottom: 2px; }
+  .cl-fl { height: 10px; }
+  .cl-fn { font-weight: 700; }
 `;
 
 // ---- Pantalla: primero se revisa, se decide lo del salario, y solo entonces se genera ----
@@ -14988,7 +14975,7 @@ const CERT_CSS = `
 let _certSal = null;   // null = todavía no ha decidido; true/false = con o sin salario
 
 // Los datos que van a salir impresos, para revisarlos antes de generar.
-function certRevisionHtml(row, cfg) {
+function certRevisionHtml(row) {
   const inactivo = row.estado === 'INACTIVO';
   // El tercer argumento es lo que se muestra CUANDO NO HAY dato; solo entonces se marca en ambar.
   const dato = (etiqueta, valor, siFalta) => `<div class="cert-d${!valor && siFalta ? ' falta' : ''}">
@@ -15013,8 +15000,8 @@ function certRevisionHtml(row, cfg) {
         ${dato('Salario en la ficha', row.salario ? certPesos(row.salario) : '', 'sin salario en la ficha')}
       </div>
       ${inactivo
-    ? '<div class="cert-nota-est">Esta persona está <b>INACTIVA</b>: el certificado se redacta en pasado («laboró», «desempeñó») y lleva la fecha de retiro.</div>'
-    : '<div class="cert-nota-est">Esta persona está <b>ACTIVA</b>: el certificado se redacta en presente («labora», «desempeña») y la fecha de retiro va en blanco.</div>'}
+    ? '<div class="cert-nota-est">Esta persona está <b>INACTIVA</b>: el certificado dice «laboró» y lleva la fecha de retiro.</div>'
+    : '<div class="cert-nota-est">Esta persona está <b>ACTIVA</b>: el certificado dice «labora» y en la fecha de retiro sale «Contrato vigente».</div>'}
       ${falta.length
     ? `<div class="cert-bloqueo">No se puede expedir sin ${falta.join(', ')}. Corrige la ficha primero.</div>` : ''}
     </div>`;
@@ -15054,8 +15041,7 @@ function certOpciones() {
   const dir = m.querySelector('[data-dir]');
   return {
     conSalario: _certSal === true,
-    conAuxilio: _certSal === true,
-    dirigidoA: dir ? dir.value.trim() : '',
+    dirigidoA: dir ? dir.value.trim() : '',   // no se imprime: queda en el registro de expedición
     logo: _certLogo || '',
   };
 }
@@ -15090,8 +15076,9 @@ async function openCertificado(row) {
     const [cfg] = await Promise.all([certLeerConfig(), certLogoDataUri().then((d) => { _certLogo = d; })]);
     if (!cfg || !cfg.ok) throw new Error('falta ejecutar sql/93 o no tienes permiso');
 
-    const LBL = { firmante1_nombre: 'quién firma', telefono: 'el teléfono de contacto',
-      smmlv: 'el salario mínimo del año', auxilio_transporte: 'el auxilio de transporte' };
+    const LBL = { firmante1_nombre: 'quién firma', firmante2_nombre: 'quién firma',
+      suscrito_cargo: 'el cargo de quien suscribe', telefono: 'el teléfono de contacto',
+      correo_contacto: 'el correo de contacto', empresa_direccion: 'la dirección del membrete' };
     const falta = cfg.falta || [];
     aviso.hidden = !falta.length;
     if (falta.length) {
@@ -15101,7 +15088,7 @@ async function openCertificado(row) {
 
     const puede = !!(row.nombre && row.cedula && row.fecha_ingreso);
     const haySalario = !!row.salario;
-    p1.innerHTML = certRevisionHtml(row, cfg) + (puede ? `
+    p1.innerHTML = certRevisionHtml(row) + (puede ? `
       <div class="cert-preg">
         <div class="cert-preg-t">¿El certificado debe incluir el salario?</div>
         <div class="cert-preg-b">
@@ -15113,6 +15100,7 @@ async function openCertificado(row) {
     : 'Esta persona no tiene salario en la ficha, así que solo se puede expedir sin salario.'}</div>
         <label class="cert-dir">Con destino a
           <input type="text" data-dir placeholder="(opcional) banco, entidad…" maxlength="80">
+          <span class="pst-nota">No se imprime: queda en el registro, para saber para qué se pidió.</span>
         </label>
       </div>` : '');
   } catch (e) {
@@ -15260,7 +15248,9 @@ function cfRender() {
   const body = cfModal().querySelector('.cf-body');
   const puede = !!(_cf.datos && _cf.datos.puede_editar);
   body.innerHTML = `
-    <div class="cf-intro">Estas dos firmas salen en <b>todos</b> los certificados laborales.
+    <div class="cf-intro">El certificado laboral lo firma
+      <b>${(_cf.cfg || {}).firma_rol === 'GERENTE' ? 'la Gerencia' : 'Gestión Humana'}</b>,
+      que es lo que pide el formato. La otra queda registrada para los documentos que la necesiten.
       Cuando entra otra persona al cargo no se borra la anterior: se registra desde cuándo firma
       la nueva, y el certificado se actualiza solo.</div>
     ${puede ? '' : '<div class="cert-bloqueo">Puedes consultarlas, pero solo administración las cambia.</div>'}
@@ -15330,11 +15320,18 @@ function cfDatosHtml(puede) {
   return `<div class="cf-datos">
     <h4>Datos que salen en el certificado</h4>
     <div class="cf-datos-g">
+      ${campo('suscrito_cargo', 'Cargo de quien suscribe', c.suscrito_cargo, 'text', 'Va en "El suscrito \u2026 de la compa\u00f1\u00eda".')}
       ${campo('telefono', 'Tel\u00e9fono de contacto', c.telefono, 'text', 'El que se imprime en "cualquier informaci\u00f3n\u2026"')}
+      ${campo('telefono_ext', 'Extensiones', c.telefono_ext, 'text', 'Por ejemplo: 107 y/o 108.')}
+      ${campo('correo_contacto', 'Correo para verificar', c.correo_contacto, 'text')}
       ${campo('ciudad', 'Ciudad', c.ciudad, 'text')}
-      ${campo('anio_valores', 'A\u00f1o de estos valores', c.anio_valores, 'number')}
-      ${campo('smmlv', 'Salario m\u00ednimo del a\u00f1o', c.smmlv, 'number', 'Si el sueldo coincide, se nombra como "salario m\u00ednimo legal vigente".')}
-      ${campo('auxilio_transporte', 'Auxilio de transporte', c.auxilio_transporte, 'number', 'Solo se imprime para quien gana hasta 2 salarios m\u00ednimos.')}
+    </div>
+    <h4>Membrete (el encabezado de la hoja)</h4>
+    <div class="cf-datos-g">
+      ${campo('empresa_direccion', 'Direcci\u00f3n', c.empresa_direccion, 'text')}
+      ${campo('empresa_correo', 'Correo de la empresa', c.empresa_correo, 'text')}
+      ${campo('empresa_web', 'P\u00e1gina web', c.empresa_web, 'text')}
+      ${campo('empresa_whatsapp', 'WhatsApp', c.empresa_whatsapp, 'text')}
     </div>
     ${puede ? `<div class="cf-btns">
       <button type="button" class="btn btn-primary btn-sm" data-cfg-guardar>\ud83d\udcbe Guardar estos datos</button>
