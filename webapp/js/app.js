@@ -1001,6 +1001,9 @@ function selectTable(name, filtroInicial) {
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
   const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !isTalentoHumano();
   const bPqr = $('pqr-sync-btn'); if (bPqr) bPqr.hidden = name !== 'pqrsf' || !puedeTraerPqrsf();
+  // Al abrir PQRSF, si la hoja lleva rato sin traerse, se trae sola. Sin await: la pantalla
+  // se pinta ya y la sincronización va por detrás.
+  if (name === 'pqrsf') pqrsfAutoSync();
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
@@ -12560,7 +12563,7 @@ function novSecs(st) {
       novLi(!q.falta_cerrar, 'No queda ninguna respondida sin cerrar',
         `<b>${q.falta_cerrar}</b> ya respondidas que <b>falta cerrar</b> (el botón <b>Cerrar</b> está en la bandeja; es papeleo, no incumplimiento)`),
     ];
-    secs.push(novSec('📣', 'PQRSF: la bandeja quedó en dos listas', 'v279', 'Antes todo lo abierto salía revuelto. Ahora se separa lo que de verdad <b>no tiene respuesta</b> de lo que ya se respondió y <b>solo falta cerrar</b>, y <b>vencida</b> es únicamente la que sigue sin responder con el plazo pasado. Así el aviso del menú no se infla con desorden administrativo.',
+    secs.push(novSec('📣', 'PQRSF: la bandeja quedó en dos listas', 'v334', 'Antes todo lo abierto salía revuelto. Ahora se separa lo que de verdad <b>no tiene respuesta</b> de lo que ya se respondió y <b>solo falta cerrar</b>, y <b>vencida</b> es únicamente la que sigue sin responder con el plazo pasado. Así el aviso del menú no se infla con desorden administrativo. <b>La hoja se trae sola</b> al abrir la bandeja cuando el último cargue ya tiene más de 6 horas; el botón sigue ahí para hacerlo cuando se quiera.',
       itQ, [], [novBtn('pqrsf', '📣 Abrir la bandeja', true)]));
   }
 
@@ -13342,26 +13345,41 @@ function pqrArmarFilas(texto) {
   return salida;
 }
 
-// Botón "🔄 Traer PQRSF": lee la hoja publicada y actualiza la tabla
-async function sincronizarPqrsf() {
+// Botón "🔄 Traer PQRSF": lee la hoja publicada y actualiza la tabla.
+// `o.auto` = lo disparó la app al abrir la pantalla, no una persona: entonces no estorba con
+// mensajes si no hubo novedades, y un fallo (sin señal, hoja caída) se queda callado — el
+// botón sigue ahí para hacerlo a mano.
+async function sincronizarPqrsf(o) {
+  const auto = !!(o && o.auto);
   const btn = $('pqr-sync-btn'); const prev = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Leyendo la hoja…'; }
+  if (btn) { btn.disabled = true; btn.textContent = auto ? '⏳ Actualizando…' : '⏳ Leyendo la hoja…'; }
   try {
-    const { data: est, error: e1 } = await sb.rpc('pqrsf_estado');
-    if (e1) {
-      if (/pqrsf_estado/.test(String(e1.message || e1))) {
-        toast('Falta ejecutar sql/89 en la base: todavia no existe el modulo de PQRSF.', 'err'); return;
+    let est = (o && o.estado) || null;
+    if (!est) {
+      const { data, error: e1 } = await sb.rpc('pqrsf_estado');
+      if (e1) {
+        if (/pqrsf_estado/.test(String(e1.message || e1))) {
+          if (!auto) toast('Falta ejecutar sql/89 en la base: todavia no existe el modulo de PQRSF.', 'err');
+          return;
+        }
+        throw e1;
       }
-      throw e1;
+      est = data;
     }
-    if (!est?.ok) { toast('No tienes permiso para ver las PQRSF.', 'err'); return; }
-    if (!est.puede_cargar) { toast('Tu cuenta puede consultar las PQRSF, pero no traerlas.', 'err'); return; }
+    if (!est?.ok) { if (!auto) toast('No tienes permiso para ver las PQRSF.', 'err'); return; }
+    if (!est.puede_cargar) {
+      if (!auto) toast('Tu cuenta puede consultar las PQRSF, pero no traerlas.', 'err');
+      return;
+    }
     const url = est.url || '';
-    if (!url) { toast('Falta configurar el enlace de la hoja (tabla pqrsf_fuente).', 'err'); return; }
+    if (!url) {
+      if (!auto) toast('Falta configurar el enlace de la hoja (tabla pqrsf_fuente).', 'err');
+      return;
+    }
     const resp = await fetch(url, { cache: 'no-store' });
     if (!resp.ok) throw new Error('La hoja respondió ' + resp.status);
     const filas = pqrArmarFilas(await resp.text());
-    if (!filas.length) { toast('La hoja no trajo filas.', 'err'); return; }
+    if (!filas.length) { if (!auto) toast('La hoja no trajo filas.', 'err'); return; }
     let nuevos = 0, actualizados = 0;
     const LOTE = 60;   // cada fila lleva ademas la hoja completa en datos_origen (~5 KB)
     for (let i = 0; i < filas.length; i += LOTE) {
@@ -13371,11 +13389,39 @@ async function sincronizarPqrsf() {
       if (!data?.ok) throw new Error(data?.error || 'no se pudo guardar');
       nuevos += data.nuevos || 0; actualizados += data.actualizados || 0;
     }
-    toast(`Listo: ${nuevos} PQRSF nueva(s) y ${actualizados} actualizada(s).`, 'ok');
+    // En automático solo se avisa cuando llegó algo nuevo: "0 nuevas" cada vez es ruido.
+    if (!auto) toast(`Listo: ${nuevos} PQRSF nueva(s) y ${actualizados} actualizada(s).`, 'ok');
+    else if (nuevos) toast(`Llegaron ${nuevos} PQRSF nueva(s) desde la última vez.`, 'ok');
     if (current === 'pqrsf') loadData();
   } catch (e) {
-    toast('No se pudieron traer las PQRSF: ' + (e.message || e), 'err');
+    if (auto) console.warn('PQRSF: no se pudo actualizar sola —', e.message || e);
+    else toast('No se pudieron traer las PQRSF: ' + (e.message || e), 'err');
   } finally { if (btn) { btn.disabled = false; btn.textContent = prev; } }
+}
+
+// Traer la hoja sola al abrir 📣 PQRSF.
+//
+// No es un cron: quien baja la hoja es el navegador de quien entra, así que esto depende de
+// que alguien abra la pantalla. Es lo que arregla el caso real que lo motivó — cuatro días
+// sin traerla porque nadie pulsó el botón — sin montar infraestructura nueva.
+// Una sola vez por sesión, y solo si la última carga ya tiene horas: son ~2.600 filas en 45
+// llamadas, no es algo para repetir cada vez que alguien cambia de pantalla.
+const PQR_AUTO_HORAS = 6;
+let _pqrAutoHecho = false;
+
+async function pqrsfAutoSync() {
+  if (_pqrAutoHecho || !puedeTraerPqrsf()) return;
+  _pqrAutoHecho = true;   // también si falla: no se reintenta en bucle al navegar
+  try {
+    const { data } = await sb.rpc('pqrsf_estado');
+    if (!data?.ok || !data.puede_cargar || !data.url) return;
+    const t = data.ultima_carga ? toDate(data.ultima_carga).getTime() : 0;
+    const horas = t ? (Date.now() - t) / 3600000 : 1e6;   // sin marca = nunca se ha traído
+    if (!(horas >= PQR_AUTO_HORAS)) return;
+    await sincronizarPqrsf({ auto: true, estado: data });
+  } catch (e) {
+    console.warn('PQRSF: no se pudo comprobar si la hoja está al día —', e.message || e);
+  }
 }
 
 // ---- Ficha de la PQRSF: el radicado completo, ordenado ----
@@ -23542,7 +23588,8 @@ $('sonarfull-btn').addEventListener('click', async () => {
 
 // ---------- Administración de accesos (solo admin) ----------
 $('sin-sync-btn')?.addEventListener('click', sincronizarSiniestros);
-$('pqr-sync-btn')?.addEventListener('click', sincronizarPqrsf);
+// Sin pasar el evento: el primer argumento de sincronizarPqrsf son sus opciones.
+$('pqr-sync-btn')?.addEventListener('click', () => sincronizarPqrsf());
 $('perfil-new-btn').addEventListener('click', async () => {
   const rolIn = (prompt('Rol del acceso (despachador / auditor / admin / gestion_humana):', 'despachador') || '').trim().toLowerCase();
   if (!rolIn) return;
