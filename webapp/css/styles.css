@@ -2668,6 +2668,15 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
   box-shadow: 0 2px 10px rgba(0,0,0,.14); }
 @media (max-width: 640px) { .cert-prev { padding: 10px; } .cert-prev .cl-hoja { padding: 24px 20px; } }
 
+/* ---- Historial de vinculaciones en la revisión del certificado ---- */
+.cert-hist { margin: 12px 0 0; padding: 10px 12px; border-radius: 9px;
+  background: #f8fafc; border: 1px solid var(--border); }
+.cert-hist-t { font-size: 13px; color: #334155; margin-bottom: 6px; }
+.cert-hist-l { margin: 0; padding-left: 22px; font-size: 13px; color: #0f172a; }
+.cert-hist-l li { margin-bottom: 3px; }
+.cert-aviso-in { margin: 10px 0 0; }
+.cert-aviso-in ul { margin: 5px 0; padding-left: 20px; }
+
 /* ---- Enviar el certificado por WhatsApp ---- */
 .cert-wa { padding: 16px 18px 18px; }
 .cert-wa-t { font-weight: 700; font-size: 15px; color: #0f172a; margin-bottom: 8px; }

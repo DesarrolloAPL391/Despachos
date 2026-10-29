@@ -12479,7 +12479,7 @@ function novSecs(st) {
     novLi(c.membrete, 'El membrete está completo (dirección y correo)',
       'Falta la <b>dirección</b> o el <b>correo</b> de la empresa: el encabezado de la hoja sale incompleto'),
   ];
-  secs.push(novSec('✍️', 'Certificado laboral', 'v332', 'Se genera desde la ficha de la persona, en el Perfil, con el formato que entregó Talento Humano: membrete con el logo, la fecha arriba y una sola firma. La redacción se ajusta sola según esté activa o retirada (y al género), y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario</b>, y se puede <b>enviar por WhatsApp</b>: desde el celular va el PDF adjunto y desde el computador un enlace privado que vence.',
+  secs.push(novSec('✍️', 'Certificado laboral', 'v333', 'Se genera desde la ficha de la persona, en el Perfil, con el formato que entregó Talento Humano: membrete con el logo, la fecha arriba y una sola firma. La redacción se ajusta sola según esté activa o retirada (y al género), y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario</b>, y se puede <b>enviar por WhatsApp</b>: desde el celular va el PDF adjunto y desde el computador un enlace privado que vence. A quien ha entrado <b>más de una vez</b> a la compañía le salen todos los periodos, del más viejo al más nuevo.',
     itC,
     c.expedidos ? [`Certificados expedidos hasta hoy: <b>${c.expedidos}</b>.`] : [],
     [novBtn('cert', '✍️ Abrir Firmas del certificado', true)]));
@@ -14824,6 +14824,21 @@ function certFechaLarga(v) {
   return `${Number(m[3])} de ${CERT_MESES[Number(m[2]) - 1]} de ${m[1]}`;
 }
 
+// Un renglón del historial: "Del 6 de marzo de 2023 al 5 de noviembre de 2023."
+// Si en ese periodo tenía otro cargo, se dice; repetir el mismo en cada línea sobra.
+// A una persona ya retirada no se le escribe "Contrato vigente" aunque le falte la fecha de
+// retiro: eso es un dato por corregir, y la pantalla de revisión lo avisa aparte.
+function certPeriodoTexto(p, inactivo, cargoActual) {
+  const d = p.desde ? certFechaLarga(p.desde) : '';
+  const h = p.hasta ? certFechaLarga(p.hasta) : '';
+  const otro = p.cargo && String(p.cargo).toUpperCase() !== String(cargoActual || '').toUpperCase()
+    ? `, como ${p.cargo}` : '';
+  if (d && h) return `Del ${d} al ${h}${otro}.`;
+  if (d) return `Desde el ${d}${otro}.` + (inactivo ? '' : ' Contrato vigente.');
+  if (h) return `Hasta el ${h}${otro}.`;
+  return '—';
+}
+
 // El logo, ya convertido a imagen embebida: si se imprime desde otra ventana, una ruta relativa
 // no resolvería y el certificado saldría sin membrete.
 async function certLogoDataUri() {
@@ -14867,6 +14882,20 @@ function certDocHtml(row, cfg, opts) {
   const frase = (o.conSalario && row.salario)
     ? ` y devengando un Salario de <b>${certPesos(row.salario)}</b>`
     : '';
+
+  // Historial: 306 personas han entrado más de una vez. Con un solo periodo el documento
+  // queda exactamente como el formato de Talento Humano; con varios, cada entrada lleva su
+  // renglón, porque certificar solo el último sería certificar media vida laboral.
+  const per = (o.hist && o.hist.ok && Array.isArray(o.hist.periodos)) ? o.hist.periodos : [];
+  const varios = per.length > 1;
+  const bloqueFechas = varios
+    ? `<div class="cl-fechas">${per.map((p, i) => `<div><span>Periodo ${i + 1}:</span>`
+      + `${esc(certPeriodoTexto(p, inactivo, row.cargo))}</div>`).join('')}</div>`
+    : `<div class="cl-fechas">
+      <div><span>Fecha de Ingreso:</span>${row.fecha_ingreso ? certFechaLarga(row.fecha_ingreso) + '.' : '—'}</div>
+      <div><span>Fecha de retiro:</span>${row.fecha_retiro ? certFechaLarga(row.fecha_retiro) + '.'
+      : (inactivo ? '—' : 'Contrato vigente.')}</div>
+    </div>`;
 
   const hoy = new Date();
   const fechaHoy = `${cfg.ciudad || 'Medellín'}, ${hoy.getDate()} de ${CERT_MESES[hoy.getMonth()]} `
@@ -14916,14 +14945,11 @@ function certDocHtml(row, cfg, opts) {
     <p class="cl-p">
       ${trato} <u><b>${esc(row.nombre || '')}</b></u> ${ido} con cédula de ciudadanía
       No. <u><b>${esc(row.cedula || '')}</b></u> ${labora} para la compañía como
-      <b>${esc(row.cargo || '')}</b>${contrato}${frase}, para el siguiente periodo:
+      <b>${esc(row.cargo || '')}</b>${contrato}${frase},
+      para ${varios ? 'los siguientes periodos' : 'el siguiente periodo'}:
     </p>
 
-    <div class="cl-fechas">
-      <div><span>Fecha de Ingreso:</span>${row.fecha_ingreso ? certFechaLarga(row.fecha_ingreso) + '.' : '—'}</div>
-      <div><span>Fecha de retiro:</span>${row.fecha_retiro ? certFechaLarga(row.fecha_retiro) + '.'
-    : (inactivo ? '—' : 'Contrato vigente.')}</div>
-    </div>
+    ${bloqueFechas}
 
     ${pie ? `<p class="cl-p cl-tel">${pie}</p>` : ''}
 
@@ -14960,8 +14986,10 @@ const CERT_CSS = `
   .cl-suscrito { margin-bottom: 20px; }
   .cl-tit { text-align: center; font-weight: 700; margin: 0 0 20px; }
   .cl-fechas { margin: 22px 0 26px; font-weight: 700; }
-  .cl-fechas div { margin-bottom: 4px; }
-  .cl-fechas span { display: inline-block; min-width: 4.6cm; }
+  /* En dos columnas de verdad: un periodo largo parte la línea bajo el texto, no bajo la
+     etiqueta, que es como se veía antes ("como AUXILIAR." colgando a la izquierda). */
+  .cl-fechas div { margin-bottom: 4px; display: flex; align-items: baseline; }
+  .cl-fechas span { flex: none; width: 4.6cm; }
   .cl-tel { margin-top: 26px; }
   .cl-cord { margin: 34px 0 0; }
   .cl-f { margin-top: 64px; }
@@ -14975,6 +15003,28 @@ const CERT_CSS = `
 // expide el certificado (no es lo mismo el que pide un crédito que el que lo lleva a un arriendo),
 // y una casilla premarcada se convierte en una decisión que nadie tomó.
 let _certSal = null;   // null = todavía no ha decidido; true/false = con o sin salario
+
+// El historial, tal como va a salir impreso. Se muestra siempre que haya más de una entrada
+// (es la parte nueva y la que más se revisa), y los avisos van en ámbar: no bloquean, porque
+// una fecha vieja mal cargada no puede dejar a nadie sin su certificado, pero sí tienen que
+// verse ANTES de firmar.
+function certHistRevHtml(row, inactivo) {
+  const h = _certHist;
+  if (!h || !h.ok) return '';
+  const per = Array.isArray(h.periodos) ? h.periodos : [];
+  const avisos = Array.isArray(h.avisos) ? h.avisos : [];
+  if (per.length < 2 && !avisos.length) return '';
+  return `
+    ${per.length > 1 ? `<div class="cert-hist">
+      <div class="cert-hist-t">Esta persona ha entrado <b>${per.length} veces</b> a la compañía:
+        el certificado las lista todas.</div>
+      <ol class="cert-hist-l">${per.map((p) =>
+    `<li>${esc(certPeriodoTexto(p, inactivo, row.cargo))}</li>`).join('')}</ol>
+    </div>` : ''}
+    ${avisos.length ? `<div class="cert-aviso cert-aviso-in">⚠️ Revisa el historial antes de expedir:
+      <ul>${avisos.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>
+      Se corrige en la ficha de la persona.</div>` : ''}`;
+}
 
 // Los datos que van a salir impresos, para revisarlos antes de generar.
 function certRevisionHtml(row) {
@@ -15001,6 +15051,7 @@ function certRevisionHtml(row) {
     inactivo && !row.fecha_retiro ? 'está INACTIVA y no tiene fecha de retiro' : '')}
         ${dato('Salario en la ficha', row.salario ? certPesos(row.salario) : '', 'sin salario en la ficha')}
       </div>
+      ${certHistRevHtml(row, inactivo)}
       ${inactivo
     ? '<div class="cert-nota-est">Esta persona está <b>INACTIVA</b>: el certificado dice «laboró» y lleva la fecha de retiro.</div>'
     : '<div class="cert-nota-est">Esta persona está <b>ACTIVA</b>: el certificado dice «labora» y en la fecha de retiro sale «Contrato vigente».</div>'}
@@ -15052,9 +15103,11 @@ function certOpciones() {
     conSalario: _certSal === true,
     dirigidoA: dir ? dir.value.trim() : '',   // no se imprime: queda en el registro de expedición
     logo: _certLogo || '',
+    hist: _certHist,
   };
 }
 let _certLogo = '';
+let _certHist = null;   // periodos trabajados de la persona abierta (sql/146)
 
 // Revisar (1) · ver el documento armado (2) · enviarlo por WhatsApp (3).
 let _certPaso = 1;
@@ -15084,7 +15137,7 @@ function certPintar() {
 async function openCertificado(row) {
   if (!isTalentoHumano() || !row) return;
   // Otra persona u otra decisión sobre el salario = otro documento: no se hereda nada.
-  _certRow = row; _certSal = null; _certCons = ''; _certPdf = null;
+  _certRow = row; _certSal = null; _certCons = ''; _certPdf = null; _certHist = null;
   const m = certModal();
   m.hidden = false;
   certPaso(1);
@@ -15092,7 +15145,13 @@ async function openCertificado(row) {
   p1.innerHTML = '<div class="loading">Cargando…</div>';
   const aviso = m.querySelector('[data-aviso]');
   try {
-    const [cfg] = await Promise.all([certLeerConfig(), certLogoDataUri().then((d) => { _certLogo = d; })]);
+    const [cfg] = await Promise.all([
+      certLeerConfig(),
+      certLogoDataUri().then((d) => { _certLogo = d; }),
+      // Si el historial falla, el certificado sale con el periodo de la ficha, como antes.
+      sb.rpc('certificado_historial', { p_cedula: row.cedula })
+        .then((r) => { _certHist = (r.data && r.data.ok) ? r.data : null; }, () => {}),
+    ]);
     if (!cfg || !cfg.ok) throw new Error('falta ejecutar sql/93 o no tienes permiso');
 
     const LBL = { firmante1_nombre: 'quién firma', firmante2_nombre: 'quién firma',
