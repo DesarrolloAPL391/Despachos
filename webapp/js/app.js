@@ -12479,7 +12479,7 @@ function novSecs(st) {
     novLi(c.membrete, 'El membrete está completo (dirección y correo)',
       'Falta la <b>dirección</b> o el <b>correo</b> de la empresa: el encabezado de la hoja sale incompleto'),
   ];
-  secs.push(novSec('✍️', 'Certificado laboral', 'v331', 'Se genera desde la ficha de la persona, en el Perfil, con el formato que entregó Talento Humano: membrete con el logo, la fecha arriba y una sola firma. La redacción se ajusta sola según esté activa o retirada (y al género), y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario.</b>',
+  secs.push(novSec('✍️', 'Certificado laboral', 'v332', 'Se genera desde la ficha de la persona, en el Perfil, con el formato que entregó Talento Humano: membrete con el logo, la fecha arriba y una sola firma. La redacción se ajusta sola según esté activa o retirada (y al género), y cada certificado queda numerado y con constancia de quién lo expidió. <b>Antes de imprimir te muestra los datos y te pregunta si incluyes el salario</b>, y se puede <b>enviar por WhatsApp</b>: desde el celular va el PDF adjunto y desde el computador un enlace privado que vence.',
     itC,
     c.expedidos ? [`Certificados expedidos hasta hoy: <b>${c.expedidos}</b>.`] : [],
     [novBtn('cert', '✍️ Abrir Firmas del certificado', true)]));
@@ -14943,9 +14943,11 @@ function certDocHtml(row, cfg, opts) {
 // Estilos del documento: van embebidos porque se imprime en una ventana aparte.
 // Los márgenes son los de la plantilla de Word (el derecho es ancho a propósito: el membrete
 // y el logo se salen a ese costado, el texto no).
+// `.cl-doc` envuelve al documento en vez de usar `body`: la vista previa vive DENTRO de la
+// aplicación, y una regla sobre `body` le cambiaba la tipografía a toda la pantalla.
 const CERT_CSS = `
   @page { size: letter; margin: 1.5cm 4.2cm 1.3cm 1.9cm; }
-  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
+  .cl-doc { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
   .cl-hoja { font-size: 12pt; line-height: 1.5; }
   .cl-mb { display: flex; align-items: flex-start; gap: 14px; margin: 0 -3.4cm 26px 0; }
   .cl-mbt { flex: 1; padding-top: 4px; }
@@ -15018,9 +15020,11 @@ function certModal() {
     <div class="cert-aviso" data-aviso hidden></div>
     <div class="cert-paso" data-paso1><div class="loading">Cargando…</div></div>
     <div class="cert-paso cert-prev" data-paso2 hidden></div>
+    <div class="cert-paso" data-paso3 hidden></div>
     <div class="modal-foot">
       <button type="button" class="btn btn-sm" data-volver hidden>← Cambiar</button>
       <span class="spacer"></span>
+      <button type="button" class="btn" data-wa hidden>💬 Enviar por WhatsApp</button>
       <button type="button" class="btn btn-primary" data-imprimir hidden>🖨️ Imprimir / Guardar PDF</button>
       <button type="button" class="btn" data-x>Cerrar</button>
     </div>
@@ -15028,9 +15032,14 @@ function certModal() {
   m.addEventListener('click', (e) => {
     if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
     const s = e.target.closest('[data-sal]');
-    if (s) { _certSal = s.dataset.sal === '1'; certPaso(2); return; }
-    if (e.target.closest('[data-volver]')) { certPaso(1); return; }
+    // Cambiar lo del salario hace OTRO documento: el consecutivo y el PDF se vuelven a hacer.
+    if (s) { _certSal = s.dataset.sal === '1'; _certCons = ''; _certPdf = null; certPaso(2); return; }
+    if (e.target.closest('[data-volver]')) { certPaso(_certPaso === 3 ? 2 : 1); return; }
     if (e.target.closest('[data-imprimir]')) certImprimir();
+    if (e.target.closest('[data-wa]')) { certPaso(3); return; }
+    if (e.target.closest('[data-wa-go]')) certWaEnviar();
+    if (e.target.closest('[data-wa-share]')) certWaCompartir();
+    if (e.target.closest('[data-wa-baja]')) certWaDescargar();
   });
   document.body.appendChild(m);
   return m;
@@ -15047,25 +15056,35 @@ function certOpciones() {
 }
 let _certLogo = '';
 
-// Cambia entre revisar (1) y ver el documento ya armado (2).
+// Revisar (1) · ver el documento armado (2) · enviarlo por WhatsApp (3).
+let _certPaso = 1;
 function certPaso(n) {
   const m = certModal();
+  _certPaso = n;
   m.querySelector('[data-paso1]').hidden = n !== 1;
   m.querySelector('[data-paso2]').hidden = n !== 2;
-  m.querySelector('[data-volver]').hidden = n !== 2;
+  m.querySelector('[data-paso3]').hidden = n !== 3;
+  m.querySelector('[data-volver]').hidden = n === 1;
   m.querySelector('[data-imprimir]').hidden = n !== 2;
+  m.querySelector('[data-wa]').hidden = n !== 2;
   if (n === 2) certPintar();
+  if (n === 3) {
+    m.querySelector('[data-paso3]').innerHTML = certWaHtml(_certRow, _certCfg);
+    certWaPreparar();
+  }
 }
 
 function certPintar() {
   if (!_certRow || !_certCfg) return;
   const prev = certModal().querySelector('[data-paso2]');
-  prev.innerHTML = `<style>${CERT_CSS}</style>` + certDocHtml(_certRow, _certCfg, certOpciones());
+  prev.innerHTML = `<style>${CERT_CSS}</style><div class="cl-doc">`
+    + certDocHtml(_certRow, _certCfg, certOpciones()) + '</div>';
 }
 
 async function openCertificado(row) {
   if (!isTalentoHumano() || !row) return;
-  _certRow = row; _certSal = null;
+  // Otra persona u otra decisión sobre el salario = otro documento: no se hereda nada.
+  _certRow = row; _certSal = null; _certCons = ''; _certPdf = null;
   const m = certModal();
   m.hidden = false;
   certPaso(1);
@@ -15108,6 +15127,21 @@ async function openCertificado(row) {
   }
 }
 
+// El consecutivo se pide UNA sola vez por certificado abierto: imprimir y enviar son dos
+// salidas del mismo documento, no dos certificados distintos.
+let _certCons = '';
+
+async function certAsegurarRegistro() {
+  if (_certCons) return _certCons;
+  const o = certOpciones();
+  try {
+    const { data } = await sb.rpc('certificado_registrar', {
+      p_cedula: _certRow.cedula, p_con_salario: o.conSalario, p_dirigido_a: o.dirigidoA || null });
+    if (data?.ok) _certCons = data.consecutivo || '';
+  } catch { /* si la bitácora falla, el certificado sale igual */ }
+  return _certCons;
+}
+
 // Imprimir: primero se registra (para que el documento salga con su consecutivo), luego se abre.
 async function certImprimir() {
   if (!_certRow || !_certCfg) return;
@@ -15115,24 +15149,259 @@ async function certImprimir() {
   const o = certOpciones();
   btn.disabled = true; const prev = btn.textContent; btn.textContent = '⏳ Generando…';
   try {
-    let consecutivo = '';
-    try {
-      const { data } = await sb.rpc('certificado_registrar', {
-        p_cedula: _certRow.cedula, p_con_salario: o.conSalario, p_dirigido_a: o.dirigidoA || null });
-      if (data?.ok) consecutivo = data.consecutivo || '';
-    } catch { /* si la bitácora falla, el certificado se imprime igual */ }
+    const consecutivo = await certAsegurarRegistro();
 
     const w = window.open('', '_blank');
     if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
     w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
       + `<title>Certificado laboral${consecutivo ? ' ' + consecutivo : ''}</title>`
-      + `<style>${CERT_CSS}</style></head><body>`
+      + `<style>${CERT_CSS}</style></head><body class="cl-doc">`
       + certDocHtml(_certRow, _certCfg, { ...o, consecutivo })
       + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
     w.document.close();
   } catch (e) {
     toast('No se pudo generar: ' + (e.message || e), 'err');
   } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ===================================================================================
+// 💬 ENVIAR EL CERTIFICADO POR WHATSAPP (sql/145)
+//
+// WhatsApp NO deja adjuntar un archivo desde un enlace: `wa.me?text=…` manda texto y punto.
+// Así que hay dos caminos, y los dos terminan con el PDF en manos de la persona:
+//   · CELULAR: el navegador comparte el archivo al sistema y WhatsApp lo recibe adjunto de
+//     verdad. El documento no pasa por ningún servidor nuestro.
+//   · COMPUTADOR: ahí eso no existe. El PDF se guarda en un bucket privado y se manda un
+//     enlace firmado que vence a los días configurados. Privado y con vencimiento porque el
+//     certificado lleva la cédula y, a veces, el salario.
+// ===================================================================================
+function ensurePdfLibs() {
+  if (window.jspdf && window.html2canvas) return Promise.resolve();
+  const uno = (src, listo) => (listo() ? Promise.resolve() : new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = () => rej(new Error('no cargó ' + src));
+    document.head.appendChild(s);
+  }));
+  return Promise.all([
+    uno('js/jspdf.umd.min.js', () => window.jspdf),
+    uno('js/html2canvas.min.js', () => window.html2canvas),
+  ]);
+}
+
+// El documento se dibuja dentro de un iframe: así sus estilos no tocan la aplicación y lo que
+// se fotografía es exactamente la hoja, sin nada alrededor.
+async function certPdfBlob(row, cfg, o) {
+  await ensurePdfLibs();
+  const fr = document.createElement('iframe');
+  fr.setAttribute('aria-hidden', 'true');
+  fr.style.cssText = 'position:fixed;left:-10000px;top:0;width:816px;height:1056px;border:0';
+  document.body.appendChild(fr);
+  try {
+    const d = fr.contentDocument;
+    d.open();
+    d.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><style>${CERT_CSS}</style>`
+      + `<style>html,body{margin:0}.cl-doc{width:21.6cm;box-sizing:border-box;`
+      + `padding:1.5cm 4.2cm 1.3cm 1.9cm;background:#fff}</style></head>`
+      + `<body><div class="cl-doc">${certDocHtml(row, cfg, o)}</div></body></html>`);
+    d.close();
+    // El logo va embebido (data URI), pero esperar a las imágenes evita una hoja sin membrete.
+    await new Promise((res) => { if (d.readyState === 'complete') res(); else fr.onload = res; });
+    await Promise.all(Array.from(d.images).map((im) => (im.complete ? null
+      : new Promise((r) => { im.onload = im.onerror = r; }))).filter(Boolean));
+
+    const hoja = d.querySelector('.cl-doc');
+    const canvas = await window.html2canvas(hoja, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'mm', format: 'letter', compress: true });
+    const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+    const alto = canvas.height * pw / canvas.width;
+    const img = canvas.toDataURL('image/jpeg', 0.94);
+    pdf.addImage(img, 'JPEG', 0, 0, pw, alto);
+    // Si algún día el texto creciera más de una hoja, se reparte en páginas en vez de cortarse.
+    let resta = alto - ph, y = -ph;
+    while (resta > 1) {
+      pdf.addPage();
+      pdf.addImage(img, 'JPEG', 0, y, pw, alto);
+      resta -= ph; y -= ph;
+    }
+    return pdf.output('blob');
+  } finally { fr.remove(); }
+}
+
+// "AMARILES ESCOBAR GIOVANNY ANDRES" → "Giovanny Andrés": en Colombia van primero los dos
+// apellidos. Es un saludo, no un dato legal; con menos de tres palabras se deja el nombre tal cual.
+function certNombrePila(nombre) {
+  const p = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+  const pila = p.length >= 3 ? p.slice(2) : p;
+  return pila.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+const CERT_WA_DEF = 'Buen día, {nombre}.\n\n'
+  + 'Desde *{empresa}* le hacemos llegar el certificado laboral que solicitó.\n\n'
+  + '{enlace}\n'
+  + 'Para cualquier verificación puede comunicarse al {telefono} o al correo {correo}.\n\n'
+  + 'Gracias por hacer parte de nuestro equipo.\n*Conectamos Propósitos.*';
+
+function certWaTexto(row, cfg, enlace) {
+  const dias = Number(cfg.wa_dias) || 7;
+  const tel = [cfg.telefono, cfg.telefono_ext ? `Ext. ${cfg.telefono_ext}` : ''].filter(Boolean).join(' ');
+  let t = String(cfg.wa_mensaje || CERT_WA_DEF)
+    .replace(/\{nombre\}/g, certNombrePila(row.nombre))
+    .replace(/\{empresa\}/g, cfg.empresa_nombre || '')
+    .replace(/\{telefono\}/g, tel)
+    .replace(/\{correo\}/g, cfg.correo_contacto || '')
+    .replace(/\{dias\}/g, String(dias));
+  // Cuando el PDF va adjunto no hay enlace que poner: la línea desaparece entera.
+  t = enlace
+    ? t.replace(/\{enlace\}/g, `${enlace}\n(El enlace es personal y estará disponible ${dias} día${dias === 1 ? '' : 's'}.)`)
+    : t.split('\n').filter((l) => l.indexOf('{enlace}') < 0).join('\n');
+  return t.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Número colombiano a formato internacional, con lo que la gente escribe de verdad
+// (espacios, guiones, +57, 57 adelante o los 10 dígitos pelados).
+function certWaNumero(v) {
+  let d = String(v || '').replace(/\D/g, '');
+  if (d.length === 12 && d.startsWith('57')) d = d.slice(2);
+  if (d.length === 11 && d.startsWith('57')) d = d.slice(2);   // 57 + fijo
+  return d.length === 10 ? '57' + d : '';
+}
+
+const certPuedeCompartirPdf = () => !!(navigator.canShare && navigator.share
+  && navigator.canShare({ files: [new File([new Blob(['x'])], 'x.pdf', { type: 'application/pdf' })] }));
+
+let _certPdf = null;   // el PDF ya generado del certificado que está abierto
+
+// Se ofrecen las DOS salidas en vez de adivinar cuál sirve: en Windows el navegador también
+// dice que sabe "compartir", pero ese menú casi nunca tiene WhatsApp, y elegir por el usuario
+// lo dejaría sin salida. Abrir WhatsApp con el enlace funciona siempre.
+function certWaHtml(row, cfg) {
+  const puede = certPuedeCompartirPdf();
+  const dias = Number(cfg.wa_dias) || 7;
+  return `
+    <div class="cert-wa">
+      <div class="cert-wa-t">💬 Enviar por WhatsApp</div>
+      <div class="cert-wa-como">WhatsApp no deja adjuntar un archivo desde un enlace, así que hay dos formas:
+        <b>abrir el chat</b> con un enlace privado al PDF, que vence en <b>${dias} día${dias === 1 ? '' : 's'}</b>,
+        o <b>compartir el PDF</b> para que viaje adjunto${puede ? '' : ' (eso solo desde el celular)'}.</div>
+      <label class="cert-wa-l">Celular de quien recibe
+        <input type="tel" data-wa-num value="${esc(String(row.celular || '').trim())}"
+          placeholder="3001234567" maxlength="20" inputmode="tel">
+        <span class="pst-nota">${row.celular ? 'Es el que tiene en la ficha; cámbialo si va para otra persona.'
+    : 'Esta persona no tiene celular en la ficha: escríbelo.'} Solo hace falta para abrir el chat.</span>
+      </label>
+      <label class="cert-wa-l">Mensaje
+        <textarea data-wa-msg rows="8"></textarea>
+        <span class="pst-nota">Puedes ajustarlo antes de enviarlo. Donde dice <b>{enlace}</b> va el enlace al PDF
+          (esa línea se quita sola si lo compartes adjunto). El texto fijo se cambia en ✍️ Firmas del certificado.</span>
+      </label>
+      <div class="cert-wa-est" data-wa-est>⏳ Preparando el documento…</div>
+      <div class="cert-wa-b">
+        <button type="button" class="btn btn-primary" data-wa-go disabled>💬 Abrir WhatsApp</button>
+        ${puede ? '<button type="button" class="btn" data-wa-share disabled>📎 Compartir el PDF</button>' : ''}
+        <button type="button" class="btn" data-wa-baja disabled>⬇️ Descargar el PDF</button>
+      </div>
+    </div>`;
+}
+
+// Paso 3: se prepara el PDF apenas se entra, no al pulsar el botón. En iPhone, compartir solo
+// funciona dentro del gesto del usuario: si el archivo se generara en ese momento, el navegador
+// cancelaría el envío.
+async function certWaPreparar() {
+  const m = certModal();
+  const est = m.querySelector('[data-wa-est]');
+  const txt = m.querySelector('[data-wa-msg]');
+  const botones = m.querySelectorAll('[data-wa-go], [data-wa-share], [data-wa-baja]');
+  // El mensaje se arma con {enlace} dentro: al compartir adjunto esa línea se quita sola.
+  if (txt) txt.value = certWaTexto(_certRow, _certCfg, '{enlace}');
+  try {
+    _certPdf = await certPdfBlob(_certRow, _certCfg, certOpciones());
+    est.textContent = `✅ Documento listo (${Math.round(_certPdf.size / 1024)} KB).`;
+    est.className = 'cert-wa-est ok';
+    botones.forEach((b) => { b.disabled = false; });
+  } catch (e) {
+    est.textContent = 'No se pudo preparar el PDF: ' + (e.message || e);
+    est.className = 'cert-wa-est mal';
+  }
+}
+
+// Nombre con el que el documento llega a quien lo recibe.
+const certPdfNombre = (cons) => `Certificado laboral${cons ? ' ' + cons : ''}.pdf`;
+
+// Guardar el PDF en el equipo: el tercer camino, por si lo quieren mandar por otro medio.
+async function certWaDescargar() {
+  if (!_certPdf) return;
+  const cons = await certAsegurarRegistro();
+  const url = URL.createObjectURL(_certPdf);
+  const a = document.createElement('a');
+  a.href = url; a.download = certPdfNombre(cons);
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+// Compartir el archivo al sistema: es el único camino por el que WhatsApp lo recibe ADJUNTO.
+async function certWaCompartir() {
+  const m = certModal();
+  const est = m.querySelector('[data-wa-est]');
+  const txt = m.querySelector('[data-wa-msg]');
+  if (!_certPdf) return;
+  try {
+    const cons = await certAsegurarRegistro();
+    const file = new File([_certPdf], certPdfNombre(cons), { type: 'application/pdf' });
+    // Sin el enlace: el documento va adjunto, no hay nada que abrir.
+    const texto = String(txt.value).split('\n').filter((l) => l.indexOf('{enlace}') < 0).join('\n').trim();
+    await navigator.share({ files: [file], text: texto, title: 'Certificado laboral' });
+    // Compartir no dice a quién se le mandó: queda el hecho, no el destinatario.
+    await sb.rpc('certificado_envio_registrar',
+      { p_consecutivo: cons, p_archivo: null, p_telefono: null }).then(() => {}, () => {});
+    est.textContent = '✅ Compartido con el PDF adjunto.'; est.className = 'cert-wa-est ok';
+  } catch (e) {
+    if (e && e.name === 'AbortError') { est.textContent = 'Envío cancelado.'; est.className = 'cert-wa-est'; }
+    else { est.textContent = 'No se pudo compartir: ' + (e.message || e); est.className = 'cert-wa-est mal'; }
+  }
+}
+
+async function certWaEnviar() {
+  const m = certModal();
+  const btn = m.querySelector('[data-wa-go]');
+  const est = m.querySelector('[data-wa-est]');
+  const num = m.querySelector('[data-wa-num]');
+  const txt = m.querySelector('[data-wa-msg]');
+  if (!_certPdf) return;
+
+  const tel = certWaNumero(num ? num.value : '');
+  if (!tel) {
+    est.textContent = 'Revisa el número: deben ser los 10 dígitos del celular.';
+    est.className = 'cert-wa-est mal'; if (num) num.focus();
+    return;
+  }
+
+  btn.disabled = true; const antes = btn.textContent; btn.textContent = '⏳ Enviando…';
+  try {
+    const cons = await certAsegurarRegistro();
+    // El PDF se guarda y viaja como enlace firmado: por un enlace no se puede adjuntar.
+    const ruta = `${_certRow.cedula}/${cons || Date.now()}.pdf`;
+    const up = await sb.storage.from('certificados')
+      .upload(ruta, _certPdf, { upsert: true, contentType: 'application/pdf' });
+    if (up.error) throw up.error;
+    const dias = Number(_certCfg.wa_dias) || 7;
+    const su = await sb.storage.from('certificados').createSignedUrl(ruta, dias * 86400);
+    if (su.error) throw su.error;
+
+    await sb.rpc('certificado_envio_registrar',
+      { p_consecutivo: cons, p_archivo: ruta, p_telefono: tel }).then(() => {}, () => {});
+
+    const texto = String(txt.value).replace(/\{enlace\}/g, su.data.signedUrl);
+    window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+    est.textContent = '✅ WhatsApp abierto con el mensaje y el enlace. Solo falta darle enviar.';
+    est.className = 'cert-wa-est ok';
+  } catch (e) {
+    if (e && e.name === 'AbortError') { est.textContent = 'Envío cancelado.'; est.className = 'cert-wa-est'; }
+    else {
+      est.textContent = 'No se pudo enviar: ' + (e.message || e);
+      est.className = 'cert-wa-est mal';
+    }
+  } finally { btn.disabled = false; btn.textContent = antes; }
 }
 
 
@@ -15333,6 +15602,18 @@ function cfDatosHtml(puede) {
       ${campo('empresa_web', 'P\u00e1gina web', c.empresa_web, 'text')}
       ${campo('empresa_whatsapp', 'WhatsApp', c.empresa_whatsapp, 'text')}
     </div>
+    <h4>Mensaje con el que se envía por WhatsApp</h4>
+    <label class="cf-l cf-l-ancho">Texto
+      <textarea data-cfg="wa_mensaje" rows="8" ${puede ? '' : 'disabled'}
+        placeholder="${esc(CERT_WA_DEF)}">${esc(c.wa_mensaje || '')}</textarea>
+      <span class="pst-nota">En blanco usa el texto de arriba. Se reemplazan solas:
+        <b>{nombre}</b> (el nombre de pila), <b>{empresa}</b>, <b>{telefono}</b>, <b>{correo}</b>,
+        <b>{dias}</b> y <b>{enlace}</b>. La línea del enlace desaparece cuando el PDF va adjunto.
+        Entre *asteriscos* WhatsApp lo pone en negrita.</span>
+    </label>
+    <div class="cf-datos-g">
+      ${campo('wa_dias', 'Días que dura el enlace', c.wa_dias, 'number', 'Pasados esos días el enlace deja de abrir (1 a 30).')}
+    </div>
     ${puede ? `<div class="cf-btns">
       <button type="button" class="btn btn-primary btn-sm" data-cfg-guardar>\ud83d\udcbe Guardar estos datos</button>
       <span class="pst-nota" data-cfg-msg></span></div>` : ''}
@@ -15348,8 +15629,10 @@ function cfConectarDatos(puede) {
   btn.addEventListener('click', async () => {
     const p = {};
     m.querySelectorAll('[data-cfg]').forEach((el) => {
-      const v = el.value.trim();
-      if (v !== '') p[el.dataset.cfg] = el.type === 'number' ? Number(v) : v;
+      const v = el.value.trim(), k = el.dataset.cfg;
+      // Los demás campos en blanco se dejan como están (no se borran por descuido); el mensaje
+      // sí se puede vaciar a propósito, y eso significa "vuelve al texto por defecto".
+      if (v !== '' || k === 'wa_mensaje') p[k] = el.type === 'number' ? Number(v) : v;
     });
     btn.disabled = true; msg.textContent = 'Guardando\u2026';
     try {
