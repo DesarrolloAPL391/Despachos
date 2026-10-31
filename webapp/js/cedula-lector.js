@@ -31,8 +31,9 @@ const FECHA_OK = (a, m, d) => {
   return f.getUTCFullYear() === +a && f.getUTCMonth() === +m - 1 && f.getUTCDate() === +d && f <= new Date();
 };
 export function leerCodigoCedula(texto) {
-  // El lector del teléfono entrega los bytes como texto: la Ñ (latin-1) puede llegar como "�"
-  const s = String(texto || '').replace(/(?<=[A-Z])�(?=[A-Z])/g, 'Ñ');
+  // El lector del teléfono entrega los bytes como texto y puede adivinar mal la codificación: la Ñ
+  // (latin-1) llega como un carácter raro. En los nombres el único no-ASCII es la Ñ.
+  const s = String(texto || '').replace(/(?<=[A-Z])[^\x00-\x7F](?=[A-Z])/g, 'Ñ');
   if (!s.includes('PubDSK_')) return null;
   const NUL = /[\u0000�]+/;
   const g = /([MF])((?:19|20)\d{2})(\d{2})(\d{2})(\d{2})(\d{3})[\s\S]?((?:AB|A|B|O)[+-])/.exec(s);
@@ -236,9 +237,11 @@ async function conLugar(d) {
 async function leerBarras(img, base) {
   const det = await detectorNativo();
   if (det) {
-    // El lector del teléfono (Android) es bueno: si él no lo encuentra, ZXing tampoco
-    try { for (const r of await det.detect(img)) { const d = leerCodigoCedula(r.rawValue); if (d) return d; } } catch { /* nada */ }
-    return null;
+    // El lector del teléfono (Android) es bueno: si él no ve el código, ZXing tampoco. Si lo ve pero
+    // lo entrega dañado (texto mal codificado), ZXing lee los mismos bytes bien.
+    let visto = false;
+    try { for (const r of await det.detect(img)) { visto = true; const d = leerCodigoCedula(r.rawValue); if (d) return d; } } catch { /* nada */ }
+    if (!visto) return null;
   }
   const zx = await zxing();
   // ZXing es exigente con el tamaño y la inclinación: se prueba enderezando unos grados (él solo
@@ -299,7 +302,7 @@ export async function leerCedula(file, onProgreso) {
 // a cuadro (más lento y exigente). La digital no trae código: "📸 Leer" toma el cuadro y lee sus líneas.
 // Devuelve los datos de la cédula, o null si se canceló. Necesita https (o localhost) para la cámara.
 const CSS_ESC = `
-.ced-esc { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; grid-template-rows: 1fr auto auto; overflow: hidden; }
+.ced-esc { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; grid-template-rows: 1fr auto auto auto; overflow: hidden; }
 .ced-esc video { grid-area: 1 / 1; width: 100%; height: 100%; object-fit: contain; min-height: 0; background: #000; }
 .ced-esc-marco { grid-area: 1 / 1; align-self: center; justify-self: center; width: min(86vw, 560px); aspect-ratio: 1.58;
   border: 3px dashed rgba(255,255,255,.95); border-radius: 14px; background: transparent;
@@ -308,6 +311,8 @@ const CSS_ESC = `
 .ced-esc-bot { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); }
 .ced-esc-bot button { border: 0; border-radius: 12px; padding: 12px 16px; font: 700 15px system-ui, sans-serif; background: #fff; color: #111; cursor: pointer; }
 .ced-esc-bot button[data-x] { background: #4b5563; color: #fff; }
+.ced-esc-foto { border-radius: 12px; padding: 12px 16px; font: 700 15px system-ui, sans-serif; background: #16a34a; color: #fff; cursor: pointer; }
+.ced-esc-diag { color: rgba(255,255,255,.55); text-align: center; font: 11px system-ui, sans-serif; padding: 0 12px 10px; min-height: 14px; }
 `;
 let _cssEsc = false;
 function pitido() {
@@ -328,17 +333,27 @@ export function escanearCedula() {
     ov.className = 'ced-esc';
     ov.innerHTML = `<video playsinline muted></video><div class="ced-esc-marco"></div>
       <div class="ced-esc-txt">⏳ Abriendo la cámara…</div>
-      <div class="ced-esc-bot"><button type="button" data-luz hidden>🔦 Linterna</button>
-        <button type="button" data-foto>📸 Leer (cédula digital)</button><button type="button" data-x>Cancelar</button></div>`;
+      <div class="ced-esc-bot"><button type="button" data-luz hidden>🔦</button>
+        <label class="ced-esc-foto">📸 Tomar foto<input type="file" accept="image/*" capture="environment" hidden></label>
+        <button type="button" data-vivo hidden>🎥 Volver al escáner</button>
+        <button type="button" data-x>Cancelar</button></div>
+      <div class="ced-esc-diag"></div>`;
     document.body.appendChild(ov);
     const video = ov.querySelector('video'), txt = ov.querySelector('.ced-esc-txt');
-    const GUIA = 'Apunta al <b>código de barras de atrás</b> de la cédula, de cerca y con buena luz: se lee solo.'
-      + '<br><span style="font-size:13px;opacity:.85">¿Cédula digital (la nueva)? Que se vean las 3 líneas de abajo y toca 📸.</span>';
-    let stream = null, vivo = true, ocupado = false;
+    const GUIA = 'Pon el <b>código de barras de atrás</b> dentro del recuadro y <b>aleja el celular</b> hasta que se vea nítido: se lee solo.'
+      + '<br><span style="font-size:13px;opacity:.85">¿No lee, o es la cédula digital (la nueva)? Toca <b>📸 Tomar foto</b>.</span>';
+    // Diagnóstico sin datos de la persona: qué lector, qué cámara, cuántos códigos vio y cuántos no entendió
+    const diag = { lector: '', camara: '', zoom: '', vistos: 0, malos: 0, largo: 0, marca: '' };
+    const pintarDiag = () => {
+      ov.querySelector('.ced-esc-diag').textContent = [diag.lector, diag.camara, diag.zoom, `códigos vistos: ${diag.vistos}`,
+        diag.malos ? `no entendidos: ${diag.malos} (largo ${diag.largo}${diag.marca})` : ''].filter(Boolean).join(' · ');
+    };
+    let stream = null, vivo = true, ocupado = false, turno = 0;
+    const pararCamara = () => { turno++; if (stream) stream.getTracks().forEach((t) => t.stop()); stream = null; };
     const cerrar = (d) => {
       if (!vivo) return;
       vivo = false;
-      if (stream) stream.getTracks().forEach((t) => t.stop());
+      pararCamara();
       ov.remove();
       fin(d || null);
     };
@@ -349,57 +364,96 @@ export function escanearCedula() {
       setTimeout(() => cerrar(d), 250);
     };
     ov.querySelector('[data-x]').onclick = () => cerrar(null);
-    ov.querySelector('[data-foto]').onclick = async () => {
-      if (ocupado || !video.videoWidth) return;
+
+    // 📸 La cámara del propio celular enfoca de cerca (la de Chrome a veces no, p. ej. los Samsung
+    // Ultra) y sirve para las dos cédulas: la foto se lee entera (código o líneas).
+    const entrada = ov.querySelector('.ced-esc-foto input');
+    const reanudar = (msg) => { if (!vivo) return; ov.querySelector('[data-vivo]').hidden = true; if (msg) txt.innerHTML = msg; abrirCamara(); };
+    ov.querySelector('.ced-esc-foto').addEventListener('click', () => { pararCamara(); txt.textContent = '📸 Toma la foto de la parte de atrás, de cerca y nítida.'; });
+    entrada.addEventListener('cancel', () => reanudar(GUIA));
+    entrada.addEventListener('change', async () => {
+      const f = entrada.files && entrada.files[0];
+      entrada.value = '';
+      if (!f) { reanudar(GUIA); return; }
       ocupado = true;
-      txt.textContent = '⏳ Leyendo… no la muevas.';
-      const foto = await new Promise((r) => lienzo(video, 0, 2400).toBlob(r, 'image/jpeg', 0.92));
-      const d = await leerCedula(foto).catch(() => null);
+      txt.textContent = '⏳ Leyendo la foto…';
+      const d = await leerCedula(f, (st, p) => {
+        if (st === 'recognizing text') txt.textContent = `⏳ Leyendo la foto… ${Math.round(p * 100)}%`;
+      }).catch(() => null);
       ocupado = false;
       if (!vivo) return;
       if (d) { listo(d); return; }
-      txt.innerHTML = 'No se pudo leer. Acércala, sin reflejos y derecha, que se vea completa, y vuelve a tocar 📸.';
-    };
-    (async () => {
+      txt.innerHTML = 'No se pudo leer la foto. Tómala otra vez: la cédula sobre una mesa, derecha, con luz, sin reflejos y que llene la foto.';
+      ov.querySelector('[data-vivo]').hidden = false;
+    });
+    ov.querySelector('[data-vivo]').onclick = () => reanudar(GUIA);
+
+    async function abrirCamara() {
+      const yo = ++turno;
       try {
+        // Alta resolución: así se puede alejar el celular (enfoca mejor) y las barras siguen gruesas
         stream = await navigator.mediaDevices.getUserMedia({ audio: false,
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
       } catch {
-        txt.innerHTML = '📷 No se pudo abrir la cámara. Dale permiso a la cámara en el navegador y vuelve a intentar.';
+        txt.innerHTML = '📷 No se pudo abrir la cámara en vivo. Dale permiso a la cámara, o usa <b>📸 Tomar foto</b>.';
         return;
       }
-      if (!vivo) { stream.getTracks().forEach((t) => t.stop()); return; }
+      if (!vivo || yo !== turno) { stream.getTracks().forEach((t) => t.stop()); return; }
       video.srcObject = stream;
       await video.play().catch(() => {});
       const pista = stream.getVideoTracks()[0];
       try {
         const cap = pista.getCapabilities ? pista.getCapabilities() : {};
-        if (cap.focusMode && cap.focusMode.includes('continuous')) pista.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        const extra = {};
+        if (cap.focusMode && cap.focusMode.includes('continuous')) extra.focusMode = 'continuous';
+        // Zoom 2×: con el celular más lejos la cédula queda del mismo tamaño y la cámara sí enfoca
+        if (cap.zoom && cap.zoom.max >= 2) { extra.zoom = Math.max(cap.zoom.min || 1, 2); diag.zoom = 'zoom 2×'; }
+        if (Object.keys(extra).length) await pista.applyConstraints({ advanced: [extra] }).catch(() => {});
         if (cap.torch) {
           const b = ov.querySelector('[data-luz]');
           let on = false;
           b.hidden = false;
           b.onclick = () => { on = !on; pista.applyConstraints({ advanced: [{ torch: on }] }).catch(() => {}); };
         }
-      } catch { /* sin linterna ni enfoque */ }
+      } catch { /* sin linterna, enfoque ni zoom */ }
       txt.innerHTML = GUIA;
       const det = await detectorNativo();
-      const zx = det ? null : await zxing().catch(() => null);
+      let zx = det ? null : await zxing().catch(() => null);
+      diag.lector = det ? 'lector del teléfono' : 'lector de respaldo';
       // Cuadro a cuadro: el del teléfono es rápido. ZXing tarda y es exigente: cada cuadro se le
       // pasa de una forma distinta (agrandado y enderezando unos grados), y se le da más aire.
       const FORMAS = [[0, 1.5], [3, 1.5], [-3, 1.5], [0, 1], [3, 1], [-3, 1], [6, 1.5], [-6, 1.5]];
       let n = 0;
-      while (vivo) {
+      while (vivo && yo === turno) {
         await new Promise((r) => setTimeout(r, det ? 120 : 200));
-        if (!vivo || ocupado || video.readyState < 2) continue;
+        if (!vivo || yo !== turno || ocupado || video.readyState < 2) continue;
+        diag.camara = `${video.videoWidth}×${video.videoHeight}`;
         let d = null;
         try {
-          if (det) { for (const r of await det.detect(video)) { d = leerCodigoCedula(r.rawValue); if (d) break; } }
-          else if (zx) { const [giro, k] = FORMAS[n++ % FORMAS.length]; d = codigoZxing(zx, lienzo(video, giro, 2000, k)); }
+          if (det) {
+            const cods = await det.detect(video);
+            for (const r of cods) {
+              diag.vistos++;
+              d = leerCodigoCedula(r.rawValue);
+              if (d) break;
+              diag.malos++; diag.largo = String(r.rawValue || '').length;
+              diag.marca = String(r.rawValue || '').includes('PubDSK_') ? ', con marca' : ', sin marca';
+            }
+            // Lo vio pero no se entendió: ZXing lee el mismo cuadro desde los bytes
+            if (!d && cods.length) {
+              zx = zx || await zxing().catch(() => null);
+              for (const k of [1, 1.5]) { if (!d && zx) d = codigoZxing(zx, lienzo(video, 0, 2400, k)); }
+            }
+          } else if (zx) {
+            const [giro, k] = FORMAS[n++ % FORMAS.length];
+            d = codigoZxing(zx, lienzo(video, giro, 2000, k));
+          }
         } catch { /* cuadro sin código */ }
+        pintarDiag();
         if (d && vivo && !ocupado) { await listo(d); return; }
       }
-    })();
+    }
+    abrirCamara();
   });
 }
 
