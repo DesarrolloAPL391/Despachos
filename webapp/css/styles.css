@@ -2222,6 +2222,14 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .pact-url input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 .pact-share { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .pact-share a { text-decoration: none; }
+/* 📢 link general vs 🔗 link personal: cuadro que los compara */
+.lk-dif { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
+.lk-col { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; line-height: 1.35; background: var(--surface); }
+.lk-col.on { border-color: #93c5fd; background: #eff6ff; }
+.lk-col ul { margin: 6px 0 0; padding-left: 16px; }
+.lk-col li + li { margin-top: 3px; }
+.lk-pie { margin: 4px 0 0; font-size: 12px; }
+@media (max-width: 560px) { .lk-dif { grid-template-columns: 1fr; } }
 
 /* ---------- 📊 Estadísticas sociodemográficas ---------- */
 #pst-sub { text-transform: none; }
@@ -2471,6 +2479,55 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pf-sec dd.pf-nada { font-weight: 400; color: #c3bdbd; }
 .pf-sec dd a { color: var(--primary); }
 
+/* 📋 Hoja de vida FO-GH-03 (sql/150): listas a todo el ancho de la tarjeta, firma y sección 7 */
+.pf-sec dt.pf-ancho, .pf-sec dd.pf-ancho { grid-column: 1 / -1; }
+.pf-sec dt.pf-ancho { margin-top: 4px; }
+.pf-lista { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-weight: 400; }
+.pf-lista li { line-height: 1.4; }
+.pf-lista .chip { font-size: 10.5px; padding: 1px 7px; }
+.pf-firma { display: block; max-width: 220px; max-height: 80px; margin-top: 6px; border-bottom: 1px solid var(--border); }
+.pf-sel-fila { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.pf-sel-card { max-width: 860px; width: 96vw; }
+.pf-sel-body { padding: 14px 20px; overflow-y: auto; }
+.pf-sel-quien { margin: 0 0 10px; font-size: 13px; }
+.pf-sel-grupo { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+.pf-sel-grupo h4 { margin: 0 0 8px; font-size: 13px; color: var(--primary); }
+.pf-sel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.pf-sel-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.pf-sel-grid label.full { grid-column: 1 / -1; }
+.pf-sel-ant { display: grid; grid-template-columns: 110px 1fr 140px 1.3fr; gap: 6px 8px; align-items: center; font-size: 12px; }
+.pf-sel-ant > span { color: var(--muted); font-weight: 700; }
+.pf-sel-card input, .pf-sel-card select, .pf-sel-card textarea {
+  width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; font: inherit; font-size: 13px; background: #fff; color: var(--text);
+}
+@media (max-width: 640px) {
+  .pf-sel-grid { grid-template-columns: 1fr; }
+  .pf-sel-ant { grid-template-columns: 1fr 1fr; }
+  .pf-sel-ant > span { display: none; }
+  .pf-sel-ant > b { grid-column: 1 / -1; margin-top: 6px; }
+}
+/* 📋 Hoja de vida FO-GH-03 en PDF: la vista previa son las hojas carta reales (816 px) */
+.hvd-card { max-width: 900px; width: 96vw; }
+.hvd-op { padding: 0 16px; }
+.hvd-op .pf-aviso { margin: 10px 0 0; }
+.hvd-vin { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.hvd-vin select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font: inherit; color: var(--text); }
+.hvd-prev { background: #e9ecef; overflow: auto; max-height: 64vh; margin-top: 10px; }
+.hvd-prev iframe { display: block; width: 840px; min-height: 400px; border: 0; margin: 0 auto; }
+.pact-lista { margin: 0; padding-left: 16px; }
+.pact-firma { max-width: 160px; max-height: 60px; background: #fff; border: 1px solid var(--border); border-radius: 6px; }
+.pact-foto { width: 72px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+.pact-ced { display: flex; gap: 6px; flex-wrap: wrap; }
+.pact-ced img { width: 150px; aspect-ratio: 1.58; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+/* 🪪 Visor de la cédula guardada (sql/152) */
+.ced-ver-card { max-width: 760px; }
+.ced-ver { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ced-ver figure { margin: 0; }
+.ced-ver img { width: 100%; border-radius: 10px; border: 1px solid var(--border); display: block; }
+.ced-ver figcaption { font-size: 12.5px; color: var(--muted, #6b6b6b); margin-top: 4px; }
+@media (max-width: 600px) { .ced-ver { grid-template-columns: 1fr; } }
+.pf-av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
 .pf-hist { grid-column: 1 / -1; margin-top: 2px; }
 .pf-hist ol { list-style: none; margin: 0; padding: 0 0 0 6px; }
 .pf-hist li { display: flex; gap: 10px; padding: 8px 0; border-left: 2px solid var(--border); padding-left: 14px; font-size: 13px; }
@@ -2667,6 +2724,18 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .cert-prev .cl-hoja { background: #fff; padding: 46px 54px; margin: 0 auto; max-width: 760px;
   box-shadow: 0 2px 10px rgba(0,0,0,.14); }
 @media (max-width: 640px) { .cert-prev { padding: 10px; } .cert-prev .cl-hoja { padding: 24px 20px; } }
+
+/* ---- Liquidaciones: qué corregir en la hoja ---- */
+.liq-rev-t { font-weight: 700; font-size: 14px; color: #0f172a; margin: 14px 0 8px; }
+.liq-rev { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+.liq-rev th, .liq-rev td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; }
+.liq-rev th { background: #f1f5f9; font-weight: 600; }
+.liq-rev td.mal { color: #b91c1c; font-weight: 700; }
+.liq-rev td.ok { color: #15803d; }
+.liq-rev small { color: #64748b; }
+.liq-rev small.mal { color: #b91c1c; font-weight: 700; }
+.col-foto { display: block; max-width: 100%; max-height: 520px; margin: 0 auto 8px; border-radius: 8px; border: 1px solid var(--border); }
+.col-ocr { white-space: pre-wrap; font-size: 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px; max-height: 240px; overflow: auto; }
 
 /* ---- Historial de vinculaciones en la revisión del certificado ---- */
 .cert-hist { margin: 12px 0 0; padding: 10px 12px; border-radius: 9px;

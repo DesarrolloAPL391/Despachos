@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Mi consignación · Autobuses El Poblado</title>
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO del conductor (sql/149). No lee tablas: todo pasa por tres RPC
+    (colilla_identificar, colilla_analizar, colilla_guardar) que validan cédula + bus.
+    Aquí sí se muestra plata (lo que debe), por eso no basta la cédula como en el preoperacional.
+    La colilla se lee con OCR en el mismo celular (js/colilla-ocr.js); el veredicto lo da el
+    servidor, cruzando con la liquidación, y la confirmación final la da el extracto del banco.
+  -->
+  <style>
+    :root {
+      --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b;
+      --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; --okbg: #e9f8ee;
+      --mal: #dc2626; --malbg: #fdecec; --warn: #b45309; --warnbg: #fff7e6; --info: #1d4ed8; --infobg: #eff6ff;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+           background: var(--fondo); color: var(--txt); font-size: 16px; overflow-x: hidden; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%);
+             color: #fff; padding: 20px 16px 52px; text-align: center; }
+    header img { width: 58px; height: 58px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 20px; margin: 10px 0 3px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 640px; margin: -38px auto 40px; padding: 0 14px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10);
+            padding: 18px; margin-bottom: 14px; }
+    h2 { font-size: 17px; margin: 0 0 4px; }
+    h3 { font-size: 15px; margin: 18px 0 8px; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+    label { display: block; font-weight: 600; font-size: 14px; margin: 0 0 6px; }
+    input[type=text], input[type=tel], input[type=date] {
+      width: 100%; padding: 14px; border: 1px solid var(--borde); border-radius: 12px;
+      font-size: 17px; font-family: inherit; background: #fff; color: var(--txt); }
+    input:focus { outline: 2px solid var(--rojo); outline-offset: 1px; }
+    .grande { font-size: 24px; text-align: center; letter-spacing: 2px; font-weight: 700; }
+    .campo { margin-bottom: 12px; }
+    .btn { width: 100%; padding: 16px; border: 0; border-radius: 14px; font-size: 17px;
+           font-weight: 800; cursor: pointer; background: var(--rojo); color: #fff; }
+    .btn:disabled { opacity: .5; }
+    .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); font-weight: 600; margin-top: 8px; }
+    .err { color: var(--mal); font-size: 14px; margin-top: 8px; min-height: 18px; font-weight: 600; }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 8px; line-height: 1.4; }
+    .hola { display: flex; align-items: center; gap: 12px; background: var(--okbg);
+            border: 1px solid #bfe6cb; border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+    .hola .ini { width: 42px; height: 42px; border-radius: 50%; background: var(--ok); color: #fff;
+                 display: grid; place-items: center; font-weight: 800; font-size: 17px; flex: 0 0 auto; }
+    .hola b { display: block; font-size: 15px; }
+    .hola span { font-size: 13px; color: #15803d; }
+
+    /* Lista de liquidaciones */
+    .liq { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid #f1eaea; }
+    .liq:first-child { border-top: 0; }
+    .liq .f { min-width: 64px; font-weight: 800; font-size: 15px; }
+    .liq .d { flex: 1; font-size: 13px; color: var(--muted); line-height: 1.35; }
+    .liq .d b { color: var(--txt); font-size: 15px; }
+    .chip { font-size: 12px; font-weight: 800; padding: 4px 9px; border-radius: 99px; white-space: nowrap; }
+    .chip.ok { background: var(--okbg); color: #15803d; }
+    .chip.pend { background: var(--warnbg); color: var(--warn); }
+    .chip.info { background: var(--infobg); color: var(--info); }
+    .chip.cero { background: #f1f1f1; color: var(--muted); }
+
+    /* Lectura */
+    .foto-prev { width: 100%; max-height: 320px; object-fit: contain; border-radius: 12px;
+                 background: #222; display: block; }
+    .barra { height: 8px; background: #eee; border-radius: 99px; margin-top: 10px; overflow: hidden; }
+    .barra i { display: block; height: 100%; width: 0; background: var(--info); border-radius: 99px; transition: width .2s; }
+    .leido { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .leido .campo { margin: 0; }
+    .leido .campo.ancho { grid-column: 1 / -1; }
+    .dato { font-size: 13.5px; padding: 9px 11px; border-radius: 10px; background: #faf7f7; border: 1px solid var(--borde); }
+    .dato.ok { background: var(--okbg); border-color: #bfe6cb; color: #15803d; }
+    .dato.mal { background: var(--warnbg); border-color: #f5d7a8; color: var(--warn); }
+    .marca { font-size: 12px; color: var(--warn); font-weight: 700; margin-top: 4px; }
+    /* Cada liquidación pendiente tiene su botón: una colilla por liquidación */
+    .liq-item { border-top: 1px solid #f1eaea; padding-bottom: 10px; }
+    .liq-item:first-child { border-top: 0; }
+    .liq-item .liq { border-top: 0; padding-bottom: 6px; }
+    .btn-sub { width: 100%; padding: 11px; border: 0; border-radius: 11px; background: #1d4ed8; color: #fff;
+               font-size: 15px; font-weight: 800; cursor: pointer; font-family: inherit; }
+    .btn-sub.otra { background: #fff; color: #1d4ed8; border: 1px solid #c8ddfd; }
+    /* La liquidación que se está pagando, arriba de la colilla */
+    .liq-sel { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+               background: var(--infobg); border: 1px solid #c8ddfd; border-radius: 12px; padding: 12px 14px;
+               margin-bottom: 12px; color: #1e3a8a; font-size: 13.5px; line-height: 1.4; }
+    .liq-sel b { font-size: 15px; display: block; color: #1e3a8a; }
+    .liq-sel .v { font-size: 19px; font-weight: 800; white-space: nowrap; }
+
+    /* Veredicto */
+    .ver { border-radius: 14px; padding: 15px; margin-top: 14px; line-height: 1.45; }
+    .ver .t { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+    .ver.COMPLETO { background: var(--okbg); border: 1px solid #bfe6cb; color: #14532d; }
+    .ver.PARCIAL { background: var(--warnbg); border: 1px solid #f5d7a8; color: #7c2d12; }
+    .ver.DE_MAS { background: var(--infobg); border: 1px solid #c8ddfd; color: #1e3a8a; }
+    .ver.ERR, .ver.DUP { background: var(--malbg); border: 1px solid #f3c0c0; color: #7f1d1d; }
+    .banco { margin-top: 10px; font-size: 14px; padding: 10px 12px; border-radius: 10px; background: #fff; border: 1px dashed currentColor; }
+    .gracias { text-align: center; }
+    .tick { font-size: 52px; }
+    .legal { text-align: center; color: var(--muted); font-size: 12px; margin-top: 18px; line-height: 1.5; }
+    @media (max-width: 380px) { .leido { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-192.png" alt="" />
+    <h1>Mi consignación</h1>
+    <p>Sube la foto de la colilla y mira si quedaste al día</p>
+  </header>
+
+  <main>
+    <!-- PASO 1 · quién es -->
+    <section class="card" id="p1">
+      <h2>¿Quién eres?</h2>
+      <p class="sub">Escribe tu cédula y el número de un bus que hayas manejado este mes.</p>
+      <div class="campo"><label for="cedula">Cédula</label>
+        <input id="cedula" type="tel" inputmode="numeric" class="grande" autocomplete="off" /></div>
+      <div class="campo"><label for="movil">Número del bus</label>
+        <input id="movil" type="tel" inputmode="numeric" class="grande" autocomplete="off" /></div>
+      <div class="err" id="e1"></div>
+      <button class="btn" id="b1">Entrar</button>
+    </section>
+
+    <!-- PASO 2 · su cuenta -->
+    <section class="card" id="p2" hidden>
+      <div class="hola"><div class="ini" id="ini"></div><div><b id="nom"></b><span>Tus liquidaciones de las últimas tres semanas</span></div></div>
+      <p class="hint" id="lista-nota"></p>
+      <div id="lista"></div>
+      <input type="file" id="archivo" accept="image/*" hidden />
+      <button class="btn btn-sec" id="b-salir" style="margin-top:12px">Es otra persona</button>
+    </section>
+
+    <!-- PASO 3 · la colilla de UNA liquidación -->
+    <section class="card" id="p3" hidden>
+      <div class="liq-sel" id="liq-sel"></div>
+      <h2>Tu colilla</h2>
+      <img id="prev" class="foto-prev" alt="Foto de la colilla" />
+      <div id="leyendo">
+        <p class="hint" id="ley-txt">Leyendo la colilla…</p>
+        <div class="barra"><i id="ley-barra"></i></div>
+      </div>
+      <div id="resultado" hidden>
+        <div class="leido">
+          <div class="campo"><label for="valor">Valor consignado</label>
+            <input id="valor" type="tel" inputmode="numeric" />
+            <div class="marca" id="valor-marca" hidden>Lo escribiste tú: se revisará contra el banco.</div></div>
+          <div class="campo"><label for="fecha">Fecha</label><input id="fecha" type="date" />
+            <div class="marca" id="fecha-marca" hidden>No se leía bien: confírmala.</div></div>
+          <div class="campo ancho"><div class="dato" id="d-ref"></div></div>
+          <div class="campo"><div class="dato" id="d-comp"></div></div>
+          <div class="campo"><div class="dato" id="d-banco"></div></div>
+        </div>
+        <div id="veredicto"></div>
+        <div class="err" id="e3"></div>
+        <button class="btn" id="b-enviar" style="margin-top:12px" disabled>Enviar colilla</button>
+      </div>
+      <button class="btn btn-sec" id="b-otra-foto">Tomar otra foto</button>
+      <button class="btn btn-sec" id="b-volver3">Volver a mis liquidaciones</button>
+    </section>
+
+    <!-- PASO 4 · listo -->
+    <section class="card gracias" id="p4" hidden>
+      <div class="tick" id="g-ico">✅</div>
+      <h2 id="g-tit">Colilla enviada</h2>
+      <p class="sub" id="g-txt"></p>
+      <button class="btn" id="b-otra">Volver a mis liquidaciones</button>
+    </section>
+
+    <p class="legal">La foto se lee en tu celular. La consignación queda confirmada cuando aparece en el
+      extracto del banco.<br />Autobuses El Poblado Laureles S.A.</p>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+    import { leerColilla, fotoParaGuardar, prepararLector, aPesos } from './js/colilla-ocr.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const plata = (v) => '$' + Number(v || 0).toLocaleString('es-CO');
+    const fcorta = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}` : ''; };
+    const flarga = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+    const paso = (n) => { [1, 2, 3, 4].forEach((i) => { $('p' + i).hidden = i !== n; }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
+    let CED = '', MOVIL = '', NOMBRE = '';
+    // SEL: la liquidación que se está pagando. Una colilla por liquidación.
+    let DEUDAS = new Map(), SEL = null;
+    let LEIDO = null, FOTO = null, VALOR_OCR = null, _t = null;
+
+    // ---------- Paso 1 ----------
+    $('b1').addEventListener('click', entrar);
+    $('movil').addEventListener('keydown', (e) => { if (e.key === 'Enter') entrar(); });
+    async function entrar() {
+      const ced = ($('cedula').value || '').replace(/\D/g, '');
+      const mov = ($('movil').value || '').trim();
+      $('e1').textContent = '';
+      if (ced.length < 5) { $('e1').textContent = 'Escribe tu número de cédula.'; return; }
+      if (!mov) { $('e1').textContent = 'Escribe el número del bus.'; return; }
+      $('b1').disabled = true; $('b1').textContent = 'Buscando…';
+      try {
+        const { data, error } = await sb.rpc('colilla_identificar', { p_cedula: ced, p_movil: mov });
+        if (error) throw error;
+        if (!data || !data.ok) { $('e1').textContent = (data && data.error) || 'No se pudo entrar.'; return; }
+        CED = ced; MOVIL = mov; NOMBRE = data.nombre || '';
+        pintarCuenta(data.deudas || []);
+        paso(2);
+        prepararLector().catch(() => {});   // se va cargando el lector mientras busca la colilla
+      } catch (e) { $('e1').textContent = 'Sin conexión. Intenta otra vez.'; }
+      finally { $('b1').disabled = false; $('b1').textContent = 'Entrar'; }
+    }
+
+    // ---------- Paso 2: sus liquidaciones, cada una con su colilla ----------
+    function estadoChip(d) {
+      if (Number(d.dinero) <= 0) return '<span class="chip cero">Sin valor</span>';
+      if (Number(d.pendiente) <= 0) {
+        if (Number(d.colilla) > 0) {
+          return d.colilla_banco ? '<span class="chip ok">✅ Colilla confirmada</span>' : '<span class="chip info">🧾 Colilla enviada</span>';
+        }
+        return '<span class="chip ok">✅ Pagada · banco</span>';
+      }
+      const pag = Number(d.colilla) + Number(d.banco);
+      return `<span class="chip pend">${pag > 0 ? 'Faltan ' : 'Pendiente '}${plata(d.pendiente)}</span>`;
+    }
+    function pintarCuenta(deudas) {
+      $('ini').textContent = (NOMBRE.trim()[0] || '?').toUpperCase();
+      $('nom').textContent = NOMBRE;
+      DEUDAS = new Map(deudas.map((d) => [d.key, d]));
+      const ds = deudas.slice().reverse();
+      $('lista').innerHTML = ds.length ? ds.map((d) => {
+        const debe = Number(d.dinero) > 0 && Number(d.pendiente) > 0;
+        const parcial = debe && Number(d.colilla) > 0;
+        return `<div class="liq-item"><div class="liq">
+            <div class="f">${esc(fcorta(d.fecha))}</div>
+            <div class="d"><b>${plata(d.dinero)}</b><br>Bus ${esc(d.movil)} · ${esc(d.ruta || '')}</div>
+            ${estadoChip(d)}</div>
+          ${debe ? `<button class="btn-sub${parcial ? ' otra' : ''}" data-key="${esc(d.key)}">📷 ${parcial
+            ? 'Subir la colilla de lo que falta' : `Subir la colilla del ${esc(fcorta(d.fecha))}`}</button>` : ''}
+        </div>`;
+      }).join('')
+        : '<p class="hint">No tienes liquidaciones en las últimas tres semanas.</p>';
+      $('lista').querySelectorAll('[data-key]').forEach((b) => b.addEventListener('click', () => {
+        SEL = DEUDAS.get(b.dataset.key);
+        $('archivo').click();
+      }));
+      const pend = deudas.filter((d) => Number(d.dinero) > 0 && Number(d.pendiente) > 0).length;
+      $('lista-nota').textContent = pend
+        ? 'Cada liquidación lleva su colilla: toca la del día que consignaste y toma la foto.'
+        : 'No tienes liquidaciones pendientes.';
+    }
+
+    $('b-salir').addEventListener('click', () => { CED = MOVIL = NOMBRE = ''; $('cedula').value = $('movil').value = ''; paso(1); });
+
+    // ---------- Paso 3: la foto y su lectura ----------
+    $('b-otra-foto').addEventListener('click', () => $('archivo').click());
+    $('b-volver3').addEventListener('click', volverALista);
+    $('archivo').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (file && SEL) await procesarFoto(file);
+    });
+
+    function pintarSel() {
+      $('liq-sel').innerHTML = `<div><b>Liquidación del ${esc(flarga(SEL.fecha))}</b>Bus ${esc(SEL.movil)} · ${esc(SEL.ruta || '')}
+        ${Number(SEL.colilla) > 0 ? '<br>Ya enviaste una colilla: esta es por lo que falta' : ''}</div>
+        <div class="v">${plata(SEL.pendiente)}</div>`;
+    }
+
+    async function procesarFoto(file) {
+      paso(3);
+      pintarSel();
+      $('prev').src = URL.createObjectURL(file);
+      $('leyendo').hidden = false; $('resultado').hidden = true;
+      $('e3').textContent = ''; $('veredicto').innerHTML = ''; $('b-enviar').disabled = true;
+      $('ley-txt').textContent = 'Preparando el lector…'; $('ley-barra').style.width = '5%';
+      try {
+        FOTO = await fotoParaGuardar(file);
+        LEIDO = await leerColilla(file, (estado, p) => {
+          const leyendo = /recogniz/.test(estado);
+          $('ley-txt').textContent = leyendo ? `Leyendo la colilla… ${Math.round(p * 100)}%` : 'Preparando el lector…';
+          $('ley-barra').style.width = `${leyendo ? 20 + Math.round(p * 80) : 5 + Math.round(p * 15)}%`;
+        });
+      } catch (err) {
+        LEIDO = { texto: '', confianza: 0, fecha: '', valor: null, referencia: '', numeros: [], comprobante: '', banco: '' };
+        $('e3').textContent = 'No se pudo leer la foto: escribe el valor y la fecha.';
+      }
+      mostrarLeido();
+    }
+
+    function mostrarLeido() {
+      $('leyendo').hidden = true; $('resultado').hidden = false;
+      VALOR_OCR = LEIDO.valor;
+      $('valor').value = LEIDO.valor ? Number(LEIDO.valor).toLocaleString('es-CO') : '';
+      $('valor-marca').hidden = true;
+      $('fecha').value = LEIDO.fecha || '';
+      const conCed = (LEIDO.numeros || []).includes(CED);
+      $('d-ref').className = 'dato ' + (conCed ? 'ok' : 'mal');
+      $('d-ref').textContent = conCed ? '✓ La referencia es tu cédula'
+        : '⚠️ No vimos tu cédula en la colilla: sin ella el banco no sabe que la plata es tuya';
+      $('d-comp').textContent = 'Comprobante: ' + (LEIDO.comprobante || '—');
+      $('d-banco').textContent = 'Banco: ' + (LEIDO.banco || '—');
+      $('fecha-marca').hidden = !LEIDO.fechaDudosa;
+      const faltan = [!LEIDO.valor && 'el valor', !LEIDO.fecha && 'la fecha'].filter(Boolean);
+      $('e3').textContent = faltan.length ? `No se leyó ${faltan.join(' ni ')}: escríbelo como aparece en la colilla.` : '';
+      analizar();
+    }
+
+    $('valor').addEventListener('input', () => {
+      const n = aPesos($('valor').value);
+      // Si el valor no es el que leyó el OCR, se avisa: queda marcado para revisarlo.
+      $('valor-marca').hidden = !(n && n !== VALOR_OCR);
+      clearTimeout(_t); _t = setTimeout(analizar, 500);
+    });
+    $('fecha').addEventListener('change', () => { $('fecha-marca').hidden = true; analizar(); });
+
+    // El servidor compara la colilla contra ESA liquidación (nunca se decide en el celular).
+    async function analizar() {
+      const valor = aPesos($('valor').value), fecha = $('fecha').value;
+      $('b-enviar').disabled = true;
+      if (!valor || !fecha) { $('veredicto').innerHTML = ''; return; }
+      try {
+        const { data, error } = await sb.rpc('colilla_analizar', {
+          p_cedula: CED, p_movil: MOVIL, p_key: SEL.key, p_fecha: fecha, p_valor: valor,
+          p_comprobante: LEIDO.comprobante || null });
+        if (error) throw error;
+        if (!data || !data.ok) {
+          $('veredicto').innerHTML = `<div class="ver ERR"><div class="t">❌ No se puede enviar</div>${esc((data && data.error) || 'No se pudo revisar.')}</div>`;
+          return;
+        }
+        $('e3').textContent = '';
+        pintarVeredicto(data);
+        $('b-enviar').disabled = !!data.duplicada;
+      } catch (e) { $('e3').textContent = 'Sin conexión. Intenta otra vez.'; }
+    }
+
+    function pintarVeredicto(d) {
+      const del = `la liquidación del ${esc(flarga(SEL.fecha))}`;
+      let cls = d.veredicto, t = '', txt = '';
+      if (d.duplicada) { cls = 'DUP'; t = '❌ Esta colilla ya la enviaste'; txt = `La enviaste el ${esc(d.duplicada.enviada)} para otra liquidación. Cada liquidación lleva su propia colilla.`; }
+      else if (d.veredicto === 'COMPLETO') { t = '✅ Consignaste completo'; txt = `La colilla por ${plata(d.valor)} cubre ${del}.`; }
+      else if (d.veredicto === 'PARCIAL') { t = `⚠️ Te faltan ${plata(d.faltante)}`; txt = `La colilla dice ${plata(d.valor)} y ${del} es de ${plata(d.debia)}.`; }
+      else { t = `ℹ️ Consignaste ${plata(d.sobrante)} de más`; txt = `La colilla por ${plata(d.valor)} cubre ${del} (${plata(d.debia)}) y sobran ${plata(d.sobrante)}.`; }
+      const banco = d.banco_confirma
+        ? `🏦 <b>El banco ya la registra</b> (extracto del ${esc(flarga(d.banco_fecha))}).`
+        : `🏦 Se confirmará cuando se cargue el extracto del banco del ${esc(flarga(d.fecha))}.`;
+      $('veredicto').innerHTML = `<div class="ver ${cls}"><div class="t">${t}</div>${txt}
+        ${d.duplicada ? '' : `<div class="banco">${banco}</div>`}</div>`;
+    }
+
+    // ---------- Enviar ----------
+    $('b-enviar').addEventListener('click', async () => {
+      const valor = aPesos($('valor').value);
+      $('b-enviar').disabled = true; $('b-enviar').textContent = 'Enviando…';
+      try {
+        const { data, error } = await sb.rpc('colilla_guardar', { p_cedula: CED, p_movil: MOVIL, p_datos: {
+          key: SEL.key, fecha: $('fecha').value, valor,
+          valor_a_mano: !VALOR_OCR || valor !== VALOR_OCR,
+          referencia: LEIDO.referencia || '', comprobante: LEIDO.comprobante || '', banco: LEIDO.banco || '',
+          ocr_texto: LEIDO.texto || '', ocr_confianza: LEIDO.confianza || 0, foto: FOTO } });
+        if (error) throw error;
+        if (!data || !data.ok) { $('e3').textContent = (data && data.error) || 'No se pudo enviar.'; return; }
+        const okTodo = data.veredicto === 'COMPLETO' || data.veredicto === 'DE_MAS';
+        $('g-ico').textContent = okTodo ? '✅' : '⚠️';
+        $('g-tit').textContent = okTodo ? 'Colilla enviada' : 'Colilla enviada, pero te falta';
+        $('g-txt').textContent = (okTodo ? `Quedaste al día con la liquidación del ${flarga(SEL.fecha)}. `
+          : `A la liquidación del ${flarga(SEL.fecha)} le faltan ${plata(data.faltante)}. `)
+          + (data.banco_confirma ? 'El banco ya confirmó la consignación.' : 'Queda por confirmar con el extracto del banco.');
+        paso(4);
+      } catch (e) { $('e3').textContent = 'Sin conexión. Intenta otra vez.'; }
+      finally { $('b-enviar').textContent = 'Enviar colilla'; }
+    });
+
+    $('b-otra').addEventListener('click', volverALista);
+    async function volverALista() {
+      SEL = null;
+      try {
+        const { data } = await sb.rpc('colilla_identificar', { p_cedula: CED, p_movil: MOVIL });
+        if (data && data.ok) pintarCuenta(data.deudas || []);
+      } catch (e) { /* se queda la lista que había */ }
+      paso(2);
+    }
+  </script>
+</body>
+</html>

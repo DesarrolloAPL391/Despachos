@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, tiempoEntre } from './config.js';
+import { listaEditor, leerLista } from './hoja-vida.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -756,7 +757,7 @@ function buildSidebar() {
     PST_BLOQUES.forEach((b) => addNavAction(gSt, b.icon, b.label, () => openPerfilStats(b.key), 'nav-pst-' + b.key));
   }
   if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
-  if (isTalentoHumano()) addNavAction(gTh, '🔗', 'Link de actualización', openPerfilLink, 'nav-perfil-link');
+  if (isTalentoHumano()) addNavAction(gTh, '📢', 'Link general (para todos)', openPerfilLink, 'nav-perfil-link');
   if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
   if (isTalentoHumano()) addNavAction(gTh, '✨', `Novedades${NOV_PEND ? ` <span class="nav-badge">${NOV_PEND}</span>` : ''}`, () => openNovedades(), 'nav-novedades');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
@@ -3108,6 +3109,13 @@ function renderTable(cfg, rows, count, diaSel = false) {
             { className: 'act act-ver', innerHTML: '👁️', title: 'Ver la ficha completa' });
           ver.onclick = () => openPerfilFicha(row);
           act.appendChild(ver);
+          // Link personal para que la persona llene su hoja de vida FO-GH-03 (sql/151)
+          if (row.estado !== 'INACTIVO') {
+            const hv = Object.assign(document.createElement('button'),
+              { className: 'act act-evt', innerHTML: '🔗', title: 'Link PERSONAL para que llene su hoja de vida' });
+            hv.onclick = () => hvEnlace(row);
+            act.appendChild(hv);
+          }
         }
         // Editar: el admin y el auditor siempre; el despachador TAMBIÉN en su tabla de puesto
         // (la RLS lo limita a sus propias filas y a su horario). Antes solo admin/auditor
@@ -4452,8 +4460,8 @@ async function _openEditorInterno(row) {
       form.appendChild(h);
     }
 
-    const wrap = document.createElement(f.type === 'multisel' ? 'div' : 'label');
-    wrap.className = 'field' + (f.type === 'textarea' || f.type === 'multisel' ? ' full' : '');
+    const wrap = document.createElement(f.type === 'multisel' || f.type === 'lista' ? 'div' : 'label');
+    wrap.className = 'field' + (f.type === 'textarea' || f.type === 'multisel' || f.type === 'lista' ? ' full' : '');
     wrap.dataset.fieldKey = f.key;
     // Valor inicial: del registro; al crear, opcionalmente del contexto (ej. puesto del usuario)
     let val = row ? row[f.key] : (f.default ?? null);
@@ -4544,6 +4552,9 @@ async function _openEditorInterno(row) {
           });
         });
         input.append(buscador, chipsBox);
+      } else if (f.type === 'lista') {
+        // Hoja de vida FO-GH-03 (sql/150): estudios, familiares o empleos, una tarjeta por fila
+        input = listaEditor(f.key, val, { vacio: 'Sin datos todavía. La persona los llena por el link de actualización, o agrégalos aquí.' });
       } else if (f.type === 'enum') {
         input = document.createElement('select');
         if (!f.required) input.innerHTML = '<option value="">— ninguno —</option>';
@@ -4677,6 +4688,16 @@ $('modal-save').addEventListener('click', async () => {
     const wrap = el.closest('.field');
     if (wrap && wrap.classList.contains('hidden-field')) { payload[key] = null; continue; } // campo oculto -> vacío
     if (type === 'boolean') { payload[key] = el.checked; continue; }
+    if (type === 'lista') {
+      const r = leerLista(el);
+      if (r.error) {
+        expandarTodasSecciones($('edit-form'));
+        err.textContent = r.error; err.hidden = false;
+        r.el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      payload[key] = r.filas; continue;
+    }
     if (type === 'multisel') {
       const arr = [...el.querySelectorAll('input[type="checkbox"]:checked')].map((i) => i.value);
       // f.csv → guarda como texto "a, b, c" (col de texto); si no, como arreglo
@@ -12906,6 +12927,23 @@ $('restrstats-x')?.addEventListener('click', () => { $('restrstats-modal').hidde
 let PERFIL_ACT_PEND = 0; // # de actualizaciones PENDIENTES (badge del menú Talento humano)
 let _pactTab = 'PENDIENTE';
 const PERFIL_LABELS = Object.fromEntries((TABLES.perfilsociodemografico?.fields || []).map((f) => [f.key, f.label]));
+PERFIL_LABELS.declaracion_firma = 'Firma de la declaración'; // no es columna: va a perfil_firmas (sql/150)
+PERFIL_LABELS.foto_colaborador = 'Foto';                      // no es columna: va a perfil_fotos (sql/151)
+PERFIL_LABELS.cedula_lectura = 'Lectura de la cédula';         // las fotos y la lectura van a perfil_cedulas (sql/152)
+PERFIL_LABELS.cedula_frente = 'Cédula (frente)';
+PERFIL_LABELS.cedula_reverso = 'Cédula (reverso)';
+const CED_LECTURA = { CODIGO: '✅ Leída del código de barras (cédula amarilla)', MRZ: '✅ Leída de las líneas de la cédula digital',
+  NO: 'No se pudo leer: los datos los escribió la persona' };
+// Un dato de la solicitud, legible: las listas de la hoja de vida una fila por renglón y la firma como imagen
+function pactValor(k, v) {
+  if (k === 'declaracion_firma') return v ? `<img class="pact-firma" src="${esc(v)}" alt="Firma">` : '';
+  if (k === 'foto_colaborador') return v ? `<img class="pact-foto" src="${esc(v)}" alt="Foto">` : '';
+  if (k === 'cedula_lectura') return esc(CED_LECTURA[v] || v || '');
+  if (HV_LISTAS[k]) {
+    return Array.isArray(v) && v.length ? `<ol class="pact-lista">${v.map((f) => `<li>${esc(hvFilaTexto(k, f))}</li>`).join('')}</ol>` : '';
+  }
+  return esc(fmt(v));
+}
 function perfilLinkUrl() { return new URL('actualizar-datos.html', location.href).href; }
 async function refrescarPerfilActPend(rebuild = true) {
   try {
@@ -12928,9 +12966,27 @@ function perfilModal(id, titulo, cardClass = '') {
   m.querySelector('h3').textContent = titulo;
   return m;
 }
+// Hay DOS links para que la gente actualice sus datos y se confundían (31/10): el general (📢, el
+// mismo para todos) y el personal (🔗, de una sola persona, sql/151). Este cuadro los compara.
+function linksDiferencia(actual) {
+  const col = (k, titulo, filas) => `<div class="lk-col${k === actual ? ' on' : ''}"><b>${titulo}</b>${k === actual
+    ? ' <span class="chip chip-blue">este</span>' : ''}<ul>${filas.map((f) => `<li>${f}</li>`).join('')}</ul></div>`;
+  return `<div class="lk-dif">${col('general', '📢 Link general', [
+    'El <b>mismo para todos</b>: sirve para mandarlo a grupos',
+    'La persona escribe su cédula y su fecha de nacimiento',
+    'Le sale <b>vacío</b>: no muestra lo que ya tenemos',
+    'No vence',
+    'Está en el menú: Talento humano → 📢 Link general'])}${col('personal', '🔗 Link personal', [
+    'De <b>una sola persona</b>: va a su WhatsApp',
+    'Entra con su fecha de nacimiento (o los 4 últimos de la cédula)',
+    'Le sale <b>lleno</b> con lo que ya tenemos y le dice qué le falta',
+    'Vence a los 7 días y sirve para un envío',
+    'Está en el 🔗 de su fila en el Perfil'])}</div>
+    <p class="muted lk-pie">Con los dos, lo que envíen llega a 📨 Actualizaciones de datos y nada se cambia solo.</p>`;
+}
 function openPerfilLink() {
   if (!isTalentoHumano()) return;
-  const m = perfilModal('perfil-link-modal', '🔗 Link de actualización de datos', 'pact-link-card');
+  const m = perfilModal('perfil-link-modal', '📢 Link general (para todos)', 'pact-link-card');
   const url = perfilLinkUrl();
   const msg = `Hola 👋 Autobuses El Poblado está actualizando la información de sus conductores y empleados. `
     + `Por favor llena tus datos en este enlace (toma unos 5 minutos): ${url}`;
@@ -12942,7 +12998,8 @@ function openPerfilLink() {
       <a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">💬 Enviar por WhatsApp</a>
       <a class="btn btn-sm" target="_blank" rel="noopener" href="${esc(url)}">👁️ Abrir el formulario</a>
     </div>
-    <p class="muted">Por seguridad el formulario no muestra los datos que ya tenemos y no dice si una cédula existe.</p>`;
+    <p class="muted">Por seguridad el formulario no muestra los datos que ya tenemos y no dice si una cédula existe.</p>
+    ${linksDiferencia('general')}`;
   m.querySelector('[data-copy]').onclick = async () => {
     try { await navigator.clipboard.writeText(url); }
     catch { const i = m.querySelector('.pact-url input'); i.select(); document.execCommand('copy'); }
@@ -12962,13 +13019,17 @@ async function cargarPerfilActualizaciones(m) {
   const TABS = { PENDIENTE: '⏳ Pendientes', APLICADA: '✅ Aplicadas', RECHAZADA: '✖️ Rechazadas' };
   body.innerHTML = `<div class="pact-tabs">${Object.entries(TABS).map(([t, l]) =>
     `<button type="button" class="btn btn-sm${t === _pactTab ? ' btn-primary' : ''}" data-tab="${t}">${l}</button>`).join('')}
-    <span class="spacer"></span><button type="button" class="btn btn-sm" data-link>🔗 Link para empleados</button></div>
+    <span class="spacer"></span><button type="button" class="btn btn-sm" data-link>📢 Link general</button></div>
     <div class="pact-list"><div class="loading">Cargando…</div></div>`;
   body.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { _pactTab = b.dataset.tab; cargarPerfilActualizaciones(m); }; });
   body.querySelector('[data-link]').onclick = openPerfilLink;
   const list = body.querySelector('.pact-list');
-  const { data: sols, error } = await sb.from('perfil_actualizaciones').select('*')
+  // Sin las fotos de la cédula (datos_liviano, sql/152): ~300 KB cada una. Se piden al tocar "Ver".
+  const consulta = (cols) => sb.from('perfil_actualizaciones').select(cols)
     .eq('estado', _pactTab).order('enviado_en', { ascending: _pactTab === 'PENDIENTE' }).limit(200);
+  let { data: sols, error } = await consulta('id, cedula, fecha_nacimiento, nombre_informado, tipo_informado, existe, identidad_ok, '
+    + 'acepta_habeas, estado, enviado_en, revisado_por, revisado_en, campos_aplicados, motivo_rechazo, origen, tiene_cedula, datos:datos_liviano');
+  if (error && /datos_liviano|tiene_cedula/.test(error.message || '')) ({ data: sols, error } = await consulta('*')); // base sin sql/152
   if (error) { list.innerHTML = `<div class="rst-empty">Error: ${esc(error.message)}</div>`; return; }
   if (!sols.length) {
     list.innerHTML = `<div class="rst-empty">${_pactTab === 'PENDIENTE'
@@ -12987,18 +13048,26 @@ async function cargarPerfilActualizaciones(m) {
 }
 function perfilActCard(s, per, m) {
   const card = document.createElement('div'); card.className = 'pact-card';
-  const norm = (v) => (v == null ? '' : String(v).trim().toUpperCase());
+  const norm = (v) => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v).trim().toUpperCase());
   const corregir = new Set(String(per?.por_corregir || '').split(',').filter(Boolean));
-  const filas = Object.entries(s.datos || {}).map(([k, nuevo]) => {
+  const filas = Object.entries(s.datos || {}).filter(([k]) => !k.startsWith('cedula_')).map(([k, nuevo]) => {
     const actual = per ? per[k] : null;
     return { k, nuevo, actual, igual: norm(actual) === norm(nuevo) };
   });
+  // La cédula (fotos + cómo se leyó) es UNA fila: se aplica o no completa
+  if (s.tiene_cedula || s.datos?.cedula_frente || s.datos?.cedula_reverso) {
+    filas.push({ k: 'cedula_frente cedula_reverso cedula_lectura', cedula: true, igual: false });
+  }
+  const leida = ['CODIGO', 'MRZ'].includes(s.datos?.cedula_lectura);
   const cambios = filas.filter((f) => !f.igual).length;
   const pend = s.estado === 'PENDIENTE';
   const nombre = per?.nombre || s.nombre_informado || '(sin nombre)';
   const badges = [
     per ? `<span class="${chipClass(per.tipo)}">${esc(per.tipo)}</span> <span class="${chipClass(per.estado)}">${esc(per.estado)}</span>`
       : `<span class="chip chip-red">No está en la base</span>${s.tipo_informado ? ` <span class="chip chip-gray">${esc(s.tipo_informado)}</span>` : ''}`,
+    s.origen === 'ENLACE' ? '<span class="chip chip-blue">🔗 Por su link personal</span>'
+      : '<span class="chip chip-gray">📢 Por el link general</span>',
+    leida ? `<span class="chip chip-green" title="${esc(CED_LECTURA[s.datos.cedula_lectura])}">🪪 Datos leídos de su cédula</span>` : '',
     per && s.identidad_ok ? '<span class="chip chip-green">✔ Fecha de nacimiento coincide</span>' : '',
     per && !s.identidad_ok ? '<span class="chip chip-amber" title="La fecha de nacimiento enviada no coincide con la registrada (o no teníamos fecha). Verifica antes de aplicar.">⚠ Fecha de nacimiento no coincide</span>' : '',
   ].join(' ');
@@ -13012,8 +13081,12 @@ function perfilActCard(s, per, m) {
       <thead><tr>${pend ? '<th><input type="checkbox" data-all title="Marcar / desmarcar todos"></th>' : ''}<th>Dato</th><th>Actual</th><th>Nuevo</th></tr></thead>
       <tbody>${filas.map((f) => `<tr class="${f.igual ? 'pact-igual' : 'pact-cambio'}">
         ${pend ? `<td><input type="checkbox" data-campo="${esc(f.k)}"${f.igual ? '' : ' checked'}${per ? '' : ' disabled'}></td>` : ''}
-        <td>${esc(PERFIL_LABELS[f.k] || f.k)}${corregir.has(f.k) ? ' <span class="chip chip-amber">por corregir</span>' : ''}</td>
-        <td>${esc(fmt(f.actual))}</td><td>${f.igual ? esc(fmt(f.nuevo)) : `<b>${esc(fmt(f.nuevo))}</b>`}</td></tr>`).join('')}</tbody>
+        ${f.cedula
+          ? `<td>🪪 Cédula (frente y reverso)</td><td class="muted">—</td>
+             <td><button type="button" class="btn btn-sm" data-cedfotos>👁️ Ver fotos</button>
+               ${s.datos?.cedula_lectura ? `<div class="muted">${esc(CED_LECTURA[s.datos.cedula_lectura] || '')}</div>` : ''}</td>`
+          : `<td>${esc(PERFIL_LABELS[f.k] || f.k)}${corregir.has(f.k) ? ' <span class="chip chip-amber">por corregir</span>' : ''}</td>
+        <td>${pactValor(f.k, f.actual)}</td><td>${f.igual ? pactValor(f.k, f.nuevo) : `<b>${pactValor(f.k, f.nuevo)}</b>`}</td>`}</tr>`).join('')}</tbody>
     </table></div>
     <div class="pact-foot">${pend
       ? `<span class="muted">${cambios} cambio(s) de ${filas.length} dato(s)</span><span class="spacer"></span>
@@ -13022,6 +13095,17 @@ function perfilActCard(s, per, m) {
       : s.estado === 'APLICADA'
         ? `<span class="muted">Aplicados: ${esc((s.campos_aplicados || []).map((k) => PERFIL_LABELS[k] || k).join(', '))}</span>`
         : `<span class="muted">Motivo: ${esc(s.motivo_rechazo || '—')}</span>`}</div>`;
+  const bc = card.querySelector('[data-cedfotos]');
+  if (bc) {
+    bc.onclick = async () => {
+      bc.disabled = true; bc.textContent = 'Cargando…';
+      const { data, error } = await sb.from('perfil_actualizaciones')
+        .select('frente:datos->>cedula_frente, reverso:datos->>cedula_reverso').eq('id', s.id).single();
+      if (error) { bc.disabled = false; bc.textContent = '👁️ Ver fotos'; toast('No se pudieron traer las fotos: ' + error.message, 'err'); return; }
+      bc.outerHTML = `<div class="pact-ced">${[data.frente, data.reverso].filter(Boolean)
+        .map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Cédula"></a>`).join('')}</div>`;
+    };
+  }
   if (!pend) return card;
 
   const checks = () => [...card.querySelectorAll('input[data-campo]')];
@@ -13041,7 +13125,7 @@ function perfilActCard(s, per, m) {
     } finally { hideBusy(); }
   };
   card.querySelector('[data-aplicar]').onclick = async () => {
-    const campos = checks().filter((c) => c.checked).map((c) => c.dataset.campo);
+    const campos = checks().filter((c) => c.checked).flatMap((c) => c.dataset.campo.split(' '));
     if (!campos.length) { toast('Marca al menos un dato para aplicar.', 'err'); return; }
     const ok = await confirmAction({
       title: '¿Aplicar datos?',
@@ -14278,6 +14362,12 @@ function pintarLiqArmazon() {
     <div class="liq-nota">Del ${esc(c.desde)} al ${esc(c.hasta)}
       ${c.ultima_sync && c.ultima_sync.cuando ? ' · última actualización ' + esc(c.ultima_sync.cuando) : ''}
       · <button type="button" class="lnk" id="liq-sync">Traer lo nuevo de la hoja</button></div>
+    <div class="liq-nota" id="liq-banco">🏦 Extractos del banco: <span class="liq-banco-txt">consultando…</span>
+      · <button type="button" class="lnk" id="liq-banco-cargar">Cargar extracto del banco</button>
+      <input type="file" id="liq-banco-file" accept=".xls,.xlsx" multiple hidden></div>
+    <div class="liq-nota">🧾 Colillas de los conductores: <span id="liq-col-txt">consultando…</span>
+      · <button type="button" class="lnk" id="liq-colillas">Ver</button>
+      · <button type="button" class="lnk" id="liq-col-link">Copiar enlace para conductores</button></div>
     ${c.sin_cedula || c.no_cuadran ? `
       <div class="liq-avisos">
         ${c.sin_cedula ? `<div class="liq-aviso"><b>${c.sin_cedula}</b> liquidación(es) sin cédula del conductor:
@@ -14285,6 +14375,7 @@ function pintarLiqArmazon() {
           (${(c.nombres_sin_cedula || []).map((x) => esc(x)).join(', ')}). Se corrige en la hoja.</div>` : ''}
         ${c.no_cuadran ? `<div class="liq-aviso"><b>${c.no_cuadran}</b> fila(s) donde la propia hoja no cuadra
           (unidades − descontados ≠ total). Se marcan con ⚠️ en la lista.</div>` : ''}
+        <button type="button" class="lnk" id="liq-revisar">🔎 Ver cuáles son</button>
       </div>` : ''}
     <div class="liq-filtros">
       <label>Desde<input type="date" id="lf-desde"></label>
@@ -14295,6 +14386,7 @@ function pintarLiqArmazon() {
       <label class="liq-chk"><input type="checkbox" id="lf-sinfoto"> Solo sin foto</label>
       <button type="button" class="btn" id="lf-buscar">Buscar</button>
       <button type="button" class="btn btn-sec" id="lf-limpiar">Limpiar</button>
+      <button type="button" class="btn" id="liq-planilla" title="Arma el Excel con las columnas de la planilla METRO">📋 Armar planilla</button>
     </div>
     <div id="liq-tot" class="liq-tot"></div>
     <div id="liq-lista"></div>
@@ -14315,6 +14407,17 @@ function pintarLiqArmazon() {
     cargarLiqPagina();
   });
   body.querySelector('#liq-sync').addEventListener('click', sincronizarLiq);
+  body.querySelector('#liq-planilla').addEventListener('click', liqArmarPlanilla);
+  const bRev = body.querySelector('#liq-revisar');
+  if (bRev) bRev.addEventListener('click', liqVerRevisar);
+  body.querySelector('#liq-banco-cargar').addEventListener('click', () => $('liq-banco-file').click());
+  body.querySelector('#liq-banco-file').addEventListener('change', (e) => {
+    liqCargarExtractos([...e.target.files]).finally(() => { e.target.value = ''; });
+  });
+  liqPintarBanco();
+  body.querySelector('#liq-colillas').addEventListener('click', liqVerColillas);
+  body.querySelector('#liq-col-link').addEventListener('click', liqCopiarEnlaceColilla);
+  liqContarColillas();
 }
 
 async function cargarLiqPagina() {
@@ -14504,6 +14607,600 @@ async function sincronizarLiq() {
   finally { if ($('liq-sync')) { $('liq-sync').disabled = false; $('liq-sync').textContent = 'Traer lo nuevo de la hoja'; } }
 }
 
+
+// ===================================================================================
+// 📋 PLANILLA DE LIQUIDACIÓN (sql/147-148)
+//
+// Administración llena a mano la planilla METRO con datos que la app ya tiene. Esto la arma
+// con las MISMAS columnas, en el mismo orden y con las MISMAS fórmulas de la plantilla, para
+// que se pegue encima de la que usan hoy.
+//
+// Todo sale de la liquidación de la base (la hoja que se sincroniza), que es esa misma cuenta
+// resumida — medido en 12.287 filas de 2026:
+//   UNIDADES = PAX SENSOR · DESCONTAR = VIAJES (reconocimiento)
+//   LIQUIDAR = A LIQUIDAR CANTIDAD · DINERO = A LIQUIDAR $
+//   UNIDADES − DESCONTAR − LIQUIDAR = lo validado con cívica (TOTAL PAX)
+// La nómina usa la tarifa de la ruta (Hoja1 de la plantilla → tabla liq_tarifas) y lo
+// consignado sale del extracto del banco, asignado por liqAsignarBanco.
+//
+// Lo que la liquidación NO trae no se inventa: cuántos de los validados fueron Integrado
+// Cívica, Pleno Cívica o Tarjeta Conductor. Esas columnas quedan vacías pero con su fórmula:
+// si se escriben, TOTAL DE INGRESOS e INGRESO REAL se calculan solos.
+//
+// CENTRO no se arma: sus 21 buses no están en la liquidación de la base.
+// ===================================================================================
+
+// Las columnas de la planilla METRO, en el orden del archivo original.
+const LIQ_PLANILLA_COLS = [
+  'FECHA', 'VEH',
+  'INTEGRADO CIVICA cant', 'INTEGRADO CIVICA $', 'INTEGRADO CIVICA total',
+  'PLENO CIVICA cant', 'PLENO CIVICA $', 'PLENO CIVICA total',
+  'TARJETA CONDUCTOR cant', 'TARJETA CONDUCTOR $', 'TARJETA CONDUCTOR total',
+  'TOTAL PAX', 'COSTO TRANSACCIONAL', 'RUTA', 'RUTA 1', 'TOTAL DE INGRESOS',
+  'PAX SENSOR', 'DIFERENCIA PAX', 'TOTAL DIFERENCIA',
+  'VIAJES O PAX RECONOCIMIENTO', 'RECONOCIMIENTO', 'INGRESO REAL',
+  'A LIQUIDAR CANTIDAD', 'A LIQUIDAR $',
+  'VALOR CONSIGNADO', 'FECHA CONSIG', 'BANCO', 'DIFERENCIA',
+  'DEBITO debe(+)', 'CREDITO', 'CONDUCTOR', 'CEDULA', 'OBSERVACIONES',
+  'NOVEDADES POR VIAJE', 'PAX PARA NOMINA', 'NOMINA',
+];
+// Formato de cada columna (en el mismo orden): pesos, cantidades o nada.
+const LIQ_FMT_PESOS = '"$"#,##0;-"$"#,##0';
+const LIQ_FORMATO = LIQ_PLANILLA_COLS.map((c) => {
+  if (c === 'COSTO TRANSACCIONAL') return '"$"#,##0.00';
+  if (['INTEGRADO CIVICA $', 'INTEGRADO CIVICA total', 'PLENO CIVICA $', 'PLENO CIVICA total',
+    'TARJETA CONDUCTOR $', 'TARJETA CONDUCTOR total', 'TOTAL DE INGRESOS', 'TOTAL DIFERENCIA',
+    'RECONOCIMIENTO', 'INGRESO REAL', 'A LIQUIDAR $', 'VALOR CONSIGNADO', 'DIFERENCIA',
+    'DEBITO debe(+)', 'CREDITO', 'NOMINA'].includes(c)) return LIQ_FMT_PESOS;
+  if (['INTEGRADO CIVICA cant', 'PLENO CIVICA cant', 'TARJETA CONDUCTOR cant', 'TOTAL PAX', 'PAX SENSOR',
+    'DIFERENCIA PAX', 'VIAJES O PAX RECONOCIMIENTO', 'A LIQUIDAR CANTIDAD', 'NOVEDADES POR VIAJE',
+    'PAX PARA NOMINA'].includes(c)) return '#,##0';
+  return null;
+});
+// Le pone el formato a una celda con número o fórmula; las vacías y los textos quedan igual.
+function liqFormato(c, z) {
+  if (!z) return c;
+  if (typeof c === 'number') return { t: 'n', v: c, z };
+  if (c && typeof c === 'object' && (c.f || c.t === 'n')) return { ...c, z };
+  return c;
+}
+// Por pasajero validado: es la constante de la fórmula de COSTO TRANSACCIONAL de la plantilla.
+const LIQ_COSTO_TRANSACCIONAL = 172.87;
+// Se consigna al otro día, y el lunes lo del fin de semana: una consignación paga
+// liquidaciones de hasta una semana antes (lo mismo que la ventana de sql/148).
+const LIQ_DIAS_PAGO = 7;
+
+// Celdas de Excel: la fórmula va con su valor ya calculado, para que se vea bien aunque el
+// programa que lo abra no recalcule (el celular, la vista previa del correo).
+const xlF = (f, v) => ({ t: typeof v === 'number' ? 'n' : 's', v: v == null ? '' : v, f });
+// Fecha real de Excel (no texto), para que ordene y filtre como fecha.
+function xlFecha(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  return { t: 'n', v: (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 864e5, z: 'dd/mm/yyyy' };
+}
+
+// El banco como lo escribe la plantilla (la cuenta contable), no como lo trae el extracto.
+const liqBancoCodigo = (b) => (/bogot/i.test(String(b || '')) ? '1103-BGTA-CTE' : String(b || ''));
+
+// Reparte lo consignado entre las liquidaciones del conductor (por cédula): cada consignación
+// paga primero lo más viejo que siga pendiente, del mismo día o de hasta LIQ_DIAS_PAGO antes.
+// Lo que sobra queda a favor en la última liquidación que alcanzó a pagar. Las `previas` (la
+// semana antes del rango) entran a la cuenta pero no a la planilla: sin ellas, lo que se
+// consigna el día 1 por el 30 se le cargaría a la primera fila del mes.
+// Solo entran las liquidaciones que se pagan desde el primer extracto cargado: si antes no
+// hay banco, no se sabe si ya se pagaron, y contarlas como pendientes haría que la primera
+// consignación se fuera a pagar días viejos.
+function liqAsignarBanco(d) {
+  const dias = (d.dias_banco || []).slice().sort();
+  if (!dias.length) return { porKey: new Map(), sinLiq: [] };
+  const desde = fechaMasDias(dias[0], -1);
+  const porCed = new Map();
+  const de = (ced) => { if (!porCed.has(ced)) porCed.set(ced, []); return porCed.get(ced); };
+  const deuda = (x, previa) => ({
+    key: x.key, fecha: x.fecha, previa, pagos: [],
+    pend: Math.max(0, Number(x.dinero || 0)),   // una liquidación en 0 o negativa no se cobra
+  });
+  (d.previas || []).forEach((p) => { if (p.ced && p.fecha >= desde) de(p.ced).push(deuda(p, true)); });
+  // Lo de los días después del rango también se paga con estas consignaciones (no va a la planilla).
+  (d.posteriores || []).forEach((p) => { if (p.ced) de(p.ced).push(deuda(p, true)); });
+  (d.filas || []).forEach((f) => { if (f.ced && f.fecha >= desde) de(f.ced).push(deuda(f, false)); });
+  // sort es estable: dentro del mismo día se respeta el orden de la planilla.
+  porCed.forEach((l) => l.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)));
+
+  const sinLiq = [];
+  for (const c of d.consignaciones || []) {
+    const min = fechaMasDias(c.fecha, -LIQ_DIAS_PAGO);
+    const cand = (porCed.get(c.ced) || []).filter((x) => x.fecha <= c.fecha && x.fecha >= min);
+    let resto = Number(c.valor || 0);
+    for (const x of cand) {
+      if (resto <= 0) break;
+      if (x.pend <= 0) continue;
+      const t = Math.min(x.pend, resto);
+      x.pend -= t; resto -= t;
+      x.pagos.push({ fecha: c.fecha, valor: t, banco: c.banco });
+    }
+    if (resto > 0) {
+      const ult = cand[cand.length - 1];
+      if (ult) ult.pagos.push({ fecha: c.fecha, valor: resto, banco: c.banco, sobra: true });
+      else sinLiq.push({ ...c, valor: resto });
+    }
+  }
+  const porKey = new Map();
+  porCed.forEach((l) => l.forEach((x) => { if (!x.previa) porKey.set(x.key, x); }));
+  return { porKey, sinLiq };
+}
+
+// Una fila de la planilla. `n` es su posición (la fila de Excel es n + 2: la 1 es el
+// encabezado), `pago` lo que le asignó liqAsignarBanco, `diasBanco` los días con extracto y
+// `colillas` las que mandó el conductor por esa liquidación (sql/149).
+function liqFilaPlanilla(f, n, pago, diasBanco, colillas) {
+  const r = n + 2;
+  const num = (v) => (v == null || v === '' ? null : Number(v));
+  const Q = num(f.unidades), T = num(f.descontar), W = num(f.liquidar), X = num(f.dinero);
+  const L = Q != null && T != null && W != null ? Q - T - W : null;
+  const tv = num(f.tarifa_valor);
+  // El valor del pasaje sale de la misma liquidación (DINERO / LIQUIDAR): así las filas de
+  // 2025 ($3.400) también dan bien. Si LIQUIDAR es 0 no se puede despejar y va el de la fecha.
+  const pasaje = W && X != null && X % W === 0 ? X / W : (String(f.fecha) >= '2026-01-16' ? 3800 : 3400);
+
+  const pagos = (pago && pago.pagos) || [];
+  const pagado = pagos.reduce((a, p) => a + Number(p.valor || 0), 0);
+  const sobra = pagos.filter((p) => p.sobra).reduce((a, p) => a + Number(p.valor || 0), 0);
+  // Se consigna al día siguiente: sin el extracto de ese día no se puede afirmar que no
+  // pagó, así que va en blanco, no en 0.
+  const hayBanco = diasBanco.has(fechaMasDias(f.fecha, 1));
+  const Y = !f.ced ? '' : pagos.length ? pagado : hayBanco ? 0 : '';
+  const ult = pagos.length ? pagos[pagos.length - 1] : null;
+  const ced = String(f.conductor_cedula || '').replace(/\D/g, '');
+
+  const obs = [];
+  if (f.cuadra === false) obs.push('La liquidación no cuadra: unidades − descontados ≠ total');
+  if (!f.ced) obs.push('Sin cédula del conductor: no se puede buscar en el banco');
+  else if (Y === '') obs.push('Falta el extracto del banco del día siguiente');
+  const dias = [...new Set(pagos.map((p) => fechaLegible(p.fecha)))];
+  if (dias.length > 1) obs.push('Pagado en varias consignaciones: ' + dias.join(', '));
+  if (sobra) obs.push('Consignó ' + liqPlata(sobra) + ' de más');
+  if (!f.tarifa) obs.push('La ruta no tiene tarifa de nómina');
+  // La colilla es lo que dice el conductor; la plata que se vio entrar es la del banco.
+  (colillas || []).forEach((c) => obs.push(`Colilla del ${fechaLegible(c.fecha)} por ${liqPlata(c.valor)}: `
+    + (c.confirmada ? 'confirmada por el banco' : 'falta confirmarla con el banco')));
+
+  return [
+    xlFecha(f.fecha), f.movil,
+    '', '', xlF(`IF(C${r}="","",C${r}*D${r})`, ''),
+    '', '', xlF(`IF(F${r}="","",F${r}*G${r})`, ''),
+    '', '', xlF(`IF(I${r}="","",I${r}*J${r})`, ''),
+    L == null ? '' : L,
+    L == null ? '' : xlF(`L${r}*${LIQ_COSTO_TRANSACCIONAL}`, Math.round(L * LIQ_COSTO_TRANSACCIONAL * 100) / 100),
+    f.ruta || '', f.tarifa || '',
+    xlF(`IF(COUNT(E${r},H${r},K${r})=0,"",N(E${r})+N(H${r})+N(K${r}))`, ''),
+    Q == null ? '' : Q,
+    L == null ? '' : xlF(`Q${r}-L${r}`, Q - L),
+    L == null ? '' : xlF(`R${r}*${pasaje}`, (Q - L) * pasaje),
+    T == null ? '' : T,
+    T == null ? '' : xlF(`T${r}*${pasaje}`, T * pasaje),
+    xlF(`IF(P${r}="","",P${r}+S${r}-U${r})`, ''),
+    W == null ? '' : W,
+    X == null ? '' : X,
+    Y,
+    ult ? xlFecha(ult.fecha) : '',
+    ult ? liqBancoCodigo(ult.banco) : '',
+    Y === '' ? '' : xlF(`X${r}-Y${r}`, (X || 0) - Y),
+    Y === '' ? '' : xlF(`MAX(X${r}-Y${r},0)`, Math.max((X || 0) - Y, 0)),
+    Y === '' ? '' : xlF(`MAX(Y${r}-X${r},0)`, Math.max(Y - (X || 0), 0)),
+    f.conductor || '', ced ? Number(ced) : '',
+    obs.join(' · '),
+    0,                                           // NOVEDADES POR VIAJE: se escribe a mano
+    Q == null ? '' : xlF(`Q${r}-AH${r}`, Q),
+    Q == null || tv == null ? '' : xlF(`AI${r}*${tv}`, Q * tv),
+  ];
+}
+
+// "2026-10-31" + n días, sin pasar por la zona horaria.
+function fechaMasDias(iso, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+  return d.toISOString().slice(0, 10);
+}
+
+async function liqArmarPlanilla() {
+  await _conExcelBtn('liq-planilla', async () => {
+    // Sin fechas en los filtros, el mes corrido: una planilla es de un mes.
+    const hoy = hoyServidor();
+    const desde = _liqF.desde || hoy.slice(0, 8) + '01';
+    const hasta = _liqF.hasta || hoy;
+
+    const [pl, rev, col] = await Promise.all([
+      sb.rpc('liquidaciones_planilla', {
+        p_desde: desde, p_hasta: hasta,
+        p_punto: _liqF.punto || null, p_movil: _liqF.movil || null }),
+      sb.rpc('liquidaciones_revisar').then((x) => x, () => ({ data: null })),
+      sb.rpc('colillas_por_liquidacion', { p_desde: desde, p_hasta: hasta }).then((x) => x, () => ({ data: null })),
+    ]);
+    if (pl.error) throw pl.error;
+    const colPorKey = (col.data && col.data.ok && col.data.por_key) || {};
+    const d = pl.data || {};
+    if (!d.ok) throw new Error(d.error || 'no se pudo armar');
+    const filas = d.filas || [];
+    if (!filas.length) throw new Error('No hay liquidaciones en ese rango.');
+
+    const { porKey, sinLiq } = liqAsignarBanco(d);
+    const diasBanco = new Set(d.dias_banco || []);
+    // Formato de planilla contable: pesos con separador de miles y cantidades enteras.
+    const metro = filas.map((f, i) => liqFilaPlanilla(f, i, porKey.get(f.key), diasBanco, colPorKey[f.key])
+      .map((c, j) => liqFormato(c, LIQ_FORMATO[j])));
+
+    // Los totales del resumen salen de las mismas celdas que van en la hoja.
+    const ix = (c) => LIQ_PLANILLA_COLS.indexOf(c);
+    const val = (v) => (v && typeof v === 'object' ? v.v : v);
+    const suma = (c) => metro.reduce((a, row) => a + (typeof val(row[ix(c)]) === 'number' ? val(row[ix(c)]) : 0), 0);
+    const cuantas = (c, fn) => metro.filter((row) => fn(val(row[ix(c)]))).length;
+    const r = d.resumen || {};
+    const sinCruzar = sinLiq.reduce((a, c) => a + Number(c.valor || 0), 0);
+
+    const $$ = (n) => ({ t: 'n', v: Number(n) || 0, z: LIQ_FMT_PESOS });
+    const hojas = [{ name: 'METRO', filtro: true, aoa: [LIQ_PLANILLA_COLS, ...metro] }, {
+      name: 'Resumen',
+      aoa: [
+        ['Planilla de liquidación METRO'],
+        ['Desde', fechaLegible(d.desde)], ['Hasta', fechaLegible(d.hasta)],
+        ['Punto', _liqF.punto || 'todos'], ['Vehículo', _liqF.movil || 'todos'], [],
+        ['Liquidaciones', filas.length],
+        ['Pax sensor', suma('PAX SENSOR')],
+        ['Validados con cívica (total pax)', suma('TOTAL PAX')],
+        ['Viajes (reconocimiento)', suma('VIAJES O PAX RECONOCIMIENTO')],
+        ['A liquidar (cantidad)', suma('A LIQUIDAR CANTIDAD')],
+        ['A liquidar $', $$(suma('A LIQUIDAR $'))],
+        ['Valor consignado', $$(suma('VALOR CONSIGNADO'))],
+        ['Débito (lo que se debe)', $$(suma('DEBITO debe(+)'))],
+        ['Crédito (pagado de más)', $$(suma('CREDITO'))],
+        ['Nómina', $$(suma('NOMINA'))], [],
+        ['Banco'],
+        ['Días con extracto cargado', (d.dias_banco || []).map(fechaLegible).join(', ') || 'ninguno'],
+        ['Filas con la consignación cruzada', cuantas('VALOR CONSIGNADO', (v) => typeof v === 'number' && v > 0)],
+        ['Filas sin consignación habiendo extracto', cuantas('VALOR CONSIGNADO', (v) => v === 0)],
+        ['Filas en blanco porque falta el extracto', cuantas('VALOR CONSIGNADO', (v) => v === '')],
+        ['Consignado en el rango (todo el extracto)', $$(r.banco_rango)],
+        ['… de personas que no están en esta liquidación', $$(r.banco_otros),
+          `${r.banco_otros_personas || 0} persona(s): otra flota, CENTRO o abonos`],
+        ['Consignaciones de estos conductores sin liquidación que pagar', $$(sinCruzar), `${sinLiq.length} movimiento(s)`], [],
+        ['De dónde sale cada columna'],
+        ['PAX SENSOR', 'UNIDADES de la liquidación'],
+        ['TOTAL PAX', 'UNIDADES − DESCONTAR − LIQUIDAR: lo validado con cívica'],
+        ['COSTO TRANSACCIONAL', `TOTAL PAX × ${LIQ_COSTO_TRANSACCIONAL} (fórmula de la plantilla)`],
+        ['RUTA / RUTA 1', 'La ruta de la liquidación / su tarifa de nómina (Hoja1)'],
+        ['DIFERENCIA PAX / TOTAL DIFERENCIA', 'PAX SENSOR − TOTAL PAX / × valor del pasaje'],
+        ['VIAJES O PAX RECONOCIMIENTO / RECONOCIMIENTO', 'DESCONTAR de la liquidación (son los viajes) / × valor del pasaje'],
+        ['A LIQUIDAR CANTIDAD / A LIQUIDAR $', 'LIQUIDAR y DINERO de la liquidación'],
+        ['VALOR CONSIGNADO / FECHA CONSIG / BANCO',
+          `Extracto del banco, por la cédula del conductor. Cada consignación paga primero lo más viejo pendiente, de hasta ${LIQ_DIAS_PAGO} días antes`],
+        ['DIFERENCIA / DÉBITO / CRÉDITO', 'A LIQUIDAR $ − CONSIGNADO. Débito: lo que debe. Crédito: lo que pagó de más'],
+        ['PAX PARA NÓMINA / NÓMINA', 'PAX SENSOR − NOVEDADES POR VIAJE / × tarifa de la ruta'],
+        [],
+        ['Lo que la liquidación no trae'],
+        ['Integrado Cívica / Pleno Cívica / Tarjeta Conductor',
+          'La liquidación trae el total validado, no por tipo de tarjeta. Quedan con su fórmula: si se escriben, TOTAL DE INGRESOS e INGRESO REAL se calculan solos'],
+        ['NOVEDADES POR VIAJE', 'Va en 0 y se escribe a mano; al cambiarla se recalcula la nómina'],
+        ['CENTRO', 'Sus buses no están en la liquidación de la base'],
+      ],
+    }];
+
+    // Las tarifas que se usaron (Hoja1 de la plantilla), para que se pueda revisar la nómina.
+    const tar = new Map();
+    filas.forEach((f) => {
+      if (!f.tarifa) return;
+      const k = `${f.tarifa}|${f.tarifa_valor}`;
+      if (!tar.has(k)) tar.set(k, { tarifa: f.tarifa, valor: Number(f.tarifa_valor), rutas: new Set(), buses: new Set() });
+      tar.get(k).rutas.add(f.ruta);
+      if (f.ruta === '134I' && f.tarifa === 'TARIFA 6') tar.get(k).buses.add(f.movil);
+    });
+    hojas.push({
+      name: 'Tarifas',
+      aoa: [['Tarifa', 'Por pasajero', 'Rutas (como las escribe la liquidación)', 'Buses de la 134IA'],
+        ...[...tar.values()].sort((a, b) => (a.tarifa < b.tarifa ? -1 : 1)).map((t) => [
+          t.tarifa, t.valor, [...t.rutas].sort().join(', '), [...t.buses].sort().join(', ')])],
+    });
+
+    if (sinLiq.length) {
+      const nom = new Map(filas.filter((f) => f.ced).map((f) => [f.ced, f.conductor]));
+      hojas.push({
+        name: 'Banco sin cruzar',
+        aoa: [['Consignaciones que no encontraron liquidación pendiente del mismo conductor'],
+          ['Fecha', 'Cédula', 'Conductor', 'Valor', 'Banco'],
+          ...sinLiq.map((c) => [xlFecha(c.fecha), Number(c.ced), nom.get(c.ced) || '', Number(c.valor), c.banco || ''])],
+      });
+    }
+
+    // Lo que hay que corregir EN LA HOJA, para no armar planillas sobre datos malos.
+    const rv = rev.data;
+    if (rv && rv.ok && ((rv.no_cuadran || []).length || (rv.sin_cedula || []).length)) {
+      const aoa = [['Qué corregir en la hoja de liquidaciones'], []];
+      if ((rv.no_cuadran || []).length) {
+        aoa.push(['Filas donde la hoja no cuadra (unidades − descontados ≠ total)']);
+        aoa.push(['Fecha', 'Vehículo', 'Ruta', 'Conductor', 'Unidades', 'Descontar', 'Debería dar', 'La hoja dice']);
+        rv.no_cuadran.forEach((x) => aoa.push([xlFecha(x.fecha), x.movil, x.ruta, x.conductor,
+          x.unidades, x.descontar, x.deberia, x.dice]));
+        aoa.push([]);
+      }
+      if ((rv.sin_cedula || []).length) {
+        aoa.push(['Conductores sin cédula (no se pueden cruzar con el banco)']);
+        aoa.push(['Conductor', 'Liquidaciones', 'Desde', 'Hasta', 'Vehículos', '¿Está en el perfil?']);
+        rv.sin_cedula.forEach((x) => aoa.push([x.conductor, x.filas, xlFecha(x.desde), xlFecha(x.hasta), x.moviles,
+          Number(x.en_perfil) === 1 ? 'sí, una persona' : Number(x.en_perfil) === 0 ? 'no aparece' : x.en_perfil + ' coincidencias']));
+      }
+      hojas.push({ name: 'Corregir', aoa });
+    }
+
+    await _xlsxDescargar(hojas, `Planilla_METRO_${desde}_a_${hasta}.xlsx`);
+  });
+}
+
+// ---------- 🏦 Extracto del banco (sql/142, 148) ----------
+// El "RecaudosDiasAnteriores" del Banco de Bogotá trae la cédula del conductor en la
+// referencia. Se lee aquí, en el navegador, y se mandan las filas a recaudos_cargar. La llave
+// es archivo + línea: subir el mismo archivo dos veces no duplica nada.
+let _liqBanco = null;
+
+async function liqPintarBanco() {
+  const box = $('liq-banco');
+  if (!box) return;
+  try {
+    const { data, error } = await sb.rpc('recaudos_estado');
+    if (error) throw error;
+    _liqBanco = data && data.ok ? data : null;
+  } catch (e) { _liqBanco = null; }
+  const b = _liqBanco;
+  box.querySelector('.liq-banco-txt').textContent = !b ? 'no se pudo consultar'
+    : !b.dias ? 'todavía no hay ninguno cargado'
+    : b.dias === 1 ? `1 día cargado: ${fechaLegible(b.desde)}`
+    : `${b.dias} días cargados, del ${fechaLegible(b.desde)} al ${fechaLegible(b.hasta)}`;
+}
+
+const _sinTilde = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+
+// "2026/10/15", "2026-10-15" o "15/10/2026" → "2026-10-15"
+function _isoBanco(v) {
+  const s = String(v || '').trim();
+  let m = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/.exec(s);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s);
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : '';
+}
+
+// Lee el .xls del banco: busca la fila de encabezados (la que dice "Referencia 1") y toma las
+// columnas por su nombre, no por su posición, por si el banco las corre.
+async function liqLeerExtracto(file) {
+  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws || !ws['!ref']) throw new Error('el archivo está vacío');
+  const ini = XLSX.utils.decode_range(ws['!ref']).s.r;
+  const filas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '', blankrows: true });
+  const h = filas.findIndex((row) => row.some((c) => _sinTilde(c) === 'referencia 1'));
+  if (h < 0) throw new Error('no parece un extracto de recaudos (no tiene "Referencia 1")');
+  const cab = filas[h].map(_sinTilde);
+  const C = {
+    fecha: cab.indexOf('fecha'), aplica: cab.indexOf('fecha aplicacion'),
+    tipo: cab.indexOf('tipo recaudo origen'), origen: cab.indexOf('origen'),
+    banco: cab.indexOf('banco'), tx: cab.indexOf('transaccion'),
+    r1: cab.indexOf('referencia 1'), r2: cab.indexOf('referencia 2'),
+    valor: cab.indexOf('valor total'), comp: cab.indexOf('no. comprobante'),
+  };
+  if (C.fecha < 0 || C.valor < 0) throw new Error('no se encontraron las columnas Fecha y Valor Total');
+  const txt = (row, i) => (i < 0 ? '' : String(row[i] == null ? '' : row[i]).trim());
+  // Una fecha que llegue como número de Excel se pasa a texto; el servidor acepta las dos formas.
+  const fecha = (v) => (typeof v === 'number' && v > 20000
+    ? new Date(Math.round((v - 25569) * 864e5)).toISOString().slice(0, 10) : String(v == null ? '' : v).trim());
+  const valor = (v) => {
+    if (typeof v === 'number') return v;
+    let s = String(v == null ? '' : v).replace(/[$\s]/g, '');
+    s = /,\d{1,2}$/.test(s) ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    const n = Number(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const out = [];
+  filas.slice(h + 1).forEach((row, i) => {
+    const f = fecha(row[C.fecha]), v = valor(row[C.valor]);
+    if (!_isoBanco(f) || !v) return;          // renglones en blanco y el de totales
+    out.push({
+      // El número de renglón del archivo (como lo cuenta Excel): es parte de la llave.
+      linea: ini + h + i + 2,
+      fecha: f, fecha_aplica: C.aplica < 0 ? '' : fecha(row[C.aplica]),
+      tipo: txt(row, C.tipo), origen: txt(row, C.origen), banco: txt(row, C.banco),
+      transaccion: txt(row, C.tx), ref1: txt(row, C.r1), ref2: txt(row, C.r2),
+      valor: v, comprobante: txt(row, C.comp),
+    });
+  });
+  return out;
+}
+
+async function liqCargarExtractos(files) {
+  if (!files.length) return;
+  const b = $('liq-banco-cargar');
+  if (b) { b.disabled = true; b.textContent = 'Cargando…'; }
+  const res = [];
+  let malo = false;
+  try {
+    for (const file of files) {
+      // "Recaudos… (1).xls" es el mismo archivo bajado dos veces: sin el (1) la llave lo reconoce.
+      const nombre = file.name.replace(/\s*\(\d+\)(?=\.[^.]+$)/, '');
+      let filas;
+      try { filas = await liqLeerExtracto(file); } catch (e) { res.push(`${nombre}: ${e.message || e}`); malo = true; continue; }
+      if (!filas.length) { res.push(`${nombre}: no trae consignaciones`); malo = true; continue; }
+      // Los mismos días ya cargados con OTRO nombre: puede ser el mismo extracto renombrado.
+      const fechas = [...new Set(filas.map((x) => _isoBanco(x.fecha)))];
+      const otro = ((_liqBanco && _liqBanco.archivos) || []).find((a) => a.archivo !== nombre
+        && fechas.some((f) => f >= a.desde && f <= a.hasta));
+      if (otro) {
+        const ok = await confirmAction({
+          title: '¿Cargar este extracto?',
+          lead: `Ya hay uno cargado de esas fechas: ${otro.archivo}.`,
+          message: `Si ${nombre} es el mismo extracto con otro nombre, las consignaciones quedarían dobles.`,
+          okLabel: 'Cargar igual', danger: true,
+        });
+        if (!ok) { res.push(`${nombre}: no se cargó`); continue; }
+      }
+      const { data, error } = await sb.rpc('recaudos_cargar', { p_archivo: nombre, p_filas: filas });
+      if (error || !data || !data.ok) {
+        res.push(`${nombre}: ${(error && error.message) || (data && data.error) || 'no se pudo cargar'}`);
+        malo = true; continue;
+      }
+      res.push(`${fechas.map(fechaLegible).join(', ')}: ${data.nuevas} nueva(s)`
+        + (data.repetidas ? `, ${data.repetidas} ya estaban` : '')
+        + (data.sin_cedula ? `, ${data.sin_cedula} sin cédula` : ''));
+    }
+  } finally {
+    if ($('liq-banco-cargar')) { $('liq-banco-cargar').disabled = false; $('liq-banco-cargar').textContent = 'Cargar extracto del banco'; }
+  }
+  toast('Extracto ' + res.join(' · '), malo ? 'err' : 'ok');
+  liqPintarBanco();
+}
+
+// ---------- 🧾 Colillas de consignación (sql/149) ----------
+// El conductor sube la foto por consignacion.html; el OCR la lee en su celular y el servidor la
+// cruza con su liquidación. Aquí administración ve cada colilla y lo que importa: si el
+// extracto del banco la confirma. Una foto se puede editar; el extracto no.
+const COL_BANCO = {
+  CONFIRMADA: ['ok', '✅ Confirmada'],
+  FALTA_EXTRACTO: ['', '⏳ Falta extracto'],
+  NO_APARECE: ['mal', '❌ No aparece'],
+};
+const COL_VER = { COMPLETO: 'Completo', PARCIAL: 'Le falta', DE_MAS: 'De más', SIN_DEUDA: 'Sin deuda' };
+
+async function liqContarColillas() {
+  const el = $('liq-col-txt');
+  if (!el) return;
+  try {
+    const { data, error } = await sb.rpc('colillas_listar', { p_desde: null, p_hasta: null });
+    if (error || !data || !data.ok) throw error || new Error('x');
+    const fs = data.filas || [];
+    const conf = fs.filter((x) => x.estado_banco === 'CONFIRMADA').length;
+    const no = fs.filter((x) => x.estado_banco === 'NO_APARECE').length;
+    el.textContent = !fs.length ? 'ninguna en el último mes'
+      : `${fs.length} en el último mes · ${conf} confirmada(s) por el banco${no ? ` · ${no} que NO aparece(n)` : ''}`;
+  } catch (e) { el.textContent = 'no se pudo consultar'; }
+}
+
+function liqCopiarEnlaceColilla() {
+  const url = new URL('consignacion.html', location.href).href;
+  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+    .then(() => toast('Enlace copiado: ' + url, 'ok'), () => toast(url, 'ok'));
+}
+
+async function liqVerColillas() {
+  const { data, error } = await sb.rpc('colillas_listar', { p_desde: null, p_hasta: null });
+  if (error || !data || !data.ok) {
+    toast('No se pudo consultar: ' + ((error && error.message) || (data && data.error) || ''), 'err');
+    return;
+  }
+  const fs = data.filas || [];
+  const m = liqColModal();
+  const cubre = (x) => (x.cubre || []).map((c) => `${fechaLegible(c.fecha)} · bus ${esc(c.movil)}`).join('<br>') || '—';
+  m.querySelector('.pf-body').innerHTML = fs.length ? `
+    <table class="liq-rev"><thead><tr><th>Conductor</th><th>Colilla</th><th>Valor</th>
+      <th>Paga</th><th>Resultado</th><th>Banco</th><th></th></tr></thead><tbody>
+      ${fs.map((x) => {
+        const b = COL_BANCO[x.estado_banco] || ['', x.estado_banco];
+        return `<tr>
+          <td>${esc(x.nombre || '')}<br><small>Bus ${esc(x.movil || '')} · enviada ${esc(x.enviada)}</small></td>
+          <td>${esc(fechaLegible(x.fecha))}${x.ref_cedula === false ? '<br><small class="mal">⚠️ sin la cédula</small>' : ''}</td>
+          <td><b>${liqPlata(x.valor)}</b>${x.valor_a_mano ? '<br><small title="El conductor cambió lo que leyó el OCR">✍️ escrito a mano</small>' : ''}</td>
+          <td>${cubre(x)}</td>
+          <td class="${x.veredicto === 'COMPLETO' ? 'ok' : x.veredicto === 'DE_MAS' ? '' : 'mal'}">${esc(COL_VER[x.veredicto] || x.veredicto)}
+            ${Number(x.faltante) ? `<br><small>faltan ${liqPlata(x.faltante)}</small>` : ''}
+            ${Number(x.sobrante) ? `<br><small>sobran ${liqPlata(x.sobrante)}</small>` : ''}</td>
+          <td class="${b[0]}">${b[1]}${x.banco_fecha ? `<br><small>${esc(fechaLegible(x.banco_fecha))}</small>` : ''}</td>
+          <td><button type="button" class="lnk" data-foto="${x.id}">Ver foto</button></td></tr>`;
+      }).join('')}</tbody></table>
+    <div id="col-foto"></div>
+    <div class="pst-nota">La colilla la lee el celular del conductor; la prueba de que la plata entró es el
+      extracto del banco. "No aparece" quiere decir que ya están los extractos de ese día y del siguiente
+      y no hay una consignación de esa cédula por ese valor.</div>`
+    : '<div class="rst-empty">Todavía no hay colillas.</div>';
+  m.querySelectorAll('[data-foto]').forEach((b) => b.addEventListener('click', async () => {
+    const box = m.querySelector('#col-foto');
+    box.innerHTML = '<div class="loading">Cargando la foto…</div>';
+    const r = await sb.rpc('colilla_foto', { p_id: Number(b.dataset.foto) });
+    const d = r.data || {};
+    if (r.error || !d.ok || !d.foto) { box.innerHTML = '<div class="cump-empty">No se pudo abrir la foto.</div>'; return; }
+    box.innerHTML = `<div class="liq-rev-t">Foto de la colilla</div>
+      <img class="col-foto" alt="Colilla" src="${esc(d.foto)}">
+      ${d.texto ? `<details><summary>Lo que leyó el OCR</summary><pre class="col-ocr">${esc(d.texto)}</pre></details>` : ''}`;
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  m.hidden = false;
+}
+
+function liqColModal() {
+  let m = $('liqcol-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'liqcol-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🧾 Colillas de consignación</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
+// Lo que hay que corregir, en pantalla (lo mismo que va en la hoja "Corregir" del Excel).
+async function liqVerRevisar() {
+  const { data, error } = await sb.rpc('liquidaciones_revisar');
+  if (error || !data || !data.ok) {
+    toast('No se pudo consultar: ' + ((error && error.message) || (data && data.error) || ''), 'err');
+    return;
+  }
+  const nc = data.no_cuadran || [], sc = data.sin_cedula || [];
+  const m = liqRevModal();
+  m.querySelector('.pf-body').innerHTML = `
+    ${nc.length ? `<div class="liq-rev-t">Filas donde la hoja no cuadra (${nc.length})</div>
+      <table class="liq-rev"><thead><tr><th>Fecha</th><th>Bus</th><th>Ruta</th>
+        <th>Unidades</th><th>Descontar</th><th>Debería</th><th>Dice</th></tr></thead><tbody>
+        ${nc.map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td>${esc(x.movil || '')}</td>
+          <td>${esc(x.ruta || '')}</td><td>${x.unidades == null ? '—' : x.unidades}</td>
+          <td>${x.descontar == null ? '—' : x.descontar}</td>
+          <td><b>${x.deberia == null ? '—' : x.deberia}</b></td>
+          <td class="mal">${x.dice == null ? '—' : x.dice}</td></tr>`).join('')}
+      </tbody></table>` : ''}
+    ${sc.length ? `<div class="liq-rev-t">Conductores sin cédula (${sc.length})</div>
+      <table class="liq-rev"><thead><tr><th>Conductor</th><th>Liquidaciones</th>
+        <th>Desde</th><th>Hasta</th><th>En el perfil</th></tr></thead><tbody>
+        ${sc.map((x) => `<tr><td>${esc(x.conductor || '')}</td><td>${x.filas}</td>
+          <td>${esc(fechaLegible(x.desde))}</td><td>${esc(fechaLegible(x.hasta))}</td>
+          <td class="${Number(x.en_perfil) === 1 ? 'ok' : 'mal'}">${Number(x.en_perfil) === 1
+    ? 'sí, una persona' : Number(x.en_perfil) === 0 ? 'no aparece' : x.en_perfil + ' coincidencias'}</td></tr>`).join('')}
+      </tbody></table>` : ''}
+    ${!nc.length && !sc.length ? '<div class="rst-empty">No hay nada por corregir.</div>' : ''}
+    <div class="pst-nota">Esto se corrige <b>en la hoja de Google</b>, que es la fuente:
+      si se cambiara aquí, la próxima sincronización lo volvería a pisar.</div>`;
+  m.hidden = false;
+}
+
+function liqRevModal() {
+  let m = $('liqrev-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'liqrev-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🔎 Qué corregir en la hoja</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+
 let _sinRow = null;
 function sinModal() {
   let m = $('sin-modal');
@@ -14666,11 +15363,16 @@ const PF_SEC = {
   'Identificación': '🪪', 'Laboral': '💼', 'Seguridad social': '🏥', 'Licencia y restricción': '🚦',
   'Datos personales': '🧍', 'Vivienda': '🏠', 'Educación': '🎓', 'Núcleo familiar': '👨‍👩‍👧',
   'Contacto de emergencia': '🆘', 'Referencia laboral': '📞', 'Control de datos': '🗃️',
+  'Información laboral': '🧭', 'Experiencia laboral': '🏢', 'Declaración y autorización': '✍️',
 };
 // Ya salen en el encabezado: no se repiten dentro de las secciones.
 const PF_EN_CABECERA = ['cedula', 'nombre', 'tipo', 'estado', 'cargo'];
 let _pfVacios = false;  // ver también los campos sin dato
 let _pfRow = null;
+let _pfFirma = null;   // firma de la declaración (perfil_firmas), se lee al abrir la ficha
+let _pfHist = [];      // vinculaciones de la persona abierta (para la hoja de vida en PDF)
+let _pfFoto = null;    // foto tipo documento (perfil_fotos, sql/151)
+let _pfCedula = null;  // si tenemos su cédula (perfil_cedulas, sql/152): solo los datos, las fotos al tocar "Cédula"
 
 function pfModal() {
   let m = $('pf-modal');
@@ -14684,6 +15386,8 @@ function pfModal() {
     <div class="modal-foot">
       <label class="pf-sw"><input type="checkbox" data-vacios> Ver campos sin dato</label>
       <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-cedver hidden>🪪 Cédula</button>
+      <button type="button" class="btn btn-sm" data-hvdoc hidden>📋 Hoja de vida (PDF)</button>
       <button type="button" class="btn btn-sm" data-cert hidden>📄 Certificado laboral</button>
       <button type="button" class="btn btn-sm" data-editar hidden>✏️ Editar ficha</button>
       <button type="button" class="btn" data-x>Cerrar</button>
@@ -14697,6 +15401,8 @@ function pfModal() {
   });
   m.querySelector('[data-editar]').onclick = () => { m.hidden = true; if (_pfRow) openEditor(_pfRow); };
   m.querySelector('[data-cert]').onclick = () => { if (_pfRow) openCertificado(_pfRow); };
+  m.querySelector('[data-hvdoc]').onclick = () => { if (_pfRow) openHojaVidaDoc(_pfRow, _pfHist); };
+  m.querySelector('[data-cedver]').onclick = () => { if (_pfRow) verCedula(_pfRow); };
   document.body.appendChild(m);
   return m;
 }
@@ -14704,7 +15410,12 @@ function pfModal() {
 // Un campo ya legible: fechas en dd/mm/aaaa, salario con separador, correo y celular enlazados.
 function pfValor(f, row) {
   const v = row[f.key];
+  if (f.key === 'declaracion_aceptada_en' && _pfFirma) {
+    return `${v ? esc(fmtFechaHora(v)) : ''}<img class="pf-firma" src="${esc(_pfFirma.firma)}" alt="Firma">`;
+  }
   if (v == null || String(v).trim() === '') return '';
+  if (f.type === 'lista') return pfListaHtml(f.key, v);
+  if (f.type === 'datetime') return esc(fmtFechaHora(v));
   if (f.type === 'date') return esc(fechaLegible(v));
   if (f.key === 'salario') return '$ ' + Number(v).toLocaleString('es-CO');
   if (f.key === 'correo') return `<a href="mailto:${esc(v)}">${esc(v)}</a>`;
@@ -14723,9 +15434,32 @@ function pfSeccionesHtml(row) {
       .map((f) => ({ f, html: pfValor(f, row) }))
       .filter((x) => _pfVacios || x.html !== '');
     if (!filas.length) return '';
-    return `<section class="pf-sec"><h4>${PF_SEC[s] || '•'} ${esc(s)}</h4><dl>${filas.map((x) =>
-      `<dt>${esc(x.f.label)}</dt><dd${x.html ? '' : ' class="pf-nada"'}>${x.html || '—'}</dd>`).join('')}</dl></section>`;
+    return `<section class="pf-sec"><h4>${PF_SEC[s] || '•'} ${esc(s)}</h4><dl>${filas.map((x) => {
+      const ancho = x.f.type === 'lista' ? ' pf-ancho' : '';
+      return `<dt class="${ancho}">${esc(x.f.label)}</dt><dd class="${(x.html ? '' : 'pf-nada') + ancho}">${x.html || '—'}</dd>`;
+    }).join('')}</dl></section>`;
   }).join('');
+}
+
+// 📋 Listas de la hoja de vida FO-GH-03 (estudios, familiares, empleos) en la ficha
+function pfListaHtml(lista, arr) {
+  if (!Array.isArray(arr) || !arr.length) return '';
+  const fila = (f) => {
+    if (lista === 'estudios') {
+      return [`<b>${esc(f.titulo || f.nivel || '—')}</b>`, f.titulo ? esc(f.nivel || '') : '', esc(f.institucion || ''),
+        f.fecha_grado ? 'grado ' + esc(fechaLegible(f.fecha_grado)) : '', esc([f.ciudad, f.departamento].filter(Boolean).join(', ')),
+        esc(f.contacto || ''), f.observaciones ? `<i>${esc(f.observaciones)}</i>` : ''];
+    }
+    if (lista === 'familiares') {
+      return [`<b>${esc(f.nombre || '—')}</b>`, esc(f.parentesco || ''), f.edad ? esc(f.edad) + ' años' : '', esc(f.ocupacion || ''),
+        f.depende === 'SI' ? '<span class="chip chip-amber">depende</span>' : '', f.convive === 'SI' ? '<span class="chip chip-blue">convive</span>' : ''];
+    }
+    return [`<b>${esc(f.empresa || '—')}</b>`, esc(f.cargo || ''),
+      f.fecha_ingreso ? `${esc(fechaLegible(f.fecha_ingreso))} a ${f.fecha_retiro ? esc(fechaLegible(f.fecha_retiro)) : 'hoy'} (${esc(tiempoEntre(f.fecha_ingreso, f.fecha_retiro))})` : '',
+      f.jefe ? 'jefe: ' + esc(f.jefe) : '', esc(f.telefono || ''), f.motivo_retiro ? 'retiro: ' + esc(f.motivo_retiro) : '',
+      f.funciones ? `<i>${esc(f.funciones)}</i>` : ''];
+  };
+  return `<ol class="pf-lista">${arr.map((f) => `<li>${fila(f).filter(Boolean).join(' · ')}</li>`).join('')}</ol>`;
 }
 
 function pfHistorialHtml(hist) {
@@ -14736,7 +15470,10 @@ function pfHistorialHtml(hist) {
     return `<li class="${activo ? 'on' : ''}"><span class="pf-hdot"></span>
         <div><b>${esc(fechaLegible(h.fecha_ingreso || ''))}</b> → ${activo ? '<b>hoy</b>' : esc(fechaLegible(h.fecha_retiro))}
         <span class="${chipClass(h.tipo_ingreso || 'NUEVO')}">${esc(h.tipo_ingreso || 'NUEVO')}</span>
-        <div class="muted">${esc(h.cargo || '')}${h.novedad_retiro ? ' · Retiro: ' + esc(h.novedad_retiro) : ''}</div></div></li>`;
+        <div class="muted">${esc(h.cargo || '')}${h.novedad_retiro ? ' · Retiro: ' + esc(h.novedad_retiro) : ''}</div>
+        <div class="pf-sel-fila"><button type="button" class="pf-link" data-sel="${esc(h.id)}">📋 Espacio del empleador</button>
+          ${h.seleccion && h.seleccion.estado ? `<span class="${chipClass(h.seleccion.estado)}">${esc(h.seleccion.estado)}</span>`
+            : `<span class="muted">${h.seleccion && Object.keys(h.seleccion).length ? 'en proceso' : 'sin diligenciar'}</span>`}</div></div></li>`;
   }).join('')}</ol></section>`;
 }
 
@@ -14768,6 +15505,7 @@ function pfRender(row, hist, sin) {
   const licVence = row.licencia_vencimiento || '';
   const licVencida = licVence && licVence < hoyServidor();
   const licPronto = licVence && !licVencida && licVence <= new Date(Date.now() + 45 * 864e5).toISOString().slice(0, 10);
+  const hvFalta = hojaVidaFaltantes(row, { sinFoto: !_pfFoto, sinCedula: !_pfCedula });
 
   const chips = [
     `<span class="${chipClass(row.estado)}">${esc(row.estado || '—')}</span>`,
@@ -14787,16 +15525,22 @@ function pfRender(row, hist, sin) {
     inactivo ? `<div class="pf-aviso gris">Persona <b>INACTIVA</b>${row.fecha_retiro ? ` desde el ${esc(fechaLegible(row.fecha_retiro))}` : ''}${row.novedad_retiro ? ` · ${esc(row.novedad_retiro)}` : ''}.</div>` : '',
     licVencida && row.tipo === 'CONDUCTOR' ? `<div class="pf-aviso rojo">🪪 La licencia está <b>vencida</b> (${esc(fechaLegible(licVence))}).</div>` : '',
     porCorregir ? `<div class="pf-aviso ambar">📝 Campos por corregir: <b>${esc(porCorregir)}</b></div>` : '',
+    hvFalta.length ? `<div class="pf-aviso ambar">📋 Hoja de vida FO-GH-03 incompleta, falta: <b>${esc(hvFalta.join(', '))}</b>.
+      ${isTalentoHumano() ? '<button type="button" class="pf-link" data-hvlink>🔗 Enviarle su link personal para que la llene</button>' : ''}</div>` : '',
   ].filter(Boolean).join('');
 
   m.querySelector('h3').textContent = '🪪 Ficha de la persona';
   // Editar abre el formulario de la tabla; solo tiene sentido estando en ella
   m.querySelector('[data-editar]').hidden = !isTalentoHumano() || current !== 'perfilsociodemografico';
   m.querySelector('[data-cert]').hidden = !isTalentoHumano();
+  m.querySelector('[data-hvdoc]').hidden = !isTalentoHumano();
+  m.querySelector('[data-cedver]').hidden = !isTalentoHumano() || !_pfCedula;
+  _pfHist = hist || [];
   m.querySelector('[data-vacios]').checked = _pfVacios;
   body.innerHTML = `
     <header class="pf-top">
-      <div class="pf-av ${row.tipo === 'CONDUCTOR' ? 'cond' : 'adm'}${inactivo ? ' off' : ''}">${esc(iniciales)}</div>
+      <div class="pf-av ${row.tipo === 'CONDUCTOR' ? 'cond' : 'adm'}${inactivo ? ' off' : ''}">${_pfFoto
+    ? `<img src="${esc(_pfFoto.foto)}" alt="Foto">` : esc(iniciales)}</div>
       <div class="pf-idt">
         <h2>${esc(row.nombre || '—')}</h2>
         <div class="pf-sub">C.C. ${esc(row.cedula || '—')}${row.codigo ? ' · Código ' + esc(row.codigo) : ''}${row.cargo ? ' · ' + esc(row.cargo) : ''}</div>
@@ -14811,6 +15555,565 @@ function pfRender(row, hist, sin) {
     ${pfHistorialHtml(hist)}`;
   // Cada siniestro de la lista abre su reporte completo
   body.querySelectorAll('[data-sinkey]').forEach((b) => { b.onclick = () => sinAbrirPorKey(b.dataset.sinkey); });
+  const bl = body.querySelector('[data-hvlink]');
+  if (bl) bl.onclick = () => hvEnlace(row);
+  // 7. Espacio exclusivo del empleador de cada vinculación
+  body.querySelectorAll('[data-sel]').forEach((b) => {
+    b.onclick = () => {
+      const h = hist.find((x) => String(x.id) === b.dataset.sel);
+      if (h) abrirSeleccion(row, h, () => pfRender(row, hist, sin));
+    };
+  });
+}
+
+// ---------- 📋 7. ESPACIO EXCLUSIVO DEL EMPLEADOR (FO-GH-03, sql/150) ----------
+// Uno por vinculación: cada ingreso tiene su verificación de antecedentes y su aprobación.
+// Si la persona entró por aspirantes, ya viene con lo que Gestión Humana verificó en el proceso.
+function selModal() {
+  let m = $('pf-sel-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pf-sel-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-sel-card">
+    <div class="modal-head"><h3>📋 Espacio exclusivo del empleador</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-sel-body"></div>
+    <div class="modal-foot"><span class="muted" data-por></span><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cancelar</button>
+      <button type="button" class="btn btn-primary" data-guardar>Guardar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+function selControl(k, t, o, v) {
+  const val = v == null ? '' : String(v);
+  if (t === 'enum') {
+    return `<select data-sk="${k}"><option value="">—</option>${o.map((x) =>
+      `<option${x === val ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
+  }
+  if (t === 'textarea') return `<textarea data-sk="${k}" rows="2" maxlength="1500">${esc(val)}</textarea>`;
+  return `<input type="${t === 'date' ? 'date' : 'text'}" data-sk="${k}" value="${esc(val)}" maxlength="200">`;
+}
+function abrirSeleccion(row, h, alGuardar) {
+  const m = selModal();
+  const s = h.seleccion || {};
+  m.querySelector('h3').textContent = `📋 Espacio del empleador · ingreso ${fechaLegible(h.fecha_ingreso || '') || 'sin fecha'}`;
+  m.querySelector('[data-por]').textContent = s.por ? `Última vez: ${s.por} · ${fmtFechaHora(s.en)}` : '';
+  m.querySelector('.pf-sel-body').innerHTML = `
+    <p class="muted pf-sel-quien">${esc(row.nombre || '')} · ${esc(h.cargo || row.cargo || '')}${s.aspirante_id ? ' · <b>viene del proceso de aspirantes</b>: revisa y completa' : ''}</p>
+    <div class="pf-sel-err error" hidden></div>
+    ${PERFIL_SELECCION.map((g) => `<section class="pf-sel-grupo"><h4>${esc(g.grupo)}</h4>${g.antecedentes
+      ? `<div class="pf-sel-ant"><span>Entidad</span><span>Resultado</span><span>Fecha de verificación</span><span>Observaciones</span>
+          ${g.campos.map((c) => `<b>${esc(c.l)}</b>${selControl(c.k + '_resultado', 'enum', c.o, s[c.k + '_resultado'])}
+            ${selControl(c.k + '_fecha', 'date', null, s[c.k + '_fecha'])}${selControl(c.k + '_obs', 'text', null, s[c.k + '_obs'])}`).join('')}</div>`
+      : `<div class="pf-sel-grid">${g.campos.map((c) => `<label class="${c.t === 'textarea' ? 'full' : ''}"><span>${esc(c.l)}</span>
+          ${selControl(c.k, c.t, c.o, s[c.k])}</label>`).join('')}</div>`}</section>`).join('')}`;
+  const btn = m.querySelector('[data-guardar]');
+  btn.onclick = async () => {
+    const datos = {};
+    m.querySelectorAll('[data-sk]').forEach((el) => { const v = el.value.trim(); if (v) datos[el.dataset.sk] = v; });
+    btn.disabled = true;
+    showBusy('Guardando…');
+    try {
+      const { data, error } = await sb.rpc('perfil_seleccion_guardar', { p_vinculacion: h.id, p_datos: datos });
+      if (error) throw error;
+      h.seleccion = data.seleccion;
+      m.hidden = true;
+      toast('Espacio del empleador guardado', 'ok');
+      alGuardar();
+    } catch (e) {
+      const er = m.querySelector('.pf-sel-err');
+      er.textContent = 'No se pudo guardar: ' + (e.message || e); er.hidden = false;
+    } finally { btn.disabled = false; hideBusy(); }
+  };
+  m.querySelector('.pf-sel-err').hidden = true;
+  m.hidden = false;
+}
+
+// ===================================================================================
+// 📋 HOJA DE VIDA FO-GH-03 EN PDF (sql/150) — se genera desde la ficha, como el certificado.
+// Reproduce el formato de Gestión Humana (v2, 24/03/2026): el encabezado con el logo, el título
+// y el código en CADA hoja, y las secciones en el mismo orden y con los mismos títulos (también
+// la numeración que trae el formato, aunque repite el 3 y el 4). Lo que falta sale en blanco,
+// como en papel. Las hojas se arman MIDIENDO: un bloque entra si cabe y si no pasa a la hoja
+// siguiente, así una lista larga de familiares o de empleos no parte un renglón por la mitad.
+// ===================================================================================
+const HVD_CSS = `
+  .hv-doc { margin: 0; }
+  .hv-pag { width: 816px; height: 1055px; padding: 34px 50px 34px; box-sizing: border-box; display: flex; flex-direction: column;
+    background: #fff; color: #000; font-family: Calibri, Carlito, 'Segoe UI', Arial, sans-serif; font-size: 12px; overflow: hidden; }
+  .hv-cab { display: grid; grid-template-columns: 188px 1fr 158px; border: 1px solid #000; margin-bottom: 16px; flex: none; }
+  .hv-cab > div { padding: 6px 8px; display: flex; align-items: center; }
+  .hv-cab > div + div { border-left: 1px solid #000; }
+  .hv-cab img { max-width: 100%; max-height: 54px; margin: 0 auto; display: block; }
+  .hv-cab-t { justify-content: center; font: 700 15px Arial, Helvetica, sans-serif; text-align: center; }
+  .hv-cab-c { flex-direction: column; align-items: flex-start !important; justify-content: center; font: 12.5px/1.25 Arial, Helvetica, sans-serif; }
+  .hv-cuerpo { flex: 1; overflow: hidden; }
+  .hv-box { border: 1px solid #000; padding: 6px 9px 7px; margin-bottom: 14px; }
+  .hv-box h3 { font-size: 15px; margin: 0 0 6px; }
+  .hv-box h4 { font-size: 14px; margin: 8px 0 4px; }
+  .hv-tit { font: 700 13.5px Arial, Helvetica, sans-serif; margin: 2px 0 7px 36px; }
+  .hv-l { display: flex; gap: 6px; align-items: baseline; margin: 6px 0; }
+  .hv-l b { flex: none; }
+  .hv-v { flex: 1; border-bottom: 1px solid #000; min-height: 15px; padding: 0 4px; font-weight: 400; overflow-wrap: anywhere; }
+  .hv-r { display: flex; gap: 22px; }
+  .hv-r > .hv-l { flex: 1; min-width: 0; }
+  .hv-x { white-space: nowrap; margin-right: 18px; }
+  .hv-banda { background: #e7e7e7; margin: 6px -9px; padding: 3px 9px; border-top: 1px solid #000; border-bottom: 1px solid #000; font-weight: 700; font-size: 13.5px; }
+  .hv-t { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+  .hv-t th, .hv-t td { border: 1px solid #000; padding: 3px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  .hv-t th { background: #d9d9d9; text-align: center; vertical-align: middle; }
+  .hv-t td.hv-c { text-align: center; white-space: nowrap; }
+  .hv-t .hv-sub td { background: #d9d9d9; text-align: center; font-weight: 700; }
+  .hv-t .hv-lbl { width: 37%; font-weight: 700; }
+  .hv-t.hv-emp { margin-bottom: 16px; }
+  .hv-t.hv-emp td:first-child { width: 37%; font-weight: 700; }
+  .hv-txt { text-align: justify; line-height: 1.5; font-size: 12.5px; margin: 0 0 10px; }
+  .hv-aut { font-size: 13px; line-height: 1.75; text-align: justify; margin: 0 0 10px; }
+  .hv-aut ul { margin: 8px 0 12px 30px; padding: 0; line-height: 1.6; }
+  .hv-firma { margin-top: 10px; }
+  .hv-firma .hv-l { margin: 9px 0; }
+  .hv-firma img { height: 54px; display: block; margin: 0 0 -12px 12px; }
+  .hv-nota { font-size: 10px; color: #666; margin-top: 8px; }
+  .hv-i { font-style: italic; font-weight: 400; }
+  .hv-cb { display: inline-block; width: 10px; height: 10px; border: 1px solid #000; vertical-align: -1px; margin-right: 2px; position: relative; }
+  .hv-cb.on::after { content: 'X'; position: absolute; left: 1px; top: -2px; font: 700 11px/1 Arial, sans-serif; }
+`;
+const hvdX = (on) => `<span class="hv-cb${on ? ' on' : ''}"></span>`; // casilla dibujada: el ☒ de la fuente casi no se ve
+const hvdV = (v) => (v == null ? '' : esc(String(v)));
+const hvdF = (v) => (v ? esc(fechaLegible(v)) : '');
+const hvdL = (lbl, val) => `<div class="hv-l"><b>${lbl}</b><span class="hv-v">${val || ''}</span></div>`;
+const hvdSiNo = (v) => `${hvdX(v === 'SI')} Sí ${hvdX(v === 'NO')} No`;
+
+// Los bloques del documento, en el orden del formato. `salto` = empieza hoja nueva (como el formato).
+function hvdBloques(row, hist, firma, vin, foto) {
+  const B = [];
+  const add = (html, salto = false) => B.push({ html, salto });
+  const cond = row.tipo === 'CONDUCTOR';
+  const est = Array.isArray(row.estudios) ? row.estudios : [];
+  const fam = Array.isArray(row.familiares) ? row.familiares : [];
+  const emp = Array.isArray(row.empleos) ? row.empleos : [];
+
+  // Encabezado de la persona: foto, código, centro de costo y placa
+  add(`<div style="display:flex;justify-content:flex-end;gap:120px;align-items:flex-start;margin:0 0 14px">
+    <div style="width:98px;height:124px;border:1px solid #000;overflow:hidden">${foto && foto.foto
+    ? `<img src="${esc(foto.foto)}" alt="" style="width:100%;height:100%;object-fit:cover;display:block">` : ''}</div>
+    <div style="width:282px;border:1px solid #000;margin-top:20px">
+      <div style="padding:4px 6px;border-bottom:1px solid #000"><b>Código del colaborador:</b> ${hvdV(row.codigo)}</div>
+      <div style="padding:4px 6px"><b>Centro de costo / NI:</b> ${hvdV(row.centro_costos)}<br><b>Placa (si aplica):</b> ${hvdV(row.placa)}</div>
+    </div></div>`);
+
+  // 1. Información del cargo
+  add(`<div class="hv-box"><h3>1. INFORMACIÓN DEL CARGO</h3>
+    ${hvdL('Cargo al que aspira:', hvdV(row.cargo))}
+    <div><b>Tipo de cargo (marque con una X):</b></div>
+    <div><span class="hv-x">${hvdX(row.tipo === 'ADMINISTRATIVO')} Administrativo</span><span class="hv-x">${hvdX(cond)} Operativo</span></div>
+    <div class="hv-banda">Para cargos de conducción (diligenciar solo si aplica)</div>
+    <div><b>¿Se vinculará a través de APL o de un afiliado?</b></div>
+    <div><span class="hv-x">${hvdX(row.vinculacion_por === 'APL')} APL</span><span class="hv-x">${hvdX(row.vinculacion_por === 'AFILIADO')} Afiliado</span></div>
+    <div style="margin:5px 0"><b>Condición del conductor:</b> <span class="hv-x">${hvdX(cond && row.tipo_ingreso === 'NUEVO')} Nuevo</span>
+      <span class="hv-x">${hvdX(cond && row.tipo_ingreso === 'REINGRESO')} Reintegro</span></div>
+    ${hvdL('Nombre del afiliado (si aplica):', cond ? hvdV(row.nombre_propietario) : '')}</div>`);
+
+  // 2. Información personal
+  const sangre = /^(AB|A|B|O)\s*([+-])?/.exec(String(row.tipo_sangre || '').toUpperCase());
+  const td = row.tipo_documento || '';
+  add(`<div class="hv-box"><h3>&nbsp; 2. INFORMACIÓN PERSONAL DEL COLABORADOR</h3>
+    ${hvdL('Nombres y apellidos:', hvdV(row.nombre))}
+    <div class="hv-r"><div class="hv-l"><b>Tipo de documento:</b> ${hvdX(td === 'C.C.')} C.C. ${hvdX(td === 'T.I.')} T.I. ${hvdX(td === 'C.E.')} C.E.${td === 'PPT' ? ` ${hvdX(true)} PPT` : ''}</div>
+      ${hvdL('Número:', hvdV(row.cedula))}</div>
+    <div class="hv-r">${hvdL('Lugar de nacimiento:', hvdV(row.lugar_nacimiento))}${hvdL('Fecha de nacimiento:', hvdF(row.fecha_nacimiento))}</div>
+    <div class="hv-r">${hvdL('Sexo:', hvdV(row.sexo))}${hvdL('Estado civil:', hvdV(row.estado_civil))}</div>
+    <div class="hv-r">${hvdL('Grupo sanguíneo:', sangre ? sangre[1] : '')}${hvdL('RH:', sangre && sangre[2] ? (sangre[2] === '+' ? 'POSITIVO (+)' : 'NEGATIVO (−)') : '')}</div>
+    <div class="hv-r">${hvdL('Libreta militar:', hvdV(row.libreta_militar))}${hvdL('Clase:', hvdV(row.libreta_militar_clase))}</div>
+    ${hvdL('Actividad u ocupación actual:', hvdV(row.ocupacion_actual))}</div>`);
+
+  // 3. Contacto y residencia
+  add(`<div class="hv-box"><h3>&nbsp; 3. INFORMACIÓN DE CONTACTO Y RESIDENCIA</h3>
+    ${hvdL('Dirección de residencia:', hvdV(row.direccion))}
+    <div class="hv-r">${hvdL('Departamento:', hvdV(row.departamento))}${hvdL('Ciudad:', hvdV(row.ciudad))}</div>
+    <div class="hv-r">${hvdL('Localidad / Comuna:', hvdV(row.localidad_comuna))}${hvdL('Barrio:', hvdV(row.barrio))}</div>
+    ${hvdL('Teléfono de contacto 1:', hvdV(row.celular))}
+    ${hvdL('Teléfono de contacto 2:', hvdV(row.telefono))}
+    ${hvdL('Correo electrónico:', hvdV(row.correo))}</div>`);
+
+  // 4. Académica: con la lista; si la persona aún no la ha llenado, con el estudio que ya tenía el perfil
+  const SUP = ['TÉCNICA', 'TECNOLÓGICA', 'UNIVERSITARIA', 'POSGRADO'];
+  let sup = est.filter((e) => SUP.includes(e.nivel));
+  let med = est.filter((e) => e.nivel === 'MEDIA (BACHILLER)');
+  let bas = est.filter((e) => String(e.nivel || '').startsWith('BÁSICA'));
+  if (!est.length && (row.escolaridad || row.escolaridad_detalle || row.institucion_educativa)) {
+    const viejo = { titulo: row.escolaridad_detalle || row.escolaridad, institucion: row.institucion_educativa,
+      fecha_grado: row.fecha_ultimo_grado, ciudad: row.ciudad_estudio, departamento: row.departamento_estudio };
+    const e = String(row.escolaridad || '');
+    if (['TÉCNICO', 'TECNÓLOGO', 'PROFESIONAL', 'POSGRADO'].includes(e)) sup = [viejo];
+    else if (e === 'BACHILLER') med = [viejo];
+    else bas = [viejo];
+  }
+  const supHtml = (sup.length ? sup : [{}]).map((e, i) => `${i ? '<div style="border-top:1px dashed #999;margin:8px 0"></div>' : ''}
+    ${hvdL('Institución:', hvdV(e.institucion))}
+    <div class="hv-r">${hvdL('Título obtenido:', hvdV(e.titulo))}${hvdL('Fecha de graduación:', hvdF(e.fecha_grado))}</div>
+    <div class="hv-r">${hvdL('Ciudad:', hvdV(e.ciudad))}${hvdL('Departamento:', hvdV(e.departamento))}</div>
+    ${hvdL('Sitio web / Correo de contacto de la institución:', hvdV(e.contacto))}
+    ${hvdL('Observaciones (estado, en curso, incompleto, homologaciones, etc.):', hvdV(e.observaciones))}`).join('');
+  add(`<div class="hv-box"><h3 style="font-family:Arial">4. INFORMACIÓN ACADÉMICA</h3>
+    <h4>4.1 Educación Superior (Técnica, Tecnológica, Universitaria o Posgrado)</h4>${supHtml}</div>`);
+  const m0 = med[0] || {};
+  add(`<div class="hv-box"><h4 style="margin-top:0">4.2 Educación Media</h4>
+    ${hvdL('Institución:', hvdV(m0.institucion))}
+    <div class="hv-r">${hvdL('Título obtenido (Bachiller):', hvdV(m0.titulo))}${hvdL('Fecha de graduación:', hvdF(m0.fecha_grado))}</div>
+    <div class="hv-r">${hvdL('Ciudad:', hvdV(m0.ciudad))}${hvdL('Departamento:', hvdV(m0.departamento))}</div></div>`);
+  const b0 = bas.find((e) => e.nivel === 'BÁSICA SECUNDARIA') || bas[0] || {};
+  add(`<div class="hv-box"><h4 style="margin-top:0">4.3 Educación Básica</h4>
+    ${hvdL('Último grado aprobado:', hvdV(b0.titulo || (b0.nivel ? b0.nivel : '')))}
+    ${hvdL('Institución educativa:', hvdV(b0.institucion))}
+    <div class="hv-r">${hvdL('Ciudad:', hvdV(b0.ciudad))}${hvdL('Departamento:', hvdV(b0.departamento))}</div></div>`);
+
+  // 3. Información familiar (así viene numerada en el formato)
+  let filasFam = fam;
+  if (!fam.length) {
+    // Lo que el perfil ya sabía antes de la lista: la pareja y las edades de los hijos
+    const viejos = [];
+    if (row.nombre_pareja) viejos.push({ nombre: row.nombre_pareja, parentesco: 'CÓNYUGE/PAREJA', convive: row.convive_pareja });
+    String(row.edades_hijos || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((e) => viejos.push({ parentesco: `HIJO (${e})` }));
+    String(row.edades_hijas || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((e) => viejos.push({ parentesco: `HIJA (${e})` }));
+    if (row.otros_a_cargo) viejos.push({ parentesco: row.otros_a_cargo, depende: 'SI' });
+    filasFam = viejos;
+  }
+  const nFam = Math.max(9, filasFam.length);
+  const aCargo = fam.length ? String(fam.filter((f) => f.depende === 'SI').length) : hvdV(row.personas_a_cargo);
+  add(`<div class="hv-tit">3. INFORMACIÓN FAMILIAR</div>
+    <table class="hv-t"><thead><tr><th style="width:34%">Nombres y Apellidos</th><th>Parentesco</th><th>Ocupación</th>
+      <th style="width:96px">¿Depende económicamente de usted?</th><th style="width:88px">¿Convive con usted?</th></tr></thead>
+    <tbody>${Array.from({ length: nFam }, (_, i) => filasFam[i] || {}).map((f) => `<tr><td>${hvdV(f.nombre)}</td>
+      <td>${hvdV(f.parentesco)}${f.edad ? ` (${hvdV(f.edad)} años)` : ''}</td><td>${hvdV(f.ocupacion)}</td>
+      <td class="hv-c">${hvdSiNo(f.depende)}</td><td class="hv-c">${hvdSiNo(f.convive)}</td></tr>`).join('')}
+    <tr><td colspan="5"><b>Total, personas a cargo:</b> <u>&nbsp;${aCargo}&nbsp;</u><br><b>Nota:</b><br>
+      <span class="hv-i" style="font-family:Arial">La información registrada se utilizará exclusivamente para fines relacionados con la gestión del riesgo psicosocial, bienestar laboral y seguridad y salud en el trabajo.</span></td></tr>
+    </tbody></table>`);
+
+  // 4. Contacto en caso de emergencia
+  const em = [
+    { n: row.emergencia_nombre, p: row.emergencia_parentesco, t1: row.emergencia_telefono1, t2: row.emergencia_telefono2, d: row.emergencia_direccion },
+    { n: row.emergencia2_nombre, p: row.emergencia2_parentesco, t1: row.emergencia2_telefono1, t2: row.emergencia2_telefono2, d: row.emergencia2_direccion },
+  ];
+  add(`<div class="hv-tit">4.&nbsp;&nbsp; CONTACTO EN CASO DE EMERGENCIA</div>
+    <table class="hv-t"><thead><tr><th>Nombres y Apellidos</th><th>Parentesco</th><th>Teléfono principal</th><th>Teléfono alterno</th><th>Dirección</th></tr></thead>
+    <tbody>${em.map((e) => `<tr><td>${hvdV(e.n)}</td><td>${hvdV(e.p)}</td><td>${hvdV(e.t1)}</td><td>${hvdV(e.t2)}</td><td>${hvdV(e.d)}</td></tr>`).join('')}</tbody></table>`);
+
+  // 5. Información laboral. "¿Ha estado vinculado?": lo que declaró la persona; si no lo dijo, el historial
+  const vinAntes = row.vinculado_antes || ((hist || []).length > 1 ? 'SI' : '');
+  add(`<div class="hv-tit">5.&nbsp;&nbsp; INFORMACIÓN LABORAL</div>
+    <table class="hv-t" style="margin-bottom:12px"><tbody>
+      <tr><td><b>Recomendado por (nombre y cargo):</b> ${hvdV(row.recomendado_por)}</td></tr>
+      <tr><td><b>Trayectoria laboral:</b> ${hvdV(row.trayectoria_laboral)}</td></tr>
+      <tr><td><b>Indique el número de años de experiencia en la actividad o cargo:</b> ${hvdV(row.experiencia_anios)}</td></tr>
+      <tr class="hv-sub"><td>Antecedentes en la organización</td></tr>
+      <tr><td><b>¿Ha estado vinculado anteriormente con la empresa?</b><br><b>${hvdSiNo(vinAntes)}</b></td></tr>
+      <tr><td><b>En caso afirmativo, indique área, cargo o afiliado relacionado:</b> ${hvdV(row.vinculado_antes_detalle)}</td></tr>
+      <tr><td><b>Observaciones:</b> ${hvdV(row.vinculado_antes_obs)}</td></tr>
+    </tbody></table>
+    <table class="hv-t" style="margin-bottom:12px"><tbody>
+      <tr class="hv-sub"><td>Experiencia adicional</td></tr>
+      <tr><td><b>¿Ha laborado fuera del país?</b><br><b>${hvdSiNo(row.laboro_exterior)}</b></td></tr>
+      <tr><td><b>En caso afirmativo, indique país(es) y actividad realizada:</b> ${hvdV(row.exterior_detalle)}</td></tr>
+    </tbody></table>
+    <table class="hv-t"><tbody>
+      <tr class="hv-sub"><td colspan="2">Periodos sin vinculación laboral</td></tr>
+      <tr><td style="width:62%"><b>Indique el período más largo durante el cual no ha tenido vinculación laboral:</b>
+        <span class="hv-i" style="font-size:10px">(Ejemplo: diciembre de 2024 – marzo de 2025)</span></td><td>${hvdV(row.periodo_sin_vinculacion)}</td></tr>
+      <tr><td colspan="2"><b>Durante este período, ¿qué actividades realizaba?:</b> ${hvdV(row.actividades_sin_vinculacion)}</td></tr>
+    </tbody></table>`);
+
+  // 6. Experiencia laboral: al menos tres cuadros, como el formato. Sin lista, la referencia que ya tenía el perfil.
+  let empleos = emp;
+  if (!emp.length && row.ref_empresa) {
+    empleos = [{ empresa: row.ref_empresa, cargo: row.ref_cargo, telefono: row.ref_telefono_jefe,
+      fecha_ingreso: row.ref_fecha_ingreso, fecha_retiro: row.ref_fecha_retiro }];
+  }
+  const nEmp = Math.max(3, empleos.length);
+  for (let i = 0; i < nEmp; i++) {
+    const e = empleos[i] || {};
+    const filas = [['Empresa', hvdV(e.empresa)], ['Cargo', hvdV(e.cargo)], ['Jefe inmediato', hvdV(e.jefe)],
+      ['Funciones principales', hvdV(e.funciones)], ['Fecha ingreso', hvdF(e.fecha_ingreso)], ['Fecha retiro', hvdF(e.fecha_retiro)],
+      ['Tiempo laborado', e.fecha_ingreso ? esc(tiempoEntre(e.fecha_ingreso, e.fecha_retiro)) : ''], ['Teléfono', hvdV(e.telefono)],
+      ['Motivo de retiro', hvdV(e.motivo_retiro)]];
+    const ultimo = i === nEmp - 1;
+    add(`${i === 0 ? '<div class="hv-tit">6. EXPERIENCIA LABORAL (Relacione los últimos tres [3] empleos o los más relevantes para el cargo)</div>' : ''}
+      <table class="hv-t hv-emp"><tbody>${filas.map(([l, v]) => `<tr><td>${l}</td><td>${v}</td></tr>`).join('')}
+      ${ultimo ? `<tr><td colspan="2" style="height:46px"><b style="font-family:Arial">OBSERVACIONES:</b> ${hvdV(row.experiencia_observaciones)}</td></tr>` : ''}
+      </tbody></table>`);
+  }
+
+  // Declaración de veracidad
+  add(`<div class="hv-tit" style="margin-left:10px">DECLARACIÓN DE VERACIDAD:</div>
+    <p class="hv-txt" style="font-family:Arial">Para todos los efectos legales, certifico que la información suministrada en la presente hoja de vida es veraz, completa y verificable.<br>
+    Autorizo a la empresa a validar la información aquí consignada y acepto que cualquier inexactitud u omisión podrá ser causal para la terminación del contrato, de conformidad con lo establecido en el artículo 62 del Código Sustantivo del Trabajo.</p>`);
+
+  // Autorización para consulta de antecedentes (en el formato empieza hoja)
+  add(`<div class="hv-tit" style="text-align:center;margin:6px 0 12px">AUTORIZACIÓN PARA CONSULTA DE ANTECEDENTES</div>
+    <div class="hv-aut" style="font-family:Arial;padding:0 24px">Yo, <u>&nbsp;${hvdV(row.nombre)}&nbsp;</u>, mayor de edad, identificado(a) con cédula de ciudadanía No. <u>&nbsp;${hvdV(row.cedula)}&nbsp;</u>,
+      autorizo de manera libre, previa, expresa e informada a la empresa <b>AUTOBUSES EL POBLADO LAURELES S.A. (APL)</b> para la verificación y consulta de mis antecedentes ante las siguientes entidades:
+      <ul><li>Procuraduría General de la Nación</li><li>Contraloría General de la República</li><li>Policía Nacional</li><li>Organismos de tránsito (aplica para cargos de conducción)</li></ul>
+      La presente autorización se otorga en el marco del proceso de vinculación laboral y/o durante la relación laboral, con fines de verificación de información, cumplimiento de requisitos legales y gestión del talento humano.<br><br>
+      La información recolectada será tratada de manera confidencial y utilizada exclusivamente para los fines aquí establecidos, conforme a la Política de Tratamiento de Datos Personales de la empresa y la normatividad vigente.<br>
+      Declaro que he sido informado(a) sobre el tratamiento de mis datos personales, que he tenido la oportunidad de realizar preguntas y que estas han sido resueltas de manera satisfactoria.<br>
+      En constancia de lo anterior, firmo:</div>`, true);
+  const fechaFirma = row.declaracion_aceptada_en || (firma && firma.firmado_en) || '';
+  add(`<div class="hv-firma" style="padding:0 24px"><div style="font-size:16px;font-weight:700;margin-bottom:6px">FIRMA DEL COLABORADOR</div>
+    ${firma && firma.firma ? `<img src="${esc(firma.firma)}" alt="">` : ''}
+    <div class="hv-l" style="max-width:420px"><b>Firma del colaborador:</b><span class="hv-v"></span></div>
+    <div class="hv-l" style="max-width:520px"><b>Nombre completo:</b><span class="hv-v">${hvdV(row.nombre)}</span></div>
+    <div class="hv-l" style="max-width:300px"><b>C.C.:</b><span class="hv-v">${hvdV(row.cedula)}</span></div>
+    <div class="hv-l" style="max-width:300px"><b>Fecha:</b><span class="hv-v">${fechaFirma ? esc(fmtFechaHora(fechaFirma).slice(0, 10)) : ''}</span></div>
+    <div><b>En caso de no firma, indique el motivo:</b></div>
+    <div class="hv-v" style="margin-top:4px;min-height:18px">${hvdV(row.declaracion_no_firma_motivo)}</div>
+    <div class="hv-v" style="margin-top:6px;min-height:18px"></div></div>`);
+
+  // 7. Espacio exclusivo para el empleador: el de la vinculación elegida (en el formato empieza hoja)
+  const h = (hist || []).find((x) => String(x.id) === String(vin)) || (hist || [])[0] || {};
+  const s = h.seleccion || {};
+  const previas = (hist || []).filter((x) => x.id !== h.id && (!h.fecha_ingreso || !x.fecha_ingreso || x.fecha_ingreso < h.fecha_ingreso));
+  const vinAntes7 = s.vinculado_antes || (h.id ? (previas.length ? 'SI' : 'NO') : '');
+  const motivoAnt = s.motivo_retiro_anterior || (previas[0] && previas[0].novedad_retiro) || '';
+  add(`<div class="hv-tit" style="margin-left:10px">7. ESPACIO EXCLUSIVO PARA EL EMPLEADOR</div>
+    <div class="hv-box" style="padding-top:0">
+      <div class="hv-banda" style="margin-top:0;text-align:center;border-top:0">Información general</div>
+      ${hvdL('Fecha:', hvdF(s.fecha))}
+      <div class="hv-r">${hvdL('Proceso de selección: Filtro I:', hvdV(s.filtro1))}${hvdL('Filtro II:', hvdV(s.filtro2))}</div>
+      <div class="hv-r">${hvdL('Área:', hvdV(s.area))}${hvdL('Responsable:', hvdV(s.responsable))}</div>
+      <div class="hv-banda" style="text-align:center">Validaciones internas</div>
+      <div class="hv-r"><div><b>¿Ha estado vinculado anteriormente (APL)?</b><br>${hvdSiNo(vinAntes7)}</div>
+        ${hvdL('RUNT / Licencia N°:', hvdV(s.runt_licencia || row.numero_licencia))}</div>
+      ${hvdL('Motivo de retiro (si aplica):', hvdV(motivoAnt))}
+      <div style="margin-top:4px">Estado del proceso: ${hvdX(s.estado === 'APROBADO')} Aprobado ${hvdX(s.estado === 'NO APROBADO')} No aprobado</div>
+    </div>`, true);
+  const ENT = [['procuraduria', 'Procuraduría'], ['contraloria', 'Contraloría'], ['policia', 'Policía'], ['simit', 'SIMIT']];
+  add(`<table class="hv-t" style="margin-bottom:0"><thead><tr><th colspan="4" style="padding:6px">Verificación de antecedentes</th></tr>
+      <tr><th>Entidad</th><th>Resultado</th><th>Fecha de verificación</th><th>Observaciones</th></tr></thead>
+    <tbody>${ENT.map(([k, l]) => `<tr><td>${l}</td><td>${hvdV(s[k + '_resultado'])}</td><td>${hvdF(s[k + '_fecha'])}</td><td>${hvdV(s[k + '_obs'])}</td></tr>`).join('')}
+      <tr><td colspan="4"><b>¿Presenta acuerdo de pago?</b>: ${hvdSiNo(s.acuerdo_pago)} &nbsp;&nbsp;&nbsp;&nbsp; <b>¿Registra foto multas?</b>: ${hvdSiNo(s.fotomultas)}</td></tr>
+      <tr><td colspan="4" style="height:58px"><b>Observaciones generales:</b> ${hvdV(s.observaciones)}</td></tr></tbody></table>
+    <div style="height:14px"></div>`);
+  add(`<div class="hv-box"><b>Aprobaciones</b>
+    <div class="hv-r">${hvdL('Aprobado por Gerencia:', hvdV(s.aprob_gerencia))}<div class="hv-l" style="flex:0 0 200px"><b>Fecha:</b><span class="hv-v">${hvdF(s.aprob_gerencia_fecha)}</span></div></div>
+    <div class="hv-r">${hvdL('Aprobado por el afiliado:', hvdV(s.aprob_afiliado))}<div class="hv-l" style="flex:0 0 200px"><b>Fecha:</b><span class="hv-v">${hvdF(s.aprob_afiliado_fecha)}</span></div></div>
+    <div class="hv-r">${hvdL('Aprobado por Junta Directiva (si aplica):', hvdV(s.aprob_junta))}<div class="hv-l" style="flex:0 0 200px"><b>Fecha:</b><span class="hv-v">${hvdF(s.aprob_junta_fecha)}</span></div></div>
+    <div style="margin-top:10px"><b>COMENTARIOS DE APROBACIÓN:</b> <span class="hv-i">(Espacio destinado para que los responsables de la aprobación registren observaciones, condiciones o recomendaciones asociadas a la decisión)</span></div>
+    <div class="hv-v" style="margin-top:6px;min-height:54px">${hvdV(s.comentarios)}</div></div>
+    <div class="hv-nota">Generado desde el perfil sociodemográfico el ${esc(fechaLegible(hoyServidor()))}${h.fecha_ingreso ? ` · espacio del empleador del ingreso del ${esc(fechaLegible(h.fecha_ingreso))}` : ''}.</div>`);
+  return B;
+}
+
+// Reparte los bloques en hojas carta midiendo dentro de un documento (el iframe de la vista previa).
+function hvdPaginar(d, bloques, logo) {
+  const cont = d.querySelector('.hv-doc');
+  cont.innerHTML = '';
+  const cab = `<div class="hv-cab"><div>${logo ? `<img src="${logo}" alt="">` : ''}</div>
+    <div class="hv-cab-t">HOJA DE VIDA DEL COLABORADOR</div>
+    <div class="hv-cab-c"><b>Código: FO-GH-03</b><span>Versión: 2</span><span>Fecha: 24/03/2026</span></div></div>`;
+  let cuerpo = null;
+  const hoja = () => {
+    const p = d.createElement('div');
+    p.className = 'hv-pag';
+    p.innerHTML = cab + '<div class="hv-cuerpo"></div>';
+    cont.appendChild(p);
+    cuerpo = p.querySelector('.hv-cuerpo');
+  };
+  hoja();
+  for (const b of bloques) {
+    const w = d.createElement('div');
+    w.innerHTML = b.html;
+    if (b.salto && cuerpo.children.length) hoja();
+    cuerpo.appendChild(w);
+    if (cuerpo.scrollHeight > cuerpo.clientHeight + 1 && cuerpo.children.length > 1) {
+      cuerpo.removeChild(w);
+      hoja();
+      cuerpo.appendChild(w);
+    }
+  }
+  return cont.querySelectorAll('.hv-pag').length;
+}
+
+let _hvd = null;   // { row, hist, firma, logo, vin } de la hoja de vida abierta
+function hvdModal() {
+  let m = $('hvd-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'hvd-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card hvd-card">
+    <div class="modal-head"><h3>📋 Hoja de vida FO-GH-03</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="hvd-op"></div>
+    <div class="hvd-prev"><iframe title="Vista previa de la hoja de vida"></iframe></div>
+    <div class="modal-foot"><span class="muted" data-hojas></span><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button>
+      <button type="button" class="btn" data-hvlink>🔗 Link personal para que la llene</button>
+      <button type="button" class="btn" data-pdf>⬇️ Descargar PDF</button>
+      <button type="button" class="btn btn-primary" data-imp>🖨️ Imprimir / Guardar PDF</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  m.addEventListener('change', (e) => { if (e.target.matches('[data-vin]') && _hvd) { _hvd.vin = e.target.value; hvdPintar(); } });
+  m.querySelector('[data-imp]').onclick = hvdImprimir;
+  m.querySelector('[data-pdf]').onclick = hvdDescargar;
+  m.querySelector('[data-hvlink]').onclick = () => { if (_hvd) hvEnlace(_hvd.row); };
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openHojaVidaDoc(row, hist) {
+  if (!isTalentoHumano() || !row) return;
+  const m = hvdModal();
+  m.hidden = false;
+  const h = hist || [];
+  _hvd = { row, hist: h, firma: _pfFirma, foto: _pfFoto, logo: await certLogoDataUri(), vin: h[0] ? String(h[0].id) : '' };
+  const falta = hojaVidaFaltantes(row, { sinFoto: !_pfFoto, sinCedula: !_pfCedula });
+  m.querySelector('.hvd-op').innerHTML = `
+    ${falta.length ? `<div class="pf-aviso ambar">Falta en la hoja de vida: <b>${esc(falta.join(', '))}</b>. Esos espacios salen en blanco
+      (o con lo que el perfil ya tenía). Mándale su 🔗 link personal (botón de abajo) para que los llene.</div>` : ''}
+    ${h.length > 1 ? `<label class="hvd-vin">Espacio del empleador (sección 7) del ingreso:
+      <select data-vin>${h.map((x) => `<option value="${esc(x.id)}">${esc(fechaLegible(x.fecha_ingreso || '') || 'sin fecha')}
+        ${x.fecha_retiro ? '→ ' + esc(fechaLegible(x.fecha_retiro)) : '→ hoy'} · ${esc(x.tipo_ingreso || '')}</option>`).join('')}</select></label>` : ''}`;
+  await hvdPintar();
+}
+
+async function hvdPintar() {
+  const m = hvdModal(), fr = m.querySelector('iframe');
+  const d = fr.contentDocument;
+  d.open();
+  d.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><style>${HVD_CSS}
+    html, body { margin: 0; background: #e9ecef; } .hv-doc { padding: 14px 0; } .hv-pag { margin: 0 auto 14px; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+    </style></head><body><div class="hv-doc"></div></body></html>`);
+  d.close();
+  await Promise.all(Array.from(d.images).map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))));
+  const n = hvdPaginar(d, hvdBloques(_hvd.row, _hvd.hist, _hvd.firma, _hvd.vin, _hvd.foto), _hvd.logo);
+  // Esperar a que carguen la firma y el logo de las hojas ya armadas
+  await Promise.all(Array.from(d.images).map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))));
+  fr.style.height = (n * 1069 + 30) + 'px';
+  m.querySelector('[data-hojas]').textContent = `${n} hoja${n === 1 ? '' : 's'} carta`;
+}
+
+// ---------- 🪪 La cédula guardada (perfil_cedulas, sql/152) ----------
+// Del link: las fotos en la tabla. De aspirantes: apuntan a los documentos que subió (bucket aspirantes).
+async function verCedula(row) {
+  const m = perfilModal('ced-ver-modal', `🪪 Cédula · ${row.nombre || row.cedula}`, 'ced-ver-card');
+  const body = m.querySelector('.pact-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  m.hidden = false;
+  try {
+    const { data: c, error } = await sb.from('perfil_cedulas')
+      .select('frente, reverso, frente_ruta, reverso_ruta, tomada_en, origen, lectura').eq('cedula', row.cedula).maybeSingle();
+    if (error) throw error;
+    if (!c) { body.innerHTML = '<div class="rst-empty">No tenemos fotos de su cédula.</div>'; return; }
+    const url = async (b64, ruta) => {
+      if (b64) return b64;
+      if (!ruta) return '';
+      const { data } = await sb.storage.from('aspirantes').createSignedUrl(ruta, 600);
+      return data?.signedUrl || '';
+    };
+    const [fr, re] = await Promise.all([url(c.frente, c.frente_ruta), url(c.reverso, c.reverso_ruta)]);
+    const origen = { ENLACE: 'por su link personal', LINK: 'por el link general', ASPIRANTE: 'al inscribirse como aspirante' }[c.origen] || '';
+    const lado = (u, t, n) => (u ? `<figure><a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="${t}"></a>
+      <figcaption>${t} · <a href="${esc(u)}" download="${esc(n)}">⬇️ Descargar</a></figcaption></figure>` : '');
+    body.innerHTML = `<p class="muted">Enviada el ${esc(fmtFechaHora(c.tomada_en))}${origen ? ' ' + origen : ''}.
+        ${c.lectura ? esc(CED_LECTURA[c.lectura] || '') + '.' : ''}</p>
+      <div class="ced-ver">${lado(fr, 'Frente', `cedula_${row.cedula}_frente.jpg`)}${lado(re, 'Reverso', `cedula_${row.cedula}_reverso.jpg`)}</div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">No se pudo traer la cédula: ${esc(e.message || e)}</div>`;
+  }
+}
+
+// ---------- 🔗 ENLACE PERSONAL para que la persona llene su hoja de vida (sql/151) ----------
+// Es de UNA persona, vence a los 7 días y sirve para un envío. La persona entra con su fecha de
+// nacimiento (o los 4 últimos dígitos de la cédula) y ve el formulario prellenado con lo que ya
+// tenemos y lo que le falta. Lo que envía llega a 📨 Actualizaciones de datos, como siempre.
+async function hvEnlace(row) {
+  if (!isTalentoHumano() || !row) return;
+  const m = perfilModal('hv-enlace-modal', '🔗 Link personal para llenar la hoja de vida', 'pact-link-card');
+  const body = m.querySelector('.pact-body');
+  body.innerHTML = '<div class="loading">Generando el enlace…</div>';
+  m.hidden = false;
+  try {
+    const { data, error } = await sb.rpc('perfil_hv_enlace_crear', { p_cedula: row.cedula });
+    if (error) throw error;
+    const url = new URL('actualizar-datos.html?t=' + data.token, location.href).href;
+    const partes = String(row.nombre || '').trim().split(/\s+/);
+    const pila = partes.length >= 3 ? partes[2] : partes[0] || '';
+    const saludo = pila ? pila[0] + pila.slice(1).toLowerCase() : '';
+    const vence = fechaLegible(String(data.vence_en || '').slice(0, 10));
+    const msg = `Hola${saludo ? ' ' + saludo : ''} 👋 Gestión Humana de Autobuses El Poblado necesita completar tu hoja de vida. `
+      + `Entra a este enlace, es solo para ti (vence el ${vence}): ${url} `
+      + 'Para entrar te pide tu fecha de nacimiento. Toma unos 10 minutos; ten a mano los datos de tus estudios y de tus últimos empleos.';
+    const cel = String(row.celular || '').replace(/\D/g, '');
+    body.innerHTML = `
+      <p>Este enlace es <b>solo para ${esc(row.nombre || '')}</b>. Vence el <b>${esc(vence)}</b> y sirve para un envío.
+        Al abrirlo le pide su <b>fecha de nacimiento</b> (o los 4 últimos dígitos de su cédula), y le muestra el formulario con lo que ya
+        tenemos y lo que le falta, paso a paso, con su foto y su firma.</p>
+      ${data.abierto_en ? `<p class="muted">Ya lo abrió el ${esc(fmtFechaHora(data.abierto_en))}, pero todavía no ha enviado.</p>` : ''}
+      <div class="pact-url"><input type="text" readonly value="${esc(url)}"><button type="button" class="btn btn-primary btn-sm" data-copy>📋 Copiar</button></div>
+      <div class="pact-share">
+        <a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="https://wa.me/${/^3\d{9}$/.test(cel) ? '57' + cel : ''}?text=${encodeURIComponent(msg)}">💬 Enviar por WhatsApp${/^3\d{9}$/.test(cel) ? ' a ' + esc(cel) : ''}</a>
+        <a class="btn btn-sm" target="_blank" rel="noopener" href="${esc(url)}">👁️ Ver cómo lo ve</a>
+      </div>
+      <p class="muted">Si se le vence o se bloquea, genera otro desde aquí.</p>
+      ${linksDiferencia('personal')}`;
+    body.querySelector('[data-copy]').onclick = async () => {
+      try { await navigator.clipboard.writeText(url); } catch { const i = body.querySelector('.pact-url input'); i.select(); document.execCommand('copy'); }
+      toast('Enlace copiado', 'ok');
+    };
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">No se pudo generar el enlace: ${esc(e.message || e)}</div>`;
+  }
+}
+
+function hvdNombreArchivo() { return `FO-GH-03 Hoja de vida ${String(_hvd.row.nombre || _hvd.row.cedula || '').trim()}.pdf`; }
+
+// Imprimir: las hojas ya armadas (medidas en la vista previa) en una ventana aparte, una por página.
+function hvdImprimir() {
+  if (!_hvd) return;
+  const d = hvdModal().querySelector('iframe').contentDocument;
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(hvdNombreArchivo().replace(/\.pdf$/, ''))}</title>
+    <style>${HVD_CSS} @page { size: letter; margin: 0; } html, body { margin: 0; }
+      .hv-pag { break-after: page; } .hv-pag:last-child { break-after: auto; }</style></head>
+    <body>${d.querySelector('.hv-doc').innerHTML}<script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+}
+
+// Descargar: cada hoja se fotografía tal cual y va a su página del PDF (carta).
+async function hvdDescargar() {
+  if (!_hvd) return;
+  const m = hvdModal(), btn = m.querySelector('[data-pdf]');
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    await ensurePdfLibs();
+    const pdf = await hvdPdf(m.querySelector('iframe').contentDocument);
+    const url = URL.createObjectURL(pdf);
+    const a = document.createElement('a');
+    a.href = url; a.download = hvdNombreArchivo();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (e) {
+    toast('No se pudo generar el PDF: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+async function hvdPdf(d) {
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: 'mm', format: 'letter', compress: true });
+  const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+  const hojas = [...d.querySelectorAll('.hv-pag')];
+  for (const [i, p] of hojas.entries()) {
+    const sombra = p.style.boxShadow;
+    p.style.boxShadow = 'none';
+    const canvas = await window.html2canvas(p, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    p.style.boxShadow = sombra;
+    if (i) pdf.addPage();
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.85), 'JPEG', 0, 0, pw, ph);
+  }
+  return pdf.output('blob');
 }
 
 // Los siniestros de la persona. La cédula del reporte viene de otra app: se prueba tal cual,
@@ -14836,10 +16139,16 @@ async function openPerfilFicha(row) {
   m.hidden = false;
   try {
     // La fila de la tabla ya trae todo (select *); faltan el historial y los siniestros del conductor.
-    const [{ data: hist }, sin] = await Promise.all([
+    const [{ data: hist }, sin, { data: firma }, { data: foto }, { data: cedula }] = await Promise.all([
       sb.from('perfil_vinculaciones').select('*').eq('cedula', row.cedula).order('fecha_ingreso', { ascending: false }),
       pfLeerSiniestros(row),
+      sb.from('perfil_firmas').select('firma, firmado_en, origen').eq('cedula', row.cedula).maybeSingle(),
+      sb.from('perfil_fotos').select('foto, tomada_en').eq('cedula', row.cedula).maybeSingle(),
+      sb.from('perfil_cedulas').select('tomada_en, origen, lectura').eq('cedula', row.cedula).maybeSingle(),
     ]);
+    _pfFirma = firma || null;
+    _pfFoto = foto || null;
+    _pfCedula = cedula || null;
     pfRender(row, hist || [], sin);
   } catch (e) {
     m.querySelector('.pf-body').innerHTML = `<div class="rst-empty">Error: ${esc(e.message || e)}</div>`;
@@ -16598,7 +17907,7 @@ function aspDatosHtml(a) {
     const filas = g.campos.filter(([k]) => d[k] != null && d[k] !== '');
     if (!filas.length) return '';
     return `<div class="aspd-grupo"><h5>${esc(g.grupo)}</h5><dl>${filas.map(([k, l]) =>
-      `<dt>${esc(l)}</dt><dd>${esc(/^\d{4}-\d{2}-\d{2}$/.test(String(d[k])) ? fechaLegible(d[k]) : d[k])}</dd>`).join('')}</dl></div>`;
+      `<dt>${esc(l)}</dt><dd>${pactValor(k, d[k])}</dd>`).join('')}</dl></div>`;
   }).join('') || '<p class="muted">Sin datos adicionales.</p>';
 }
 function aspEvalsPreviasHtml(a) {
@@ -16827,7 +18136,8 @@ async function exportarAspirantes(btn) {
       const per = _asp.perfiles[r.cedula];
       const docs = Object.entries(r.adjuntos || {}).filter(([, l]) => Array.isArray(l) && l.length).map(([t, l]) => `${ASP_DOC_LBL[t] || t}: ${l.length}`).join(' · ');
       const fila = [r.creado_en, ASP_ETAPA_LBL[r.etapa] || r.etapa, r.etapa_desde, r.cedula, r.nombre, r.fecha_nacimiento || '', aspEdad(r.fecha_nacimiento),
-        ...campos.map(([k]) => d[k] ?? ''), per ? `${per.tipo} ${per.estado}` : '', docs];
+        ...campos.map(([k]) => (HV_LISTAS[k] ? hvListaTexto(k, d[k]) : k === 'declaracion_firma' ? (d[k] ? 'SÍ' : '') : d[k] ?? '')),
+        per ? `${per.tipo} ${per.estado}` : '', docs];
       ASPIRANTE_ETAPAS.forEach((e) => {
         const ev = (r.evaluaciones || {})[e.key] || {};
         fila.push(ev.resultado || '',
@@ -18102,7 +19412,7 @@ function renderPerfilStats() {
     P.forEach((p) => String(p.por_corregir || '').split(',').filter(Boolean)
       .forEach((c) => campos.push({ ...p, _campo: PST_CAMPOS[c.trim()] || c.trim() })));
     g.appendChild(pstBarras('Campos por corregir', pstContar(campos, (c) => c._campo),
-      { nota: 'Se corrigen desde la ficha o con el 🔗 link de actualización de datos' }));
+      { nota: 'Se corrigen desde la ficha, con el 🔗 link personal de cada uno o con el 📢 link general' }));
     g.appendChild(pstBarras('Estado de los datos', pstContar(P, (p) => (p.por_corregir ? 'Con datos por corregir' : 'Completos')), {}));
   }
 }
@@ -19365,8 +20675,12 @@ async function _xlsxDescargar(hojas, filename) {
   for (const h of hojas) {
     const ws = XLSX.utils.aoa_to_sheet(h.aoa);
     const ncol = Math.max(1, ...h.aoa.map((r) => r.length));
+    // Una celda puede venir como objeto {v, f} (fórmula con su valor): se mide su valor.
+    const ancho = (x) => String(x == null ? '' : (typeof x === 'object' && !(x instanceof Date) ? x.v : x)).length;
     ws['!cols'] = Array.from({ length: ncol }, (_, i) =>
-      ({ wch: Math.min(48, Math.max(10, ...h.aoa.map((r) => String(r[i] == null ? '' : r[i]).length + 2))) }));
+      ({ wch: Math.min(48, Math.max(10, ...h.aoa.map((r) => ancho(r[i]) + 2))) }));
+    // Filtros en la fila de títulos, como en la planilla que usan.
+    if (h.filtro && ws['!ref']) ws['!autofilter'] = { ref: ws['!ref'] };
     XLSX.utils.book_append_sheet(wb, ws, String(h.name).slice(0, 31));
   }
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });

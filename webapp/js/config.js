@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v334';
+export const APP_VERSION = 'v341';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -98,8 +98,169 @@ export const PERFIL_LISTAS = {
     'ABUELO(A)', 'SUEGRO(A)', 'CUÑADO(A)', 'SOBRINO(A)', 'OTRO FAMILIAR', 'AMIGO(A)'],
   categoria_licencia: ['A1', 'A2', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3'],
   estado_restriccion: ['SIN RESTRICCION', 'RESTRINGIDO'],
+  // Hoja de vida FO-GH-03 (sql/150)
+  tipo_documento: ['C.C.', 'T.I.', 'C.E.', 'PPT'],
+  libreta_clase: ['PRIMERA CLASE', 'SEGUNDA CLASE', 'NO TIENE'],
+  vinculacion_por: ['APL', 'AFILIADO'],
+  nivel_estudio: ['BÁSICA PRIMARIA', 'BÁSICA SECUNDARIA', 'MEDIA (BACHILLER)', 'TÉCNICA', 'TECNOLÓGICA', 'UNIVERSITARIA', 'POSGRADO'],
+  parentesco_familia: ['CÓNYUGE/PAREJA', 'HIJO', 'HIJA', 'MADRE', 'PADRE', 'HERMANO(A)', 'ABUELO(A)', 'NIETO(A)', 'SUEGRO(A)',
+    'OTRO FAMILIAR', 'OTRA PERSONA'],
 };
 const PL = PERFIL_LISTAS;
+
+// ---- 📋 HOJA DE VIDA FO-GH-03 (sql/150) ----
+// Las listas del formato: una fila por estudio, familiar o empleo. Las usan el link del
+// colaborador, el de aspirantes y la ficha de Gestión Humana, para que los tres pidan lo mismo.
+export const HV_LISTAS = {
+  estudios: { label: 'Estudios', uno: 'estudio', max: 10, campos: [
+    { k: 'nivel', l: 'Nivel', t: 'enum', o: PL.nivel_estudio, req: true },
+    { k: 'institucion', l: 'Institución', req: true },
+    { k: 'titulo', l: 'Título obtenido o último grado aprobado' },
+    { k: 'fecha_grado', l: 'Fecha de graduación', t: 'date' },
+    { k: 'ciudad', l: 'Ciudad' },
+    { k: 'departamento', l: 'Departamento', t: 'enum', o: PL.departamento },
+    { k: 'contacto', l: 'Sitio web o correo de la institución' },
+    { k: 'observaciones', l: 'Observaciones (en curso, incompleto, homologaciones…)' },
+  ] },
+  familiares: { label: 'Familiares', uno: 'familiar', max: 20, campos: [
+    { k: 'nombre', l: 'Nombres y apellidos', req: true },
+    { k: 'parentesco', l: 'Parentesco', t: 'enum', o: PL.parentesco_familia, req: true },
+    { k: 'edad', l: 'Edad', t: 'number' },
+    { k: 'ocupacion', l: 'Ocupación' },
+    { k: 'depende', l: '¿Depende económicamente?', t: 'enum', o: PL.si_no, req: true },
+    { k: 'convive', l: '¿Convive con usted?', t: 'enum', o: PL.si_no, req: true },
+  ] },
+  empleos: { label: 'Empleos', uno: 'empleo', max: 8, campos: [
+    { k: 'empresa', l: 'Empresa', req: true },
+    { k: 'cargo', l: 'Cargo', req: true },
+    { k: 'jefe', l: 'Jefe inmediato' },
+    { k: 'telefono', l: 'Teléfono', t: 'tel' },
+    { k: 'funciones', l: 'Funciones principales', t: 'textarea' },
+    { k: 'fecha_ingreso', l: 'Fecha de ingreso', t: 'date' },
+    { k: 'fecha_retiro', l: 'Fecha de retiro', t: 'date' },
+    { k: 'motivo_retiro', l: 'Motivo de retiro' },
+  ] },
+};
+// "2 años y 3 meses" entre dos fechas YYYY-MM-DD (sin retiro = hasta hoy). Es el "tiempo laborado" del formato.
+export function tiempoEntre(desde, hasta) {
+  const a = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(desde || '')); if (!a) return '';
+  const h = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(hasta || '')) || /^(\d{4})-(\d{2})-(\d{2})/.exec(new Date().toISOString());
+  let m = (Number(h[1]) - Number(a[1])) * 12 + (Number(h[2]) - Number(a[2])) - (Number(h[3]) < Number(a[3]) ? 1 : 0);
+  if (m < 0) return '';
+  const y = Math.floor(m / 12); m %= 12;
+  const t = [y ? `${y} año${y === 1 ? '' : 's'}` : '', m ? `${m} mes${m === 1 ? '' : 'es'}` : ''].filter(Boolean).join(' y ');
+  return t || 'menos de 1 mes';
+}
+const _fechaCo = (v) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+// Una fila de la lista en una línea (Excel y comparación de actualizaciones)
+export function hvFilaTexto(lista, f) {
+  if (lista === 'estudios') {
+    return [f.nivel, f.titulo, f.institucion, _fechaCo(f.fecha_grado), [f.ciudad, f.departamento].filter(Boolean).join(', '), f.observaciones]
+      .filter(Boolean).join(' · ');
+  }
+  if (lista === 'familiares') {
+    return [f.nombre, f.parentesco, f.edad ? `${f.edad} años` : '', f.ocupacion,
+      f.depende === 'SI' ? 'depende' : '', f.convive === 'SI' ? 'convive' : ''].filter(Boolean).join(' · ');
+  }
+  return [f.empresa, f.cargo, f.jefe ? `jefe ${f.jefe}` : '', f.telefono,
+    f.fecha_ingreso ? `${_fechaCo(f.fecha_ingreso)} a ${f.fecha_retiro ? _fechaCo(f.fecha_retiro) : 'hoy'} (${tiempoEntre(f.fecha_ingreso, f.fecha_retiro)})` : '',
+    f.motivo_retiro ? `retiro: ${f.motivo_retiro}` : ''].filter(Boolean).join(' · ');
+}
+export const hvListaTexto = (lista, arr) => (Array.isArray(arr) ? arr : []).map((f) => hvFilaTexto(lista, f)).join(' | ');
+// Los datos del núcleo familiar que el perfil ya tenía (y que alimentan las estadísticas) salen
+// de la lista de familiares, para no preguntarle dos veces lo mismo a la persona.
+export function hvResumenFamilia(fam) {
+  const L = Array.isArray(fam) ? fam : [];
+  const edades = (xs) => xs.filter((f) => String(f.edad || '').trim()).map((f) => `${String(f.edad).trim()} AÑOS`).join(', ');
+  const pareja = L.find((f) => f.parentesco === 'CÓNYUGE/PAREJA');
+  const hijos = L.filter((f) => f.parentesco === 'HIJO'), hijas = L.filter((f) => f.parentesco === 'HIJA');
+  const otros = L.filter((f) => !['CÓNYUGE/PAREJA', 'HIJO', 'HIJA'].includes(f.parentesco) && f.depende === 'SI');
+  const n = L.filter((f) => f.depende === 'SI').length;
+  return {
+    personas_a_cargo: n === 0 ? 'NINGUNA' : n <= 3 ? '1 A 3 PERSONAS' : n <= 6 ? '4 A 6 PERSONAS' : 'MÁS DE 6 PERSONAS',
+    convive_pareja: pareja ? 'SI' : 'NO',
+    nombre_pareja: pareja ? pareja.nombre : '',
+    edad_pareja: pareja && pareja.edad ? String(pareja.edad) : '',
+    tiene_hijos: hijos.length || hijas.length ? 'SI' : 'NO',
+    edades_hijos: edades(hijos),
+    edades_hijas: edades(hijas),
+    otros_a_cargo: [...new Set(otros.map((f) => f.parentesco))].join(', '),
+    edades_otros: edades(otros),
+  };
+}
+// El estudio más alto de la lista llena los campos de educación que el perfil ya tenía
+export function hvEstudioPrincipal(est) {
+  const L = (Array.isArray(est) ? est : []).filter((e) => e.nivel);
+  if (!L.length) return {};
+  const e = L.reduce((a, b) => (PL.nivel_estudio.indexOf(b.nivel) > PL.nivel_estudio.indexOf(a.nivel) ? b : a));
+  return { escolaridad_detalle: e.titulo || e.nivel, institucion_educativa: e.institucion || '', fecha_ultimo_grado: e.fecha_grado || '',
+    ciudad_estudio: e.ciudad || '', departamento_estudio: e.departamento || '' };
+}
+// Las listas para prellenar el enlace personal: las nuevas si ya existen; si no, armadas con lo que
+// el perfil tenía antes (escolaridad, pareja y edades de los hijos, referencia laboral). Así la
+// persona completa y corrige en vez de empezar de cero.
+const _NIVEL_DE = { 'PRIMARIA INCOMPLETA': 'BÁSICA PRIMARIA', PRIMARIA: 'BÁSICA PRIMARIA', 'SECUNDARIA INCOMPLETA': 'BÁSICA SECUNDARIA',
+  BACHILLER: 'MEDIA (BACHILLER)', 'TÉCNICO': 'TÉCNICA', 'TECNÓLOGO': 'TECNOLÓGICA', PROFESIONAL: 'UNIVERSITARIA', POSGRADO: 'POSGRADO' };
+export function hvListasDesdePerfil(r) {
+  const lleno = (v) => Array.isArray(v) && v.length;
+  const estudios = lleno(r.estudios) ? r.estudios
+    : (r.escolaridad_detalle || r.institucion_educativa) ? [{ nivel: _NIVEL_DE[r.escolaridad] || '', titulo: r.escolaridad_detalle || '',
+      institucion: r.institucion_educativa || '', fecha_grado: r.fecha_ultimo_grado || '', ciudad: r.ciudad_estudio || '',
+      departamento: r.departamento_estudio || '' }] : [];
+  let familiares = lleno(r.familiares) ? r.familiares : [];
+  if (!familiares.length) {
+    const edades = (t) => String(t || '').split(',').map((x) => x.replace(/\D/g, '')).filter(Boolean);
+    if (r.nombre_pareja) familiares.push({ nombre: r.nombre_pareja, parentesco: 'CÓNYUGE/PAREJA', edad: String(r.edad_pareja || '').replace(/\D/g, ''), convive: 'SI' });
+    edades(r.edades_hijos).forEach((e) => familiares.push({ parentesco: 'HIJO', edad: e }));
+    edades(r.edades_hijas).forEach((e) => familiares.push({ parentesco: 'HIJA', edad: e }));
+  }
+  const empleos = lleno(r.empleos) ? r.empleos
+    : r.ref_empresa ? [{ empresa: r.ref_empresa, cargo: r.ref_cargo || '', telefono: r.ref_telefono_jefe || '',
+      fecha_ingreso: r.ref_fecha_ingreso || '', fecha_retiro: r.ref_fecha_retiro || '' }] : [];
+  return { estudios, familiares, empleos };
+}
+// Qué le falta a la persona de la hoja de vida FO-GH-03 (se pide por el link de actualización).
+// La foto y la cédula viven en otras tablas: quien las conoce lo dice con o.sinFoto / o.sinCedula.
+export function hojaVidaFaltantes(r, o = {}) {
+  const vacia = (v) => !Array.isArray(v) || !v.length;
+  return [
+    o.sinFoto && 'foto',
+    o.sinCedula && 'foto de la cédula',
+    !r.tipo_documento && 'tipo de documento',
+    !r.lugar_nacimiento && 'lugar de nacimiento',
+    r.sexo === 'MASCULINO' && !r.libreta_militar_clase && 'libreta militar',
+    vacia(r.estudios) && 'estudios',
+    vacia(r.familiares) && 'familia',
+    (r.experiencia_anios == null || r.experiencia_anios === '') && 'información laboral',
+    vacia(r.empleos) && 'experiencia laboral',
+    !r.declaracion_aceptada_en && 'firma de la declaración',
+  ].filter(Boolean);
+}
+// 7. ESPACIO EXCLUSIVO DEL EMPLEADOR: uno por vinculación (perfil_vinculaciones.seleccion)
+const _ANTEC = ['SIN ANTECEDENTES', 'CON ANTECEDENTES'];
+export const PERFIL_SELECCION = [
+  { grupo: 'Información general', campos: [
+    { k: 'fecha', l: 'Fecha', t: 'date' }, { k: 'area', l: 'Área', t: 'enum', o: PL.area },
+    { k: 'filtro1', l: 'Proceso de selección · Filtro I' }, { k: 'filtro2', l: 'Filtro II' },
+    { k: 'responsable', l: 'Responsable' }] },
+  { grupo: 'Validaciones internas', campos: [
+    { k: 'vinculado_antes', l: '¿Ha estado vinculado anteriormente (APL)?', t: 'enum', o: PL.si_no },
+    { k: 'motivo_retiro_anterior', l: 'Motivo de retiro (si aplica)' },
+    { k: 'runt_licencia', l: 'RUNT / Licencia N°' },
+    { k: 'estado', l: 'Estado del proceso', t: 'enum', o: ['APROBADO', 'NO APROBADO'] }] },
+  { grupo: 'Verificación de antecedentes', antecedentes: true, campos: [
+    { k: 'procuraduria', l: 'Procuraduría', o: _ANTEC }, { k: 'contraloria', l: 'Contraloría', o: _ANTEC },
+    { k: 'policia', l: 'Policía', o: _ANTEC }, { k: 'simit', l: 'SIMIT', o: ['SIN MULTAS', 'CON MULTAS PENDIENTES', 'CON ACUERDO DE PAGO'] }] },
+  { grupo: 'Multas y observaciones', campos: [
+    { k: 'acuerdo_pago', l: '¿Presenta acuerdo de pago?', t: 'enum', o: PL.si_no },
+    { k: 'fotomultas', l: '¿Registra fotomultas?', t: 'enum', o: PL.si_no },
+    { k: 'observaciones', l: 'Observaciones generales', t: 'textarea' }] },
+  { grupo: 'Aprobaciones', campos: [
+    { k: 'aprob_gerencia', l: 'Aprobado por Gerencia' }, { k: 'aprob_gerencia_fecha', l: 'Fecha', t: 'date' },
+    { k: 'aprob_afiliado', l: 'Aprobado por el afiliado' }, { k: 'aprob_afiliado_fecha', l: 'Fecha', t: 'date' },
+    { k: 'aprob_junta', l: 'Aprobado por Junta Directiva (si aplica)' }, { k: 'aprob_junta_fecha', l: 'Fecha', t: 'date' },
+    { k: 'comentarios', l: 'Comentarios de aprobación', t: 'textarea' }] },
+];
 
 // ---- 🧑‍✈️ PROCESO DE ASPIRANTES A CONDUCTOR (sql/77) ----
 // Lo usan el link público (trabaja-con-nosotros.html) y la pantalla del admin.
@@ -150,20 +311,31 @@ export const ASPIRANTE_ETAPAS = [
 // Datos de la inscripción, en el orden en que se muestran y se exportan
 export const ASPIRANTE_CAMPOS = [
   { grupo: 'Contacto y vivienda', campos: [['celular', 'Celular'], ['telefono', 'Otro teléfono'], ['correo', 'Correo'], ['direccion', 'Dirección'],
-    ['barrio', 'Barrio'], ['ciudad', 'Municipio'], ['departamento', 'Departamento'], ['estrato', 'Estrato'], ['tipo_vivienda', 'Tipo de vivienda']] },
+    ['barrio', 'Barrio'], ['localidad_comuna', 'Localidad / comuna'], ['ciudad', 'Municipio'], ['departamento', 'Departamento'], ['estrato', 'Estrato'],
+    ['tipo_vivienda', 'Tipo de vivienda']] },
   { grupo: 'Licencia y experiencia', campos: [['categoria_licencia', 'Categoría de licencia'], ['numero_licencia', 'Número de licencia'],
     ['licencia_expedicion', 'Expedición de la licencia'], ['licencia_vencimiento', 'Vencimiento de la licencia'], ['restricciones_licencia', 'Restricciones de la licencia'],
     ['experiencia_anios', 'Años de experiencia (servicio público)'], ['vehiculos_conducidos', 'Vehículos que ha conducido'],
     ['comparendos_pendientes', '¿Tiene comparendos pendientes?'], ['trabajo_antes_apl', '¿Trabajó antes en APL?'], ['disponibilidad', 'Disponibilidad'],
     ['como_se_entero', '¿Cómo se enteró?'], ['referido_por', 'Referido por']] },
-  { grupo: 'Datos personales', campos: [['sexo', 'Sexo'], ['tipo_sangre', 'Tipo de sangre'], ['estado_civil', 'Estado civil'], ['uso_lentes', '¿Usa lentes?'],
+  { grupo: 'Datos personales', campos: [['tipo_documento', 'Tipo de documento'], ['lugar_nacimiento', 'Lugar de nacimiento'], ['sexo', 'Sexo'],
+    ['tipo_sangre', 'Tipo de sangre'], ['estado_civil', 'Estado civil'], ['uso_lentes', '¿Usa lentes?'],
+    ['libreta_militar_clase', 'Libreta militar'], ['libreta_militar', 'N° de libreta militar'], ['ocupacion_actual', 'Ocupación actual'],
     ['eps', 'EPS'], ['afp', 'Fondo de pensiones'], ['escolaridad', 'Escolaridad'], ['escolaridad_detalle', 'Último grado o título'],
-    ['institucion_educativa', 'Institución educativa']] },
+    ['institucion_educativa', 'Institución educativa'], ['estudios', 'Estudios']] },
   { grupo: 'Núcleo familiar', campos: [['personas_a_cargo', 'Personas a cargo'], ['convive_pareja', '¿Tiene pareja?'], ['nombre_pareja', 'Nombre de la pareja'],
     ['edad_pareja', 'Edad de la pareja'], ['tiene_hijos', '¿Tiene hijos?'], ['edades_hijos', 'Edades de los hijos'], ['edades_hijas', 'Edades de las hijas'],
-    ['otros_a_cargo', 'Otras personas a cargo'], ['edades_otros', 'Edades de otras personas a cargo']] },
+    ['otros_a_cargo', 'Otras personas a cargo'], ['edades_otros', 'Edades de otras personas a cargo'], ['familiares', 'Familiares']] },
   { grupo: 'Contacto de emergencia', campos: [['emergencia_nombre', 'Nombre'], ['emergencia_parentesco', 'Parentesco'],
-    ['emergencia_telefono1', 'Teléfono 1'], ['emergencia_telefono2', 'Teléfono 2'], ['emergencia_direccion', 'Dirección']] },
+    ['emergencia_telefono1', 'Teléfono 1'], ['emergencia_telefono2', 'Teléfono 2'], ['emergencia_direccion', 'Dirección'],
+    ['emergencia2_nombre', 'Contacto 2'], ['emergencia2_parentesco', 'Parentesco (contacto 2)'], ['emergencia2_telefono1', 'Teléfono (contacto 2)'],
+    ['emergencia2_telefono2', 'Otro teléfono (contacto 2)'], ['emergencia2_direccion', 'Dirección (contacto 2)']] },
+  { grupo: 'Información y experiencia laboral', campos: [['trayectoria_laboral', 'Trayectoria laboral'],
+    ['vinculado_antes_detalle', 'Área, cargo o afiliado (si estuvo en APL)'], ['laboro_exterior', '¿Trabajó fuera del país?'],
+    ['exterior_detalle', 'País(es) y actividad'], ['periodo_sin_vinculacion', 'Período más largo sin trabajo'],
+    ['actividades_sin_vinculacion', 'Qué hacía en ese período'], ['empleos', 'Empleos'], ['experiencia_observaciones', 'Observaciones']] },
+  { grupo: 'Declaración y firma', campos: [['declaracion_aceptada_en', 'Firmó la declaración y la autorización de antecedentes'],
+    ['declaracion_firma', 'Firma'], ['declaracion_no_firma_motivo', 'Motivo de no firma']] },
   { grupo: 'Referencias', campos: [['ref_empresa', 'Última empresa'], ['ref_cargo', 'Cargo'], ['ref_nombre_jefe', 'Jefe inmediato'],
     ['ref_telefono_jefe', 'Teléfono del jefe'], ['ref_fecha_ingreso', 'Fecha de ingreso'], ['ref_fecha_retiro', 'Fecha de retiro'],
     ['ref_motivo_retiro', 'Motivo de retiro'], ['refp_nombre', 'Referencia personal'], ['refp_parentesco', 'Relación'], ['refp_telefono', 'Teléfono referencia personal']] },
@@ -182,6 +354,7 @@ export const antiguedadPerfil = (r) => aniosEntre(r.fecha_ingreso, r.fecha_retir
 // Campos de la ficha del empleado (se reutilizan para exportar TODO a Excel)
 const PERFIL_FIELDS = [
   { key: 'cedula', label: 'Cédula', type: 'text', required: true, section: 'Identificación', hint: 'Solo números. Es la llave de la persona: no se repite.' },
+  { key: 'tipo_documento', label: 'Tipo de documento', type: 'enum', options: PL.tipo_documento, section: 'Identificación' },
   { key: 'nombre', label: 'Apellidos y nombre', type: 'text', required: true, section: 'Identificación' },
   { key: 'tipo', label: 'Tipo de empleado', type: 'enum', options: PL.tipo, required: true, section: 'Identificación' },
   { key: 'estado', label: 'Estado', type: 'enum', options: PL.estado, required: true, section: 'Identificación', hint: 'Al retirar a alguien: INACTIVO + fecha de retiro. Al reintegrarlo: ACTIVO + la nueva fecha de ingreso (queda en el historial).' },
@@ -198,6 +371,7 @@ const PERFIL_FIELDS = [
   { key: 'salario', label: 'Salario', type: 'number', min: 0, section: 'Laboral' },
   { key: 'centro_costos', label: 'Centro de costos', type: 'text', section: 'Laboral' },
   { key: 'nombre_propietario', label: 'Nombre propietario (vehículo / empleador)', type: 'text', section: 'Laboral' },
+  { key: 'vinculacion_por', label: '¿Se vinculó por APL o por un afiliado?', type: 'enum', options: PL.vinculacion_por, section: 'Laboral' },
   { key: 'placa', label: 'Placa', type: 'text', section: 'Laboral' },
   { key: 'novedad_retiro', label: 'Novedad de retiro', type: 'text', section: 'Laboral' },
   { key: 'eps', label: 'EPS', type: 'enum', options: PL.eps, section: 'Seguridad social' },
@@ -212,11 +386,16 @@ const PERFIL_FIELDS = [
   { key: 'motivo_restriccion', label: 'Motivo de la restricción', type: 'textarea', section: 'Licencia y restricción' },
   { key: 'sexo', label: 'Sexo', type: 'enum', options: PL.sexo, section: 'Datos personales' },
   { key: 'fecha_nacimiento', label: 'Fecha de nacimiento', type: 'date', section: 'Datos personales' },
+  { key: 'lugar_nacimiento', label: 'Lugar de nacimiento', type: 'text', section: 'Datos personales' },
   { key: 'tipo_sangre', label: 'Tipo de sangre', type: 'enum', options: PL.tipo_sangre, section: 'Datos personales' },
   { key: 'estado_civil', label: 'Estado civil', type: 'enum', options: PL.estado_civil, section: 'Datos personales' },
   { key: 'uso_lentes', label: '¿Usa lentes?', type: 'enum', options: PL.si_no, section: 'Datos personales' },
+  { key: 'libreta_militar', label: 'Libreta militar N°', type: 'text', section: 'Datos personales' },
+  { key: 'libreta_militar_clase', label: 'Clase de libreta militar', type: 'enum', options: PL.libreta_clase, section: 'Datos personales' },
+  { key: 'ocupacion_actual', label: 'Actividad u ocupación actual', type: 'text', section: 'Datos personales' },
   { key: 'direccion', label: 'Dirección', type: 'text', section: 'Vivienda' },
   { key: 'barrio', label: 'Barrio', type: 'text', section: 'Vivienda' },
+  { key: 'localidad_comuna', label: 'Localidad / comuna', type: 'text', section: 'Vivienda' },
   { key: 'ciudad', label: 'Ciudad / municipio', type: 'text', section: 'Vivienda' },
   { key: 'departamento', label: 'Departamento', type: 'enum', options: PL.departamento, section: 'Vivienda' },
   { key: 'estrato', label: 'Estrato', type: 'number', min: 0, section: 'Vivienda' },
@@ -227,6 +406,7 @@ const PERFIL_FIELDS = [
   { key: 'fecha_ultimo_grado', label: 'Fecha del último grado', type: 'date', section: 'Educación' },
   { key: 'ciudad_estudio', label: 'Ciudad donde estudió', type: 'text', section: 'Educación' },
   { key: 'departamento_estudio', label: 'Departamento donde estudió', type: 'enum', options: PL.departamento, section: 'Educación' },
+  { key: 'estudios', label: 'Estudios', type: 'lista', section: 'Educación', hint: 'Superior, media y básica, como en el formato FO-GH-03.' },
   { key: 'personas_a_cargo', label: 'Personas a cargo', type: 'enum', options: PL.personas_a_cargo, section: 'Núcleo familiar' },
   { key: 'convive_pareja', label: '¿Tiene esposo(a) / pareja?', type: 'enum', options: PL.si_no, section: 'Núcleo familiar' },
   { key: 'nombre_pareja', label: 'Nombre de la pareja', type: 'text', section: 'Núcleo familiar' },
@@ -236,16 +416,36 @@ const PERFIL_FIELDS = [
   { key: 'edades_hijas', label: 'Edades de las hijas', type: 'text', section: 'Núcleo familiar' },
   { key: 'otros_a_cargo', label: 'Otras personas a cargo', type: 'text', section: 'Núcleo familiar' },
   { key: 'edades_otros', label: 'Edades de otras personas a cargo', type: 'text', section: 'Núcleo familiar' },
+  { key: 'familiares', label: 'Familiares', type: 'lista', section: 'Núcleo familiar' },
   { key: 'emergencia_nombre', label: 'Contacto de emergencia', type: 'text', section: 'Contacto de emergencia' },
   { key: 'emergencia_parentesco', label: 'Parentesco', type: 'enum', options: PL.parentesco, section: 'Contacto de emergencia' },
   { key: 'emergencia_telefono1', label: 'Teléfono 1', type: 'text', section: 'Contacto de emergencia' },
   { key: 'emergencia_telefono2', label: 'Teléfono 2', type: 'text', section: 'Contacto de emergencia' },
   { key: 'emergencia_direccion', label: 'Dirección del contacto', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia2_nombre', label: 'Contacto 2', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia2_parentesco', label: 'Parentesco (contacto 2)', type: 'enum', options: PL.parentesco, section: 'Contacto de emergencia' },
+  { key: 'emergencia2_telefono1', label: 'Teléfono principal (contacto 2)', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia2_telefono2', label: 'Teléfono alterno (contacto 2)', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'emergencia2_direccion', label: 'Dirección (contacto 2)', type: 'text', section: 'Contacto de emergencia' },
+  { key: 'recomendado_por', label: 'Recomendado por (nombre y cargo)', type: 'text', section: 'Información laboral' },
+  { key: 'trayectoria_laboral', label: 'Trayectoria laboral', type: 'textarea', section: 'Información laboral' },
+  { key: 'experiencia_anios', label: 'Años de experiencia en la actividad o cargo', type: 'number', min: 0, section: 'Información laboral' },
+  { key: 'vinculado_antes', label: '¿Ha estado vinculado antes con la empresa?', type: 'enum', options: PL.si_no, section: 'Información laboral' },
+  { key: 'vinculado_antes_detalle', label: 'Área, cargo o afiliado relacionado', type: 'text', section: 'Información laboral' },
+  { key: 'vinculado_antes_obs', label: 'Observaciones (vinculación anterior)', type: 'text', section: 'Información laboral' },
+  { key: 'laboro_exterior', label: '¿Ha laborado fuera del país?', type: 'enum', options: PL.si_no, section: 'Información laboral' },
+  { key: 'exterior_detalle', label: 'País(es) y actividad realizada', type: 'text', section: 'Información laboral' },
+  { key: 'periodo_sin_vinculacion', label: 'Período más largo sin vinculación laboral', type: 'text', section: 'Información laboral', hint: 'Ej: DICIEMBRE 2024 - MARZO 2025' },
+  { key: 'actividades_sin_vinculacion', label: '¿Qué actividades realizaba en ese período?', type: 'textarea', section: 'Información laboral' },
+  { key: 'empleos', label: 'Empleos', type: 'lista', section: 'Experiencia laboral', hint: 'Los últimos tres empleos o los más relevantes para el cargo.' },
+  { key: 'experiencia_observaciones', label: 'Observaciones', type: 'textarea', section: 'Experiencia laboral' },
   { key: 'ref_empresa', label: 'Empresa (referencia laboral)', type: 'text', section: 'Referencia laboral' },
   { key: 'ref_cargo', label: 'Cargo desempeñado', type: 'text', section: 'Referencia laboral' },
   { key: 'ref_telefono_jefe', label: 'Teléfono del jefe inmediato', type: 'text', section: 'Referencia laboral' },
   { key: 'ref_fecha_ingreso', label: 'Fecha de ingreso (referencia)', type: 'date', section: 'Referencia laboral' },
   { key: 'ref_fecha_retiro', label: 'Fecha de retiro (referencia)', type: 'date', section: 'Referencia laboral' },
+  { key: 'declaracion_aceptada_en', label: 'Firmó la declaración y la autorización de antecedentes', type: 'datetime', readOnly: true, section: 'Declaración y autorización', hint: 'Lo firma la persona por el link de actualización de datos o al inscribirse como aspirante.' },
+  { key: 'declaracion_no_firma_motivo', label: 'Motivo de no firma', type: 'text', section: 'Declaración y autorización' },
   { key: 'por_corregir', label: 'Campos por corregir', type: 'text', readOnly: true, section: 'Control de datos', hint: 'Vinieron dañados o incoherentes del archivo de origen. Cada campo sale de esta lista solo, al corregirlo y guardar.' },
   { key: 'origen', label: 'Origen del registro', type: 'text', readOnly: true, section: 'Control de datos' },
   { key: 'actualizado_por', label: 'Última actualización por', type: 'text', readOnly: true, section: 'Control de datos' },
@@ -998,10 +1198,14 @@ export const TABLES = {
       { label: 'Años en APL', calc: antiguedadPerfil },
       { key: 'eps', label: 'EPS' },
       { key: 'calidad', label: 'Datos', badge: true },
+      { label: 'Hoja de vida', badge: true, calc: (r) => (hojaVidaFaltantes(r).length ? 'INCOMPLETO' : 'COMPLETO') },
     ],
     // Excel: TODA la ficha (cada campo) + edad y antigüedad calculadas
     exportCols: [
-      ...PERFIL_FIELDS.map((f) => ({ key: f.key, label: f.label })),
+      ...PERFIL_FIELDS.map((f) => (f.type === 'lista'
+        ? { label: f.label, calc: (r) => hvListaTexto(f.key, r[f.key]) }
+        : { key: f.key, label: f.label })),
+      { label: 'Hoja de vida: falta', calc: (r) => hojaVidaFaltantes(r).join(', ') },
       { label: 'Edad', calc: edadPerfil },
       { label: 'Años en APL', calc: antiguedadPerfil },
       { key: 'calidad', label: 'Calidad de datos' },

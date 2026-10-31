@@ -34,6 +34,8 @@
     input, select, textarea { width: 100%; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
     input:focus, select:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
     .hint { font-weight: 400; color: var(--muted); font-size: 12px; }
+    .ced-caja { background: #fbf8f8; border: 1px solid var(--borde); border-radius: 12px; padding: 12px; margin-bottom: 14px; }
+    .ced-caja p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.45; color: #444; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .chips label { display: flex; gap: 7px; align-items: center; border: 1px solid var(--borde); border-radius: 999px; padding: 8px 12px; font-weight: 600; cursor: pointer; }
     .chips input { width: 18px; height: 18px; margin-top: 0; }
@@ -65,6 +67,11 @@
     .doc-file button { border: 0; background: none; color: #b91c1c; font-size: 18px; cursor: pointer; padding: 0 4px; }
     .doc-file.ok { background: #dcfce7; }
     .progreso { font-size: 14px; color: var(--muted); text-align: center; margin: 10px 0 0; }
+    .sub { font-size: 14px; font-weight: 700; margin: 16px 0 8px; color: #333; }
+    .linea { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; margin-top: 10px; font-weight: 600; }
+    .linea input { width: 20px; height: 20px; flex: none; margin-top: 1px; }
+    .no-firma { border: 0; background: none; color: var(--muted); text-decoration: underline; font-size: 13px; cursor: pointer; padding: 6px 0; }
+    .habeas ul { margin: 6px 0; padding-left: 20px; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -90,17 +97,26 @@
       <div class="card">
         <h2>🪪 Tus datos</h2>
         <div id="err1" class="error" hidden></div>
+        <div class="ced-caja">
+          <p><b>📷 Ahorra tiempo:</b> tómale foto a tu cédula por los dos lados, sobre una mesa, con buena luz y de cerca.
+            Con la foto de <b>atrás</b> leemos tus datos y te llenamos el formulario. Las fotos quedan como tu documento:
+            no las tienes que volver a subir.</p>
+          <div id="cedula-fotos"></div>
+        </div>
         <div class="grid">
-          <label>Número de cédula <span class="req">*</span><input data-k="cedula" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Solo números" required /></label>
+          <label>Tipo de documento <span class="req">*</span><select data-k="tipo_documento" data-lista="tipo_documento" required></select></label>
+          <label>Número de documento <span class="req">*</span><input data-k="cedula" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Solo números" required /></label>
           <label>Fecha de nacimiento <span class="req">*</span><input data-k="fecha_nacimiento" type="date" required /></label>
+          <label>Lugar de nacimiento <span class="req">*</span><input data-k="lugar_nacimiento" maxlength="120" placeholder="Municipio y departamento" required /></label>
           <label class="full">Apellidos y nombres completos <span class="req">*</span><input data-k="nombre" autocomplete="name" maxlength="150" required /></label>
           <label>Celular <span class="req">*</span><input data-k="celular" inputmode="tel" maxlength="13" placeholder="3001234567" required /></label>
           <label>Otro teléfono<input data-k="telefono" inputmode="tel" maxlength="15" /></label>
           <label class="full">Correo electrónico<input data-k="correo" type="email" autocomplete="email" maxlength="120" /></label>
           <label class="full">Dirección <span class="req">*</span><input data-k="direccion" maxlength="150" required /></label>
           <label>Barrio <span class="req">*</span><input data-k="barrio" maxlength="80" required /></label>
+          <label>Localidad / comuna<input data-k="localidad_comuna" maxlength="80" /></label>
           <label>Municipio <span class="req">*</span><input data-k="ciudad" list="l-ciudad" maxlength="80" required /></label>
-          <label class="full">Departamento <span class="req">*</span><select data-k="departamento" data-lista="departamento" required></select></label>
+          <label>Departamento <span class="req">*</span><select data-k="departamento" data-lista="departamento" required></select></label>
         </div>
       </div>
       <div class="card">
@@ -119,6 +135,7 @@
             <div class="chips" id="vehiculos" style="margin-top:6px"></div>
           </div>
           <label>¿Has trabajado antes en Autobuses El Poblado? <span class="req">*</span><select data-k="trabajo_antes_apl" data-lista="si_no" required></select></label>
+          <label data-si="trabajo_antes_apl">Área, cargo o afiliado con el que trabajaste<input data-k="vinculado_antes_detalle" maxlength="200" /></label>
           <label>Disponibilidad para empezar <span class="req">*</span><select data-k="disponibilidad" data-lista="disponibilidad" required></select></label>
           <label>¿Cómo te enteraste de la vacante? <span class="req">*</span><select data-k="como_se_entero" data-lista="como_se_entero" required></select></label>
           <label data-si="como_se_entero" data-si-valor="REFERIDO POR UN CONDUCTOR O EMPLEADO">¿Quién te refirió?<input data-k="referido_por" maxlength="120" placeholder="Nombre del conductor o empleado" /></label>
@@ -142,25 +159,20 @@
           <label>Fondo de pensiones<select data-k="afp" data-lista="afp"></select></label>
           <label>Estrato <span class="req">*</span><select data-k="estrato" data-lista="estrato" required></select></label>
           <label>Tipo de vivienda <span class="req">*</span><select data-k="tipo_vivienda" data-lista="tipo_vivienda" required></select></label>
-          <label>Nivel de estudios <span class="req">*</span><select data-k="escolaridad" data-lista="escolaridad" required></select></label>
-          <label>Último grado o título<input data-k="escolaridad_detalle" maxlength="120" placeholder="Ej: NOVENO, TÉCNICO EN MECÁNICA" /></label>
-          <label class="full">Institución educativa<input data-k="institucion_educativa" maxlength="150" /></label>
+          <label data-si="sexo" data-si-valor="MASCULINO">Libreta militar <span class="req">*</span><select data-k="libreta_militar_clase" data-lista="libreta_clase" required></select></label>
+          <label data-si="sexo" data-si-valor="MASCULINO">Número de la libreta<input data-k="libreta_militar" inputmode="numeric" maxlength="20" /></label>
+          <label class="full">Actividad u ocupación actual<input data-k="ocupacion_actual" maxlength="120" /></label>
+          <label class="full">Nivel de estudios más alto que terminaste <span class="req">*</span><select data-k="escolaridad" data-lista="escolaridad" required></select></label>
         </div>
+        <p class="sub">Tus estudios <span class="hint">(superior, media y básica: agrega uno por cada nivel)</span></p>
+        <div id="l-estudios"></div>
       </div>
 
       <div class="card">
-        <h2>👨‍👩‍👧 Núcleo familiar</h2>
-        <div class="grid">
-          <label class="full">Personas a cargo <span class="req">*</span><select data-k="personas_a_cargo" data-lista="personas_a_cargo" required></select></label>
-          <label>¿Tienes esposo(a) o pareja? <span class="req">*</span><select data-k="convive_pareja" data-lista="si_no" required></select></label>
-          <label data-si="convive_pareja">Edad de tu pareja<input data-k="edad_pareja" inputmode="numeric" maxlength="20" /></label>
-          <label class="full" data-si="convive_pareja">Nombre de tu pareja<input data-k="nombre_pareja" maxlength="120" /></label>
-          <label>¿Tienes hijos? <span class="req">*</span><select data-k="tiene_hijos" data-lista="si_no" required></select></label>
-          <label data-si="tiene_hijos">Edades de tus hijos (hombres)<input data-k="edades_hijos" maxlength="60" placeholder="Ej: 5 AÑOS, 12 AÑOS" /></label>
-          <label data-si="tiene_hijos">Edades de tus hijas (mujeres)<input data-k="edades_hijas" maxlength="60" placeholder="Ej: 3 AÑOS" /></label>
-          <label>Otras personas a cargo<input data-k="otros_a_cargo" maxlength="80" placeholder="Ej: MADRE, PADRE" /></label>
-          <label>Edades de esas personas<input data-k="edades_otros" maxlength="60" /></label>
-        </div>
+        <h2>👨‍👩‍👧 Información familiar</h2>
+        <p class="hint" style="margin-top:-6px">Las personas con las que vives o que dependen de ti.</p>
+        <div id="l-familiares"></div>
+        <label class="linea"><input type="checkbox" id="sin-familia" /> No vivo con nadie y nadie depende económicamente de mí</label>
       </div>
 
       <div class="card">
@@ -172,18 +184,28 @@
           <label>Otro teléfono<input data-k="emergencia_telefono2" inputmode="tel" maxlength="13" /></label>
           <label>Dirección del contacto<input data-k="emergencia_direccion" maxlength="150" /></label>
         </div>
+        <p class="sub">Segundo contacto <span class="hint">(opcional)</span></p>
+        <div class="grid">
+          <label class="full">Nombre<input data-k="emergencia2_nombre" maxlength="120" /></label>
+          <label>Parentesco<select data-k="emergencia2_parentesco" data-lista="parentesco"></select></label>
+          <label>Celular / teléfono<input data-k="emergencia2_telefono1" inputmode="tel" maxlength="13" /></label>
+          <label>Otro teléfono<input data-k="emergencia2_telefono2" inputmode="tel" maxlength="13" /></label>
+          <label>Dirección<input data-k="emergencia2_direccion" maxlength="150" /></label>
+        </div>
       </div>
 
       <div class="card">
-        <h2>💼 Último trabajo como conductor</h2>
-        <div class="grid">
-          <label class="full">Empresa<input data-k="ref_empresa" maxlength="120" /></label>
-          <label>Cargo<input data-k="ref_cargo" maxlength="80" placeholder="Ej: CONDUCTOR DE BUS" /></label>
-          <label>Jefe inmediato<input data-k="ref_nombre_jefe" maxlength="120" /></label>
-          <label>Teléfono de la empresa o del jefe<input data-k="ref_telefono_jefe" inputmode="tel" maxlength="15" /></label>
-          <label>Motivo de retiro<input data-k="ref_motivo_retiro" maxlength="150" /></label>
-          <label>Fecha de ingreso<input data-k="ref_fecha_ingreso" type="date" /></label>
-          <label>Fecha de retiro<input data-k="ref_fecha_retiro" type="date" /></label>
+        <h2>💼 Experiencia laboral</h2>
+        <p class="hint" style="margin-top:-6px">Tus últimos tres empleos o los más importantes para el cargo, empezando por el más reciente.</p>
+        <div id="l-empleos"></div>
+        <label class="linea"><input type="checkbox" id="sin-empleos" /> No he tenido empleos anteriores</label>
+        <div class="grid" style="margin-top:12px">
+          <label class="full">Trayectoria laboral<textarea data-k="trayectoria_laboral" maxlength="1500" placeholder="En pocas palabras: en qué has trabajado"></textarea></label>
+          <label class="full">¿Has trabajado fuera del país? <span class="req">*</span><select data-k="laboro_exterior" data-lista="si_no" required></select></label>
+          <label class="full" data-si="laboro_exterior">País(es) y actividad realizada <span class="req">*</span><input data-k="exterior_detalle" maxlength="300" required /></label>
+          <label class="full">Período más largo que has estado sin trabajo<input data-k="periodo_sin_vinculacion" maxlength="120" placeholder="Ej: DICIEMBRE 2024 - MARZO 2025" /></label>
+          <label class="full">¿Qué hacías en ese período?<textarea data-k="actividades_sin_vinculacion" maxlength="1500"></textarea></label>
+          <label class="full">Observaciones<textarea data-k="experiencia_observaciones" maxlength="1500"></textarea></label>
         </div>
       </div>
 
@@ -209,6 +231,37 @@
         <h2>📎 Documentos</h2>
         <p class="hint" style="margin-top:-6px">Toma una foto clara (con buena luz y que se lea) o adjunta un PDF. Máximo 10 MB por archivo.</p>
         <div id="docs"></div>
+      </div>
+
+      <div class="card">
+        <h2>📝 Declaración de veracidad</h2>
+        <div class="habeas">
+          Para todos los efectos legales, certifico que la información suministrada en la presente hoja de vida es veraz, completa y
+          verificable. Autorizo a la empresa a validar la información aquí consignada y acepto que cualquier inexactitud u omisión podrá
+          ser causal para la terminación del contrato, de conformidad con lo establecido en el artículo 62 del Código Sustantivo del Trabajo.
+        </div>
+        <h2 style="margin-top:16px">🔎 Autorización para consulta de antecedentes</h2>
+        <div class="habeas">
+          Yo, <b id="aut-nombre">—</b>, mayor de edad, identificado(a) con documento No. <b id="aut-ced">—</b>, autorizo de manera libre,
+          previa, expresa e informada a la empresa <b>AUTOBUSES EL POBLADO LAURELES S.A. (APL)</b> para la verificación y consulta de mis
+          antecedentes ante las siguientes entidades:
+          <ul><li>Procuraduría General de la Nación</li><li>Contraloría General de la República</li><li>Policía Nacional</li>
+            <li>Organismos de tránsito (aplica para cargos de conducción)</li></ul>
+          La presente autorización se otorga en el marco del proceso de vinculación laboral y/o durante la relación laboral, con fines de
+          verificación de información, cumplimiento de requisitos legales y gestión del talento humano. La información recolectada será
+          tratada de manera confidencial y utilizada exclusivamente para los fines aquí establecidos, conforme a la Política de
+          Tratamiento de Datos Personales de la empresa y la normatividad vigente. Declaro que he sido informado(a) sobre el tratamiento de
+          mis datos personales, que he tenido la oportunidad de realizar preguntas y que estas han sido resueltas de manera satisfactoria.
+        </div>
+        <label class="acepto"><input type="checkbox" id="acepto-decl" /> <span>Certifico que mis datos son verdaderos y <b>autorizo</b> la consulta de mis antecedentes. <span class="req">*</span></span></label>
+      </div>
+
+      <div class="card">
+        <h2>✍️ Tu firma</h2>
+        <div id="firma"></div>
+        <button type="button" class="no-firma" id="btn-no-firma">No puedo firmar aquí</button>
+        <label id="bloque-no-firma" hidden>Motivo por el que no firmas <span class="req">*</span>
+          <input id="no-firma-motivo" maxlength="300" /></label>
       </div>
 
       <div class="card">
@@ -243,7 +296,9 @@
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERFIL_LISTAS, ASPIRANTE_LISTAS } from './js/config.js';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERFIL_LISTAS, ASPIRANTE_LISTAS, hvResumenFamilia, hvEstudioPrincipal } from './js/config.js';
+    import { listaEditor, leerLista, firmaPad } from './js/hoja-vida.js';
+    import { cedulaCaptura } from './js/cedula-lector.js';
 
     // Cliente ANÓNIMO: no usa ni toca la sesión guardada de la app (aunque haya un admin logueado)
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -261,13 +316,52 @@
     $('l-ciudad').innerHTML = L.ciudad.map((c) => `<option value="${c}">`).join('');
     document.querySelector('[data-k="departamento"]').value = 'ANTIOQUIA';
     $('vehiculos').innerHTML = L.vehiculos.map((v) => `<label><input type="checkbox" value="${v}" /> ${v}</label>`).join('');
+    document.querySelector('[data-k="tipo_documento"]').value = 'C.C.';
+
+    // Hoja de vida FO-GH-03 (sql/150): listas y firma
+    const listas = {
+      estudios: listaEditor('estudios', [], { minFilas: 1 }),
+      familiares: listaEditor('familiares', [], { minFilas: 1 }),
+      empleos: listaEditor('empleos', [], { minFilas: 1 }),
+    };
+    for (const [k, el] of Object.entries(listas)) $('l-' + k).appendChild(el);
+    const firma = firmaPad($('firma'));
+
+    // Cédula por foto (sql/152): la de atrás se lee y, si la persona dice "sí", llena sus datos.
+    // Las dos fotos pasan a ser el documento "Cédula (ambas caras)" del paso 3.
+    const ced = cedulaCaptura($('cedula-fotos'), {
+      onUsar: (d) => {
+        const poner = (k, v) => {
+          const el = document.querySelector(`[data-k="${k}"]`);
+          if (!el || !v) return;
+          if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === v)) el.add(new Option(v, v));
+          el.value = v;
+        };
+        poner('tipo_documento', 'C.C.');
+        poner('cedula', d.cedula);
+        poner('nombre', `${d.apellidos} ${d.nombres}`.trim());
+        poner('fecha_nacimiento', d.fecha_nacimiento);
+        poner('lugar_nacimiento', d.lugar_nacimiento);
+        poner('sexo', d.sexo);
+        poner('tipo_sangre', d.tipo_sangre);
+        toggleSi();
+      },
+      onCambio: () => { mostrarError($('err1'), ''); cedulaADocs(); },
+    });
+    function cedulaADocs() {
+      const d = ASPIRANTE_LISTAS.documentos.find((x) => x.key === 'cedula');
+      const otras = (archivos.cedula || []).filter((a) => !a.deLector || a.subido);
+      archivos.cedula = [...ced.archivos().map((file) => ({ file, subido: null, deLector: true })), ...otras].slice(0, d.max);
+      pintarDocs();
+    }
+    $('btn-no-firma').onclick = () => { $('bloque-no-firma').hidden = !$('bloque-no-firma').hidden; };
 
     // Campos que dependen de otra respuesta (pareja, hijos, referido)
     const toggleSi = () => document.querySelectorAll('[data-si]').forEach((el) => {
       const val = document.querySelector(`[data-k="${el.dataset.si}"]`).value;
       el.hidden = val !== (el.dataset.siValor || 'SI');
     });
-    document.querySelectorAll('[data-k="convive_pareja"], [data-k="tiene_hijos"], [data-k="como_se_entero"]').forEach((s) => s.addEventListener('change', toggleSi));
+    document.querySelectorAll('[data-k="como_se_entero"], [data-k="sexo"], [data-k="trabajo_antes_apl"], [data-k="laboro_exterior"]').forEach((s) => s.addEventListener('change', toggleSi));
     toggleSi();
 
     const soloDigitos = (v) => String(v || '').replace(/\D/g, '');
@@ -322,11 +416,30 @@
       const err = $('err2');
       const falta = leerPaso($('paso2'), datos);
       if (falta) { falta.focus(); return mostrarError(err, `Falta: ${nombreDe(falta)}.`); }
-      for (const k of ['emergencia_telefono1', 'emergencia_telefono2', 'ref_telefono_jefe', 'refp_telefono']) {
+      for (const k of ['emergencia_telefono1', 'emergencia_telefono2', 'emergencia2_telefono1', 'emergencia2_telefono2', 'refp_telefono']) {
         if (!datos[k]) continue;
         datos[k] = soloDigitos(datos[k]);
         if (datos[k].length < 7) return mostrarError(err, 'Revisa los números de teléfono (mínimo 7 dígitos).');
       }
+      const est = leerLista(listas.estudios), fam = leerLista(listas.familiares), emp = leerLista(listas.empleos);
+      for (const r of [est, fam, emp]) if (r.error) { r.el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return mostrarError(err, r.error); }
+      if (!est.filas.length) return mostrarError(err, 'Agrega al menos un estudio (el último que hiciste).');
+      if (!fam.filas.length && !$('sin-familia').checked) return mostrarError(err, 'Agrega a tu familia, o marca que no vives con nadie y nadie depende de ti.');
+      if (!emp.filas.length && !$('sin-empleos').checked) return mostrarError(err, 'Agrega tus últimos empleos, o marca que no has tenido empleos anteriores.');
+      Object.assign(datos, { estudios: est.filas, familiares: fam.filas, empleos: emp.filas });
+      for (const [k, v] of Object.entries({ ...hvEstudioPrincipal(est.filas), ...hvResumenFamilia(fam.filas) })) if (v) datos[k] = v;
+      // El último empleo también va como "referencia laboral" (así lo ve hoy el tablero de aspirantes)
+      const u = emp.filas[0];
+      if (u) {
+        Object.assign(datos, { ref_empresa: u.empresa, ref_cargo: u.cargo, ref_nombre_jefe: u.jefe, ref_telefono_jefe: u.telefono,
+          ref_fecha_ingreso: u.fecha_ingreso, ref_fecha_retiro: u.fecha_retiro, ref_motivo_retiro: u.motivo_retiro });
+        for (const k of Object.keys(datos)) if (datos[k] == null) delete datos[k];
+      }
+      // Lo que el formato llama distinto
+      if (datos.referido_por) datos.recomendado_por = datos.referido_por;
+      if (datos.trabajo_antes_apl) datos.vinculado_antes = datos.trabajo_antes_apl;
+      $('aut-nombre').textContent = datos.nombre;
+      $('aut-ced').textContent = datos.cedula;
       mostrarError(err, '');
       irA(2);
     });
@@ -390,7 +503,17 @@
       for (const d of ASPIRANTE_LISTAS.documentos) {
         if (d.req && !(archivos[d.key] || []).length) return mostrarError(err, `Falta adjuntar: ${d.label}.`);
       }
+      if (!$('acepto-decl').checked) return mostrarError(err, 'Debes certificar tus datos y autorizar la consulta de antecedentes para enviar.');
+      const sinFirma = !$('bloque-no-firma').hidden;
+      const motivo = $('no-firma-motivo').value.trim();
+      if (sinFirma && motivo.length < 5) return mostrarError(err, 'Escribe el motivo por el que no firmas.');
+      if (!sinFirma && firma.vacia()) return mostrarError(err, 'Firma en el recuadro con el dedo.');
       if (!$('acepto').checked) return mostrarError(err, 'Debes aceptar la autorización de tratamiento de datos para enviar.');
+      datos.declaracion_acepta = true;
+      if (ced.lectura()) datos.cedula_lectura = ced.lectura();
+      delete datos.declaracion_firma; delete datos.declaracion_no_firma_motivo;
+      if (sinFirma) datos.declaracion_no_firma_motivo = motivo.toUpperCase();
+      else datos.declaracion_firma = firma.dataUrl();
       mostrarError(err, '');
       const btn = $('enviar'), prog = $('progreso');
       btn.disabled = true; $('volver3').hidden = true; prog.hidden = false;
