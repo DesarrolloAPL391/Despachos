@@ -2519,6 +2519,17 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pact-foto { width: 72px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
 .pact-ced { display: flex; gap: 6px; flex-wrap: wrap; }
 .pact-ced img { width: 150px; aspect-ratio: 1.58; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+/* 📷 Cédula escaneada: ¿está registrado y coincide? */
+.ced-scan-card { max-width: 620px; }
+.ced-scan-quien { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.ced-scan-quien img { width: 84px; height: 112px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+.ced-scan-sin { width: 84px; height: 112px; border-radius: 10px; background: #f3f4f6; display: grid; place-items: center; font-size: 36px; flex: none; }
+.ced-scan-ok { color: #15803d; font-weight: 800; }
+.ced-scan-no { color: #b45309; font-weight: 800; }
+.ced-scan-tabla { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0; }
+.ced-scan-tabla td, .ced-scan-tabla th { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.ced-scan-tabla td:first-child { color: var(--muted, #6b6b6b); }
+.ced-scan-bot { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 12px; }
 /* 🪪 Visor de la cédula guardada (sql/152) */
 .ced-ver-card { max-width: 760px; }
 .ced-ver { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

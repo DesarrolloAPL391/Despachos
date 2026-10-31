@@ -1,6 +1,6 @@
 // 🪪 LECTOR DE LA CÉDULA por foto (sql/152). Lo usan los 3 links: actualizar-datos.html (general y
-// enlace personal) y trabaja-con-nosotros.html. Se lee el REVERSO, donde la cédula trae los datos
-// escritos para máquinas:
+// enlace personal) y trabaja-con-nosotros.html; y la app con el escáner en vivo (escanearCedula), para
+// registrar o verificar a alguien. Se lee el REVERSO, donde la cédula trae los datos escritos para máquinas:
 //   * Cédula amarilla: el código de barras PDF417 → cédula, apellidos, nombres, sexo, fecha y lugar de
 //     nacimiento y RH. En Android con Chrome lo lee el lector del propio teléfono (BarcodeDetector); en
 //     los demás, ZXing (más flojo con fotos normales).
@@ -31,7 +31,8 @@ const FECHA_OK = (a, m, d) => {
   return f.getUTCFullYear() === +a && f.getUTCMonth() === +m - 1 && f.getUTCDate() === +d && f <= new Date();
 };
 export function leerCodigoCedula(texto) {
-  const s = String(texto || '');
+  // El lector del teléfono entrega los bytes como texto: la Ñ (latin-1) puede llegar como "�"
+  const s = String(texto || '').replace(/(?<=[A-Z])�(?=[A-Z])/g, 'Ñ');
   if (!s.includes('PubDSK_')) return null;
   const NUL = /[\u0000�]+/;
   const g = /([MF])((?:19|20)\d{2})(\d{2})(\d{2})(\d{2})(\d{3})[\s\S]?((?:AB|A|B|O)[+-])/.exec(s);
@@ -49,8 +50,9 @@ export function leerCodigoCedula(texto) {
     partes = [campo(base, base + 23), campo(base + 23, base + 46), campo(base + 46, base + 69), campo(base + 69, base + 92)];
   } else {
     // El lector perdió el relleno: separar por los NUL que quedaron
-    const p = s.slice(base, g.index).split(NUL).map((x) => x.trim()).filter((x) => x && !/^\d$/.test(x));
-    partes = p.length >= 4 ? p.slice(0, 4) : p.length === 3 ? [p[0], p[1], p[2], ''] : [p[0] || '', '', p[1] || '', ''];
+    // (si no quedó ninguno, los nombres vienen pegados y no se pueden separar: se dejan vacíos)
+    const p = s.slice(base, g.index).split(NUL).map((x) => x.trim().replace(/\d$/, '')).filter((x) => x && !/^\d$/.test(x));
+    partes = p.length >= 4 ? p.slice(0, 4) : p.length === 3 ? [p[0], p[1], p[2], ''] : p.length === 2 ? [p[0], '', p[1], ''] : ['', '', '', ''];
   }
   const cedula = ced[1].replace(/^0+/, '');
   if (cedula.length < 5) return null;
@@ -146,15 +148,18 @@ async function aImagen(file) {
   }
 }
 // Lienzo girado (cualquier ángulo: 90/180 para la orientación, unos grados para enderezar) y
-// reducido a maxLado
-function lienzo(img, giro, maxLado) {
-  const k = Math.min(1, maxLado / Math.max(img.width, img.height));
-  const w = img.width * k, h = img.height * k, r = (giro * Math.PI) / 180;
+// reducido a maxLado. img puede ser una foto o el <video> de la cámara; escala > 1 la agranda
+// (ZXing lee mejor las barras finas de un cuadro de video agrandado), sin pasar de maxLado.
+function lienzo(img, giro, maxLado, escala = 1) {
+  const W = img.videoWidth || img.width, H = img.videoHeight || img.height;
+  const k = Math.min(escala, maxLado / Math.max(W, H));
+  const w = W * k, h = H * k, r = (giro * Math.PI) / 180;
   const c = document.createElement('canvas');
   c.width = Math.round(Math.abs(w * Math.cos(r)) + Math.abs(h * Math.sin(r)));
   c.height = Math.round(Math.abs(w * Math.sin(r)) + Math.abs(h * Math.cos(r)));
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.imageSmoothingQuality = 'high';
   ctx.translate(c.width / 2, c.height / 2);
   ctx.rotate(r);
   ctx.drawImage(img, -w / 2, -h / 2, w, h);
@@ -194,32 +199,54 @@ export async function fotoCedula(file) {
 }
 
 // ---------- Lectores ----------
-// base = 0 si la foto está acostada (como se ve la cédula), 90 si está parada
-async function leerBarras(img, base) {
-  if ('BarcodeDetector' in window) {
-    try {
-      if ((await window.BarcodeDetector.getSupportedFormats()).includes('pdf417')) {
-        // El lector del teléfono (Android) es bueno: si él no lo encuentra, ZXing tampoco
-        const det = new window.BarcodeDetector({ formats: ['pdf417'] });
-        for (const r of await det.detect(img)) { const d = leerCodigoCedula(r.rawValue); if (d) return d; }
-        return null;
-      }
-    } catch { /* sigue con ZXing */ }
-  }
+// El lector de códigos del teléfono (Android/Chrome, solo en https), o null si no hay
+let _det;
+async function detectorNativo() {
+  if (_det !== undefined) return _det;
+  _det = null;
+  try {
+    if ('BarcodeDetector' in window && (await window.BarcodeDetector.getSupportedFormats()).includes('pdf417')) {
+      _det = new window.BarcodeDetector({ formats: ['pdf417'] });
+    }
+  } catch { /* sin lector nativo */ }
+  return _det;
+}
+let _zx = null;
+async function zxing() {
+  if (_zx) return _zx;
   await cargarScript(ZXING, 'ZXing');
   const Z = window.ZXing;
-  const pistas = new Map([[Z.DecodeHintType.TRY_HARDER, true], [Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.PDF_417]]]);
+  _zx = { Z, lector: new Z.PDF417Reader(),
+    pistas: new Map([[Z.DecodeHintType.TRY_HARDER, true], [Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.PDF_417]]]) };
+  return _zx;
+}
+function codigoZxing(zx, c) {
+  try {
+    const fuente = new zx.Z.RGBLuminanceSource(grises(c), c.width, c.height);
+    return leerCodigoCedula(zx.lector.decode(new zx.Z.BinaryBitmap(new zx.Z.HybridBinarizer(fuente)), zx.pistas).getText());
+  } catch { return null; } // no lo encontró en este cuadro
+}
+async function conLugar(d) {
+  if (d && d.tipo === 'CODIGO' && d.lugar_codigo && !d.lugar_nacimiento) {
+    try { d.lugar_nacimiento = (await import('./cedula-lugares.js')).LUGARES[d.lugar_codigo] || ''; } catch { /* sin lugar */ }
+  }
+  return d;
+}
+// base = 0 si la foto está acostada (como se ve la cédula), 90 si está parada
+async function leerBarras(img, base) {
+  const det = await detectorNativo();
+  if (det) {
+    // El lector del teléfono (Android) es bueno: si él no lo encuentra, ZXing tampoco
+    try { for (const r of await det.detect(img)) { const d = leerCodigoCedula(r.rawValue); if (d) return d; } } catch { /* nada */ }
+    return null;
+  }
+  const zx = await zxing();
   // ZXing es exigente con el tamaño y la inclinación: se prueba enderezando unos grados (él solo
   // prueba también al revés, 180°)
   const intentos = [[0, 1200], [0, 1600], [3, 1200], [-3, 1200], [3, 1600], [-3, 1600], [6, 1600], [-6, 1600], [90, 1600]];
   for (const [giro, lado] of intentos) {
-    const c = lienzo(img, base + giro, lado);
-    try {
-      const fuente = new Z.RGBLuminanceSource(grises(c), c.width, c.height);
-      const r = new Z.PDF417Reader().decode(new Z.BinaryBitmap(new Z.HybridBinarizer(fuente)), pistas);
-      const d = leerCodigoCedula(r.getText());
-      if (d) return d;
-    } catch { /* no lo encontró así */ }
+    const d = codigoZxing(zx, lienzo(img, base + giro, lado));
+    if (d) return d;
     await new Promise((r) => setTimeout(r, 0)); // deja respirar la pantalla
   }
   return null;
@@ -263,10 +290,117 @@ export async function leerCedula(file, onProgreso) {
   if (!pareceAmarilla(img)) lectores.reverse(); // la digital es blanca: primero sus líneas
   let d = null;
   for (const leer of lectores) { d = await leer(); if (d) break; }
-  if (d && d.tipo === 'CODIGO' && d.lugar_codigo) {
-    try { d.lugar_nacimiento = (await import('./cedula-lugares.js')).LUGARES[d.lugar_codigo] || ''; } catch { /* sin lugar */ }
-  }
-  return d;
+  return conLugar(d);
+}
+
+// ---------- Escáner en vivo (cámara) ----------
+// Para quien registra o verifica a alguien: se apunta al código de atrás y se lee solo, sin tomar
+// foto. En Android/Chrome lo lee el teléfono (menos de un segundo); en el PC o el iPhone, ZXing cuadro
+// a cuadro (más lento y exigente). La digital no trae código: "📸 Leer" toma el cuadro y lee sus líneas.
+// Devuelve los datos de la cédula, o null si se canceló. Necesita https (o localhost) para la cámara.
+const CSS_ESC = `
+.ced-esc { position: fixed; inset: 0; z-index: 10000; background: #000; display: grid; grid-template-rows: 1fr auto auto; overflow: hidden; }
+.ced-esc video { grid-area: 1 / 1; width: 100%; height: 100%; object-fit: contain; min-height: 0; background: #000; }
+.ced-esc-marco { grid-area: 1 / 1; align-self: center; justify-self: center; width: min(86vw, 560px); aspect-ratio: 1.58;
+  border: 3px dashed rgba(255,255,255,.95); border-radius: 14px; background: transparent;
+  box-shadow: 0 0 0 2px rgba(0,0,0,.45), inset 0 0 0 2px rgba(0,0,0,.45); pointer-events: none; }
+.ced-esc-txt { color: #fff; text-align: center; padding: 12px 16px; font: 15px/1.4 system-ui, sans-serif; }
+.ced-esc-bot { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); }
+.ced-esc-bot button { border: 0; border-radius: 12px; padding: 12px 16px; font: 700 15px system-ui, sans-serif; background: #fff; color: #111; cursor: pointer; }
+.ced-esc-bot button[data-x] { background: #4b5563; color: #fff; }
+`;
+let _cssEsc = false;
+function pitido() {
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)();
+    const o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = 1400; g.gain.value = 0.12;
+    o.connect(g).connect(a.destination);
+    o.start(); o.stop(a.currentTime + 0.12);
+    setTimeout(() => a.close(), 400);
+  } catch { /* sin sonido */ }
+  try { if (navigator.vibrate) navigator.vibrate(60); } catch { /* sin vibración */ }
+}
+export function escanearCedula() {
+  if (!_cssEsc) { _cssEsc = true; const st = document.createElement('style'); st.textContent = CSS_ESC; document.head.appendChild(st); }
+  return new Promise((fin) => {
+    const ov = document.createElement('div');
+    ov.className = 'ced-esc';
+    ov.innerHTML = `<video playsinline muted></video><div class="ced-esc-marco"></div>
+      <div class="ced-esc-txt">⏳ Abriendo la cámara…</div>
+      <div class="ced-esc-bot"><button type="button" data-luz hidden>🔦 Linterna</button>
+        <button type="button" data-foto>📸 Leer (cédula digital)</button><button type="button" data-x>Cancelar</button></div>`;
+    document.body.appendChild(ov);
+    const video = ov.querySelector('video'), txt = ov.querySelector('.ced-esc-txt');
+    const GUIA = 'Apunta al <b>código de barras de atrás</b> de la cédula, de cerca y con buena luz: se lee solo.'
+      + '<br><span style="font-size:13px;opacity:.85">¿Cédula digital (la nueva)? Que se vean las 3 líneas de abajo y toca 📸.</span>';
+    let stream = null, vivo = true, ocupado = false;
+    const cerrar = (d) => {
+      if (!vivo) return;
+      vivo = false;
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      ov.remove();
+      fin(d || null);
+    };
+    const listo = async (d) => {
+      ocupado = true; // que el bucle no la vuelva a leer mientras se cierra
+      pitido(); txt.innerHTML = '✅ <b>¡Leída!</b>';
+      await conLugar(d);
+      setTimeout(() => cerrar(d), 250);
+    };
+    ov.querySelector('[data-x]').onclick = () => cerrar(null);
+    ov.querySelector('[data-foto]').onclick = async () => {
+      if (ocupado || !video.videoWidth) return;
+      ocupado = true;
+      txt.textContent = '⏳ Leyendo… no la muevas.';
+      const foto = await new Promise((r) => lienzo(video, 0, 2400).toBlob(r, 'image/jpeg', 0.92));
+      const d = await leerCedula(foto).catch(() => null);
+      ocupado = false;
+      if (!vivo) return;
+      if (d) { listo(d); return; }
+      txt.innerHTML = 'No se pudo leer. Acércala, sin reflejos y derecha, que se vea completa, y vuelve a tocar 📸.';
+    };
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+      } catch {
+        txt.innerHTML = '📷 No se pudo abrir la cámara. Dale permiso a la cámara en el navegador y vuelve a intentar.';
+        return;
+      }
+      if (!vivo) { stream.getTracks().forEach((t) => t.stop()); return; }
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+      const pista = stream.getVideoTracks()[0];
+      try {
+        const cap = pista.getCapabilities ? pista.getCapabilities() : {};
+        if (cap.focusMode && cap.focusMode.includes('continuous')) pista.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+        if (cap.torch) {
+          const b = ov.querySelector('[data-luz]');
+          let on = false;
+          b.hidden = false;
+          b.onclick = () => { on = !on; pista.applyConstraints({ advanced: [{ torch: on }] }).catch(() => {}); };
+        }
+      } catch { /* sin linterna ni enfoque */ }
+      txt.innerHTML = GUIA;
+      const det = await detectorNativo();
+      const zx = det ? null : await zxing().catch(() => null);
+      // Cuadro a cuadro: el del teléfono es rápido. ZXing tarda y es exigente: cada cuadro se le
+      // pasa de una forma distinta (agrandado y enderezando unos grados), y se le da más aire.
+      const FORMAS = [[0, 1.5], [3, 1.5], [-3, 1.5], [0, 1], [3, 1], [-3, 1], [6, 1.5], [-6, 1.5]];
+      let n = 0;
+      while (vivo) {
+        await new Promise((r) => setTimeout(r, det ? 120 : 200));
+        if (!vivo || ocupado || video.readyState < 2) continue;
+        let d = null;
+        try {
+          if (det) { for (const r of await det.detect(video)) { d = leerCodigoCedula(r.rawValue); if (d) break; } }
+          else if (zx) { const [giro, k] = FORMAS[n++ % FORMAS.length]; d = codigoZxing(zx, lienzo(video, giro, 2000, k)); }
+        } catch { /* cuadro sin código */ }
+        if (d && vivo && !ocupado) { await listo(d); return; }
+      }
+    })();
+  });
 }
 
 // ---------- Componente: fotos del frente y el reverso + lectura ----------

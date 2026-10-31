@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, tiempoEntre } from './config.js';
 import { listaEditor, leerLista } from './hoja-vida.js';
+import { escanearCedula } from './cedula-lector.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
@@ -1006,6 +1007,7 @@ function selectTable(name, filtroInicial) {
   // se pinta ya y la sincronización va por detrás.
   if (name === 'pqrsf') pqrsfAutoSync();
   $('perfil-new-btn').hidden = name !== 'perfiles' || !isAdmin(); // crear acceso: solo admin en Perfiles
+  $('ced-scan-btn').hidden = name !== 'perfilsociodemografico' || !isTalentoHumano();
   $('perfil-pass-btn').hidden = name !== 'perfiles' || !isAdmin();
   $('perfil-kick-btn').hidden = name !== 'perfiles' || !isAdmin(); // expulsar sesión: solo admin en Perfiles
   // sin "+ Nuevo" donde no aplica (el auditor no crea; tampoco en la vista previa "como auditor")
@@ -4390,14 +4392,15 @@ function toggleEmptySections(form) {
 // con varios await, así que dos clics seguidos en ✏️ mezclaban los campos de una fila con
 // los de otra y se podía guardar el dato equivocado sobre el viaje equivocado.
 let _editorAbriendo = false;
-async function openEditor(row) {
+// inicial: valores para un registro NUEVO (p. ej. los de la cédula escaneada)
+async function openEditor(row, inicial = null) {
   if (_editorAbriendo) return;
   _editorAbriendo = true;
   showBusy('Abriendo…');
-  try { await _openEditorInterno(row); }
+  try { await _openEditorInterno(row, inicial); }
   finally { _editorAbriendo = false; hideBusy(); }
 }
-async function _openEditorInterno(row) {
+async function _openEditorInterno(row, inicial = null) {
   const cfg = TABLES[current];
   if (row && filaBloqueada(cfg, row)) { toast(cfg.lockedHint || 'Registro bloqueado', 'err'); return; }
   // La fecha es clave: solo se opera el día actual.
@@ -4466,6 +4469,7 @@ async function _openEditorInterno(row) {
     // Valor inicial: del registro; al crear, opcionalmente del contexto (ej. puesto del usuario)
     let val = row ? row[f.key] : (f.default ?? null);
     if (!row && f.ctxValue && CTX && CTX[f.ctxValue]) val = CTX[f.ctxValue];
+    if (!row && inicial && inicial[f.key] != null && inicial[f.key] !== '') val = inicial[f.key];
 
     if (f.type === 'boolean') {
       wrap.className = 'field check';
@@ -4674,6 +4678,7 @@ $('modal-cancel').addEventListener('click', closeModal);
 $('new-btn').addEventListener('click', () => {
   if (current === 'despachos') openNuevoDespacho(); else openEditor(null);
 });
+$('ced-scan-btn').addEventListener('click', () => escanearCedulaPerfil());
 
 $('modal-save').addEventListener('click', async () => {
   if ($('modal-save').dataset.busy === '1') return; // evita doble click
@@ -15992,6 +15997,76 @@ async function hvdPintar() {
   await Promise.all(Array.from(d.images).map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))));
   fr.style.height = (n * 1069 + 30) + 'px';
   m.querySelector('[data-hojas]').textContent = `${n} hoja${n === 1 ? '' : 's'} carta`;
+}
+
+// ---------- 📷 Escanear la cédula para registrar o verificar a alguien ----------
+// La cámara lee el código de atrás (js/cedula-lector.js) y aquí se cruza con la base: si ya está,
+// su ficha y si los datos coinciden; si no, crearla con los datos de la cédula. Los datos del
+// código son los del documento; que quien la presenta sea el dueño se ve comparando la foto.
+const _sinTildes = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+async function escanearCedulaPerfil() {
+  if (!isTalentoHumano()) return;
+  const d = await escanearCedula();
+  if (!d) return;
+  const m = perfilModal('ced-scan-modal', '🪪 Cédula escaneada', 'ced-scan-card');
+  const body = m.querySelector('.pact-body');
+  body.innerHTML = '<div class="loading">Buscando en la base…</div>';
+  m.hidden = false;
+  try {
+    const [{ data: per, error }, { data: asps }] = await Promise.all([
+      sb.from('perfilsociodemografico').select('*').eq('cedula', d.cedula).maybeSingle(),
+      sb.from('aspirantes').select('id, etapa, creado_en').eq('cedula', d.cedula).order('creado_en', { ascending: false }).limit(1),
+    ]);
+    if (error) throw error;
+    const { data: foto } = per ? await sb.from('perfil_fotos').select('foto').eq('cedula', d.cedula).maybeSingle() : { data: null };
+    const nombreCed = `${d.apellidos} ${d.nombres}`.trim();
+    const asp = (asps || [])[0];
+    const fila = (k, v) => (v ? `<tr><td>${k}</td><td><b>${esc(v)}</b></td></tr>` : '');
+    const leidos = `<table class="ced-scan-tabla">${fila('Cédula', d.cedula)}${fila('Apellidos', d.apellidos)}${fila('Nombres', d.nombres)}
+      ${fila('Fecha de nacimiento', fechaLegible(d.fecha_nacimiento))}${fila('Lugar de nacimiento', d.lugar_nacimiento)}
+      ${fila('Sexo', d.sexo)}${fila('Grupo sanguíneo y RH', d.tipo_sangre)}</table>
+      <p class="muted">${d.tipo === 'CODIGO' ? 'Leída del código de barras (cédula amarilla).' : 'Leída de las líneas de la cédula digital: el nombre no trae control, revísalo.'}</p>`;
+    if (per) {
+      // ¿Los datos de la base son los del documento?
+      const cmp = (k, base, ced, igual) => (ced ? `<tr><td>${k}</td><td>${esc(base || '—')}</td>
+        <td>${igual ? '✅ Coincide' : `⚠️ La cédula dice <b>${esc(ced)}</b>`}</td></tr>` : '');
+      const mismoNombre = d.tipo !== 'CODIGO' || !nombreCed ? null
+        : _sinTildes(per.nombre).split(' ').sort().join(' ') === _sinTildes(nombreCed).split(' ').sort().join(' ');
+      const filas = [
+        mismoNombre === null ? '' : cmp('Nombre', per.nombre, nombreCed, mismoNombre),
+        cmp('Fecha de nacimiento', fechaLegible(String(per.fecha_nacimiento || '').slice(0, 10)), fechaLegible(d.fecha_nacimiento),
+          String(per.fecha_nacimiento || '').slice(0, 10) === d.fecha_nacimiento),
+        cmp('Sexo', per.sexo, d.sexo, per.sexo === d.sexo),
+        cmp('Grupo sanguíneo y RH', per.tipo_sangre, d.tipo_sangre, per.tipo_sangre === d.tipo_sangre),
+      ].join('');
+      body.innerHTML = `
+        <div class="ced-scan-quien">${foto?.foto ? `<img src="${esc(foto.foto)}" alt="Foto">` : '<span class="ced-scan-sin">👤</span>'}
+          <div><div class="ced-scan-ok">✅ Está registrado</div><b>${esc(per.nombre || '')}</b>
+            <div><span class="${chipClass(per.tipo)}">${esc(per.tipo || '')}</span> <span class="${chipClass(per.estado)}">${esc(per.estado || '')}</span>
+              ${per.cargo ? `<span class="muted">${esc(per.cargo)}</span>` : ''}</div>
+            ${foto?.foto ? '<div class="muted">Mira que la cara de la persona sea la de la foto.</div>' : ''}</div></div>
+        ${filas ? `<table class="ced-scan-tabla ced-scan-cmp"><thead><tr><th>Dato</th><th>En la base</th><th>Cédula</th></tr></thead><tbody>${filas}</tbody></table>` : ''}
+        <details><summary>Lo que trae la cédula</summary>${leidos}</details>
+        <div class="ced-scan-bot"><button type="button" class="btn btn-primary" data-ficha>🪪 Ver ficha</button>
+          <button type="button" class="btn" data-otra>📷 Escanear otra</button></div>`;
+      body.querySelector('[data-ficha]').onclick = () => { m.hidden = true; openPerfilFicha(per); };
+    } else {
+      body.innerHTML = `
+        <div class="ced-scan-quien"><span class="ced-scan-sin">🆕</span><div><div class="ced-scan-no">No está en el Perfil sociodemográfico</div>
+          ${asp ? `<div>Es <b>aspirante</b> (etapa ${esc(asp.etapa)}, inscrito el ${esc(fechaLegible(String(asp.creado_en).slice(0, 10)))}).</div>` : ''}</div></div>
+        ${leidos}
+        <div class="ced-scan-bot"><button type="button" class="btn btn-primary" data-crear>➕ Crear con estos datos</button>
+          <button type="button" class="btn" data-otra>📷 Escanear otra</button></div>`;
+      body.querySelector('[data-crear]').onclick = () => {
+        m.hidden = true;
+        openEditor(null, { cedula: d.cedula, nombre: nombreCed, fecha_nacimiento: d.fecha_nacimiento, sexo: d.sexo,
+          tipo_sangre: d.tipo_sangre, lugar_nacimiento: d.lugar_nacimiento, tipo_documento: 'C.C.' });
+      };
+    }
+    body.querySelector('[data-otra]').onclick = () => { m.hidden = true; escanearCedulaPerfil(); };
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">No se pudo buscar la cédula: ${esc(e.message || e)}</div>`;
+  }
 }
 
 // ---------- 🪪 La cédula guardada (perfil_cedulas, sql/152) ----------
