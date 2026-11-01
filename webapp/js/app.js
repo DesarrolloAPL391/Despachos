@@ -5332,7 +5332,8 @@ async function cargarCumplimiento(forzarSonar) {
     rows = rows.concat(data || []);
   }
   // 2) Estado real de SONAR por regId
-  const regids = [...new Set(rows.map((r) => r.sonar_regid).filter(Boolean).map(Number))];
+  // Solo regId numéricos: un texto (nota escrita a mano) da NaN y la consulta entera falla (sql/153)
+  const regids = [...new Set(rows.map((r) => r.sonar_regid).filter((x) => /^\d+$/.test(x || '')).map(Number))];
   let realMap = await _cargarEstadosSonar(regids);
   // 3) ¿Faltan estados reales? → traerlos de SONAR (una llamada por móvil, bajo el timeout de 8s).
   //    Automático una vez por puesto+día; el botón ↻ lo fuerza. Tope de seguridad de 150 móviles.
@@ -22557,7 +22558,7 @@ function minsDesde(ts) { return ts ? Math.floor((Date.now() - toDate(ts).getTime
 // estado (Completo/Incompleto/Cancelado/En progreso). El regId que guardó la app al
 // despachar ES el itlId de SONAR. El RPC además guarda el viaje en despachos_sonar.
 async function estadoSonarEnVivo(row) {
-  if (!row?.sonar_regid) { toast('Este viaje no tiene regId de SONAR.', 'err'); return; }
+  if (!/^\d+$/.test(row?.sonar_regid || '')) { toast('Este viaje no tiene regId de SONAR.', 'err'); return; }
   const movil = row.veh?.numero;
   if (!movil) { toast('No se pudo identificar el móvil del viaje.', 'err'); return; }
   const g = await gpsInfoFor(movil);

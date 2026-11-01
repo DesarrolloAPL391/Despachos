@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v344';
+export const APP_VERSION = 'v345';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -569,7 +569,10 @@ export const TABLES = {
       // Es lo que el auditor luego contrasta contra lo que dice SONAR (Auditoría SONAR).
       { key: 'estado_despacho', label: '¿Se realizó el viaje?', type: 'enum',
         options: ['SIN DESPACHO', 'SI', 'NO REALIZA EL VIAJE', 'NO SE REALIZA POR OTRO MOTIVO'], section: 'General' },
-      { key: 'sonar_regid', label: 'regId SONAR', type: 'text', section: 'General' },
+      // Lo llena el despacho a SONAR. Si queda editable los despachadores escriben ahí el motivo
+      // del viaje no hecho y el cron de estados SONAR se cae para toda la flota (sql/153).
+      { key: 'sonar_regid', label: 'regId SONAR', type: 'text', section: 'General', readOnly: true,
+        hint: 'Lo pone SONAR al despachar. Las notas van en Observación.' },
       { key: 'codigo', label: 'Código (turno)', type: 'text', section: 'General', formHide: true },
       { key: 'cambio', label: 'Cambio (automático)', type: 'text', section: 'General', readOnly: true, autoCambio: true, hint: 'Se registra solo al elegir un móvil distinto al programado.' },
 
