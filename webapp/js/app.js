@@ -1902,6 +1902,9 @@ async function refrescarPreop(rebuild = true) {
 // instructivo de seguridad vial, ajustados a su caso). Aquí seguridad vial revisa CADA archivo
 // —lo acepta, o lo rechaza con un motivo que el reclamante lee al consultar—, cambia el estado y
 // asocia el siniestro que reportó el conductor en la app. Todo se escribe por RPC.
+// El tablero (sql/161) separa nuevas, en trámite, con todos los documentos, con documentos
+// pendientes y resueltas; cada fila trae el mapa de sus documentos, y todo baja a Excel. De cada
+// reclamación se puede bajar el expediente completo en un .zip.
 let RCL_PEND = 0;
 const _rcl = { filas: [], vista: 'revisar', q: '', id: null, ficha: null };
 const RCL_ESTADOS = {
@@ -1914,12 +1917,28 @@ const RCL_REQ = {
   ACEPTADO: ['chip-green', 'Aceptado'], OPCIONAL: ['chip-gray', 'Si aplica'], NO_APLICA: ['chip-gray', 'No aplica'],
 };
 const RCL_ABIERTAS = ['RECIBIDA', 'INCOMPLETA', 'EN ESTUDIO'];
-const RCL_VISTAS = [
-  { key: 'revisar', label: 'Por revisar' }, { key: 'abiertas', label: 'Abiertas' },
-  { key: 'cerradas', label: 'Cerradas' }, { key: 'todas', label: 'Todas' },
-];
+// Nombre corto de cada requisito (el mapa de documentos de la lista y las columnas del Excel), en el
+// orden del instructivo. Los títulos completos vienen de la base en la ficha.
+const RCL_CORTO = {
+  CARTA: 'Carta', IPAT: 'IPAT', FALLO: 'Fallo Movilidad', CC_PROPIETARIO: 'Cédula propietario', LICENCIA: 'Licencia',
+  CC_CONDUCTOR: 'Cédula conductor', TARJETA: 'Tarjeta propiedad', SOAT: 'SOAT', RTM: 'Técnico-mecánica', PODER: 'Poder',
+  PRUEBAS: 'Fotos/videos', NO_RECLAMACION: 'No reclamación', FACTURA: 'Factura/cotización', CERT_BANCARIO: 'Cert. bancario',
+  PODER_BENEF: 'Poder beneficiario',
+};
+const rclAbierta = (f) => RCL_ABIERTAS.includes(f.estado);
 // Lo que pide que alguien la mire: nueva, o con archivos que llegaron y nadie ha revisado
-const rclPorRevisar = (f) => f.estado === 'RECIBIDA' || (RCL_ABIERTAS.includes(f.estado) && (f.conteo?.por_revisar || 0) > 0);
+const rclPorRevisar = (f) => f.estado === 'RECIBIDA' || (rclAbierta(f) && (f.conteo?.por_revisar || 0) > 0);
+const RCL_VISTAS = [
+  { key: 'nuevas', icon: '🆕', label: 'Nuevas', ayuda: 'Llegaron y nadie las ha tocado', fn: (f) => f.estado === 'RECIBIDA' && !f.gestionada },
+  { key: 'revisar', icon: '📥', label: 'Por revisar', ayuda: 'Nuevas o con documentos sin revisar', fn: rclPorRevisar },
+  { key: 'tramite', icon: '🔄', label: 'En trámite', ayuda: 'Todas las que siguen abiertas', fn: rclAbierta },
+  { key: 'completas', icon: '📂', label: 'Con todos los documentos', ayuda: 'Abiertas, con los obligatorios entregados', fn: (f) => rclAbierta(f) && !(f.conteo?.faltan) },
+  { key: 'faltan', icon: '📌', label: 'Les faltan documentos', ayuda: 'Abiertas, con obligatorios pendientes o rechazados', fn: (f) => rclAbierta(f) && (f.conteo?.faltan || 0) > 0 },
+  { key: 'resueltas', icon: '✅', label: 'Resueltas', ayuda: 'Aprobadas, pagadas, no proceden o anuladas', fn: (f) => !rclAbierta(f) },
+  { key: 'todas', icon: '🗂️', label: 'Todas', ayuda: 'Desde la primera', fn: () => true },
+];
+const rclDias = (ts) => Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 86400000));
+const rclHace = (ts) => { const d = rclDias(ts); return d === 0 ? 'hoy' : d === 1 ? 'hace 1 día' : `hace ${d} días`; };
 
 async function refrescarReclamaciones(rebuild = true) {
   if (!isSeguridadVial()) { RCL_PEND = 0; return; }
@@ -1971,58 +1990,188 @@ async function rclCargarLista() {
   refrescarReclamaciones();
 }
 
+// Las filas de la vista elegida, con la búsqueda aplicada
+function rclFiltradas() {
+  const v = RCL_VISTAS.find((x) => x.key === _rcl.vista) || RCL_VISTAS[0];
+  let filas = _rcl.filas.filter(v.fn);
+  const q = _rcl.q.trim().toLowerCase();
+  if (q) filas = filas.filter((f) => [f.radicado, f.placa_afectada, f.bus, f.bus_placa, f.reclamante_nombre, f.reclamante_doc]
+    .some((x) => String(x || '').toLowerCase().includes(q)));
+  return filas;
+}
+
+// El mapa de documentos de una fila: un cuadrito por requisito que aplica, del color de su estado
+function rclMapaDocs(f) {
+  const req = f.requisitos || {};
+  return '<div class="rcl-dots">' + Object.keys(RCL_CORTO).filter((k) => req[k] && req[k] !== 'NO_APLICA')
+    .map((k) => `<i class="rcl-dot d-${req[k].toLowerCase()}" title="${esc(RCL_CORTO[k])}: ${esc((RCL_REQ[req[k]] || [, req[k]])[1])}"></i>`)
+    .join('') + '</div>';
+}
+
 function rclPintarLista() {
   const body = rclModal().querySelector('.rcl-body');
   const todas = _rcl.filas;
-  const cuenta = {
-    revisar: todas.filter(rclPorRevisar).length,
-    abiertas: todas.filter((f) => RCL_ABIERTAS.includes(f.estado)).length,
-    cerradas: todas.filter((f) => !RCL_ABIERTAS.includes(f.estado)).length,
-    todas: todas.length,
-  };
-  let filas = _rcl.vista === 'revisar' ? todas.filter(rclPorRevisar)
-    : _rcl.vista === 'abiertas' ? todas.filter((f) => RCL_ABIERTAS.includes(f.estado))
-      : _rcl.vista === 'cerradas' ? todas.filter((f) => !RCL_ABIERTAS.includes(f.estado)) : todas;
-  const q = _rcl.q.trim().toLowerCase();
-  if (q) filas = filas.filter((f) => [f.radicado, f.placa_afectada, f.bus, f.bus_placa, f.reclamante_nombre]
-    .some((v) => String(v || '').toLowerCase().includes(q)));
+  const filas = rclFiltradas();
+  const vista = RCL_VISTAS.find((x) => x.key === _rcl.vista) || RCL_VISTAS[0];
   const enlace = new URL('reclamacion.html', location.href).href;
   const msg = 'Para radicar la reclamación por los daños a su vehículo, entre a este enlace y suba allí los documentos: ' + enlace;
-  const est = (k) => todas.filter((f) => f.estado === k).length;
+  const valor = filas.reduce((s, f) => s + (Number(f.valor_estimado) || 0), 0);
 
   body.innerHTML = `
     <div class="rcl-enlace">🔗 <span>Enlace para el reclamante: <b>${esc(enlace)}</b></span>
       <button type="button" class="btn btn-sm" data-copiar="${esc(enlace)}">Copiar</button>
       <a class="btn btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">💬 WhatsApp</a></div>
-    <div class="pp-tarjetas">
-      <div class="pp-card ${cuenta.revisar ? 'mal' : 'ok'}"><b>${cuenta.revisar}</b><span>Por revisar</span></div>
-      <div class="pp-card"><b>${est('INCOMPLETA')}</b><span>Esperando documentos</span></div>
-      <div class="pp-card"><b>${est('EN ESTUDIO')}</b><span>En estudio</span></div>
-      <div class="pp-card"><b>${todas.length}</b><span>Total</span></div>
+    <div class="rcl-kpis">
+      ${RCL_VISTAS.map((v) => {
+        const n = todas.filter(v.fn).length;
+        const alerta = (v.key === 'revisar' || v.key === 'nuevas') && n;
+        return `<button type="button" class="rcl-kpi${_rcl.vista === v.key ? ' on' : ''}${alerta ? ' alerta' : ''}" data-vista="${v.key}">
+          <span class="rcl-kpi-ic">${v.icon}</span><b>${n}</b><span class="rcl-kpi-t">${v.label}</span><small>${v.ayuda}</small></button>`;
+      }).join('')}
     </div>
     <div class="rcl-filtros">
-      ${RCL_VISTAS.map((v) => `<button type="button" class="btn btn-sm ${_rcl.vista === v.key ? 'btn-primary' : ''}" data-vista="${v.key}">${v.label} <b>${cuenta[v.key] || ''}</b></button>`).join('')}
-      <input type="search" id="rcl-q" placeholder="Buscar radicado, placa, bus o nombre" value="${esc(_rcl.q)}" />
+      <span class="rcl-vista">${vista.icon} <b>${vista.label}</b> · ${filas.length} ${filas.length === 1 ? 'reclamación' : 'reclamaciones'}${valor ? ` · reclaman ${esc('$ ' + valor.toLocaleString('es-CO'))}` : ''}</span>
+      <input type="search" id="rcl-q" placeholder="Buscar radicado, placa, bus, nombre o cédula" value="${esc(_rcl.q)}" />
+      <button type="button" class="btn btn-sm" data-excel ${filas.length ? '' : 'disabled'}>⬇️ Excel</button>
     </div>
     ${filas.length ? `<div class="rcl-tabla-wrap"><table class="pp-tabla rcl-tabla"><thead><tr>
-        <th>Radicado</th><th>Recibida</th><th>Accidente</th><th>Vehículo</th><th>Bus</th><th>Reclamante</th><th>Documentos</th><th>Estado</th><th></th></tr></thead><tbody>
+        <th>Radicado</th><th>Recibida</th><th>Accidente</th><th>Vehículo · bus</th><th>Reclamante</th><th>Documentos</th><th>Estado</th><th>Última novedad</th><th></th></tr></thead><tbody>
       ${filas.map((f) => {
         const c = f.conteo || {}, pct = c.obligatorios ? Math.round((c.listos / c.obligatorios) * 100) : 0;
         const [cls, txt] = RCL_ESTADOS[f.estado] || ['chip-gray', f.estado];
+        const notas = [
+          c.faltan ? `<span class="rcl-n mal">Faltan ${c.faltan}</span>` : '<span class="rcl-n ok">✓ Completos</span>',
+          c.por_revisar ? `<span class="rcl-n rev">${c.por_revisar} por revisar</span>` : '',
+          c.rechazados ? `<span class="rcl-n mal">${c.rechazados} rechazado${c.rechazados === 1 ? '' : 's'}</span>` : '',
+          f.docs_despues ? `<span class="rcl-n info" title="Los subió por Consultar o completar">📎 ${f.docs_despues} agregado${f.docs_despues === 1 ? '' : 's'} después</span>` : '',
+        ].filter(Boolean).join(' ');
         return `<tr data-abrir="${f.id}" class="rcl-fila">
-          <td><b>${esc(f.radicado)}</b>${rclPorRevisar(f) ? ' <span class="rcl-punto" title="Por revisar"></span>' : ''}</td>
-          <td>${esc(fmtFechaHora(f.creado_en))}</td>
+          <td><b>${esc(f.radicado)}</b>${rclPorRevisar(f) ? ' <span class="rcl-punto" title="Por revisar"></span>' : ''}
+            ${f.estado === 'RECIBIDA' && !f.gestionada ? '<br><span class="rcl-n nueva">🆕 Nueva</span>' : ''}</td>
+          <td>${esc(fmt(String(f.creado_en).slice(0, 10)))}<br><small>${esc(rclHace(f.creado_en))}</small></td>
           <td>${esc(fmt(f.fecha_siniestro))}</td>
-          <td><b>${esc(f.placa_afectada)}</b></td>
-          <td>${esc(f.bus || '')}${f.bus_placa ? ` <span class="pp-pla">${esc(f.bus_placa)}</span>` : ''}</td>
-          <td>${esc(f.reclamante_nombre || '')}${f.es_propietario ? '' : ' <span class="pp-pla">apoderado</span>'}</td>
-          <td><div class="rcl-mini"><i style="width:${pct}%"></i></div><small>${c.listos || 0}/${c.obligatorios || 0}${c.rechazados ? ` · ${c.rechazados} rechazado${c.rechazados === 1 ? '' : 's'}` : ''}</small></td>
+          <td><b>${esc(f.placa_afectada)}</b><br><small>Bus ${esc(f.bus || '—')}${f.bus_placa ? ' · ' + esc(f.bus_placa) : ''}</small></td>
+          <td>${esc(f.reclamante_nombre || '')}${f.es_propietario ? '' : '<br><small>apoderado</small>'}</td>
+          <td class="rcl-td-docs"><div class="rcl-mini"><i style="width:${pct}%"></i></div>
+            <small>${c.listos || 0} de ${c.obligatorios || 0} obligatorios · ${f.n_docs || 0} archivo${f.n_docs === 1 ? '' : 's'}</small>
+            ${rclMapaDocs(f)}<div class="rcl-notas">${notas}</div></td>
           <td><span class="chip ${cls}">${esc(txt)}</span></td>
+          <td><small>${esc(fmtFechaHora(f.actualizado_en))}</small></td>
           <td><button type="button" class="btn btn-sm" data-abrir="${f.id}">Abrir</button></td></tr>`;
-      }).join('')}</tbody></table></div>`
-    : `<div class="cump-empty">${_rcl.vista === 'revisar' ? 'No hay reclamaciones por revisar. 👏' : 'No hay reclamaciones en esta vista.'}</div>`}`;
+      }).join('')}</tbody></table></div>
+      <div class="rcl-leyenda"><i class="rcl-dot d-aceptado"></i> Aceptado <i class="rcl-dot d-recibido"></i> Por revisar
+        <i class="rcl-dot d-falta"></i> Falta <i class="rcl-dot d-rechazado"></i> Rechazado <i class="rcl-dot d-opcional"></i> Si aplica
+        · pasa el mouse por un cuadrito para ver qué documento es</div>`
+    : `<div class="cump-empty">${_rcl.vista === 'revisar' || _rcl.vista === 'nuevas' ? 'No hay reclamaciones por revisar. 👏' : 'No hay reclamaciones en esta vista.'}</div>`}`;
   const inp = $('rcl-q');
   inp.addEventListener('input', () => { _rcl.q = inp.value; rclPintarLista(); const i = $('rcl-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); });
+}
+
+// Excel de la vista que se está viendo: todos los datos y una columna por documento
+async function rclExcel() {
+  const filas = rclFiltradas();
+  if (!filas.length) return;
+  const vista = RCL_VISTAS.find((x) => x.key === _rcl.vista) || RCL_VISTAS[0];
+  const reqTxt = (e) => (e ? (RCL_REQ[e] || [, e])[1] : '');
+  const sn = (b) => (b === true ? 'Sí' : b === false ? 'No' : '');
+  const cols = [
+    ['Radicado', (f) => f.radicado], ['Estado', (f) => (RCL_ESTADOS[f.estado] || [, f.estado])[1]],
+    ['Recibida', (f) => f.creado_en, true], ['Días desde que llegó', (f) => rclDias(f.creado_en)],
+    ['Fecha del accidente', (f) => f.fecha_siniestro, true], ['Hora', (f) => String(f.hora_siniestro || '').slice(0, 5)],
+    ['Lugar', (f) => f.lugar], ['Vehículo afectado', (f) => f.placa_afectada], ['Bus', (f) => f.bus], ['Placa del bus', (f) => f.bus_placa],
+    ['Audiencia en Movilidad', (f) => ({ SI: 'Sí', NO: 'No', NO_SE: 'No sabe' }[f.audiencia] || f.audiencia)],
+    ['Cómo pasó', (f) => f.relato], ['Reclamante', (f) => f.reclamante_nombre], ['Cédula / NIT', (f) => f.reclamante_doc],
+    ['Calidad', (f) => (f.es_propietario ? 'Propietario' : 'Apoderado')], ['Propietario', (f) => f.propietario_nombre],
+    ['Teléfono', (f) => f.reclamante_telefono], ['Correo', (f) => f.reclamante_correo], ['Dirección', (f) => f.reclamante_direccion],
+    ['Quién manejaba', (f) => (f.conductor_es_propietario ? 'El propietario' : (f.conductor_nombre || 'Otra persona'))],
+    ['Pretensiones', (f) => f.pretensiones], ['Valor que reclama', (f) => (f.valor_estimado == null ? '' : Number(f.valor_estimado))],
+    ['¿Ya reparó?', (f) => sn(f.reparado)], ['¿Tiene seguro?', (f) => sn(f.tiene_seguro)], ['Aseguradora', (f) => f.aseguradora],
+    ['Cuenta para el pago', (f) => ({ PROPIETARIO: 'Del propietario', RECLAMANTE: 'De quien reclama', OTRA: 'De otra persona' }[f.cuenta_de] || f.cuenta_de)],
+    ['Obligatorios', (f) => f.conteo?.obligatorios ?? ''], ['Entregados', (f) => f.conteo?.listos ?? ''], ['Faltan', (f) => f.conteo?.faltan ?? ''],
+    ['Por revisar', (f) => f.conteo?.por_revisar ?? ''], ['Rechazados', (f) => f.conteo?.rechazados ?? ''],
+    ['Archivos', (f) => f.n_docs ?? ''], ['Agregados después', (f) => f.docs_despues ?? ''],
+    ...Object.keys(RCL_CORTO).map((k) => ['Doc: ' + RCL_CORTO[k], (f) => reqTxt((f.requisitos || {})[k])]),
+    ['Siniestro asociado', (f) => (f.siniestro_key ? 'Sí' : 'No')], ['Mensaje al reclamante', (f) => f.observacion_publica],
+    ['Última novedad', (f) => f.actualizado_en, true],
+  ];
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const aoa = [cols.map((c) => c[0]), ...filas.map((f) => cols.map((c) => { const v = c[1](f); return v == null ? '' : v; }))];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    filas.forEach((f, ri) => cols.forEach((c, ci) => {
+      if (!c[2]) return;
+      const fx = celdaFechaXlsx(c[1](f));
+      if (fx) ws[XLSX.utils.encode_cell({ r: ri + 1, c: ci })] = fx;
+    }));
+    ws['!cols'] = cols.map((c) => ({ wch: Math.min(40, Math.max(10, c[0].length + 2)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Reclamaciones');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = `Reclamaciones_${vista.label.replace(/\s+/g, '_')}_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${filas.length} reclamación(es).`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e), 'err');
+  }
+}
+
+// El expediente completo de una reclamación en un .zip: una carpeta por documento (numerada como
+// el instructivo) y un resumen con los datos, el estado de cada documento y el historial.
+async function rclExpediente(btn) {
+  const f = _rcl.ficha, r = f.reclamacion;
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Armando el expediente…';
+  try {
+    const { data, error } = await sb.from('reclamacion_docs').select('id,requisito,nombre,archivo,estado,motivo_rechazo,creado_en')
+      .eq('reclamacion_id', r.id).order('id');
+    if (error) throw error;
+    const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+    const zip = new JSZip();
+    const limpio = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const req = Object.fromEntries((f.checklist || []).map((q) => [q.codigo, q]));
+    const usados = {};
+    (data || []).forEach((d) => {
+      const q = req[d.requisito] || { num: 0, titulo: d.requisito };
+      const carpeta = `${String(q.num).padStart(2, '0')} ${limpio(q.titulo)}`;
+      usados[carpeta] = (usados[carpeta] || 0) + 1;
+      const nombre = `${usados[carpeta]}${d.estado === 'RECHAZADO' ? ' (RECHAZADO)' : ''} - ${limpio(d.nombre || 'archivo')}`;
+      const b64 = String(d.archivo || '').split(',')[1] || '';
+      zip.file(`${carpeta}/${nombre}`, b64, { base64: true });
+    });
+    const sn = (b) => (b === true ? 'Sí' : b === false ? 'No' : '');
+    const lin = [
+      `RECLAMACIÓN ${r.radicado}`, `Estado: ${(RCL_ESTADOS[r.estado] || [, r.estado])[1]}`, `Recibida: ${fmtFechaHora(r.creado_en)}`, '',
+      'EL ACCIDENTE', `Fecha: ${fmt(r.fecha_siniestro)}${r.hora_siniestro ? ' ' + String(r.hora_siniestro).slice(0, 5) : ''}`,
+      `Lugar: ${r.lugar || ''}`, `Bus: ${[r.bus, r.bus_placa].filter(Boolean).join(' · ')}`, `Vehículo afectado: ${r.placa_afectada}`,
+      `Audiencia en Movilidad: ${({ SI: 'Sí', NO: 'No', NO_SE: 'No sabe' })[r.audiencia] || r.audiencia}`, `Cómo pasó: ${r.relato}`, '',
+      'QUIÉN RECLAMA', `Nombre: ${r.reclamante_nombre}`, `Cédula / NIT: ${r.reclamante_doc}`,
+      `Calidad: ${r.es_propietario ? 'Propietario' : 'Apoderado de ' + (r.propietario_nombre || '')}`,
+      `Teléfono: ${r.reclamante_telefono}`, `Correo: ${r.reclamante_correo || ''}`, `Dirección: ${r.reclamante_direccion}`,
+      `Quién manejaba: ${r.conductor_es_propietario ? 'El propietario' : (r.conductor_nombre || 'Otra persona')}`, '',
+      'QUÉ PIDE', `Pretensiones: ${r.pretensiones}`, `Valor: ${r.valor_estimado == null ? '' : '$ ' + Number(r.valor_estimado).toLocaleString('es-CO')}`,
+      `¿Ya reparó?: ${sn(r.reparado)}`, `¿Tiene seguro?: ${sn(r.tiene_seguro)}${r.aseguradora ? ' (' + r.aseguradora + ')' : ''}`, '',
+      'DOCUMENTOS',
+      ...(f.checklist || []).filter((q) => q.aplica !== 'NO_APLICA' || (q.docs || []).length)
+        .map((q) => `${String(q.num).padStart(2, '0')} ${q.titulo}: ${(RCL_REQ[q.estado] || [, q.estado])[1]}${(q.docs || []).length ? ` (${q.docs.length} archivo${q.docs.length === 1 ? '' : 's'})` : ''}`),
+      '', 'HISTORIAL',
+      ...(f.gestion || []).slice().reverse().map((g) => `${fmtFechaHora(g.creado_en)} · ${g.accion}${g.texto ? ' · ' + g.texto : ''}${g.usuario ? ' · ' + g.usuario : ''}`),
+    ];
+    zip.file('00 Resumen de la reclamación.txt', lin.join('\r\n'));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${r.radicado}_expediente.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Expediente listo: ${(data || []).length} archivo(s).`, 'ok');
+  } catch (e) {
+    toast('No se pudo armar el expediente: ' + String(e.message || e), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = prev;
+  }
 }
 
 async function rclAbrir(id) {
@@ -2062,7 +2211,8 @@ function rclPintarFicha() {
     <div class="rcl-top">
       <button type="button" class="btn btn-sm" data-volver>← Lista</button>
       <h4>${esc(r.radicado)}</h4><span class="chip ${cls}">${esc(txt)}</span>
-      <span class="rcl-sub">Recibida ${esc(fmtFechaHora(r.creado_en))}</span>
+      <span class="rcl-sub">Recibida ${esc(fmtFechaHora(r.creado_en))} · ${esc(rclHace(r.creado_en))}</span>
+      <button type="button" class="btn btn-sm rcl-zip" data-expediente>📦 Descargar expediente (.zip)</button>
     </div>
     <div class="pp-tarjetas">
       <div class="pp-card ${c.faltan ? 'mal' : 'ok'}"><b>${c.listos || 0}/${c.obligatorios || 0}</b><span>Obligatorios entregados</span></div>
@@ -2108,7 +2258,8 @@ function rclPintarFicha() {
           ${(q.docs || []).map((x) => {
             const [dc, dt] = RCL_DOC[x.estado] || ['chip-gray', x.estado];
             return `<div class="rcl-doc">
-              <span class="rcl-doc-n">📄 ${esc(x.nombre || 'archivo')} <small>${Math.round((x.bytes || 0) / 1370)} KB · ${esc(fmtFechaHora(x.creado_en))}</small>
+              <span class="rcl-doc-n">📄 ${esc(x.nombre || 'archivo')} <small>${Math.round((x.bytes || 0) / 1370)} KB · ${esc(fmtFechaHora(x.creado_en))}${
+                new Date(x.creado_en) - new Date(r.creado_en) > 1800000 ? ' · <b class="rcl-despues">📎 agregado después</b>' : ''}</small>
                 ${x.estado === 'RECHAZADO' && x.motivo ? `<small class="rcl-motivo">Motivo: ${esc(x.motivo)}</small>` : ''}</span>
               <span class="chip ${dc}">${dt}</span>
               <span class="rcl-doc-acc">
@@ -2214,6 +2365,8 @@ async function rclClick(e) {
   const el = (sel) => t.closest(sel);
   let b;
   if ((b = el('[data-vista]'))) { _rcl.vista = b.dataset.vista; rclPintarLista(); return; }
+  if (el('[data-excel]')) { rclExcel(); return; }
+  if ((b = el('[data-expediente]'))) { rclExpediente(b); return; }
   if ((b = el('[data-copiar]'))) {
     try { await navigator.clipboard.writeText(b.dataset.copiar); toast('Enlace copiado'); } catch { toast(b.dataset.copiar); }
     return;
