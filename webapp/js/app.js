@@ -85,6 +85,9 @@ function isSeguridadVial() { return isAdmin() || (isDespachador() && CORREO_SEGU
 const TABLAS_VIAL = ['siniestros', 'eventos_bus', 'preoperacionales'];
 // Siniestros y sus estadísticas: Talento humano (admin + Gestión Humana) y seguridad vial
 function puedeVerVial() { return isTalentoHumano() || isSeguridadVial(); }
+// Operaciones en "📈 Cumplimiento y análisis": seguridad vial NO lo ve (pedido del 04/11/2026).
+// Es es_operaciones_analisis() en la base (sql/159): cambiar los dos juntos.
+function isOperacionesAnalisis() { return isOperaciones() && !(isDespachador() && CORREO_SEGURIDAD_VIAL.test(miCorreo())); }
 // Subadministrador (operaciones): base despachador + gestión acotada (usuarios no-admin,
 // parque completo, pantallas de análisis). Equivale a operaciones o admin.
 function isSubadmin() { return isAdmin() || isOperaciones(); }
@@ -658,18 +661,18 @@ function buildSidebar() {
 
   // 📈 Cumplimiento y análisis
   const gAn = addNavGroup(nav, '📈', 'Cumplimiento y análisis', 'analisis');
-  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gAn, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
+  if (isAdmin() || isAuditor() || isOperacionesAnalisis()) addNavAction(gAn, '📈', 'Cumplimiento', openCumplimiento, 'nav-cump');
   if (isAdmin() || isAuditor()) addNavAction(gAn, '🕒', 'Cumplimiento por puntos', openMalla, 'nav-malla');
-  if (isAdmin() || isAuditor() || isOperaciones()) addNavAction(gAn, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
-  if (isAdmin() || isAuditor() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
+  if (isAdmin() || isAuditor() || isOperacionesAnalisis()) addNavAction(gAn, '⏱️', 'Frecuencia por franja', openFrecuencia, 'nav-frec');
+  if (isAdmin() || isAuditor() || isAfiliado() || isOperacionesAnalisis()) addNavAction(gAn, '🚐', 'Productividad por carro', openProductividad, 'nav-prod');
   if (isAdmin() || isAuditor() || isAfiliado()) addNavAction(gAn, '🕰️', 'Jornada del carro', openJornada, 'nav-jor');
   if (isAfiliado() || isAuditor() || isAdmin()) addNavAction(gAn, '🔎', 'Eventos del bus', abrirEventosMovil, 'nav-eventos');
-  if (isAdmin() || isAfiliado() || isOperaciones()) addNavAction(gAn, '🏆', 'Top de movilización', openTop, 'nav-top');
+  if (isAdmin() || isAfiliado() || isOperacionesAnalisis()) addNavAction(gAn, '🏆', 'Top de movilización', openTop, 'nav-top');
   if (isAdmin() || isAuditor() || esDespachadorLaureles()) addNavAction(gAn, '🛂', 'Control Laureles', () => openLaureles('control'), 'nav-laur');
   if (isAdmin() || isAuditor()) addNavAction(gAn, '📊', 'Cumplimiento Laureles', () => openLaureles('cumplimiento'), 'nav-laurcump');
   if (puedeVerOriental()) addNavAction(gAn, '🛂', 'Control Av. Oriental', () => openOriental('control'), 'nav-or');
   if (puedeCumplimientoOriental()) addNavAction(gAn, '📊', 'Cumplimiento Av. Oriental', () => openOriental('cumplimiento'), 'nav-orcump');
-  if (isAdmin() || isAfiliado() || isOperaciones() || isAuditor()) addNavAction(gAn, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
+  if (isAdmin() || isAfiliado() || isOperacionesAnalisis() || isAuditor()) addNavAction(gAn, '🧑‍🤝‍🧑', 'Pasajeros', openPasajeros, 'nav-pasajeros');
 
   // 🚫 Restricciones y documentos (tabla del módulo + acciones)
   const gRe = addNavGroup(nav, '🚫', 'Restricciones y documentos', 'restr');
@@ -5288,7 +5291,7 @@ async function descargarFallosTabla() {
   }
 }
 async function openCumplimiento() {
-  if (!(isAdmin() || isAuditor() || isOperaciones())) return;
+  if (!(isAdmin() || isAuditor() || isOperacionesAnalisis())) return;
   const tablas = cumpTablas();
   $('cump-puesto').innerHTML = [['todas', 'Todas'], ...tablas.map((t) => [t, TABLES[t].label || t])]
     .map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
@@ -6445,8 +6448,8 @@ const OR_GRACIA = 3;   // minutos de gracia para considerar "a tiempo" el paso
 
 // El despachador de ese puesto (igual que en Laureles, por el nombre del puesto asignado).
 function esDespachadorOriental() { return isDespachador() && /oriental/.test(normRuta(CTX?.puesto || '')); }
-function puedeVerOriental() { return isAdmin() || isAuditor() || isOperaciones() || esDespachadorOriental(); }
-function puedeCumplimientoOriental() { return isAdmin() || isAuditor() || isOperaciones(); }
+function puedeVerOriental() { return isAdmin() || isAuditor() || isOperacionesAnalisis() || esDespachadorOriental(); }
+function puedeCumplimientoOriental() { return isAdmin() || isAuditor() || isOperacionesAnalisis(); }
 
 async function openOriental(modo) {
   _orModo = (modo === 'cumplimiento') ? 'cumplimiento' : 'control';
@@ -7364,7 +7367,7 @@ $('integ-body')?.addEventListener('click', (e) => { const b = e.target.closest('
 async function openPasajeros() {
   // El monitor (auditor/control) consulta cualquier móvil de la flota, como en los eventos
   // del bus y en las tablas de puesto (sql/42); el permiso real lo da sql/125.
-  if (!isAdmin() && !isAfiliado() && !isOperaciones() && !isAuditor()) return;
+  if (!isAdmin() && !isAfiliado() && !isOperacionesAnalisis() && !isAuditor()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'pasajeros';
   cerrarRecorridoBus();
@@ -18205,7 +18208,7 @@ async function loadRutasSel() {
   return _frecRutas;
 }
 async function openFrecuencia() {
-  if (!isAdmin() && !isAuditor() && !isOperaciones()) return;
+  if (!isAdmin() && !isAuditor() && !isOperacionesAnalisis()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'frecuencia';
   cerrarRecorridoBus();
@@ -18316,7 +18319,7 @@ const PROD_EST = {
   fuera:      { ico: '🔧', lbl: 'Fuera justif.', cls: 'fuera' },
 };
 async function openProductividad() {
-  if (!isAdmin() && !isAuditor() && !isAfiliado() && !isOperaciones()) return;
+  if (!isAdmin() && !isAuditor() && !isAfiliado() && !isOperacionesAnalisis()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'productividad';
   cerrarRecorridoBus();
@@ -18667,7 +18670,7 @@ $('jor-fecha')?.addEventListener('change', () => { if ($('jor-movil').value && $
 // ── 🏆 Top de movilización: carros que más pasajeros movilizaron (semana/mes) ──
 // Admin ve toda la flota; el afiliado solo SUS carros. Datos de pasajeros_dia (top_movilizacion).
 async function openTop() {
-  if (!isAdmin() && !isAfiliado() && !isOperaciones()) return;
+  if (!isAdmin() && !isAfiliado() && !isOperacionesAnalisis()) return;
   if (mapaFlotante) cerrarMapaFlotante();
   currentView = 'top';
   cerrarRecorridoBus();
