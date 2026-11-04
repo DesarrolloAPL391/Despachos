@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Reclamación por daños · Autobuses El Poblado</title>
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO para reclamar por daños a un vehículo en un accidente con un bus (sql/160).
+    Reemplaza el "mándanos 11 documentos al correo" del instructivo de seguridad vial: cada
+    requisito tiene su casilla, la lista se ajusta sola al caso (IPAT solo antes del 14/07/2022,
+    poder solo si no reclama el propietario…) y lo que falte se completa después con el radicado.
+
+    - Los requisitos y sus reglas viven en la base (_rcl_reglas, sql/160); REQUISITOS y reglas()
+      de aquí son su copia para pintar el formulario. Si cambia uno, cambiar el otro.
+    - Primero se radica (sin archivos) y después se sube cada archivo por separado con el token
+      que devuelve el radicado: 15 PDF en un solo envío no pasan.
+    - Recibir los documentos NO es aceptar responsabilidad: el reclamante lo acepta antes de enviar.
+    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA: no radica ni sube nada.
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 680px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; }
+    h2 { font-size: 18px; margin: 0 0 4px; display: flex; gap: 8px; align-items: center; outline: none; }
+    h2 .num { background: var(--rojo); color: #fff; width: 26px; height: 26px; border-radius: 50%; font-size: 14px; display: grid; place-items: center; flex: none; }
+    h3 { font-size: 15px; margin: 18px 0 8px; }
+    .sub { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; line-height: 1.45; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .full { grid-column: 1 / -1; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    label, .lbl { display: block; font-size: 13px; font-weight: 600; color: #333; }
+    label > input, label > select, label > textarea { display: block; margin-top: 5px; }
+    .req-m { color: var(--rojo); }
+    .opc { color: var(--muted); font-weight: 400; }
+    input, select, textarea { width: 100%; min-width: 0; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
+    .grid > label, .grid > div, .card, main { min-width: 0; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
+    textarea { min-height: 120px; resize: vertical; }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12px; display: block; margin-top: 4px; line-height: 1.4; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); }
+    .btn:disabled { opacity: .6; cursor: wait; }
+    .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
+    .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .tabs { display: flex; gap: 8px; margin: 0 0 14px; }
+    .tabs button { flex: 1; border: 0; background: rgba(255,255,255,.75); color: #7a1b20; border-radius: 12px; padding: 11px; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
+    .tabs button.on { background: #fff; color: var(--rojo); box-shadow: 0 6px 16px rgba(237,28,36,.16); }
+    .prueba { background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3; border-radius: 12px; padding: 10px 12px; font-size: 13.5px; margin-bottom: 14px; }
+    .porque { display: flex; gap: 10px; background: #fff8f0; border: 1px solid #fde0c2; border-radius: 12px; padding: 11px 12px; font-size: 13.5px; line-height: 1.45; color: #5b3a12; margin: 0 0 14px; }
+    .porque > i { font-style: normal; font-size: 18px; line-height: 1.2; flex: none; }
+    .porque b { color: #3d2507; }
+    .legal { background: #f5f5f4; border: 1px solid #e7e5e4; border-radius: 12px; padding: 11px 12px; font-size: 13px; line-height: 1.45; color: #44403c; margin: 12px 0 0; }
+    .link { border: 0; background: none; color: var(--rojo); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: underline; padding: 12px 0 0; display: block; margin: 0 auto; }
+
+    /* Avance */
+    .avance { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 14px 16px 12px; margin-bottom: 12px; }
+    .av-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+    .av-top b { color: var(--rojo); }
+    .av-top span { color: var(--muted); }
+    .av-barra { height: 8px; border-radius: 99px; background: #f3e4e5; overflow: hidden; margin: 8px 0 10px; }
+    .av-barra i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ED1C24, #ff6a5f); border-radius: 99px; transition: width .35s ease; }
+    .av-pasos { list-style: none; display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 0; padding: 0; }
+    .av-pasos button { width: 100%; border: 0; background: none; padding: 2px 0; font: inherit; font-size: 11px; color: var(--muted); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; line-height: 1.2; }
+    .av-pasos button:disabled { cursor: default; opacity: .55; }
+    .av-pasos button span { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: #f3e4e5; color: #9b6b6e; }
+    .av-pasos .hecho span { background: #e7f6e9; color: #14532d; }
+    .av-pasos .aqui span { background: var(--rojo); color: #fff; box-shadow: 0 0 0 4px rgba(237,28,36,.15); }
+    .av-pasos .aqui button { color: var(--txt); font-weight: 700; }
+    .av-pasos em { font-style: normal; }
+    @media (max-width: 520px) { .av-pasos em { display: none; } }
+
+    .paso.entra { animation: entra .28s ease both; }
+    @keyframes entra { from { opacity: 0; transform: translateX(var(--dx, 18px)); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .paso.entra { animation: none; } .av-barra i { transition: none; } }
+    .nav { position: sticky; bottom: 0; display: flex; gap: 10px; padding: 12px 0 14px; background: linear-gradient(rgba(246,245,245,0), var(--fondo) 35%); }
+    .nav .btn { margin: 0; }
+    .nav #atras { flex: 0 0 34%; }
+
+    /* Inicio */
+    .como { list-style: none; margin: 4px 0 14px; padding: 0; }
+    .como li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid #f3ecec; }
+    .como li:last-child { border-bottom: 0; }
+    .como i { font-style: normal; width: 38px; height: 38px; border-radius: 12px; background: #fff1f1; display: grid; place-items: center; font-size: 19px; flex: none; }
+    .como b { display: block; font-size: 14.5px; }
+    .como span { color: var(--muted); font-size: 13px; line-height: 1.4; }
+    details.tener { border: 1px solid var(--borde); border-radius: 12px; padding: 0 14px; margin: 0 0 14px; background: #fcfcfc; }
+    details.tener summary { cursor: pointer; padding: 12px 0; font-weight: 700; font-size: 14px; }
+    details.tener ol { margin: 0 0 12px; padding-left: 22px; font-size: 13.5px; line-height: 1.5; color: #444; }
+
+    /* Preguntas de sí/no: botones grandes en vez de un selector */
+    .opciones { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .opciones button { flex: 1 1 140px; border: 1px solid var(--borde); background: #fff; border-radius: 12px; padding: 11px 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: center; }
+    .opciones button.on { border-color: var(--rojo); background: #fff5f5; color: var(--rojo); box-shadow: 0 0 0 2px rgba(237,28,36,.12); }
+    .pregunta { margin-bottom: 14px; }
+    .sub-bloque { border-left: 3px solid #f7cdd0; padding: 2px 0 2px 12px; margin: 10px 0 0; }
+    .placa { text-transform: uppercase; font-weight: 800; letter-spacing: .08em; }
+    .bus-box { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 460px) { .bus-box { grid-template-columns: 1fr; } }
+    .medidor { height: 6px; border-radius: 99px; background: #f3e4e5; overflow: hidden; margin-top: 8px; }
+    .medidor i { display: block; height: 100%; width: 0; background: #f59e0b; transition: width .2s ease; }
+    .med.listo .medidor i { background: var(--ok); }
+    .med-pie { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+    .med.listo .med-pie { color: var(--ok); font-weight: 600; }
+    .chips-txt { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 0; }
+    .chips-txt button { border: 1px dashed #e7b9bc; background: #fffafa; border-radius: 99px; padding: 6px 11px; font: inherit; font-size: 12.5px; cursor: pointer; color: #7a1b20; }
+
+    /* Paso 4: la lista de chequeo */
+    .req-prog { position: sticky; top: 0; z-index: 2; background: #fff; padding: 10px 0 12px; border-bottom: 1px solid #f3ecec; margin-bottom: 6px; }
+    .req-prog .fila { display: flex; justify-content: space-between; font-size: 13.5px; }
+    .req-prog .fila b { color: var(--txt); }
+    .req-prog .barra { height: 8px; border-radius: 99px; background: #f3e4e5; overflow: hidden; margin-top: 7px; }
+    .req-prog .barra i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .3s ease; }
+    .req { border: 1px solid var(--borde); border-radius: 14px; padding: 12px; margin-top: 10px; }
+    .req.listo { border-color: #bfe3c6; background: #fbfefb; }
+    .req-top { display: flex; gap: 10px; align-items: flex-start; }
+    .req-ic { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 800; flex: none; background: #f3e4e5; color: #9b6b6e; }
+    .req.listo .req-ic { background: #e7f6e9; color: #14532d; }
+    .req-tx { flex: 1; min-width: 0; }
+    .req-tx b { display: block; font-size: 14.5px; line-height: 1.3; }
+    .req-tx span { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
+    .tag { font-size: 11px; font-weight: 800; border-radius: 99px; padding: 3px 8px; flex: none; white-space: nowrap; }
+    .tag-ob { background: #fff1f1; color: #b3121b; }
+    .tag-op { background: #f1f5f9; color: #475569; }
+    .tag-ok { background: #e7f6e9; color: #14532d; }
+    .tag-mal { background: #fff1f1; color: #b3121b; }
+    .tag-rev { background: #fff7e6; color: #8a5a00; }
+    .arch { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--borde); border-radius: 10px; padding: 7px 10px; margin-top: 8px; font-size: 13px; background: #fff; }
+    .arch > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .arch button { border: 0; background: none; font-size: 17px; cursor: pointer; color: #b3121b; flex: none; }
+    .arch.mal { border-color: #ffc9cc; background: #fff7f7; }
+    .arch small { display: block; color: #b3121b; white-space: normal; }
+    .req-add { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; border: 1px dashed #d8b4b7; border-radius: 10px; padding: 9px 12px; font-size: 13.5px; font-weight: 700; color: #7a1b20; background: #fffafa; cursor: pointer; }
+    .req-add input { display: none; }
+    .req-acc { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .req-acc .link { padding: 10px 0 0; margin: 0; font-size: 13.5px; }
+    .no-aplica { color: var(--muted); font-size: 12.5px; margin-top: 14px; line-height: 1.45; }
+
+    /* Paso 5 */
+    .res-fila { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f3ecec; font-size: 14px; line-height: 1.45; }
+    .res-fila:last-of-type { border-bottom: 0; }
+    .res-fila > div { min-width: 0; overflow-wrap: anywhere; }
+    .res-t { display: block; font-size: 12px; font-weight: 800; letter-spacing: .03em; color: var(--muted); text-transform: uppercase; margin-bottom: 2px; }
+    .res-fila button { border: 0; background: none; color: var(--rojo); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: underline; flex: none; padding: 0; }
+    .chk { display: flex; gap: 10px; align-items: flex-start; background: #fafafa; border: 1px solid var(--borde); border-radius: 12px; padding: 12px; font-size: 13.5px; margin-top: 10px; line-height: 1.45; cursor: pointer; font-weight: 400; }
+    .chk input { width: 20px; height: 20px; flex: none; margin-top: 1px; }
+    .aviso { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; font-size: 13.5px; margin-top: 12px; line-height: 1.45; }
+
+    /* Subiendo */
+    .subiendo { position: fixed; inset: 0; background: rgba(28,28,28,.55); display: grid; place-items: center; z-index: 50; padding: 16px; }
+    .subiendo .card { width: min(420px, 100%); text-align: center; }
+    .subiendo .barra { height: 10px; border-radius: 99px; background: #f3e4e5; overflow: hidden; margin: 14px 0 8px; }
+    .subiendo .barra i { display: block; height: 100%; width: 0; background: var(--rojo); transition: width .25s ease; }
+
+    /* Constancia y consulta */
+    .ok-card { text-align: center; padding: 26px 18px; }
+    .ok-card h2 { display: block; }
+    .ok-card .big { font-size: 46px; }
+    .rad { font-size: 27px; font-weight: 800; letter-spacing: .02em; color: var(--rojo); background: #fff5f5; border: 2px dashed #f2b6ba; border-radius: 14px; padding: 14px 10px; margin: 12px 0 10px; word-break: break-all; }
+    .ok-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    @media (max-width: 400px) { .ok-btns { grid-template-columns: 1fr; } }
+    .izq { text-align: left; }
+    .sigue { list-style: none; margin: 0; padding: 0; text-align: left; }
+    .sigue li { display: flex; gap: 12px; padding: 0 0 14px; position: relative; font-size: 14px; line-height: 1.45; }
+    .sigue li::before { content: ''; position: absolute; left: 18px; top: 38px; bottom: 2px; width: 2px; background: #f0e2e3; }
+    .sigue li:last-child::before { display: none; }
+    .sigue i { font-style: normal; width: 38px; height: 38px; border-radius: 50%; background: #fff1f1; display: grid; place-items: center; font-size: 17px; flex: none; position: relative; }
+    .sigue li.hecho i { background: #e7f6e9; }
+    .sigue li > div > b { display: block; }
+    .sigue span { color: var(--muted); font-size: 13px; }
+    .falta-lista { text-align: left; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; font-size: 13.5px; margin: 12px 0; line-height: 1.5; }
+    .falta-lista ul { margin: 6px 0 0; padding-left: 20px; }
+    .estado-big { display: flex; gap: 12px; align-items: center; border-radius: 14px; padding: 14px; margin: 12px 0; text-align: left; }
+    .estado-big i { font-style: normal; font-size: 26px; }
+    .estado-big b { display: block; font-size: 16px; }
+    .estado-big span { font-size: 13.5px; }
+    .e-ok { background: #e7f6e9; color: #14532d; }
+    .e-pend { background: #fff7e6; color: #8a5a00; }
+    .e-mal { background: #fff1f1; color: #8f0d14; }
+    .e-info { background: #eef4ff; color: #1e3a8a; }
+    .obs { background: #fafafa; border: 1px solid var(--borde); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; text-align: left; margin: 0 0 12px; }
+    footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 28px; line-height: 1.5; }
+    .trampa { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-192.png" alt="Autobuses El Poblado" />
+    <h1>Reclamación por daños a tu vehículo</h1>
+    <p>Si tuviste un accidente con uno de nuestros buses, aquí radicas la reclamación con sus documentos.</p>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button type="button" id="tab-rad" class="on">Radicar</button>
+      <button type="button" id="tab-con">Consultar o completar</button>
+    </div>
+    <div class="prueba" id="prueba" hidden>🧪 <b>Vista de prueba en este computador.</b> Puedes recorrer todo; al enviar no se radica ni se sube nada.</div>
+
+    <!-- ============ RADICAR, POR PASOS ============ -->
+    <div id="form-wrap">
+      <div class="avance" id="avance" hidden>
+        <div class="av-top"><b id="av-txt"></b><span id="av-falta"></span></div>
+        <div class="av-barra"><i id="av-fill"></i></div>
+        <ol class="av-pasos" id="av-pasos"></ol>
+      </div>
+
+      <!-- 0 · Inicio -->
+      <div class="card paso" data-paso="0">
+        <h2 tabindex="-1">Así funciona</h2>
+        <p class="sub">Son 5 pasos. No tienes que tener todos los documentos ahora: envías lo que tengas y el resto lo completas después con tu número de radicado.</p>
+        <ol class="como">
+          <li><i>🚧</i><div><b>1. El accidente</b><span>Cuándo y dónde fue, qué bus, la placa de tu vehículo y cómo pasó.</span></div></li>
+          <li><i>👤</i><div><b>2. Quién reclama</b><span>Tus datos de contacto y si eres el propietario del vehículo.</span></div></li>
+          <li><i>💬</i><div><b>3. Qué pides</b><span>Lo que reclamas, el valor aproximado y dónde recibirías el pago.</span></div></li>
+          <li><i>📎</i><div><b>4. Los documentos</b><span>Una lista que se arma sola según tu caso: subes cada documento en su casilla.</span></div></li>
+          <li><i>✅</i><div><b>5. Revisas y envías</b><span>Te damos un número de radicado para consultar y completar lo que falte.</span></div></li>
+        </ol>
+        <details class="tener">
+          <summary>📋 Los documentos que te vamos a pedir</summary>
+          <ol>
+            <li>Carta de reclamación con lo que pides y tus datos de contacto (te damos un modelo).</li>
+            <li>IPAT o croquis del accidente (obligatorio si fue antes del 14 de julio de 2022).</li>
+            <li>Fallo de la Secretaría de Movilidad, si hubo audiencia.</li>
+            <li>Cédula del propietario del vehículo.</li>
+            <li>Licencia de quien manejaba (y su cédula, si no es el propietario).</li>
+            <li>Tarjeta de propiedad, SOAT y revisión técnico-mecánica vigentes el día del accidente.</li>
+            <li>Poder autenticado, si quien reclama no es el propietario.</li>
+            <li>Fotos o videos de los daños.</li>
+            <li>Certificación de no reclamación de tu aseguradora (o declaración extrajuicio si no tienes).</li>
+            <li>Factura de la reparación, o cotización si aún no lo reparas.</li>
+            <li>Certificado bancario de quien recibiría el pago.</li>
+          </ol>
+        </details>
+        <button type="button" class="btn" id="empezar">Empezar</button>
+        <button type="button" class="link" id="ir-consultar">¿Ya radicaste? Consulta o completa tus documentos</button>
+        <div class="legal">Recibir estos documentos <b>no implica aceptación de responsabilidad</b> por parte de Autobuses El Poblado Laureles S.A.: el caso será estudiado por nuestros expertos.</div>
+      </div>
+
+      <!-- 1 · El accidente -->
+      <div class="card paso" data-paso="1" hidden>
+        <h2 tabindex="-1"><span class="num">1</span> El accidente</h2>
+        <p class="sub">Lo que recuerdes. Si tienes el IPAT a la mano, ahí están la fecha, la hora y las placas.</p>
+        <div class="porque"><i>💡</i><div>Con la fecha, el bus y la placa de tu vehículo <b>encontramos el reporte del accidente</b> que hizo nuestro conductor. Por eso son lo más importante de este paso.</div></div>
+        <div class="grid">
+          <label>Día del accidente <span class="req-m">*</span>
+            <input type="date" id="fecha" />
+          </label>
+          <label>Hora aproximada <span class="opc">(opcional)</span>
+            <input type="time" id="hora" />
+          </label>
+          <label class="full">Placa de tu vehículo <span class="req-m">*</span>
+            <input type="text" id="placa" class="placa" maxlength="8" placeholder="ABC123" autocomplete="off" />
+          </label>
+          <div class="full">
+            <span class="lbl">El bus <span class="req-m">*</span> <span class="opc">— el número o la placa, lo que sepas</span></span>
+            <div class="bus-box" style="margin-top:5px">
+              <label>Número del bus
+                <input type="text" id="bus" inputmode="numeric" maxlength="5" placeholder="Ej: 5633" autocomplete="off" />
+                <span class="hint">Son los 4 dígitos grandes del frente y los costados.</span>
+              </label>
+              <label>Placa del bus
+                <input type="text" id="bus-placa" class="placa" maxlength="7" placeholder="Ej: TPX123" autocomplete="off" />
+              </label>
+            </div>
+          </div>
+          <label class="full">¿Dónde fue? <span class="opc">(opcional)</span>
+            <input type="text" id="lugar" maxlength="200" placeholder="Dirección, cruce o barrio" />
+          </label>
+        </div>
+        <div class="pregunta" style="margin-top:14px">
+          <span class="lbl">¿El caso tuvo audiencia en la Secretaría de Movilidad? <span class="req-m">*</span></span>
+          <div class="opciones" data-campo="audiencia">
+            <button type="button" data-valor="SI">Sí</button>
+            <button type="button" data-valor="NO">No</button>
+            <button type="button" data-valor="NO_SE">No sé</button>
+          </div>
+          <span class="hint">Si la hubo, te vamos a pedir la copia del fallo.</span>
+        </div>
+        <label class="full">¿Cómo pasó? <span class="req-m">*</span>
+          <textarea id="relato" maxlength="4000" placeholder="Ejemplo: iba por la Avenida 80 hacia el sur y el bus cambió de carril sin mirar, me golpeó el costado derecho…"></textarea>
+        </label>
+        <div class="med" id="med-relato"><div class="medidor"><i></i></div><div class="med-pie"></div></div>
+      </div>
+
+      <!-- 2 · Quién reclama -->
+      <div class="card paso" data-paso="2" hidden>
+        <h2 tabindex="-1"><span class="num">2</span> Quién reclama</h2>
+        <p class="sub">Los datos de la persona que adelanta la reclamación.</p>
+        <div class="porque"><i>💡</i><div>Si no eres el propietario del vehículo, <b>el propietario te tiene que dar un poder autenticado</b>: es uno de los documentos que te vamos a pedir.</div></div>
+        <div class="pregunta">
+          <span class="lbl">¿Eres el propietario del vehículo? <span class="req-m">*</span></span>
+          <div class="opciones" data-campo="es_propietario">
+            <button type="button" data-valor="true">Sí, soy el propietario</button>
+            <button type="button" data-valor="false">No, reclamo en su nombre</button>
+          </div>
+          <div class="sub-bloque grid" id="bloque-propietario" hidden style="margin-top:10px">
+            <label>Nombre del propietario <span class="req-m">*</span>
+              <input type="text" id="prop-nombre" maxlength="120" />
+            </label>
+            <label>Cédula o NIT del propietario
+              <input type="text" id="prop-doc" maxlength="15" inputmode="numeric" />
+            </label>
+          </div>
+        </div>
+        <div class="grid">
+          <label class="full">Tu nombre completo <span class="req-m">*</span>
+            <input type="text" id="nombre" maxlength="120" autocomplete="name" />
+          </label>
+          <label>Tu cédula o NIT <span class="req-m">*</span>
+            <input type="text" id="doc" maxlength="15" inputmode="numeric" />
+          </label>
+          <label>Teléfono o celular <span class="req-m">*</span>
+            <input type="tel" id="telefono" maxlength="15" inputmode="numeric" autocomplete="tel" />
+          </label>
+          <label class="full">Dirección <span class="req-m">*</span>
+            <input type="text" id="direccion" maxlength="200" autocomplete="street-address" />
+          </label>
+          <label class="full">Correo <span class="opc">(recomendado)</span>
+            <input type="email" id="correo" maxlength="120" autocomplete="email" placeholder="tucorreo@ejemplo.com" />
+          </label>
+        </div>
+        <div class="pregunta" style="margin-top:14px">
+          <span class="lbl">¿Quién iba manejando tu vehículo? <span class="req-m">*</span></span>
+          <div class="opciones" data-campo="conductor_es_propietario">
+            <button type="button" data-valor="true">El propietario</button>
+            <button type="button" data-valor="false">Otra persona</button>
+          </div>
+          <div class="sub-bloque" id="bloque-conductor" hidden>
+            <label>Nombre de quien manejaba <span class="opc">(opcional)</span>
+              <input type="text" id="cond-nombre" maxlength="120" />
+            </label>
+            <span class="hint">Te vamos a pedir su licencia y su cédula.</span>
+          </div>
+        </div>
+        <div class="trampa"><label>No llenar<input type="text" id="trampa" tabindex="-1" autocomplete="off" /></label></div>
+      </div>
+
+      <!-- 3 · Qué pides -->
+      <div class="card paso" data-paso="3" hidden>
+        <h2 tabindex="-1"><span class="num">3</span> Qué pides</h2>
+        <p class="sub">Esto define qué documentos van al final.</p>
+        <div class="porque"><i>💡</i><div>Según lo que respondas te pedimos la <b>factura o la cotización</b>, la <b>certificación de tu aseguradora o una declaración extrajuicio</b>, y el <b>certificado bancario</b> de quien recibiría el pago.</div></div>
+        <label class="full">¿Qué reclamas? <span class="req-m">*</span>
+          <textarea id="pretensiones" maxlength="4000" style="min-height:100px" placeholder="Ejemplo: que se me pague la reparación del vehículo según la cotización que adjunto."></textarea>
+        </label>
+        <div class="chips-txt" id="chips-pret">
+          <button type="button">Que se me pague la reparación del vehículo.</button>
+          <button type="button">Que se me reconozcan los repuestos.</button>
+          <button type="button">Que se me pague el valor del deducible.</button>
+        </div>
+        <label style="margin-top:14px">Valor aproximado de los daños <span class="opc">(opcional)</span>
+          <input type="text" id="valor" inputmode="numeric" maxlength="16" placeholder="$ 0" />
+        </label>
+        <div class="pregunta" style="margin-top:14px">
+          <span class="lbl">¿Ya reparaste el vehículo? <span class="req-m">*</span></span>
+          <div class="opciones" data-campo="reparado">
+            <button type="button" data-valor="true">Sí, ya lo reparé</button>
+            <button type="button" data-valor="false">Todavía no</button>
+          </div>
+        </div>
+        <div class="pregunta">
+          <span class="lbl">¿Tu vehículo tiene seguro (póliza con una aseguradora)? <span class="req-m">*</span></span>
+          <div class="opciones" data-campo="tiene_seguro">
+            <button type="button" data-valor="true">Sí</button>
+            <button type="button" data-valor="false">No</button>
+          </div>
+          <div class="sub-bloque" id="bloque-seguro" hidden>
+            <label>¿Cuál aseguradora? <span class="opc">(opcional)</span>
+              <input type="text" id="aseguradora" maxlength="120" />
+            </label>
+          </div>
+        </div>
+        <div class="pregunta">
+          <span class="lbl">Si procede el pago, ¿a nombre de quién está la cuenta? <span class="req-m">*</span></span>
+          <div class="opciones" data-campo="cuenta_de">
+            <button type="button" data-valor="PROPIETARIO">Del propietario</button>
+            <button type="button" data-valor="RECLAMANTE" id="cta-reclamante">De quien reclama</button>
+            <button type="button" data-valor="OTRA">De otra persona</button>
+          </div>
+          <span class="hint" id="hint-cuenta"></span>
+        </div>
+      </div>
+
+      <!-- 4 · Documentos -->
+      <div class="card paso" data-paso="4" hidden>
+        <h2 tabindex="-1"><span class="num">4</span> Tus documentos</h2>
+        <p class="sub">Esta lista se armó con tus respuestas. Sube cada documento en su casilla: foto legible o PDF.</p>
+        <div class="req-prog" id="req-prog"></div>
+        <div id="reqs"></div>
+        <div class="no-aplica" id="no-aplica"></div>
+        <div class="aviso">📌 <b>¿Te falta alguno?</b> Puedes seguir y enviar lo que tengas. Con tu número de radicado vuelves a esta página y lo completas. El estudio del caso empieza cuando estén todos los obligatorios.</div>
+      </div>
+
+      <!-- 5 · Revisar -->
+      <div class="card paso" data-paso="5" hidden>
+        <h2 tabindex="-1"><span class="num">5</span> Revisa antes de enviar</h2>
+        <p class="sub">Si algo no está bien, toca <b>Cambiar</b> y lo corriges.</p>
+        <div id="resumen"></div>
+        <label class="chk"><input type="checkbox" id="acepta-terminos" />
+          <span>Entiendo que recibir estos documentos <b>no implica aceptación de responsabilidad</b> por parte de Autobuses El Poblado Laureles S.A. y que el caso será estudiado.</span></label>
+        <label class="chk"><input type="checkbox" id="acepta-datos" />
+          <span>Autorizo el tratamiento de mis datos personales y de los documentos que adjunto, solo para estudiar y responder esta reclamación (Ley 1581 de 2012).</span></label>
+      </div>
+
+      <div id="err" class="err" hidden></div>
+      <div class="nav" id="nav" hidden>
+        <button type="button" class="btn btn-sec" id="atras">← Atrás</button>
+        <button type="button" class="btn" id="sig">Siguiente →</button>
+      </div>
+    </div>
+
+    <!-- ============ CONSTANCIA ============ -->
+    <div class="card ok-card" id="ok" hidden>
+      <div class="big">✅</div>
+      <h2>Quedó radicada</h2>
+      <p class="sub">Guarda este número: con él y tu correo o teléfono consultas el estado y completas lo que falte.</p>
+      <div class="rad" id="ok-rad">—</div>
+      <div class="ok-btns">
+        <button type="button" class="btn btn-sec" id="copiar">📋 Copiar el número</button>
+        <button type="button" class="btn btn-sec" id="ok-consultar">📎 Completar documentos</button>
+      </div>
+      <div id="ok-fallos"></div>
+      <div id="ok-faltan"></div>
+      <h3 class="izq">¿Qué sigue?</h3>
+      <ol class="sigue" id="ok-sigue"></ol>
+      <button type="button" class="btn btn-sec" id="otra">Radicar otra</button>
+    </div>
+
+    <!-- ============ CONSULTAR / COMPLETAR ============ -->
+    <div id="con-wrap" hidden>
+      <div class="card">
+        <h2>🔎 Consultar o completar mi reclamación</h2>
+        <p class="sub">Con el número que te dimos y el correo o teléfono que dejaste.</p>
+        <div class="porque"><i>💡</i><div>Aquí ves en qué va tu reclamación, <b>qué documentos se aceptaron</b>, cuáles hay que corregir y por qué, y <b>subes lo que falte</b>.</div></div>
+        <div class="grid">
+          <label class="full">Número de radicado
+            <input type="text" id="c-rad" placeholder="RCL-2026-0001" autocomplete="off" />
+          </label>
+          <label class="full">Tu correo o tu teléfono
+            <input type="text" id="c-con" placeholder="tucorreo@ejemplo.com" autocomplete="off" />
+          </label>
+        </div>
+        <div id="c-err" class="err" hidden style="margin-top:12px"></div>
+        <button type="button" class="btn" id="c-btn" style="margin-top:12px">Consultar</button>
+      </div>
+      <div id="c-res"></div>
+    </div>
+
+    <div class="subiendo" id="subiendo" hidden>
+      <div class="card">
+        <h2 style="justify-content:center">📤 Subiendo tus documentos</h2>
+        <div class="barra"><i id="sub-fill"></i></div>
+        <p class="sub" id="sub-txt" style="margin:0">Preparando…</p>
+        <p class="hint">No cierres esta página.</p>
+      </div>
+    </div>
+
+    <footer>
+      Autobuses El Poblado Laureles S.A. · ¿Prefieres el correo? También puedes enviar los documentos a
+      contactenos@autopobla.com.co.<br>¿Tu caso es una queja o una felicitación? Ve a <a href="pqrsf.html">PQRSF</a>.
+    </footer>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const error = (el, msg) => { el.hidden = !msg; el.textContent = msg || ''; if (msg) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    const digitos = (s) => String(s || '').replace(/\D/g, '');
+    const placaDe = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const val = (id) => ($(id).value || '').trim();
+    const pesos = (n) => '$ ' + Number(n).toLocaleString('es-CO');
+
+    const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    $('prueba').hidden = !PRUEBA;
+
+    // Copia de reclamacion_requisitos (sql/160): si cambia un texto allá, cambiarlo aquí
+    const REQUISITOS = [
+      { codigo: 'CARTA', num: 1, titulo: 'Carta de reclamación', max: 2,
+        ayuda: 'Dirigida a Autobuses El Poblado Laureles S.A.: qué pides y tus datos de contacto (dirección, teléfonos y correo). Puedes usar el modelo que armamos con lo que escribiste.' },
+      { codigo: 'IPAT', num: 2, titulo: 'IPAT o croquis del accidente', max: 3,
+        ayuda: 'Informe policial de accidente de tránsito, completo y legible. Es obligatorio si el accidente fue antes del 14 de julio de 2022 (Ley 2251 de 2022, art. 16, que modificó el art. 143 del CNT).' },
+      { codigo: 'FALLO', num: 3, titulo: 'Fallo de la Secretaría de Movilidad', max: 3, ayuda: 'Copia del fallo. Aplica si el caso tuvo audiencia contravencional.' },
+      { codigo: 'CC_PROPIETARIO', num: 4, titulo: 'Cédula del propietario del vehículo', max: 3, ayuda: 'Fotocopia legible, por las dos caras.' },
+      { codigo: 'LICENCIA', num: 5, titulo: 'Licencia de conducción de quien manejaba', max: 3, ayuda: 'De la persona que iba manejando tu vehículo el día y la hora del accidente.' },
+      { codigo: 'CC_CONDUCTOR', num: 5, titulo: 'Cédula de quien manejaba', max: 3, ayuda: 'Como quien manejaba no es el propietario, también va su documento de identidad, por las dos caras.' },
+      { codigo: 'TARJETA', num: 6, titulo: 'Tarjeta de propiedad del vehículo', max: 3, ayuda: 'Fotocopia legible, por las dos caras.' },
+      { codigo: 'SOAT', num: 6, titulo: 'SOAT vigente el día del accidente', max: 2, ayuda: 'El que estaba vigente en la fecha del accidente.' },
+      { codigo: 'RTM', num: 6, titulo: 'Revisión técnico-mecánica', max: 2, ayuda: 'Si aplica: la que estaba vigente en la fecha del accidente.' },
+      { codigo: 'PODER', num: 7, titulo: 'Poder autenticado del propietario', max: 3,
+        ayuda: 'Como quien reclama no es el propietario, el propietario autoriza en notaría a esa persona para adelantar la reclamación.' },
+      { codigo: 'PRUEBAS', num: 8, titulo: 'Fotos o videos de los daños', max: 10,
+        ayuda: 'Lo que muestre los daños de tu vehículo y ayude a aclarar cómo pasó (art. 143, Ley 2251 de 2022).' },
+      { codigo: 'NO_RECLAMACION', num: 9, titulo: 'Certificación de no reclamación', max: 3,
+        ayuda: 'La aseguradora de tu vehículo certifica que no reclamaste ante ella por este accidente.' },
+      { codigo: 'FACTURA', num: 10, titulo: 'Factura o cotización de la reparación', max: 4,
+        ayuda: 'Factura de un taller legal si ya lo reparaste; si no, cotización detallada de mano de obra y repuestos.' },
+      { codigo: 'CERT_BANCARIO', num: 11, titulo: 'Certificado bancario', max: 2,
+        ayuda: 'De la cuenta donde se haría el pago: del propietario o de la persona autorizada para recibirlo.' },
+      { codigo: 'PODER_BENEF', num: 11, titulo: 'Poder autenticado para quien recibe el pago', max: 3,
+        ayuda: 'Como la cuenta es de otra persona, va el poder autenticado que la autoriza a recibir la indemnización.' },
+    ];
+    const IPAT_HASTA = '2022-07-14';
+
+    // Las respuestas de sí/no y las opciones
+    const resp = { audiencia: null, es_propietario: null, conductor_es_propietario: null, reparado: null, tiene_seguro: null, cuenta_de: null };
+    // Los archivos de cada casilla, en memoria hasta que se radica: codigo → [{nombre, archivo, estado, error}]
+    const archivos = {};
+
+    // Copia de _rcl_reglas (sql/160): qué aplica a este caso
+    function reglas() {
+      const f = $('fecha').value;
+      return REQUISITOS.map((q) => {
+        let { titulo, ayuda } = q;
+        let aplica = 'OBLIGATORIO';
+        switch (q.codigo) {
+          case 'IPAT': aplica = f && f < IPAT_HASTA ? 'OBLIGATORIO' : 'OPCIONAL'; break;
+          case 'FALLO': aplica = resp.audiencia === 'SI' ? 'OBLIGATORIO' : resp.audiencia === 'NO_SE' ? 'OPCIONAL' : 'NO_APLICA'; break;
+          case 'CC_CONDUCTOR': aplica = resp.conductor_es_propietario === false ? 'OBLIGATORIO' : 'NO_APLICA'; break;
+          case 'PODER': aplica = resp.es_propietario === false ? 'OBLIGATORIO' : 'NO_APLICA'; break;
+          case 'PODER_BENEF': aplica = resp.cuenta_de === 'OTRA' ? 'OBLIGATORIO' : 'NO_APLICA'; break;
+          case 'RTM': aplica = 'OPCIONAL'; break;
+          case 'NO_RECLAMACION':
+            if (resp.tiene_seguro === false) {
+              titulo = 'Declaración extrajuicio (no tienes aseguradora)';
+              ayuda = 'Como tu vehículo no tiene aseguradora, va una declaración extrajuicio (se hace en notaría).';
+            } else titulo = 'Certificación de no reclamación de tu aseguradora';
+            break;
+          case 'FACTURA':
+            titulo = resp.reparado ? 'Factura del taller que hizo la reparación' : 'Cotización detallada de la reparación';
+            ayuda = resp.reparado ? 'De un taller legal, con el detalle de lo que se reparó.' : 'De mano de obra y repuestos, con el detalle de cada cosa.';
+            break;
+          default: break;
+        }
+        return { ...q, titulo, ayuda, aplica };
+      });
+    }
+    const vivos = (cod) => (archivos[cod] || []).filter((a) => a.estado !== 'quitado');
+
+    let paso = 0;
+    let alcanzado = 0;
+    let enviado = false;
+    let token = null;
+    let radicado = null;
+
+    // ---- Pestañas ----
+    const verTab = (cual) => {
+      $('tab-rad').classList.toggle('on', cual === 'rad');
+      $('tab-con').classList.toggle('on', cual === 'con');
+      $('form-wrap').hidden = cual !== 'rad' || enviado;
+      $('ok').hidden = cual !== 'rad' || !enviado;
+      $('con-wrap').hidden = cual !== 'con';
+    };
+    $('tab-rad').addEventListener('click', () => verTab('rad'));
+    $('tab-con').addEventListener('click', () => verTab('con'));
+    $('ir-consultar').addEventListener('click', () => verTab('con'));
+    // Llegar con ?radicado=RCL-… abre directo la consulta
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('radicado')) { $('c-rad').value = qs.get('radicado'); verTab('con'); }
+
+    // ---- Opciones de sí/no ----
+    const leer = (v) => (v === 'true' ? true : v === 'false' ? false : v);
+    function pintarOpciones() {
+      document.querySelectorAll('.opciones[data-campo]').forEach((g) => {
+        g.querySelectorAll('button').forEach((b) => b.classList.toggle('on', resp[g.dataset.campo] === leer(b.dataset.valor)));
+      });
+      $('bloque-propietario').hidden = resp.es_propietario !== false;
+      $('bloque-conductor').hidden = resp.conductor_es_propietario !== false;
+      $('bloque-seguro').hidden = resp.tiene_seguro !== true;
+      // "De quien reclama" solo tiene sentido si quien reclama no es el propietario
+      $('cta-reclamante').hidden = resp.es_propietario !== false;
+      if (resp.es_propietario !== false && resp.cuenta_de === 'RECLAMANTE') resp.cuenta_de = 'PROPIETARIO';
+      $('hint-cuenta').textContent = resp.cuenta_de === 'OTRA'
+        ? 'Te vamos a pedir el certificado bancario de esa persona y un poder autenticado que la autorice a recibir el pago.'
+        : resp.cuenta_de ? 'Te vamos a pedir el certificado bancario de esa cuenta.' : '';
+    }
+    document.querySelectorAll('.opciones[data-campo]').forEach((g) => g.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-valor]');
+      if (!b) return;
+      resp[g.dataset.campo] = leer(b.dataset.valor);
+      pintarOpciones();
+    }));
+    pintarOpciones();
+
+    // ---- Paso 1 ----
+    const hoy = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date()) + 'T12:00:00');
+    const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const fmtDia = (v) => (v ? new Date(v + 'T12:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+    const fmtHora = (h) => (h ? new Date('2000-01-01T' + h).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : '');
+    $('fecha').max = ymd(hoy);
+    $('fecha').min = '2000-01-01';
+    ['placa', 'bus-placa'].forEach((id) => $(id).addEventListener('input', (e) => {
+      const v = placaDe(e.target.value); if (v !== e.target.value) e.target.value = v;
+    }));
+    $('bus').addEventListener('input', (e) => { const v = digitos(e.target.value); if (v !== e.target.value) e.target.value = v; });
+    function medir() {
+      const n = val('relato').length, m = $('med-relato'), falta = 20 - n;
+      m.querySelector('i').style.width = Math.min(100, n / 20 * 100) + '%';
+      m.classList.toggle('listo', falta <= 0);
+      m.querySelector('.med-pie').textContent = falta > 0 ? `Te faltan ${falta} ${falta === 1 ? 'letra' : 'letras'} para poder seguir.` : '✓ Así está bien.';
+    }
+    $('relato').addEventListener('input', medir);
+    medir();
+
+    // ---- Paso 3 ----
+    $('chips-pret').addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      const t = $('pretensiones');
+      t.value = (t.value.trim() ? t.value.trim() + ' ' : '') + b.textContent;
+    });
+    $('valor').addEventListener('input', (e) => {
+      const d = digitos(e.target.value).replace(/^0+/, '');
+      e.target.value = d ? pesos(d) : '';
+    });
+
+    // ---- Validación por paso ----
+    function validar(k) {
+      if (k === 1) {
+        const f = $('fecha').value;
+        if (!f) return '¿Qué día fue el accidente?';
+        if (f > ymd(hoy)) return 'La fecha del accidente no puede ser futura.';
+        if (placaDe(val('placa')).length < 4) return 'Escribe la placa de tu vehículo (ej: ABC123).';
+        const bus = digitos(val('bus')), bp = placaDe(val('bus-placa'));
+        if ((bus.length < 3 || bus.length > 5) && (bp.length < 5 || bp.length > 7)) {
+          return 'Necesitamos el número del bus (los 4 dígitos grandes del frente y los costados) o su placa.';
+        }
+        if (!resp.audiencia) return 'Cuéntanos si el caso tuvo audiencia en la Secretaría de Movilidad (o marca "No sé").';
+        if (val('relato').length < 20) return 'Cuéntanos cómo pasó con un poco más de detalle: al menos 20 letras.';
+      }
+      if (k === 2) {
+        if (resp.es_propietario === null) return '¿Eres el propietario del vehículo?';
+        if (resp.es_propietario === false && val('prop-nombre').length < 5) return 'Escribe el nombre del propietario del vehículo.';
+        if (val('nombre').length < 5) return 'Escribe tu nombre completo.';
+        const doc = val('doc').replace(/[^0-9A-Za-z]/g, '');
+        if (doc.length < 5 || doc.length > 15) return 'Escribe tu número de cédula o NIT.';
+        const tel = digitos(val('telefono'));
+        if (tel.length < 7 || tel.length > 12) return 'Escribe un teléfono o celular de contacto.';
+        if (val('direccion').length < 5) return 'Escribe tu dirección.';
+        if (val('correo') && !/^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/.test(val('correo'))) return 'Revisa el correo: parece que está mal escrito.';
+        if (resp.conductor_es_propietario === null) return '¿Quién iba manejando tu vehículo?';
+      }
+      if (k === 3) {
+        if (val('pretensiones').length < 10) return 'Cuéntanos qué reclamas: por ejemplo, que se te pague la reparación del vehículo.';
+        if (resp.reparado === null) return '¿Ya reparaste el vehículo?';
+        if (resp.tiene_seguro === null) return '¿Tu vehículo tiene seguro?';
+        if (!resp.cuenta_de) return '¿A nombre de quién está la cuenta para el pago?';
+      }
+      return '';
+    }
+
+    // ---- Navegación por pasos (igual que pqrsf.html) ----
+    const PASOS = ['', 'El accidente', 'Quién reclama', 'Qué pides', 'Documentos', 'Revisar'];
+    const FALTA = ['', 'Faltan 4 pasos', 'Faltan 3 pasos', 'Faltan 2 pasos', 'Falta 1 paso', 'Último paso'];
+    function irA(n, historial = true) {
+      if (enviado) return;
+      let msg = '';
+      for (let k = Math.max(paso, 1); k < n; k++) {
+        msg = validar(k);
+        if (msg) { n = k; break; }
+      }
+      if (n !== paso) {
+        if (historial) history.pushState({ paso: n }, '');
+        else if (msg) history.replaceState({ paso: n }, '');
+      }
+      const atras = n < paso, cambia = n !== paso;
+      paso = n;
+      alcanzado = Math.max(alcanzado, n);
+      document.querySelectorAll('.paso').forEach((el) => {
+        const on = Number(el.dataset.paso) === n;
+        el.hidden = !on;
+        if (on && cambia) {
+          el.style.setProperty('--dx', atras ? '-18px' : '18px');
+          el.classList.remove('entra'); void el.offsetWidth; el.classList.add('entra');
+        }
+      });
+      if (n === 4) pintarRequisitos();
+      if (n === 5) pintarResumen();
+      pintarAvance();
+      error($('err'), msg);
+      if (!msg && cambia) {
+        $('form-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const h = document.querySelector(`.paso[data-paso="${n}"] h2`);
+        if (h) h.focus({ preventScroll: true });
+      }
+    }
+    function pintarAvance() {
+      $('avance').hidden = paso === 0;
+      $('nav').hidden = paso === 0;
+      $('av-txt').textContent = `Paso ${paso} de 5 · ${PASOS[paso]}`;
+      $('av-falta').textContent = FALTA[paso] || '';
+      $('av-fill').style.width = (paso / 5 * 100) + '%';
+      $('av-pasos').innerHTML = PASOS.slice(1).map((t, i) => {
+        const k = i + 1, c = k < paso ? 'hecho' : k === paso ? 'aqui' : '';
+        return `<li class="${c}"><button type="button" data-ir="${k}" ${k <= alcanzado ? '' : 'disabled'}><span>${k < paso ? '✓' : k}</span><em>${esc(t)}</em></button></li>`;
+      }).join('');
+      $('sig').textContent = paso === 5 ? 'Enviar reclamación' : 'Siguiente →';
+    }
+    $('empezar').addEventListener('click', () => irA(1));
+    $('atras').addEventListener('click', () => irA(Math.max(0, paso - 1)));
+    $('sig').addEventListener('click', () => { if (paso === 5) enviar(); else irA(paso + 1); });
+    ['av-pasos', 'resumen'].forEach((id) => $(id).addEventListener('click', (e) => {
+      const b = e.target.closest('[data-ir]');
+      if (b && !b.disabled) irA(Number(b.dataset.ir));
+    }));
+    $('form-wrap').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox' && e.target.type !== 'file' && paso >= 1 && paso <= 3) {
+        e.preventDefault(); $('sig').click();
+      }
+    });
+    history.replaceState({ paso: 0 }, '');
+    window.addEventListener('popstate', (e) => {
+      if (enviado) return;
+      if ($('form-wrap').hidden) verTab('rad');
+      irA(e.state && Number.isInteger(e.state.paso) ? e.state.paso : 0, false);
+    });
+    window.addEventListener('beforeunload', (e) => {
+      if ((!enviado && paso >= 2) || !$('subiendo').hidden) { e.preventDefault(); e.returnValue = ''; }
+    });
+
+    // ---- Archivos: las fotos se reducen aquí; un PDF escaneado no se puede reducir ----
+    const MAX_B64 = 6000000;
+    const leerArchivo = (file) => new Promise((res) => {
+      const fr = new FileReader();
+      fr.onerror = () => res(null);
+      if (!/^image\//.test(file.type) || /gif$/.test(file.type)) {
+        fr.onload = () => res({ nombre: file.name, archivo: fr.result });
+        fr.readAsDataURL(file);
+        return;
+      }
+      fr.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const f = Math.min(1, 1800 / Math.max(img.naturalWidth, img.naturalHeight));
+          const cv = document.createElement('canvas');
+          cv.width = Math.round(img.naturalWidth * f); cv.height = Math.round(img.naturalHeight * f);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          res({ nombre: file.name.replace(/\.[^.]+$/, '') + '.jpg', archivo: cv.toDataURL('image/jpeg', 0.78) });
+        };
+        img.onerror = () => res(null);
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+    // Devuelve el archivo listo, o el texto del problema
+    async function prepararArchivo(file, codigo) {
+      const esVideo = /^video\//.test(file.type);
+      if (esVideo && codigo !== 'PRUEBAS') return 'Los videos solo van en las fotos o videos de los daños.';
+      if (!/^image\//.test(file.type) && file.type !== 'application/pdf' && !esVideo) return `"${file.name}": solo se reciben fotos o PDF.`;
+      if (!/^image\//.test(file.type) && file.size > 4400000) {
+        return esVideo ? `"${file.name}" pesa más de 4 MB. Manda mejor fotos, o un video más corto.`
+          : `"${file.name}" pesa más de 4 MB. Escanéalo con menos calidad o tómale fotos a cada hoja.`;
+      }
+      const a = await leerArchivo(file);
+      if (!a) return `No pudimos leer "${file.name}".`;
+      if (a.archivo.length > MAX_B64) return `"${file.name}" quedó muy pesado. Tómale la foto con menos calidad.`;
+      return a;
+    }
+    const kb = (a) => Math.max(1, Math.round(a.archivo.length / 1370));
+    const tamano = (a) => (kb(a) >= 1000 ? (kb(a) / 1000).toFixed(1).replace('.', ',') + ' MB' : kb(a) + ' KB');
+    const acepta = (cod) => 'image/*,application/pdf' + (cod === 'PRUEBAS' ? ',video/*' : '');
+
+    // ---- Paso 4: la lista de chequeo ----
+    function pintarRequisitos() {
+      const rs = reglas();
+      const aplican = rs.filter((r) => r.aplica !== 'NO_APLICA');
+      const obl = aplican.filter((r) => r.aplica === 'OBLIGATORIO');
+      const listos = obl.filter((r) => vivos(r.codigo).length).length;
+      $('req-prog').innerHTML = `<div class="fila"><span><b>${listos} de ${obl.length}</b> documentos obligatorios</span>
+        <span>${listos === obl.length ? '✅ ¡Completos!' : `Faltan ${obl.length - listos}`}</span></div>
+        <div class="barra"><i style="width:${obl.length ? Math.round(listos / obl.length * 100) : 0}%"></i></div>`;
+      $('reqs').innerHTML = aplican.map((r) => {
+        const fs = vivos(r.codigo);
+        const lleno = fs.length >= r.max;
+        return `<div class="req${fs.length ? ' listo' : ''}" data-codigo="${r.codigo}">
+          <div class="req-top"><span class="req-ic">${fs.length ? '✓' : r.num}</span>
+            <div class="req-tx"><b>${esc(r.titulo)}</b><span>${esc(r.ayuda)}</span></div>
+            <span class="tag ${r.aplica === 'OBLIGATORIO' ? 'tag-ob' : 'tag-op'}">${r.aplica === 'OBLIGATORIO' ? 'Obligatorio' : 'Si aplica'}</span></div>
+          ${fs.map((a, i) => `<div class="arch"><span>📎 ${esc(a.nombre)} · ${tamano(a)}</span>
+            <button type="button" data-quitar="${i}" title="Quitar" aria-label="Quitar ${esc(a.nombre)}">✕</button></div>`).join('')}
+          <div class="req-acc">
+            ${lleno ? `<span class="hint">Máximo ${r.max} archivos.</span>` : `<label class="req-add">📷 ${fs.length ? 'Agregar otro' : 'Subir foto o PDF'}
+              <input type="file" accept="${acepta(r.codigo)}" multiple data-subir="${r.codigo}" /></label>`}
+            ${r.codigo === 'CARTA' ? '<button type="button" class="link" data-modelo>📝 Ver el modelo de carta con tus datos</button>' : ''}
+          </div></div>`;
+      }).join('');
+      const no = rs.filter((r) => r.aplica === 'NO_APLICA');
+      $('no-aplica').innerHTML = no.length ? `No aplican para tu caso: ${no.map((r) => esc(r.titulo)).join(' · ')}.` : '';
+    }
+    $('reqs').addEventListener('change', async (e) => {
+      const inp = e.target.closest('input[data-subir]');
+      if (!inp) return;
+      const cod = inp.dataset.subir, r = reglas().find((x) => x.codigo === cod);
+      const files = [...(inp.files || [])];
+      inp.value = '';
+      error($('err'), '');
+      for (const f of files) {
+        if (vivos(cod).length >= r.max) { error($('err'), `Para "${r.titulo}" se reciben máximo ${r.max} archivos.`); break; }
+        const a = await prepararArchivo(f, cod);
+        if (typeof a === 'string') { error($('err'), a); continue; }
+        (archivos[cod] = archivos[cod] || []).push({ ...a, estado: 'listo' });
+      }
+      pintarRequisitos();
+    });
+    $('reqs').addEventListener('click', (e) => {
+      const q = e.target.closest('[data-quitar]');
+      if (q) {
+        const cod = q.closest('.req').dataset.codigo;
+        const a = vivos(cod)[Number(q.dataset.quitar)];
+        if (a) a.estado = 'quitado';
+        pintarRequisitos();
+        return;
+      }
+      if (e.target.closest('[data-modelo]')) abrirModeloCarta();
+    });
+
+    // ---- El modelo de carta: se arma con lo que escribió y lo imprime o guarda como PDF ----
+    function abrirModeloCarta() {
+      const w = window.open('', '_blank');
+      if (!w) { error($('err'), 'Tu navegador bloqueó la ventana del modelo. Permite las ventanas emergentes e inténtalo de nuevo.'); return; }
+      const propio = resp.es_propietario !== false;
+      const bus = [digitos(val('bus')) && 'número ' + digitos(val('bus')), placaDe(val('bus-placa')) && 'placa ' + placaDe(val('bus-placa'))].filter(Boolean).join(', ');
+      const v = digitos(val('valor'));
+      const hoyTxt = hoy.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
+      const linea = (t) => (t ? esc(t) : '<span class="hueco">____________________</span>');
+      w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Carta de reclamación</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>body{font-family:Georgia,'Times New Roman',serif;max-width:720px;margin:32px auto;padding:0 20px;line-height:1.6;color:#111;font-size:15px}
+        h1{font-size:16px;text-align:center;margin:28px 0}.hueco{color:#999}.firma{margin-top:60px;border-top:1px solid #111;width:280px;padding-top:6px}
+        .barra{position:sticky;top:0;background:#fff8e6;border:1px solid #f3d38a;border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;font-size:14px;margin-bottom:20px}
+        .barra button{font:inherit;font-weight:700;border:0;background:#ED1C24;color:#fff;border-radius:8px;padding:8px 14px;margin-left:8px;cursor:pointer}
+        @media print{.barra{display:none}body{margin:0}}</style></head><body>
+        <div class="barra">Revisa el texto, imprímelo (o guárdalo como PDF), <b>fírmalo</b> y súbelo en la casilla de la carta.<button onclick="print()">Imprimir / guardar PDF</button></div>
+        <p>Medellín, ${esc(hoyTxt)}</p>
+        <p>Señores<br><b>AUTOBUSES EL POBLADO LAURELES S.A.</b><br>Ciudad</p>
+        <p><b>Asunto:</b> Reclamación por daños al vehículo de placa ${linea(placaDe(val('placa')))}, accidente del ${linea(fmtDia($('fecha').value))}.</p>
+        <p>Yo, ${linea(val('nombre'))}, identificado(a) con documento número ${linea(val('doc'))}, ${propio
+          ? 'en calidad de propietario(a) del vehículo'
+          : `en nombre de ${linea(val('prop-nombre'))}, propietario(a) del vehículo, según el poder que adjunto`},
+          presento reclamación por los daños causados al vehículo de placa ${linea(placaDe(val('placa')))} en el accidente ocurrido el
+          ${linea(fmtDia($('fecha').value))}${val('hora') ? ' hacia las ' + esc(fmtHora(val('hora'))) : ''}${val('lugar') ? ' en ' + esc(val('lugar')) : ''},
+          con el bus ${linea(bus)} de la empresa.</p>
+        <p><b>Hechos:</b> ${linea(val('relato'))}</p>
+        <p><b>Pretensiones:</b> ${linea(val('pretensiones'))}${v ? ` Estimo el valor de los daños en ${esc(pesos(v))}.` : ''}</p>
+        <p><b>Datos de contacto:</b><br>Dirección: ${linea(val('direccion'))}<br>Teléfono: ${linea(val('telefono'))}<br>Correo: ${linea(val('correo'))}</p>
+        <p>Atentamente,</p>
+        <div class="firma">${linea(val('nombre'))}<br>C.C. / NIT ${linea(val('doc'))}</div>
+        </body></html>`);
+      w.document.close();
+    }
+
+    // ---- Paso 5: el resumen ----
+    function pintarResumen() {
+      const rs = reglas().filter((r) => r.aplica !== 'NO_APLICA');
+      const obl = rs.filter((r) => r.aplica === 'OBLIGATORIO');
+      const faltan = obl.filter((r) => !vivos(r.codigo).length);
+      const nArch = rs.reduce((s, r) => s + vivos(r.codigo).length, 0);
+      const bus = [digitos(val('bus')) && 'Bus ' + digitos(val('bus')), placaDe(val('bus-placa')) && 'placa ' + placaDe(val('bus-placa'))].filter(Boolean).join(' · ');
+      const v = digitos(val('valor'));
+      const filas = [
+        [1, 'El accidente', [fmtDia($('fecha').value) + (val('hora') ? ' · ' + fmtHora(val('hora')) : ''), 'Tu vehículo: ' + placaDe(val('placa')), bus, val('lugar'),
+          { SI: 'Hubo audiencia en Movilidad', NO: 'Sin audiencia', NO_SE: 'No sabe si hubo audiencia' }[resp.audiencia]].filter(Boolean).map(esc).join('<br>')],
+        [2, 'Quién reclama', [val('nombre') + ' · ' + val('doc'), resp.es_propietario ? 'Propietario del vehículo' : 'En nombre de ' + val('prop-nombre'),
+          val('telefono'), val('correo'), val('direccion')].filter(Boolean).map(esc).join('<br>')],
+        [3, 'Qué pide', esc(val('pretensiones').slice(0, 220)) + (v ? `<br>Valor aproximado: <b>${esc(pesos(v))}</b>` : '')],
+        [4, 'Documentos', `${nArch} ${nArch === 1 ? 'archivo' : 'archivos'} · ${obl.length - faltan.length} de ${obl.length} obligatorios`
+          + (faltan.length ? `<br><span style="color:#b3121b">Faltan: ${faltan.map((r) => esc(r.titulo)).join(', ')}</span>` : '<br>✅ Completos')],
+      ];
+      $('resumen').innerHTML = filas.map(([k, t, x]) => `<div class="res-fila"><div><span class="res-t">${t}</span>${x}</div>
+        <button type="button" data-ir="${k}">Cambiar</button></div>`).join('')
+        + (faltan.length ? `<div class="aviso">📌 Puedes enviarla así. Te damos un número de radicado y con él completas los ${faltan.length} que faltan en esta misma página.</div>` : '');
+    }
+
+    // ---- Enviar: primero se radica, después se sube archivo por archivo ----
+    async function enviar() {
+      for (let k = 1; k <= 3; k++) {
+        const m = validar(k);
+        if (m) { irA(k); return error($('err'), m); }
+      }
+      if (!$('acepta-terminos').checked || !$('acepta-datos').checked) {
+        return error($('err'), 'Para enviarla marca las dos casillas: la de la responsabilidad y la del tratamiento de datos.');
+      }
+      error($('err'), '');
+      const b = $('sig'); b.disabled = true; b.textContent = 'Radicando…';
+      try {
+        let data;
+        if (PRUEBA) {
+          await new Promise((r) => setTimeout(r, 600));
+          data = { ok: true, radicado: 'RCL-PRUEBA-0001', token: 'prueba' };
+        } else {
+          const r = await sb.rpc('reclamacion_radicar', { p_datos: {
+            fecha_siniestro: $('fecha').value, hora_siniestro: val('hora') || null, lugar: val('lugar'),
+            bus: digitos(val('bus')), bus_placa: placaDe(val('bus-placa')), placa_afectada: placaDe(val('placa')),
+            relato: val('relato'), audiencia: resp.audiencia,
+            es_propietario: resp.es_propietario, propietario_nombre: val('prop-nombre'), propietario_doc: val('prop-doc'),
+            reclamante_nombre: val('nombre'), reclamante_doc: val('doc'), reclamante_direccion: val('direccion'),
+            reclamante_telefono: val('telefono'), reclamante_correo: val('correo'),
+            conductor_es_propietario: resp.conductor_es_propietario, conductor_nombre: val('cond-nombre'),
+            pretensiones: val('pretensiones'), valor_estimado: digitos(val('valor')),
+            reparado: resp.reparado, tiene_seguro: resp.tiene_seguro, aseguradora: val('aseguradora'), cuenta_de: resp.cuenta_de,
+            acepta_terminos: true, acepta_datos: true, trampa: val('trampa'), agente: navigator.userAgent,
+          } });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
+        if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo radicar.');
+        enviado = true;
+        radicado = data.radicado;
+        token = data.token;
+        history.replaceState({ paso: 'ok' }, '');
+        await subirTodo();
+        pintarConstancia();
+        verTab('rad');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (ex) {
+        error($('err'), String(ex.message || ex));
+      } finally {
+        b.disabled = false; b.textContent = paso === 5 ? 'Enviar reclamación' : 'Siguiente →';
+      }
+    }
+
+    // Sube lo que esté pendiente (o falló); si el permiso venció, se lo dice y lo manda a consultar
+    async function subirTodo() {
+      const rs = reglas().filter((r) => r.aplica !== 'NO_APLICA');
+      const cola = [];
+      rs.forEach((r) => vivos(r.codigo).forEach((a) => { if (a.estado === 'listo' || a.estado === 'error') cola.push({ r, a }); }));
+      if (!cola.length) return;
+      $('subiendo').hidden = false;
+      for (let i = 0; i < cola.length; i++) {
+        const { r, a } = cola[i];
+        $('sub-txt').textContent = `Archivo ${i + 1} de ${cola.length}: ${r.titulo}`;
+        $('sub-fill').style.width = Math.round((i / cola.length) * 100) + '%';
+        try {
+          let d;
+          if (PRUEBA) { await new Promise((x) => setTimeout(x, 250)); d = { ok: true }; }
+          else {
+            const res = await sb.rpc('reclamacion_subir', { p_token: token, p_requisito: r.codigo, p_doc: { nombre: a.nombre, archivo: a.archivo } });
+            if (res.error) throw res.error;
+            d = res.data;
+          }
+          if (!d || !d.ok) throw new Error((d && d.error) || 'No se pudo subir.');
+          a.estado = 'subido'; a.error = '';
+        } catch (ex) {
+          a.estado = 'error'; a.error = String(ex.message || ex);
+        }
+      }
+      $('sub-fill').style.width = '100%';
+      $('subiendo').hidden = true;
+    }
+
+    function pintarConstancia() {
+      $('ok-rad').textContent = radicado;
+      const rs = reglas().filter((r) => r.aplica !== 'NO_APLICA');
+      const fallos = [];
+      rs.forEach((r) => vivos(r.codigo).forEach((a) => { if (a.estado === 'error') fallos.push({ r, a }); }));
+      const faltan = rs.filter((r) => r.aplica === 'OBLIGATORIO' && !vivos(r.codigo).some((a) => a.estado === 'subido'));
+      const subidos = rs.reduce((s, r) => s + vivos(r.codigo).filter((a) => a.estado === 'subido').length, 0);
+      $('ok-fallos').innerHTML = fallos.length ? `<div class="err izq" style="margin-top:12px">⚠️ <b>${fallos.length} ${fallos.length === 1 ? 'archivo no se pudo subir' : 'archivos no se pudieron subir'}:</b>
+        <ul style="margin:6px 0 8px;padding-left:20px">${fallos.map(({ r, a }) => `<li>${esc(r.titulo)} — ${esc(a.nombre)}: ${esc(a.error)}</li>`).join('')}</ul>
+        <button type="button" class="btn" id="reintentar">Intentar de nuevo</button></div>` : '';
+      $('ok-faltan').innerHTML = faltan.length
+        ? `<div class="falta-lista">📌 Recibimos <b>${subidos}</b> ${subidos === 1 ? 'archivo' : 'archivos'}. <b>Te faltan ${faltan.length}</b> documentos obligatorios:
+            <ul>${faltan.map((r) => `<li>${esc(r.titulo)}</li>`).join('')}</ul>
+            Súbelos cuando los tengas en <b>Completar documentos</b>, con este número.</div>`
+        : `<div class="falta-lista" style="background:#eef7ee;border-color:#cfe8cf">✅ Recibimos <b>${subidos}</b> archivos: están todos los documentos obligatorios.</div>`;
+      const pasos = [
+        ['hecho', '✅', 'Hoy: la recibimos', `Quedó con el número ${esc(radicado)}.`],
+        ['', '🔎', 'Seguridad vial revisa cada documento', 'Si alguno no se lee o falta algo, lo vas a ver en Consultar, con la explicación de qué corregir.'],
+        ['', '⚖️', 'Con los documentos completos, se estudia el caso', 'Nuestros expertos analizan los hechos, el reporte del accidente y lo que reclamas.'],
+        ['', '📱', 'La decisión la consultas aquí mismo', 'Entra a Consultar o completar con tu número y tu correo o teléfono.'],
+      ];
+      $('ok-sigue').innerHTML = pasos.map(([c, i, t, s]) => `<li class="${c}"><i>${i}</i><div><b>${t}</b><span>${s}</span></div></li>`).join('');
+      const re = $('reintentar');
+      if (re) re.addEventListener('click', async () => { await subirTodo(); pintarConstancia(); });
+    }
+    $('copiar').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(radicado); $('copiar').textContent = '✅ Copiado'; }
+      catch { $('copiar').textContent = radicado; }
+    });
+    $('ok-consultar').addEventListener('click', () => {
+      $('c-rad').value = radicado;
+      $('c-con').value = val('correo') || digitos(val('telefono'));
+      verTab('con');
+      consultar();
+    });
+    $('otra').addEventListener('click', () => { location.href = location.pathname; });
+
+    // ---- Consultar o completar ----
+    const ESTADOS = {
+      RECIBIDA: ['e-info', '📥', 'Recibida', 'Seguridad vial va a revisar tus documentos.'],
+      INCOMPLETA: ['e-pend', '📌', 'Faltan documentos', 'Revisa abajo qué falta o qué hay que corregir, y súbelo aquí mismo.'],
+      'EN ESTUDIO': ['e-info', '⚖️', 'En estudio', 'Los documentos están completos y el caso está en estudio.'],
+      APROBADA: ['e-ok', '✅', 'Aprobada', 'La reclamación procede. Lee abajo la explicación.'],
+      PAGADA: ['e-ok', '💰', 'Pagada', 'La indemnización ya se pagó.'],
+      NEGADA: ['e-mal', '✖️', 'No procede', 'Lee abajo la explicación.'],
+      ANULADA: ['e-mal', '🚫', 'Anulada', 'Esta reclamación se anuló.'],
+    };
+    const DOC_EST = { RECIBIDO: ['tag-rev', 'En revisión'], ACEPTADO: ['tag-ok', '✓ Aceptado'], RECHAZADO: ['tag-mal', '✗ Hay que corregirlo'] };
+    let consulta = null;
+
+    async function consultar() {
+      const err = $('c-err');
+      const rad = val('c-rad'), con = val('c-con');
+      if (!rad || !con) return error(err, 'Escribe el número de radicado y el correo o teléfono que dejaste.');
+      error(err, '');
+      const b = $('c-btn'); b.disabled = true; b.textContent = 'Consultando…';
+      try {
+        let data;
+        if (PRUEBA) data = consultaDePrueba();
+        else {
+          const r = await sb.rpc('reclamacion_consultar', { p_radicado: rad, p_contacto: con });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
+        if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo consultar.');
+        consulta = data;
+        if (data.token) token = data.token;
+        pintarConsulta();
+      } catch (ex) {
+        $('c-res').innerHTML = '';
+        error(err, String(ex.message || ex));
+      } finally {
+        b.disabled = false; b.textContent = 'Consultar';
+      }
+    }
+    $('c-btn').addEventListener('click', consultar);
+
+    function pintarConsulta() {
+      const d = consulta, [cls, ic, tit, txt] = ESTADOS[d.estado] || ['e-info', '📄', d.estado, ''];
+      const lista = (d.checklist || []).filter((r) => r.aplica !== 'NO_APLICA' || (r.docs || []).length);
+      const c = d.conteo || {};
+      const pct = c.obligatorios ? Math.round(c.listos / c.obligatorios * 100) : 0;
+      $('c-res').innerHTML = `<div class="card">
+        <div class="res-t">${esc(d.radicado)} · vehículo ${esc(d.placa || '')} · accidente del ${esc(fmtDia(d.fecha_siniestro))}</div>
+        <div class="estado-big ${cls}"><i>${ic}</i><div><b>${esc(tit)}</b><span>${esc(txt)}</span></div></div>
+        ${d.observacion ? `<div class="res-t">Lo que te dice seguridad vial</div><div class="obs">${esc(d.observacion)}</div>` : ''}
+        <div class="req-prog" style="position:static"><div class="fila"><span><b>${c.listos || 0} de ${c.obligatorios || 0}</b> documentos obligatorios entregados</span>
+          <span>${c.faltan ? `Faltan ${c.faltan}` : '✅ Completos'}</span></div>
+          <div class="barra"><i style="width:${pct}%"></i></div></div>
+        ${lista.map((r) => {
+          const docs = r.docs || [];
+          const vivos2 = docs.filter((x) => x.estado !== 'RECHAZADO').length;
+          const puede = d.abierta && vivos2 < r.max;
+          const tag = { FALTA: ['tag-ob', 'Falta'], RECHAZADO: ['tag-mal', 'Corregir'], RECIBIDO: ['tag-rev', 'En revisión'],
+            ACEPTADO: ['tag-ok', '✓ Aceptado'], OPCIONAL: ['tag-op', 'Si aplica'], NO_APLICA: ['tag-op', 'No aplica'] }[r.estado] || ['tag-op', r.estado];
+          return `<div class="req${r.estado === 'ACEPTADO' || r.estado === 'RECIBIDO' ? ' listo' : ''}" data-codigo="${esc(r.codigo)}">
+            <div class="req-top"><span class="req-ic">${r.estado === 'ACEPTADO' ? '✓' : esc(r.num)}</span>
+              <div class="req-tx"><b>${esc(r.titulo)}</b>${r.estado === 'FALTA' || r.estado === 'RECHAZADO' ? `<span>${esc(r.ayuda)}</span>` : ''}</div>
+              <span class="tag ${tag[0]}">${tag[1]}</span></div>
+            ${docs.map((x) => `<div class="arch${x.estado === 'RECHAZADO' ? ' mal' : ''}"><span>📎 ${esc(x.nombre || 'archivo')}
+              ${x.estado === 'RECHAZADO' && x.motivo ? `<small>Motivo: ${esc(x.motivo)}</small>` : ''}</span>
+              <span class="tag ${DOC_EST[x.estado][0]}">${DOC_EST[x.estado][1]}</span></div>`).join('')}
+            ${puede && r.estado !== 'ACEPTADO' ? `<div class="req-acc"><label class="req-add">📷 ${r.estado === 'RECHAZADO' ? 'Subir el corregido' : docs.length ? 'Agregar otro' : 'Subir foto o PDF'}
+              <input type="file" accept="${acepta(r.codigo)}" multiple data-completar="${esc(r.codigo)}" /></label></div>` : ''}
+          </div>`;
+        }).join('')}
+        ${d.abierta ? '' : '<p class="sub" style="margin-top:12px">Esta reclamación ya no recibe documentos.</p>'}
+        <div id="c-err2" class="err" hidden style="margin-top:12px"></div>
+      </div>`;
+    }
+    $('c-res').addEventListener('change', async (e) => {
+      const inp = e.target.closest('input[data-completar]');
+      if (!inp) return;
+      const cod = inp.dataset.completar, r = consulta.checklist.find((x) => x.codigo === cod);
+      const files = [...(inp.files || [])];
+      inp.value = '';
+      const err = $('c-err2');
+      error(err, '');
+      let n = 0;
+      $('subiendo').hidden = false;
+      for (let i = 0; i < files.length; i++) {
+        $('sub-txt').textContent = `Archivo ${i + 1} de ${files.length}: ${r.titulo}`;
+        $('sub-fill').style.width = Math.round((i / files.length) * 100) + '%';
+        const a = await prepararArchivo(files[i], cod);
+        if (typeof a === 'string') { error(err, a); continue; }
+        try {
+          let d;
+          if (PRUEBA) { await new Promise((x) => setTimeout(x, 250)); d = { ok: true }; r.docs.push({ nombre: a.nombre, estado: 'RECIBIDO' }); }
+          else {
+            const res = await sb.rpc('reclamacion_subir', { p_token: token, p_requisito: cod, p_doc: { nombre: a.nombre, archivo: a.archivo } });
+            if (res.error) throw res.error;
+            d = res.data;
+          }
+          if (!d || !d.ok) throw new Error((d && d.error) || 'No se pudo subir.');
+          n++;
+        } catch (ex) { error(err, String(ex.message || ex)); break; }
+      }
+      $('subiendo').hidden = true;
+      if (!n) return;
+      if (PRUEBA) { recontarPrueba(); pintarConsulta(); } else await consultar();
+      const ok = document.querySelector(`#c-res .req[data-codigo="${cod}"]`);
+      if (ok) ok.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
+    // ---- Solo en la vista de prueba: una reclamación de ejemplo para ver la consulta ----
+    function consultaDePrueba() {
+      const ej = { CARTA: [{ nombre: 'carta.pdf', estado: 'RECHAZADO', motivo: 'La carta no tiene firma.' }],
+        CC_PROPIETARIO: [{ nombre: 'cedula.jpg', estado: 'ACEPTADO' }], LICENCIA: [{ nombre: 'licencia.jpg', estado: 'RECIBIDO' }],
+        PRUEBAS: [{ nombre: 'foto1.jpg', estado: 'ACEPTADO' }, { nombre: 'foto2.jpg', estado: 'ACEPTADO' }] };
+      const sinAplicar = ['FALLO', 'CC_CONDUCTOR', 'PODER', 'PODER_BENEF'];
+      consulta = { ok: true, radicado: val('c-rad').toUpperCase() || 'RCL-PRUEBA-0001', estado: 'INCOMPLETA', placa: 'ABC123',
+        fecha_siniestro: ymd(new Date(hoy.getTime() - 20 * 86400000)), abierta: true, token: 'prueba',
+        observacion: 'Ejemplo de lo que escribe seguridad vial: la carta no tiene firma y falta el SOAT vigente para la fecha del accidente.',
+        checklist: REQUISITOS.map((q) => ({ codigo: q.codigo, num: q.num, titulo: q.titulo, ayuda: q.ayuda, max: q.max,
+          aplica: sinAplicar.includes(q.codigo) ? 'NO_APLICA' : ['IPAT', 'RTM'].includes(q.codigo) ? 'OPCIONAL' : 'OBLIGATORIO',
+          docs: ej[q.codigo] || [] })) };
+      recontarPrueba();
+      return consulta;
+    }
+    // La misma cuenta que _rcl_checklist/_rcl_conteo, para la vista de prueba
+    function recontarPrueba() {
+      consulta.checklist.forEach((r) => {
+        const v = r.docs.filter((x) => x.estado !== 'RECHAZADO'), mal = r.docs.length - v.length;
+        r.estado = !v.length ? (mal ? 'RECHAZADO' : r.aplica === 'OBLIGATORIO' ? 'FALTA' : r.aplica === 'OPCIONAL' ? 'OPCIONAL' : 'NO_APLICA')
+          : v.every((x) => x.estado === 'ACEPTADO') ? 'ACEPTADO' : 'RECIBIDO';
+      });
+      const obl = consulta.checklist.filter((r) => r.aplica === 'OBLIGATORIO');
+      consulta.conteo = { obligatorios: obl.length, listos: obl.filter((r) => ['RECIBIDO', 'ACEPTADO'].includes(r.estado)).length,
+        faltan: obl.filter((r) => ['FALTA', 'RECHAZADO'].includes(r.estado)).length };
+    }
+  </script>
+</body>
+</html>
