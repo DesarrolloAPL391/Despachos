@@ -77,6 +77,14 @@ function isTalentoHumano() { return isAdmin() || isGestionHumana(); }
 // El mismo patrón está en la base (_correo_operaciones, sql/156): cambiar los dos juntos.
 const CORREO_OPERACIONES = /operaciones|seguridadvial/;
 function isOperaciones() { return isAdmin() || (isDespachador() && CORREO_OPERACIONES.test(miCorreo())); }
+// SEGURIDAD VIAL (sql/157): además de lo de operaciones, maneja su módulo completo — siniestros,
+// conducción (excesos y puertas abiertas) y el preoperacional. Operaciones NO lo recibe.
+// El mismo patrón está en la base (_correo_seguridad_vial): cambiar los dos juntos.
+const CORREO_SEGURIDAD_VIAL = /seguridadvial/;
+function isSeguridadVial() { return isAdmin() || (isDespachador() && CORREO_SEGURIDAD_VIAL.test(miCorreo())); }
+const TABLAS_VIAL = ['siniestros', 'eventos_bus', 'preoperacionales'];
+// Siniestros y sus estadísticas: Talento humano (admin + Gestión Humana) y seguridad vial
+function puedeVerVial() { return isTalentoHumano() || isSeguridadVial(); }
 // Subadministrador (operaciones): base despachador + gestión acotada (usuarios no-admin,
 // parque completo, pantallas de análisis). Equivale a operaciones o admin.
 function isSubadmin() { return isAdmin() || isOperaciones(); }
@@ -206,6 +214,8 @@ function visibleTablesBase() {
   // 'asistencia': el monitor marca su propia jornada y además controla la puntualidad del
   // ingreso de los despachadores (ve todas las marcaciones por RLS, sql/124).
   if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'asistencia', 'restricciones_rutas', 'eventos_bus', ...(CTX?.auditTables || [])];
+  // Seguridad vial: lo de su base despachador + las tablas de su módulo (sql/157)
+  if (isSeguridadVial()) return [...tablasDeDespachador(CTX?.tablas, CTX?.verDespachos), ...TABLAS_VIAL];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -715,7 +725,7 @@ function buildSidebar() {
 
   // 🛡️ Seguridad vial: todo lo que es riesgo en la vía junto — los siniestros que se reportan en
   // la app de AppSheet y la conducción que mide el GPS (excesos de velocidad y puertas abiertas).
-  if (isTalentoHumano() || isAuditor()) {
+  if (puedeVerVial() || isAuditor()) {
     const gVial = addNavGroup(nav, '🛡️', 'Seguridad vial', 'vial');
     for (const name of vis) { if (TBL_GROUP[name] === 'vial' && name !== 'eventos_bus') addTableBtn(gVial, name); }
     // La misma tabla de conducción, abierta por lo que se quiere mirar
@@ -725,12 +735,12 @@ function buildSidebar() {
     }
     // Preoperacional: el control del día (quién la hizo y quién falta) y el envío del enlace.
     // Va aquí porque es seguridad vial: es la revisión del carro antes de salir (Res. 315/2013).
-    if (isAdmin()) {
+    if (isSeguridadVial()) {
       const aviso = PREOP_PEND ? ` <span class="nav-badge">${PREOP_PEND}</span>` : '';
       addNavAction(gVial, '📋', 'Control del día' + aviso, openPreopPanel, 'nav-preop-panel');
       addNavAction(gVial, '📲', 'Enviar preoperacional', openPreopEnvio, 'nav-preop-envio');
     }
-    if (isTalentoHumano()) {
+    if (puedeVerVial()) {
       const gSs = addNavGroup(gVial, '📊', 'Estadísticas', 'vialstats');
       SST_BLOQUES.filter((b) => !b.soloOperacion || isAdmin() || isAuditor())
         .forEach((b) => addNavAction(gSs, b.icon, b.label, () => openSiniestrosStats(b.key), 'nav-sst-' + b.key));
@@ -998,12 +1008,13 @@ function selectTable(name, filtroInicial) {
   // Descargar Excel: admin y auditor pueden exportar la tabla que estén viendo
   // (Despachos, Auditoría SONAR, Resumen y sus tablas de puesto). La RLS limita las
   // filas a lo que le pertenece a cada quien y se respetan los filtros activos.
-  $('export-btn').hidden = !((isAdmin() || isAuditor() || isGestionHumana()) && TABLES[name] && (TABLES[name].columns || []).length > 0);
+  $('export-btn').hidden = !((isAdmin() || isAuditor() || isGestionHumana() || (isSeguridadVial() && TABLAS_VIAL.includes(name)))
+    && TABLES[name] && (TABLES[name].columns || []).length > 0);
   $('recon-btn').hidden = !(name === 'resumen' && (isAdmin() || isAuditor())); // Conciliar SONAR: auditor/admin en Resumen
   // Borrar día: solo admin, en las tablas de despacho (Despachos general + tablas de puesto).
   // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
-  const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !isTalentoHumano();
+  const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !puedeVerVial();
   const bPqr = $('pqr-sync-btn'); if (bPqr) bPqr.hidden = name !== 'pqrsf' || !puedeTraerPqrsf();
   // Al abrir PQRSF, si la hoja lleva rato sin traerse, se trae sola. Sin await: la pantalla
   // se pinta ya y la sincronización va por detrás.
@@ -1863,7 +1874,7 @@ const PREOP_LINK = location.origin + location.pathname.replace(/index\.html$/, '
 // un conductor no sirve de nada si nadie la ve, así que se cuenta aparte y se muestra siempre.
 let PREOP_PEND = 0;
 async function refrescarPreop(rebuild = true) {
-  if (!isAdmin()) { PREOP_PEND = 0; return; }
+  if (!isSeguridadVial()) { PREOP_PEND = 0; return; }
   try {
     const { count, error } = await sb.from('preoperacionales')
       .select('id', { count: 'exact', head: true }).eq('estado', 'PENDIENTE');
@@ -1890,7 +1901,7 @@ function preopModal() {
 
 // Ficha completa: las 12 respuestas tal como las dejo el conductor + la atencion del taller.
 async function openPreop(row) {
-  if (!isAdmin()) return;
+  if (!isSeguridadVial()) return;
   const m = preopModal(), body = m.querySelector('.pf-body');
   m.querySelector('.modal-head h3').textContent = '🧰 Preoperacional'; // puede venir del panel
   body.innerHTML = '<div class="loading">Cargando la inspección…</div>';
@@ -1964,19 +1975,19 @@ async function openPreop(row) {
 // Pantalla para ORGANIZAR a los conductores y mandarles el link del preoperacional.
 // El numero sale del perfil; a quien no lo tenga, se avisa aqui mismo (no se puede enviar).
 async function openPreopEnvio() {
-  if (!isAdmin()) return;
+  if (!isSeguridadVial()) return;
   const m = preopModal(), body = m.querySelector('.pf-body');
   m.querySelector('.modal-head h3').textContent = '📲 Enviar el preoperacional';
   body.innerHTML = '<div class="loading">Cargando conductores…</div>';
   m.hidden = false;
   let cond = [], hechos = new Set();
   try {
-    const [{ data: c }, { data: h }] = await Promise.all([
-      sb.from('perfilsociodemografico').select('cedula, nombre, celular')
-        .eq('cargo', 'CONDUCTOR').eq('estado', 'ACTIVO').order('nombre').limit(2000),
+    // Los conductores salen de vial_conductores (sql/157): seguridad vial no lee el perfil completo
+    const [c, { data: h }] = await Promise.all([
+      vialConductores(),
       sb.from('preoperacionales').select('cedula').eq('fecha', hoyServidor()).limit(2000),
     ]);
-    cond = c || [];
+    cond = c.filter((x) => x.cargo === 'CONDUCTOR' && x.estado === 'ACTIVO');
     hechos = new Set((h || []).map((x) => String(x.cedula || '').replace(/\D/g, '')));
   } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo cargar la lista.</div>'; return; }
 
@@ -2358,7 +2369,7 @@ async function openSyncPersonal() {
 const _pp = { fecha: null, data: null, vista: 'faltan' };
 
 async function openPreopPanel(fecha) {
-  if (!isAdmin()) return;
+  if (!isSeguridadVial()) return;
   const m = preopModal(), body = m.querySelector('.pf-body');
   m.querySelector('.modal-head h3').textContent = '📋 Control del día · Preoperacional';
   body.innerHTML = '<div class="loading">Cargando el día…</div>';
@@ -3149,8 +3160,8 @@ function renderTable(cfg, rows, count, diaSel = false) {
         }
       }
       tr.appendChild(act);
-    } else if (cfg.fichaDetalle && ((current === 'siniestros' && isTalentoHumano())
-                                    || (current === 'preoperacionales' && isAdmin())
+    } else if (cfg.fichaDetalle && ((current === 'siniestros' && puedeVerVial())
+                                    || (current === 'preoperacionales' && isSeguridadVial())
                                     || (current === 'pqrsf' && puedeVerPqrsf()))) {
       // Siniestros y PQRSF: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
       const act = document.createElement('td');
@@ -13301,7 +13312,7 @@ function abrirConduccion(categoria) {
 
 // Botón "🔄 Traer siniestros": lee la hoja y actualiza la tabla
 async function sincronizarSiniestros() {
-  if (!isTalentoHumano()) { toast('Solo un administrador o Gestión Humana puede traer los siniestros.', 'err'); return; }
+  if (!puedeVerVial()) { toast('Solo un administrador, Gestión Humana o seguridad vial puede traer los siniestros.', 'err'); return; }
   const btn = $('sin-sync-btn'); const prev = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Leyendo la hoja…';
   try {
@@ -15259,7 +15270,7 @@ function sinTodoHtml(s) {
     <dl>${filas.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`;
 }
 function openSiniestro(s) {
-  if (!isTalentoHumano()) return;
+  if (!puedeVerVial()) return;
   _sinRow = s;
   const m = sinModal(), body = m.querySelector('.pf-body');
   const chips = [
@@ -15291,9 +15302,9 @@ function openSiniestro(s) {
       ${sinBloque('🚌 Vehículo y ruta', [['Móvil', esc(s.numero_interno || '')], ['Placa', esc(s.placa || '')],
         ['Ruta', esc(s.ruta || '')], ['Afiliado', esc(s.afiliado || '')],
         ['Correo del afiliado', esc(s.correo_afiliado || '')], ['Teléfono del afiliado', wa(s.telefono_afiliado)]])}
-      ${sinBloque('🧑‍✈️ Conductor', [['Nombre', s.conductor_nombre
+      ${sinBloque('🧑‍✈️ Conductor', [['Nombre', s.conductor_nombre && isTalentoHumano() // la ficha del perfil es de Talento humano
         ? `<button type="button" class="pf-link" data-percedula="${esc(s.conductor_cedula || '')}" data-percodigo="${esc(s.conductor_codigo || '')}"
-             title="Ver la ficha de la persona">${esc(s.conductor_nombre)}</button>` : ''], ['Código', esc(s.conductor_codigo || '')],
+             title="Ver la ficha de la persona">${esc(s.conductor_nombre)}</button>` : esc(s.conductor_nombre || '')], ['Código', esc(s.conductor_codigo || '')],
         ['Cédula', esc(s.conductor_cedula || '')], ['Celular', wa(s.conductor_celular)],
         ['Ingresó a la empresa', esc(fechaLegible(s.conductor_fecha_ingreso || ''))]])}
       ${sinBloque('💥 Qué pasó', [['Causa probable', esc(s.causa || '')], ['Norma', esc(s.norma || '')],
@@ -19608,7 +19619,7 @@ const sinCed = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+
 const sstMonto = (n) => '$ ' + Math.round(Number(n || 0)).toLocaleString('es-CO');
 
 async function openSiniestrosStats(bloque) {
-  if (!isTalentoHumano()) return;
+  if (!puedeVerVial()) return;
   _sst.bloque = bloque || 'resumen';
   currentView = 'sinstats';
   statsPrepararVista();
@@ -19633,10 +19644,13 @@ async function cargarSiniestrosStats() {
     return out;
   };
   try {
-    // El perfil se lee solo para ponerle cara al conductor (quién es, si sigue activo, su cargo)
+    // El perfil se lee solo para ponerle cara al conductor (quién es, si sigue activo, su cargo).
+    // Seguridad vial no abre el perfil: le llegan solo esos datos de los conductores (sql/157).
     const [rows, personas] = await Promise.all([
       leerTodo('siniestros', SST_COLS, 'key'),
-      leerTodo('perfilsociodemografico', 'id,cedula,nombre,codigo,celular,tipo,estado,cargo,area,fecha_ingreso,fecha_retiro', 'id'),
+      isTalentoHumano()
+        ? leerTodo('perfilsociodemografico', 'id,cedula,nombre,codigo,celular,tipo,estado,cargo,area,fecha_ingreso,fecha_retiro', 'id')
+        : vialConductores(),
     ]);
     _sst.rows = rows; _sst.personas = personas;
     _sst.porCedula = new Map();
@@ -19662,6 +19676,13 @@ async function cargarSiniestrosStats() {
     body.innerHTML = '';
     body.appendChild(pstEl('div', 'cump-empty', 'No se pudieron leer los siniestros: ' + (e.message || e)));
   }
+}
+// Los conductores para seguridad vial (sql/157): quién es, si sigue activo, cargo y celular, sin
+// salario, salud ni familia. No trae `id`, así que en las listas no se abre la ficha del perfil.
+async function vialConductores() {
+  const { data, error } = await sb.rpc('vial_conductores');
+  if (error) throw error;
+  return data || [];
 }
 // La persona del perfil que hay detrás del conductor del reporte (por cédula, si no por código)
 function sstPersona(s) {
