@@ -71,9 +71,12 @@ function isAfiliado() { return CTX?.rol === 'afiliado'; }
 function isGestionHumana() { return CTX?.rol === 'gestion_humana'; }
 // Quién maneja Talento humano: el administrador y Gestión Humana (= es_talento_humano() en la base).
 function isTalentoHumano() { return isAdmin() || isGestionHumana(); }
-// Área de OPERACIONES: cuentas de rol despachador cuyo correo contiene 'operaciones' (o admin).
+// Área de OPERACIONES: cuentas de rol despachador cuyo correo contiene 'operaciones' o
+// 'seguridadvial' (seguridad vial tiene los mismos permisos y módulos), o admin.
 // Solo ellas marcan el RESULTADO de una preventiva (aprobado/rechazado).
-function isOperaciones() { return isAdmin() || (isDespachador() && /operaciones/.test(miCorreo())); }
+// El mismo patrón está en la base (_correo_operaciones, sql/156): cambiar los dos juntos.
+const CORREO_OPERACIONES = /operaciones|seguridadvial/;
+function isOperaciones() { return isAdmin() || (isDespachador() && CORREO_OPERACIONES.test(miCorreo())); }
 // Subadministrador (operaciones): base despachador + gestión acotada (usuarios no-admin,
 // parque completo, pantallas de análisis). Equivale a operaciones o admin.
 function isSubadmin() { return isAdmin() || isOperaciones(); }
