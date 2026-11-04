@@ -733,6 +733,8 @@ function buildSidebar() {
       addNavAction(gVial, '🚦', 'Excesos de velocidad', () => abrirConduccion('VELOCIDAD'), 'nav-evb-vel');
       addNavAction(gVial, '🚪', 'Puertas abiertas', () => abrirConduccion('PUERTA ABIERTA'), 'nav-evb-pue');
     }
+    // El visor en vivo de SONAR (sql/158): al admin y al auditor ya les sale en Análisis
+    if (isSeguridadVial() && !isAdmin()) addNavAction(gVial, '🔎', 'Eventos del bus (en vivo)', abrirEventosMovil, 'nav-eventos');
     // Preoperacional: el control del día (quién la hizo y quién falta) y el envío del enlace.
     // Va aquí porque es seguridad vial: es la revisión del carro antes de salir (Res. 315/2013).
     if (isSeguridadVial()) {
@@ -15294,7 +15296,7 @@ function openSiniestro(s) {
         <h2>${esc(s.placa || 'sin placa')}${s.ruta ? ` · ruta ${esc(s.ruta)}` : ''}</h2>
         <div class="pf-sub">${esc(fechaLegible(s.fecha || ''))}${s.reportado_en ? ` · reportado ${esc(fmtFechaHora(s.reportado_en))}` : ''}</div>
         <div class="pf-chips">${chips}</div>
-        ${(isAdmin() || isAuditor()) && s.numero_interno
+        ${(isSeguridadVial() || isAuditor()) && s.numero_interno
     ? `<button type="button" class="btn btn-sm sin-evt-btn" data-sinevt>🔎 Eventos del bus ese día</button>` : ''}
       </div>
     </header>
@@ -15339,8 +15341,8 @@ function openSiniestro(s) {
 // Del siniestro a la conducta de manejo: abre los eventos del bus alrededor del choque
 // (dos horas antes y una después del reporte; si no hay hora, el día completo).
 async function sinEventosDelBus(s) {
-  if (!(isAdmin() || isAuditor())) {
-    toast('Los eventos del bus los consultan el administrador y los auditores.', 'err'); return;
+  if (!(isSeguridadVial() || isAuditor())) {
+    toast('Los eventos del bus los consultan el administrador, los auditores y seguridad vial.', 'err'); return;
   }
   const f = String(s.fecha || '').slice(0, 10) || hoyServidor();
   let desde = `${f}T04:00`, hasta = `${f}T23:59`;
@@ -23164,6 +23166,11 @@ async function _movilesParaVisor() {
   let src = (lastUbic || []).map((u) => String(u.movil || '').trim()).filter(Boolean);
   if (!src.length) {
     try { const { data } = await sb.from('ubicaciones').select('movil'); src = (data || []).map((u) => String(u.movil || '').trim()).filter(Boolean); } catch (e) {}
+  }
+  // Seguridad vial no ve las posiciones en vivo (ubicaciones va por rutas): la lista sale de los
+  // buses con GPS en SONAR, que es justo lo que necesita el visor (sql/158).
+  if (!src.length) {
+    try { const { data } = await sb.from('vehiculosgps').select('movil').limit(3000); src = (data || []).map((u) => String(u.movil || '').trim()).filter(Boolean); } catch (e) {}
   }
   return [...new Set(src)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
