@@ -81,13 +81,15 @@ function isOperaciones() { return isAdmin() || (isDespachador() && CORREO_OPERAC
 // conducción (excesos y puertas abiertas) y el preoperacional. Operaciones NO lo recibe.
 // El mismo patrón está en la base (_correo_seguridad_vial): cambiar los dos juntos.
 const CORREO_SEGURIDAD_VIAL = /seguridadvial/;
-function isSeguridadVial() { return isAdmin() || (isDespachador() && CORREO_SEGURIDAD_VIAL.test(miCorreo())); }
+// La cuenta de seguridad vial en sí, sin el admin: a ella se le quitan cosas de operaciones
+function esCuentaSeguridadVial() { return isDespachador() && CORREO_SEGURIDAD_VIAL.test(miCorreo()); }
+function isSeguridadVial() { return isAdmin() || esCuentaSeguridadVial(); }
 const TABLAS_VIAL = ['siniestros', 'eventos_bus', 'preoperacionales'];
 // Siniestros y sus estadísticas: Talento humano (admin + Gestión Humana) y seguridad vial
 function puedeVerVial() { return isTalentoHumano() || isSeguridadVial(); }
 // Operaciones en "📈 Cumplimiento y análisis": seguridad vial NO lo ve (pedido del 04/11/2026).
 // Es es_operaciones_analisis() en la base (sql/159): cambiar los dos juntos.
-function isOperacionesAnalisis() { return isOperaciones() && !(isDespachador() && CORREO_SEGURIDAD_VIAL.test(miCorreo())); }
+function isOperacionesAnalisis() { return isOperaciones() && !esCuentaSeguridadVial(); }
 // Subadministrador (operaciones): base despachador + gestión acotada (usuarios no-admin,
 // parque completo, pantallas de análisis). Equivale a operaciones o admin.
 function isSubadmin() { return isAdmin() || isOperaciones(); }
@@ -217,8 +219,9 @@ function visibleTablesBase() {
   // 'asistencia': el monitor marca su propia jornada y además controla la puntualidad del
   // ingreso de los despachadores (ve todas las marcaciones por RLS, sql/124).
   if (isAuditor()) return ['despachos', 'despachos_sonar', 'resumen', 'asistencia', 'restricciones_rutas', 'eventos_bus', ...(CTX?.auditTables || [])];
-  // Seguridad vial: lo de su base despachador + las tablas de su módulo (sql/157)
-  if (isSeguridadVial()) return [...tablasDeDespachador(CTX?.tablas, CTX?.verDespachos), ...TABLAS_VIAL];
+  // Seguridad vial: lo de su base despachador, SIN el inicio y fin de labores (no marca jornada,
+  // pedido del 04/11/2026), + las tablas de su módulo (sql/157)
+  if (isSeguridadVial()) return [...tablasDeDespachador(CTX?.tablas, CTX?.verDespachos).filter((t) => t !== 'asistencia'), ...TABLAS_VIAL];
   // despachador: todas las tablas de su puesto (puede tener varias)
   return tablasDeDespachador(CTX?.tablas, CTX?.verDespachos);
 }
@@ -1725,7 +1728,8 @@ function renderAsisCard(box, abierta, completas, tarde) {
 // Aviso visual (no bloqueante): si el despachador no ha marcado su INGRESO de hoy, muestra el banner.
 async function checkAsistenciaPendiente() {
   const banner = $('asis-banner'); if (!banner) return;
-  if (CTX?.rol !== 'despachador' && CTX?.rol !== 'auditor') { banner.hidden = true; return; } // despachadores y monitores
+  // despachadores y monitores; seguridad vial no marca jornada
+  if ((CTX?.rol !== 'despachador' && CTX?.rol !== 'auditor') || esCuentaSeguridadVial()) { banner.hidden = true; return; }
   try {
     const { data } = await sb.from('asistencia').select('id').eq('email', miCorreo()).eq('fecha', hoyServidor()).limit(1);
     banner.hidden = !!(data && data.length); // si ya marcó hoy → ocultar; si no → mostrar
