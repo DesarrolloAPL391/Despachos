@@ -2816,8 +2816,19 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .perm-tabla { padding: 0 6px 10px; }
 .perm-ficha { max-width: 860px; }
 .permf-body { padding: 16px 18px; overflow: auto; max-height: 72vh; }
-.perm-req { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: #475569; }
-.perm-req li { margin-bottom: 3px; }
+/* Soportes por requisito (sql/165): verde llegó, ámbar en plazo, rojo vencido, gris opcional */
+.perm-rq { border: 1px solid var(--border); border-left: 4px solid #f59e0b; border-radius: 10px; padding: 9px 12px; margin-bottom: 8px; }
+.perm-rq.ok { border-left-color: #16a34a; }
+.perm-rq.no { border-left-color: #dc2626; background: #fef2f2; }
+.perm-rq.opc { border-left-color: #cbd5e1; }
+.perm-rq-t { font-size: 13px; color: #0f172a; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.perm-rq .perm-sops { margin-top: 8px; }
+.perm-rq-adj { margin-top: 8px; }
+.perm-alertas { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px;
+  padding: 9px 12px; font-size: 13px; margin-top: 12px; display: grid; gap: 4px; }
+.perm-tabla td.perm-tipo { white-space: normal; min-width: 130px; max-width: 190px; }
+.perm-tabla td:nth-child(2), .perm-tabla td:nth-child(3) { white-space: normal; min-width: 110px; max-width: 150px; }
+.perm-tabla td:nth-child(5), .perm-tabla td:nth-child(6) { white-space: normal; min-width: 76px; max-width: 86px; }
 /* Las dos casillas de estado, que en el papel quedaban en blanco */
 .perm-decs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .perm-dec { border: 1px solid var(--border); border-left: 4px solid #cbd5e1; border-radius: 10px; padding: 10px 12px; }

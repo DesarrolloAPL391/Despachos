@@ -6,59 +6,105 @@
   <meta name="robots" content="noindex, nofollow" />
   <meta name="theme-color" content="#ED1C24" />
   <title>Solicitud de permiso · Autobuses El Poblado</title>
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Solicitud de permiso o licencia · Autobuses El Poblado Laureles S.A." />
+  <meta property="og:description" content="Radica tu permiso, adjunta los soportes y entrega los que te falten." />
+  <meta property="og:image" content="https://desarrolloapl391.github.io/Despachos/webapp/icons/icon-512.png" />
   <link rel="icon" href="icons/icon-192.png" />
   <!--
-    LINK PÚBLICO para radicar un permiso o licencia (formato F-GH-07, sql/97).
-    No lee NADA de la base: solo envía con permiso_radicar (RPC anon), que valida la cédula
-    contra la fecha de nacimiento del perfil. La solicitud queda PENDIENTE y se aprueba en la app
-    (Gestión Humana y Gerencia).
-    Los soportes se comprimen aquí mismo antes de enviarlos: la gente sube fotos de 5 MB.
+    LINK PÚBLICO para radicar un permiso o licencia (formato F-GH-07, sql/97 + sql/165).
+    - El empleado se identifica con cédula + fecha de nacimiento (permiso_mis, con el mismo freno de
+      vacaciones). Recibe solo su nombre de pila, su cargo y SUS solicitudes de los últimos 120 días,
+      con los soportes que ya entregó, para que entregue los que le falten.
+    - Los soportes salen de permisoReglas (config.js): dependen del tipo, de lo que pasó (el caso) y
+      del parentesco. Los que existen antes del permiso se exigen para radicar; los que solo existen
+      después (la asistencia a la cita, el registro de defunción…) o son de una emergencia se
+      entregan después por este mismo link, hasta la fecha límite.
+    - Cada soporte sube en su propia llamada (permiso_soporte_subir), ya comprimido aquí.
+    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222:
+      no consulta ni radica nada.
   -->
   <style>
     :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
     header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
     header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
     header h1 { font-size: 21px; margin: 10px 0 4px; }
     header p { margin: 0; opacity: .92; font-size: 14px; }
     main { max-width: 640px; margin: -40px auto 40px; padding: 0 16px; }
-    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; min-width: 0; }
     h2 { font-size: 16px; margin: 0 0 12px; display: flex; gap: 8px; align-items: center; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .full { grid-column: 1 / -1; }
     @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
-    label { display: block; font-size: 13px; font-weight: 600; color: #333; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #333; min-width: 0; }
     label > input, label > select, label > textarea { display: block; margin-top: 5px; }
-    label .req { color: var(--rojo); }
+    .req { color: var(--rojo); }
     /* min-width:0 porque datetime-local trae un ancho minimo propio y desborda en el celular */
     input, select, textarea { width: 100%; min-width: 0; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
-    .grid > label, .card, main { min-width: 0; }
     input:focus, select:focus, textarea:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
-    .hint { font-weight: 400; color: var(--muted); font-size: 12px; display: block; margin-top: 4px; }
-    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12.5px; display: block; margin-top: 4px; line-height: 1.4; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); margin-top: 14px; }
     .btn:disabled { opacity: .6; cursor: wait; }
     .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
     .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .hola { display: flex; gap: 12px; align-items: center; }
+    .hola .av { width: 46px; height: 46px; border-radius: 50%; background: #fff1f1; display: grid; place-items: center; font-size: 22px; flex: none; }
+    .hola b { font-size: 18px; display: block; }
+    .hola small { color: var(--muted); }
+    .mias { margin-top: 14px; border-top: 1px dashed var(--borde); padding-top: 12px; }
+    .mias h3 { font-size: 14px; margin: 0 0 8px; }
+    .mia { border: 1px solid var(--borde); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: 14px; line-height: 1.45; }
+    .mia .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .mia .nota { color: #b91c1c; font-size: 13px; margin-top: 4px; }
+    .mia .listo { color: #15803d; font-size: 13px; margin-top: 4px; }
+    .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .c-PENDIENTE, .c-EN { background: #fef3c7; color: #92400e; }
+    .c-APROBADO { background: #dcfce7; color: #15803d; }
+    .c-NEGADO { background: #fee2e2; color: #b91c1c; }
+    .c-ANULADO { background: #e5e7eb; color: #374151; }
     /* Tipos de permiso: botones grandes, que se usa desde el celular */
     .tipos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
     .tipo { display: flex; gap: 8px; align-items: center; border: 1px solid var(--borde); background: #fff;
-      border-radius: 12px; padding: 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; }
+      border-radius: 12px; padding: 12px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; color: var(--txt); }
     .tipo:hover { border-color: #f0b8bb; }
     .tipo.on { border-color: var(--rojo); background: #fff5f5; box-shadow: 0 0 0 2px rgba(237,28,36,.12); }
     .tipo .e { font-size: 20px; }
-    .sop { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; margin-top: 12px; font-size: 14px; }
-    .sop b { display: block; margin-bottom: 6px; }
-    .sop ul { margin: 0; padding-left: 18px; }
-    .sop li { margin-bottom: 4px; }
-    .files { margin-top: 10px; }
-    .file-l { display: block; border: 1px dashed var(--borde); border-radius: 12px; padding: 14px; text-align: center; cursor: pointer; font-size: 14px; font-weight: 600; color: #444; background: #fafafa; }
-    .adj { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--borde); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13px; }
+    .sub { margin-top: 14px; border-top: 1px dashed var(--borde); padding-top: 12px; }
+    .sub > b { display: block; font-size: 14px; margin-bottom: 8px; }
+    .opts { display: grid; gap: 8px; }
+    .opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--borde); border-radius: 12px; padding: 11px 12px; cursor: pointer; font-size: 15px; background: #fff; text-align: left; font: inherit; width: 100%; color: var(--txt); }
+    .opt:hover { border-color: #f0b8bb; }
+    .opt.on { border-color: var(--rojo); background: #fff5f5; box-shadow: 0 0 0 2px rgba(237,28,36,.12); }
+    .opt .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #cbb; flex: none; margin-top: 2px; }
+    .opt.on .dot { border-color: var(--rojo); background: radial-gradient(var(--rojo) 45%, #fff 50%); }
+    .regla { background: #eef2ff; border: 1px solid #c7d2fe; color: #1e3a8a; border-radius: 12px; padding: 10px 12px; margin-top: 12px; font-size: 13.5px; line-height: 1.45; }
+    .regla div + div { margin-top: 6px; }
+    .calc { border-radius: 12px; padding: 10px 12px; margin-top: 10px; font-size: 14px; line-height: 1.5; background: #eef7ee; border: 1px solid #cfe8cf; color: #14532d; }
+    .avisos { margin-top: 10px; display: grid; gap: 6px; }
+    .aviso { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 9px 12px; font-size: 13.5px; line-height: 1.4; }
+    /* Soportes: uno por renglón, cada uno con su botón */
+    .sop { border: 1px solid var(--borde); border-radius: 12px; padding: 11px 12px; margin-top: 8px; }
+    .sop .t { font-size: 14px; font-weight: 600; line-height: 1.35; }
+    .tag { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 1px 8px; margin-top: 5px; }
+    .tag.ya { background: #fee2e2; color: #b91c1c; }
+    .tag.despues { background: #e0e7ff; color: #3730a3; }
+    .tag.opc { background: #f1f5f9; color: #475569; }
+    .tag.ok { background: #dcfce7; color: #15803d; }
+    .tag.vencido { background: #fee2e2; color: #b91c1c; }
+    .sop.falta { border-color: #fca5a5; background: #fffafa; }
+    .file-l { display: inline-flex; gap: 6px; align-items: center; border: 1px dashed #d4c4c4; border-radius: 10px; padding: 8px 12px; cursor: pointer; font-size: 14px; font-weight: 600; color: #444; background: #fafafa; margin-top: 8px; }
+    .adj { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--borde); border-radius: 10px; padding: 6px 10px; margin-top: 6px; font-size: 13px; background: #fff; }
     .adj button { border: 0; background: none; font-size: 18px; cursor: pointer; color: #b3121b; }
-    .horas { background: #eef7ee; border: 1px solid #cfe8cf; border-radius: 10px; padding: 10px 12px; font-size: 14px; color: #14532d; margin-top: 10px; }
-    .ok-card { text-align: center; padding: 30px 18px; }
+    .vacio { color: var(--muted); font-size: 14px; }
+    .ok-card { text-align: center; padding: 28px 18px; }
     .ok-card .big { font-size: 46px; }
     .rad { font-size: 30px; font-weight: 800; color: var(--rojo); margin: 8px 0; }
+    .resumen { text-align: left; border: 1px solid var(--borde); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.6; margin: 12px 0; }
+    .resumen ul { margin: 4px 0 0; padding-left: 18px; }
+    .prueba { background: #fff7ed; border: 1px dashed #fdba74; color: #9a3412; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-bottom: 14px; text-align: center; }
     footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 30px; }
   </style>
 </head>
@@ -70,7 +116,9 @@
   </header>
 
   <main>
-    <!-- Paso 1: quién eres -->
+    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 y cualquier fecha.</div>
+
+    <!-- 1 · Quién eres -->
     <section class="card" id="p1">
       <h2>🪪 Identifícate</h2>
       <div class="err" id="err1" hidden></div>
@@ -82,79 +130,102 @@
           <input type="date" id="fnac" />
           <span class="hint">Es para confirmar que eres tú.</span>
         </label>
-        <label class="full">Celular
-          <input type="tel" id="celular" inputmode="numeric" placeholder="3001234567" />
-          <span class="hint">Por si Gestión Humana necesita confirmarte algo.</span>
-        </label>
       </div>
+      <button type="button" class="btn" id="entrar">Continuar →</button>
+      <p class="hint" style="text-align:center;margin-top:10px">Con estos mismos datos entregas después los soportes que te falten.</p>
     </section>
 
-    <!-- Paso 2: el permiso -->
-    <section class="card">
-      <h2>📋 ¿Qué permiso necesitas?</h2>
-      <div class="tipos" id="tipos"></div>
-      <div id="soportes-info"></div>
+    <!-- Hola + sus solicitudes, con los soportes que le faltan -->
+    <section class="card" id="hola" hidden>
+      <div class="err" id="err-mias" hidden></div>
+      <div class="hola"><span class="av">📝</span><span><b id="hola-n"></b><small id="hola-c"></small></span></div>
+      <div class="mias" id="mias" hidden><h3>Tus solicitudes</h3><div id="mias-l"></div></div>
     </section>
 
-    <section class="card">
-      <h2>🕐 ¿Cuándo?</h2>
-      <div class="grid">
-        <label>Desde <span class="req">*</span>
-          <input type="datetime-local" id="desde" />
-        </label>
-        <label>Hasta <span class="req">*</span>
-          <input type="datetime-local" id="hasta" />
-          <span class="hint">Cuándo regresas a trabajar.</span>
-        </label>
-      </div>
-      <div class="horas" id="horas" hidden></div>
-    </section>
+    <div id="form" hidden>
+      <!-- 2 · El permiso -->
+      <section class="card">
+        <h2>📋 ¿Qué permiso necesitas?</h2>
+        <div class="tipos" id="tipos"></div>
+        <div class="sub" id="caso-w" hidden><b>¿Qué pasó?</b><div class="opts" id="casos"></div></div>
+        <div class="sub" id="par-w" hidden>
+          <label>¿Quién es tu familiar? <span class="req">*</span>
+            <select id="parentesco"></select>
+          </label>
+        </div>
+        <div class="regla" id="regla" hidden></div>
+      </section>
 
-    <section class="card">
-      <h2>📝 Detalles</h2>
-      <div class="grid">
-        <label class="full">Motivo <span class="req">*</span>
-          <textarea id="motivo" rows="3" maxlength="400" placeholder="Explica brevemente para qué necesitas el permiso"></textarea>
-        </label>
-        <label class="full">¿Quién te reemplaza?
-          <input type="text" id="reemplaza" maxlength="80" placeholder="Nombre del compañero (si aplica)" />
-        </label>
-        <label class="full">¿Vas a reponer el tiempo?
-          <select id="reposicion">
-            <option value="">— Elige —</option>
-            <option value="SI">Sí, voy a reponerlo</option>
-            <option value="NO">No aplica</option>
-          </select>
-        </label>
-        <label class="full" id="forma-wrap" hidden>¿Cómo lo vas a reponer?
-          <input type="text" id="forma" maxlength="160" placeholder="Ej.: el jueves hago 2 horas extra y no las reporto para pago" />
-        </label>
-      </div>
-    </section>
+      <!-- 3 · Cuándo -->
+      <section class="card">
+        <h2>🕐 ¿Cuándo?</h2>
+        <div class="grid">
+          <label>Desde <span class="req">*</span>
+            <input type="datetime-local" id="desde" />
+          </label>
+          <label>Hasta <span class="req">*</span>
+            <input type="datetime-local" id="hasta" />
+            <span class="hint">Cuándo regresas a trabajar.</span>
+          </label>
+          <label class="full" id="compensa-w" hidden><span id="compensa-l"></span> <span class="req">*</span>
+            <input type="date" id="compensa" />
+          </label>
+        </div>
+        <div class="calc" id="calc" hidden></div>
+        <div class="avisos" id="avisos"></div>
+      </section>
 
-    <section class="card">
-      <h2>📎 Soportes</h2>
-      <p class="hint" style="margin-top:0">Toma una foto del documento o sube el PDF. Puedes adjuntar hasta 3.</p>
-      <div class="files">
-        <label class="file-l">📷 Agregar soporte
-          <input type="file" id="file" accept="image/*,application/pdf" hidden />
-        </label>
-        <div id="adjuntos"></div>
-      </div>
-    </section>
+      <!-- 4 · Detalles -->
+      <section class="card">
+        <h2>📝 Detalles</h2>
+        <div class="grid">
+          <label class="full">Motivo <span class="req">*</span>
+            <textarea id="motivo" rows="3" maxlength="400" placeholder="Explica brevemente para qué necesitas el permiso"></textarea>
+          </label>
+          <label class="full" id="autoriza-w" hidden>¿Qué jefe te autorizó? <span class="req">*</span>
+            <input type="text" id="autoriza" maxlength="80" placeholder="Nombre de tu jefe inmediato" />
+            <span class="hint">Este permiso necesita el visto bueno de tu jefe antes de radicarlo.</span>
+          </label>
+          <label class="full">¿Quién te reemplaza?
+            <input type="text" id="reemplaza" maxlength="80" placeholder="Nombre del compañero (si aplica)" />
+          </label>
+          <div class="full" id="repone-w" hidden>
+            <label style="margin:0">¿Vas a reponer el tiempo? <span class="req">*</span></label>
+            <div class="opts" id="repone" style="margin-top:6px">
+              <button type="button" class="opt" data-rep="SI"><span class="dot"></span>Sí, voy a reponerlo</button>
+              <button type="button" class="opt" data-rep="NO"><span class="dot"></span>No lo voy a reponer</button>
+            </div>
+            <span class="hint" id="repone-h"></span>
+          </div>
+          <label class="full" id="forma-w" hidden>¿Cómo lo vas a reponer? <span class="req">*</span>
+            <input type="text" id="forma" maxlength="160" placeholder="Ej.: el jueves hago 2 horas extra y no las reporto para pago" />
+          </label>
+          <label class="full">Celular
+            <input type="tel" id="celular" inputmode="numeric" placeholder="3001234567" />
+            <span class="hint">Por si Gestión Humana necesita confirmarte algo.</span>
+          </label>
+        </div>
+      </section>
 
-    <div class="err" id="err2" hidden></div>
-    <button class="btn" id="enviar">Enviar la solicitud</button>
-    <p class="hint" style="text-align:center;margin-top:10px">
-      Gestión Humana y Gerencia la revisan. Te avisan el resultado.
-    </p>
+      <!-- 5 · Soportes del permiso elegido -->
+      <section class="card">
+        <h2>📎 Soportes</h2>
+        <div id="sops"><p class="vacio">Elige el tipo de permiso para ver qué soportes necesitas.</p></div>
+      </section>
+
+      <div class="err" id="err2" hidden></div>
+      <button type="button" class="btn" id="enviar">Enviar la solicitud</button>
+      <p class="hint" style="text-align:center;margin-top:10px">Gestión Humana y Gerencia la revisan. Te avisan el resultado.</p>
+    </div>
 
     <!-- Acuse -->
     <section class="card ok-card" id="gracias" hidden>
       <div class="big">✅</div>
       <h2 style="justify-content:center">Solicitud radicada</h2>
       <div class="rad" id="rad-num"></div>
-      <p class="hint">Guarda este número. Gestión Humana y Gerencia la van a revisar.</p>
+      <div class="resumen" id="resumen"></div>
+      <p class="hint">Guarda este número. Para entregar un soporte que te falte o ver cómo va, vuelve a este link y entra con tu cédula y tu fecha de nacimiento.</p>
+      <button type="button" class="btn btn-sec" id="otra">Hacer otra solicitud</button>
     </section>
   </main>
 
@@ -162,60 +233,73 @@
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERMISO_TIPOS } from './js/config.js';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERMISO_TIPOS, permisoReglas, permisoVence } from './js/config.js';
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
     const $ = (id) => document.getElementById(id);
-    const adjuntos = [];
-    let tipo = null;
-
-    const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
-
-    // ---- Tipos de permiso: al elegir uno se muestran SUS soportes, no la lista completa ----
-    const cTipos = $('tipos');
-    PERMISO_TIPOS.forEach((t) => {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'tipo';
-      b.innerHTML = `<span class="e">${t.icon}</span><span>${t.label}</span>`;
-      b.addEventListener('click', () => {
-        tipo = t;
-        [...cTipos.children].forEach((x) => x.classList.remove('on'));
-        b.classList.add('on');
-        $('soportes-info').innerHTML = `<div class="sop"><b>Para este permiso debes presentar:</b><ul>`
-          + t.soportes.map((s) => `<li>${s}</li>`).join('') + `</ul></div>`;
-      });
-      cTipos.appendChild(b);
-    });
-
-    // ---- Duración: el formato en papel no la tenía y por eso nadie controlaba la reposición ----
-    const calcularHoras = () => {
-      const d = $('desde').value, h = $('hasta').value;
-      const box = $('horas');
-      if (!d || !h) { box.hidden = true; return; }
-      const ms = new Date(h) - new Date(d);
-      if (!(ms > 0)) { box.hidden = false; box.textContent = 'La hora de regreso debe ser posterior a la de salida.'; return; }
-      const horas = ms / 3600000;
-      const dias = horas / 24;
-      box.hidden = false;
-      box.textContent = horas < 24
-        ? `Son ${horas.toFixed(horas % 1 ? 1 : 0)} hora(s) de permiso.`
-        : `Son ${dias.toFixed(dias % 1 ? 1 : 0)} día(s) de permiso.`;
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    // "martes 1 de diciembre": se arma desde el texto de la fecha para que la zona horaria no la corra.
+    const fLarga = (iso, conDia = true) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return '';
+      const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+      return `${conDia ? DIAS[dow] + ' ' : ''}${+m[3]} de ${MESES[+m[2] - 1]}${+m[1] !== new Date().getFullYear() ? ' de ' + m[1] : ''}`;
     };
-    $('desde').addEventListener('change', calcularHoras);
-    $('hasta').addEventListener('change', calcularHoras);
+    const fHora = (v) => { const s = String(v || ''); return s.length > 10 ? `${fLarga(s)}, ${s.slice(11, 16)}` : fLarga(s); };
+    const hoyIso = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
+    // "aaaa-mm-ddThh:mm" en hora de Colombia, comparable con lo que dan los campos datetime-local.
+    const ahoraLocal = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit',
+      day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()).replace(' ', 'T');
+    const sumarDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+    const ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobado', NEGADO: 'Negado', ANULADO: 'Anulado' };
+    const ced = () => ($('cedula').value || '').replace(/\D/g, '');
+    const esPrueba = () => PRUEBA && ced() === '99000111222';
 
-    $('reposicion').addEventListener('change', (e) => { $('forma-wrap').hidden = e.target.value !== 'SI'; });
+    let quien = null;                       // lo que devolvió permiso_mis
+    let tipo = null, caso = null, parentesco = null, repone = null;
+    let adj = {};                           // requisito → archivos adjuntos para la solicitud nueva
+    let hastaAuto = false;                  // el "hasta" lo puso la página (luto, maternidad…)
+    let lutoRegreso = null;
 
-    // ---- Soportes: la gente sube fotos de 5 MB; se reducen antes de enviarlas ----
+    if (PRUEBA) $('prueba').hidden = false;
+    const reglas = () => permisoReglas(tipo, caso, parentesco);
+    const nombreTipo = (p) => {
+      const R = permisoReglas(p.tipo, p.caso, p.parentesco);
+      return [R.T ? R.T.label : p.tipo, R.C && R.C.label, R.P && R.P.label].filter(Boolean).join(' · ');
+    };
+
+    // ---- Vista de prueba: una persona inventada, con un luto al que le falta un soporte ----
+    const DEMO = () => ({ ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', sabado_habil: true,
+      permisos: [{ radicado: 12, fecha_solicitud: sumarDias(hoyIso(), -6), tipo: 'LUTO', caso: null, parentesco: 'HERMANO(A)',
+        desde: sumarDias(hoyIso(), -6) + 'T06:00:00', hasta: sumarDias(hoyIso(), 1) + 'T06:00:00', estado: 'APROBADO',
+        entregados: ['defuncion'] }] });
+    const calcDemo = (inicio, dias, sab) => {
+      let d = inicio, n = 0, fin = null;
+      for (let i = 0; i < 60 && !fin; i++) {
+        const w = new Date(d + 'T12:00:00').getDay();
+        if (w !== 0 && (w !== 6 || sab)) { n++; if (n === dias) fin = d; }
+        d = sumarDias(d, 1);
+      }
+      let reg = sumarDias(fin, 1);
+      while ([0, ...(sab ? [] : [6])].includes(new Date(reg + 'T12:00:00').getDay())) reg = sumarDias(reg, 1);
+      return { ok: true, fin, regreso: reg, festivos: [] };
+    };
+
+    // ---- Los soportes llegan como fotos de 5 MB: se reducen aquí antes de enviarlos ----
     const comprimir = (file) => new Promise((res) => {
-      if (file.type === 'application/pdf') {
-        const fr = new FileReader();
-        fr.onload = () => res({ nombre: file.name, tipo_mime: file.type, archivo: fr.result });
-        fr.onerror = () => res(null);
+      const fr = new FileReader();
+      fr.onerror = () => res(null);
+      const esPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+      if (esPdf) {
+        // Algunos celulares no dicen el tipo: el PDF se marca como PDF para que la base lo acepte.
+        fr.onload = () => res({ nombre: file.name, tipo_mime: 'application/pdf',
+          archivo: 'data:application/pdf;base64,' + String(fr.result).split(',')[1] });
         fr.readAsDataURL(file);
         return;
       }
-      const fr = new FileReader();
       fr.onload = () => {
         const img = new Image();
         img.onload = () => {
@@ -223,86 +307,323 @@
           const cv = document.createElement('canvas');
           cv.width = Math.round(img.naturalWidth * f); cv.height = Math.round(img.naturalHeight * f);
           cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-          res({ nombre: file.name, tipo_mime: 'image/jpeg', archivo: cv.toDataURL('image/jpeg', 0.72) });
+          res({ nombre: file.name || 'foto.jpg', tipo_mime: 'image/jpeg', archivo: cv.toDataURL('image/jpeg', 0.72) });
         };
         img.onerror = () => res(null);
         img.src = fr.result;
       };
-      fr.onerror = () => res(null);
       fr.readAsDataURL(file);
     });
+    async function leerSoporte(file) {
+      if (!file) return { error: '' };
+      if (file.size > 12 * 1024 * 1024) return { error: 'Ese archivo pesa demasiado (máximo 12 MB).' };
+      const a = await comprimir(file);
+      if (!a) return { error: 'No se pudo leer el archivo. Si es una foto, tómala directamente con la cámara.' };
+      if (a.archivo.length > 2000000) return { error: 'Ese soporte quedó muy pesado. Si es una foto, tómala con menos calidad; si es un PDF, envía uno más liviano.' };
+      return { a };
+    }
+    async function subir(radicado, requisito, a) {
+      if (esPrueba()) return { ok: true };
+      const { data, error } = await sb.rpc('permiso_soporte_subir', {
+        p_cedula: ced(), p_fecha_nacimiento: $('fnac').value, p_radicado: radicado, p_requisito: requisito,
+        p_nombre: a.nombre, p_tipo_mime: a.tipo_mime, p_archivo: a.archivo });
+      if (error) throw error;
+      return data || { ok: false, error: 'No se pudo subir.' };
+    }
 
-    const pintarAdjuntos = () => {
-      $('adjuntos').innerHTML = '';
-      adjuntos.forEach((a, i) => {
-        const d = document.createElement('div');
-        d.className = 'adj';
-        d.innerHTML = `<span>📎 ${a.nombre.slice(0, 40)} · ${Math.round(a.archivo.length / 1400)} KB</span>`;
-        const b = document.createElement('button');
-        b.type = 'button'; b.textContent = '✕'; b.title = 'Quitar';
-        b.addEventListener('click', () => { adjuntos.splice(i, 1); pintarAdjuntos(); });
-        d.appendChild(b);
-        $('adjuntos').appendChild(d);
-      });
-    };
-
-    $('file').addEventListener('change', async (e) => {
-      const f = e.target.files && e.target.files[0];
-      e.target.value = '';
-      if (!f) return;
-      if (adjuntos.length >= 3) return mostrarError($('err2'), 'Máximo 3 soportes.');
-      if (f.size > 12 * 1024 * 1024) return mostrarError($('err2'), 'Ese archivo pesa demasiado (máximo 12 MB).');
-      mostrarError($('err2'), '');
-      const a = await comprimir(f);
-      if (!a) return mostrarError($('err2'), 'No se pudo leer el archivo.');
-      if (a.archivo.length > 2000000) return mostrarError($('err2'), 'Ese soporte quedó muy pesado. Si es una foto, tómala con menos calidad; si es un PDF, envía uno más liviano.');
-      adjuntos.push(a);
-      pintarAdjuntos();
+    // ---- 1 · Identificarse ----
+    $('entrar').addEventListener('click', async () => {
+      if (!ced()) return mostrarError($('err1'), 'Escribe tu cédula.');
+      if (!$('fnac').value) return mostrarError($('err1'), 'Escribe tu fecha de nacimiento.');
+      mostrarError($('err1'), '');
+      const b = $('entrar'); b.disabled = true; b.textContent = 'Buscando…';
+      try {
+        let data;
+        if (esPrueba()) data = DEMO();
+        else {
+          const r = await sb.rpc('permiso_mis', { p_cedula: ced(), p_fecha_nacimiento: $('fnac').value });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
+        if (!data || !data.ok) return mostrarError($('err1'), (data && data.error) || 'No encontramos tus datos.');
+        quien = data;
+        $('cedula').readOnly = true; $('fnac').readOnly = true; $('entrar').hidden = true;
+        $('hola-n').textContent = `Hola, ${quien.nombre || ''}`;
+        $('hola-c').textContent = quien.cargo || '';
+        $('hola').hidden = false;
+        pintarMias();
+        $('form').hidden = false;
+        $('hola').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch {
+        mostrarError($('err1'), 'No pudimos conectarnos. Revisa tu internet e intenta de nuevo.');
+      } finally { b.disabled = false; b.textContent = 'Continuar →'; }
     });
+
+    // ---- Sus solicitudes: lo que falta entregar se entrega aquí mismo ----
+    const pendientesDe = (p) => permisoReglas(p.tipo, p.caso, p.parentesco).soportes
+      .filter((s) => s.cuando !== 'OPC' && !(p.entregados || []).includes(s.k))
+      .map((s) => ({ ...s, vence: permisoVence(s, p.desde, p.hasta, p.fecha_solicitud) }));
+
+    function pintarMias() {
+      const mias = quien.permisos || [];
+      $('mias').hidden = !mias.length;
+      $('mias-l').innerHTML = mias.map((p, i) => {
+        const vivo = !['ANULADO', 'NEGADO'].includes(p.estado);
+        const falta = vivo ? pendientesDe(p) : [];
+        return `<div class="mia">
+          <div class="top"><b>Radicado # ${esc(p.radicado)}</b>
+            <span class="chip c-${esc(String(p.estado).split(' ')[0])}">${esc(ESTADO[p.estado] || p.estado)}</span></div>
+          <div>${esc(nombreTipo(p))}</div>
+          <div class="hint" style="margin:0">Del ${esc(fHora(p.desde))} al ${esc(fHora(p.hasta))}</div>
+          ${p.nota ? `<div class="nota">Motivo: ${esc(p.nota)}</div>` : ''}
+          ${vivo && !falta.length ? '<div class="listo">✅ Ya entregaste todos los soportes.</div>' : ''}
+          ${falta.map((s) => {
+            const vencido = s.vence && s.vence < hoyIso();
+            return `<div class="sop falta"><div class="t">${esc(s.txt)}</div>
+              <span class="tag ${vencido ? 'vencido' : 'despues'}">${s.vence ? (vencido ? 'Se venció el ' : 'Entrégalo hasta el ') + esc(fLarga(s.vence)) : 'Pendiente'}</span><br>
+              <label class="file-l">📷 Entregar<input type="file" hidden accept="image/*,application/pdf" data-mia="${i}" data-req="${esc(s.k)}"></label></div>`;
+          }).join('')}
+        </div>`;
+      }).join('');
+    }
+    $('mias-l').addEventListener('change', async (e) => {
+      const inp = e.target.closest('input[data-mia]'); if (!inp) return;
+      const p = quien.permisos[Number(inp.dataset.mia)], k = inp.dataset.req;
+      const f = inp.files && inp.files[0]; inp.value = '';
+      const r = await leerSoporte(f);
+      if (r.error) return mostrarError($('err-mias'), r.error);
+      if (!r.a) return;
+      const lab = inp.parentElement; lab.firstChild.textContent = 'Subiendo… ';
+      try {
+        const d = await subir(p.radicado, k, r.a);
+        if (!d.ok) throw new Error(d.error || 'No se pudo subir.');
+        p.entregados = [...(p.entregados || []), k];
+        mostrarError($('err-mias'), '');
+        pintarMias();
+      } catch (ex) {
+        lab.firstChild.textContent = '📷 Entregar';
+        mostrarError($('err-mias'), (ex && ex.message) || 'No se pudo subir. Intenta de nuevo.');
+      }
+    });
+
+    // ---- 2 · Tipo, caso y parentesco: de los tres depende qué soportes se piden ----
+    PERMISO_TIPOS.forEach((t) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'tipo'; b.dataset.tipo = t.key;
+      b.innerHTML = `<span class="e">${t.icon}</span><span>${esc(t.label)}</span>`;
+      b.addEventListener('click', () => { tipo = t.key; caso = null; parentesco = null; pintarTipo(); });
+      $('tipos').appendChild(b);
+    });
+    $('casos').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-caso]'); if (!b) return;
+      caso = b.dataset.caso;
+      const R = reglas(); if (R.parentescos && !R.parentescos.some((p) => p.key === parentesco)) parentesco = null;
+      pintarTipo();
+    });
+    $('parentesco').addEventListener('change', (e) => { parentesco = e.target.value || null; pintarTipo(); });
+
+    function pintarTipo() {
+      const R = reglas();
+      [...$('tipos').children].forEach((b) => b.classList.toggle('on', b.dataset.tipo === tipo));
+      const casos = (R.T && R.T.casos) || null;
+      $('caso-w').hidden = !casos;
+      $('casos').innerHTML = (casos || []).map((c) =>
+        `<button type="button" class="opt${c.key === caso ? ' on' : ''}" data-caso="${esc(c.key)}"><span class="dot"></span>${esc(c.label)}</button>`).join('');
+      $('par-w').hidden = !R.parentescos;
+      if (R.parentescos) {
+        $('parentesco').innerHTML = '<option value="">— Elige —</option>' + R.parentescos.map((p) =>
+          `<option value="${esc(p.key)}"${p.key === parentesco ? ' selected' : ''}>${esc(p.label)}</option>`).join('');
+      }
+      const txt = [R.ley, R.nota].filter(Boolean);
+      $('regla').hidden = !txt.length;
+      $('regla').innerHTML = txt.map((t) => `<div>ℹ️ ${esc(t)}</div>`).join('');
+      $('compensa-w').hidden = !R.compensa;
+      $('compensa-l').textContent = R.compensa || '';
+      $('autoriza-w').hidden = !R.autoriza;
+      $('repone-w').hidden = R.repone !== 'PREGUNTA';
+      $('repone-h').textContent = tipo === 'PERSONAL' ? 'Si no lo repones, Gestión Humana define si se descuenta.' : '';
+      if (R.repone !== 'PREGUNTA') repone = null;
+      pintarRepone();
+      calcFechas();
+    }
+
+    function pintarRepone() {
+      [...$('repone').children].forEach((b) => b.classList.toggle('on', b.dataset.rep === repone));
+      $('forma-w').hidden = repone !== 'SI' || $('repone-w').hidden;
+    }
+    $('repone').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-rep]'); if (!b) return;
+      repone = b.dataset.rep; pintarRepone();
+    });
+
+    // ---- 5 · Un renglón por soporte, cada uno con su botón ----
+    function pintarSoportes() {
+      const R = reglas();
+      if (R.falta) {
+        const que = { tipo: 'el tipo de permiso', caso: 'qué pasó', parentesco: 'quién es tu familiar' }[R.falta];
+        $('sops').innerHTML = `<p class="vacio">Elige ${que} para ver qué soportes necesitas.</p>`;
+        return;
+      }
+      if (!R.soportes.length) {
+        $('sops').innerHTML = '<p class="vacio">Este permiso no necesita soportes.</p>';
+        return;
+      }
+      const d = $('desde').value, h = $('hasta').value;
+      $('sops').innerHTML = '<p class="hint" style="margin-top:0">Toma una foto del documento o sube el PDF.</p>' + R.soportes.map((s) => {
+        const vence = d && h ? permisoVence(s, d, h, hoyIso()) : null;
+        const tag = s.cuando === 'YA' ? '<span class="tag ya">Obligatorio para radicar</span>'
+          : s.cuando === 'OPC' ? '<span class="tag opc">Opcional</span>'
+            : `<span class="tag despues">Puedes entregarlo después${vence ? ', hasta el ' + esc(fLarga(vence)) : `: ${s.dias} días desde ${s.base === 'INICIO' ? 'que empieza' : 'tu regreso'}`}</span>`;
+        const lista = adj[s.k] || [];
+        return `<div class="sop">
+          <div class="t">${esc(s.txt)}</div>${tag}
+          ${lista.map((a, i) => `<div class="adj"><span>📎 ${esc(a.nombre.slice(0, 34))} · ${Math.round(a.archivo.length / 1400)} KB</span>
+            <button type="button" title="Quitar" data-quitar="${esc(s.k)}" data-i="${i}">✕</button></div>`).join('')}
+          ${lista.length < 3 ? `<label class="file-l">📷 ${lista.length ? 'Agregar otra' : 'Adjuntar'}<input type="file" hidden accept="image/*,application/pdf" data-req="${esc(s.k)}"></label>` : ''}
+        </div>`;
+      }).join('');
+    }
+    $('sops').addEventListener('change', async (e) => {
+      const inp = e.target.closest('input[data-req]'); if (!inp) return;
+      const f = inp.files && inp.files[0]; inp.value = '';
+      const total = Object.values(adj).reduce((n, l) => n + l.length, 0);
+      if (total >= 12) return mostrarError($('err2'), 'Máximo 12 soportes por solicitud.');
+      const r = await leerSoporte(f);
+      if (r.error) return mostrarError($('err2'), r.error);
+      if (!r.a) return;
+      mostrarError($('err2'), '');
+      (adj[inp.dataset.req] = adj[inp.dataset.req] || []).push(r.a);
+      pintarSoportes();
+    });
+    $('sops').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-quitar]'); if (!b) return;
+      adj[b.dataset.quitar].splice(Number(b.dataset.i), 1);
+      pintarSoportes();
+    });
+
+    // ---- 3 · Fechas: la de regreso sale sola cuando la ley la fija ----
+    let calcN = 0;
+    async function calcFechas() {
+      const R = reglas(), d = $('desde').value, n = ++calcN;
+      lutoRegreso = null;
+      $('calc').hidden = true;
+      // Si la fecha la había puesto la página y el permiso nuevo no la fija, se borra.
+      if (hastaAuto && !R.dias && !R.habiles) { $('hasta').value = ''; hastaAuto = false; }
+      if (d && R.dias && (!$('hasta').value || hastaAuto)) {
+        $('hasta').value = sumarDias(d.slice(0, 10), R.dias) + d.slice(10); hastaAuto = true;
+      }
+      if (d && R.habiles) {
+        let r = null;
+        try {
+          r = esPrueba() ? calcDemo(d.slice(0, 10), R.habiles, !!quien.sabado_habil)
+            : (await sb.rpc('vacaciones_fechas', { p_inicio: d.slice(0, 10), p_dias: R.habiles, p_sabado: !!quien.sabado_habil })).data;
+        } catch { r = null; }
+        if (n !== calcN) return;                   // ya cambió otra cosa mientras respondía
+        if (r && r.ok) {
+          lutoRegreso = r.regreso;
+          if (!$('hasta').value || hastaAuto) { $('hasta').value = r.regreso + d.slice(10); hastaAuto = true; }
+          const fest = (r.festivos || []).map((f) => fLarga(f, false));
+          $('calc').hidden = false;
+          $('calc').innerHTML = `Tus ${R.habiles} días hábiles van hasta el <b>${esc(fLarga(r.fin))}</b>: regresas el <b>${esc(fLarga(r.regreso))}</b>.`
+            + (fest.length ? `<br><small>No cuentan los festivos: ${esc(fest.join(', '))}.</small>` : '')
+            + `<br><small>${quien.sabado_habil ? 'El sábado cuenta como hábil para tu cargo.' : 'El sábado no cuenta como hábil para tu cargo.'}</small>`;
+        }
+      }
+      avisos();
+      pintarSoportes();
+    }
+    $('desde').addEventListener('change', calcFechas);
+    $('hasta').addEventListener('input', () => { hastaAuto = false; });
+    $('hasta').addEventListener('change', () => { avisos(); pintarSoportes(); });
+
+    function avisos() {
+      const R = reglas(), d = $('desde').value, h = $('hasta').value, a = [];
+      let dura = '';
+      if (d && h) {
+        const ms = new Date(h) - new Date(d);
+        if (!(ms > 0)) a.push('La hora de regreso debe ser posterior a la de salida.');
+        else {
+          const horas = ms / 3600000, dias = Math.round(horas / 24);
+          dura = horas < 24 ? `Son ${+horas.toFixed(1)} hora(s) de permiso.` : `Son ${+(horas / 24).toFixed(1)} día(s) de permiso.`;
+          if (R.dias && dias > R.dias) a.push(`Pasa de los ${R.dias} días de esta licencia. Gestión Humana lo revisa.`);
+          if (R.habiles && lutoRegreso && h.slice(0, 10) > lutoRegreso) a.push(`Pasa de los ${R.habiles} días hábiles de la licencia de luto. Gestión Humana lo revisa.`);
+          if (tipo === 'CITA MEDICA' && horas > 10) a.push('Dura más de una jornada: si el médico te incapacita, va como incapacidad.');
+        }
+      }
+      if (R.antes && d && d < ahoraLocal()) {
+        a.push('Este permiso se pide con anticipación: quedará la nota de que se pidió cuando ya había empezado.');
+      }
+      $('avisos').innerHTML = (dura ? `<div class="calc">${esc(dura)}</div>` : '')
+        + a.map((t) => `<div class="aviso">⚠️ ${esc(t)}</div>`).join('');
+    }
 
     // ---- Enviar ----
     $('enviar').addEventListener('click', async () => {
-      const err = $('err2');
-      const ced = ($('cedula').value || '').replace(/\D/g, '');
-      if (!ced) return mostrarError($('err1'), 'Escribe tu cédula.');
-      if (!$('fnac').value) return mostrarError($('err1'), 'Escribe tu fecha de nacimiento.');
-      mostrarError($('err1'), '');
+      const err = $('err2'), R = reglas();
       if (!tipo) return mostrarError(err, 'Elige el tipo de permiso.');
-      if (!$('desde').value || !$('hasta').value) return mostrarError(err, 'Falta la fecha de salida o la de regreso.');
-      if (new Date($('hasta').value) <= new Date($('desde').value)) return mostrarError(err, 'La fecha de regreso debe ser posterior a la de salida.');
+      if (R.falta === 'caso') return mostrarError(err, 'Cuéntanos qué pasó: elige una de las opciones del permiso.');
+      if (R.falta === 'parentesco') return mostrarError(err, 'Elige quién es tu familiar.');
+      const d = $('desde').value, h = $('hasta').value;
+      if (!d || !h) return mostrarError(err, 'Falta la fecha de salida o la de regreso.');
+      if (new Date(h) <= new Date(d)) return mostrarError(err, 'La fecha de regreso debe ser posterior a la de salida.');
+      if (R.compensa && !$('compensa').value) return mostrarError(err, `Responde: ${R.compensa}`);
       if (!($('motivo').value || '').trim()) return mostrarError(err, 'Escribe el motivo del permiso.');
-      const rep = $('reposicion').value;
-      if (rep === 'SI' && !($('forma').value || '').trim()) return mostrarError(err, 'Dinos cómo vas a reponer el tiempo.');
+      if (R.autoriza && !($('autoriza').value || '').trim()) return mostrarError(err, 'Escribe qué jefe te autorizó el permiso.');
+      if (R.repone === 'PREGUNTA' && !repone) return mostrarError(err, 'Dinos si vas a reponer el tiempo.');
+      if (repone === 'SI' && !($('forma').value || '').trim()) return mostrarError(err, 'Dinos cómo vas a reponer el tiempo.');
+      const faltan = R.soportes.filter((s) => s.cuando === 'YA' && !(adj[s.k] || []).length);
+      if (faltan.length) {
+        return mostrarError(err, `Para radicar este permiso adjunta: ${faltan.map((s) => s.txt).join('; ')}.`);
+      }
       mostrarError(err, '');
 
-      const btn = $('enviar');
-      btn.disabled = true; btn.textContent = 'Enviando…';
+      const b = $('enviar'); b.disabled = true; b.textContent = 'Enviando…';
       try {
-        const { data, error } = await sb.rpc('permiso_radicar', {
-          p_cedula: ced,
-          p_fecha_nacimiento: $('fnac').value,
-          p_tipo: tipo.key,
-          p_motivo: $('motivo').value.trim(),
-          p_desde: $('desde').value,
-          p_hasta: $('hasta').value,
-          p_reemplaza: $('reemplaza').value.trim() || null,
-          p_reposicion: rep === 'SI',
-          p_forma_reposicion: rep === 'SI' ? $('forma').value.trim() : null,
-          p_celular: ($('celular').value || '').replace(/\D/g, '') || null,
-          p_soportes: adjuntos,
-        });
-        if (error) throw error;
+        let data;
+        if (esPrueba()) data = { ok: true, radicado: 999 };
+        else {
+          const r = await sb.rpc('permiso_radicar', {
+            p_cedula: ced(), p_fecha_nacimiento: $('fnac').value, p_tipo: tipo, p_caso: caso, p_parentesco: parentesco,
+            p_motivo: $('motivo').value.trim(), p_desde: d, p_hasta: h,
+            p_reemplaza: $('reemplaza').value.trim() || null,
+            p_reposicion: R.repone === 'PREGUNTA' ? repone === 'SI' : null,
+            p_forma_reposicion: repone === 'SI' ? $('forma').value.trim() : null,
+            p_celular: ($('celular').value || '').replace(/\D/g, '') || null,
+            p_autoriza: R.autoriza ? $('autoriza').value.trim() : null,
+            p_compensa_fecha: R.compensa ? $('compensa').value : null,
+            p_soportes: [] });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
         if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo radicar.');
-        document.querySelectorAll('main > section.card, #enviar, main > .hint').forEach((el) => { el.hidden = true; });
+
+        // Ya está radicada: los soportes suben uno por uno. Si alguno falla, se entrega después.
+        const cola = R.soportes.flatMap((s) => (adj[s.k] || []).map((a) => ({ s, a })));
+        const fallaron = new Set(), subidos = new Set();
+        for (let i = 0; i < cola.length; i++) {
+          b.textContent = `Subiendo soporte ${i + 1} de ${cola.length}…`;
+          try {
+            const r = await subir(data.radicado, cola[i].s.k, cola[i].a);
+            if (r && r.ok) subidos.add(cola[i].s.k); else fallaron.add(cola[i].s.k);
+          } catch { fallaron.add(cola[i].s.k); }
+        }
+        const pend = R.soportes.filter((s) => s.cuando !== 'OPC' && !subidos.has(s.k));
         $('rad-num').textContent = 'Radicado # ' + data.radicado;
+        $('resumen').innerHTML = `<div><b>Permiso:</b> ${esc([R.T.label, R.C && R.C.label, R.P && R.P.label].filter(Boolean).join(' · '))}</div>`
+          + `<div><b>Del</b> ${esc(fHora(d))} <b>al</b> ${esc(fHora(h))}</div>`
+          + (subidos.size ? `<div><b>Soportes entregados:</b> ${subidos.size}</div>` : '')
+          + (pend.length ? `<div style="margin-top:6px"><b>Te falta entregar:</b><ul>${pend.map((s) => {
+            const v = permisoVence(s, d, h, hoyIso());
+            return `<li>${esc(s.txt)}${fallaron.has(s.k) ? ' <b>(no se pudo subir: inténtalo de nuevo)</b>' : ''}${v ? ` — hasta el ${esc(fLarga(v))}` : ''}</li>`;
+          }).join('')}</ul></div>` : '<div>✅ Entregaste todos los soportes.</div>');
+        ['p1', 'hola', 'form'].forEach((id) => { $(id).hidden = true; });
         $('gracias').hidden = false;
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (ex) {
         mostrarError(err, (ex && ex.message) ? ex.message : 'No se pudo enviar. Revisa tu conexión e intenta de nuevo.');
-      } finally {
-        btn.disabled = false; btn.textContent = 'Enviar la solicitud';
-      }
+      } finally { b.disabled = false; b.textContent = 'Enviar la solicitud'; }
     });
+    $('otra').addEventListener('click', () => location.reload());
   </script>
 </body>
 </html>

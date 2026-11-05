@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, tiempoEntre } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, tiempoEntre } from './config.js';
 import { listaEditor, leerLista } from './hoja-vida.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -17800,7 +17800,7 @@ async function cfGuardar(r, card, msg) {
 // quedaba en blanco.
 // ===================================================================================
 let PERM_OK = false, PERM_GH = false, PERM_GER = false, PERM_MIOS = 0;
-const _perm = { rows: [], vista: 'decidir', q: '', abierto: null, recien: new Set() };
+const _perm = { rows: [], vista: 'decidir', q: '', abierto: null, recien: new Set(), sops: new Map() };
 const PERM_VISTAS = [
   { key: 'decidir', label: 'Por decidir' },
   { key: 'PENDIENTE', label: 'Pendientes' },
@@ -17837,6 +17837,30 @@ const permFechaHora = (v) => {
   const s = String(v).replace('T', ' ');
   return `${fechaLegible(s.slice(0, 10))} ${s.slice(11, 16)}`;
 };
+
+// Lo que pasó y con quién, como lo eligió el empleado (sql/165).
+function permCasoTexto(r) {
+  const R = permisoReglas(r.tipo, r.caso, r.parentesco);
+  return [R.C ? R.C.label.replace(/\s*\(.*\)$/, '') : r.caso, R.P ? R.P.label : r.parentesco].filter(Boolean).join(' · ');
+}
+// Qué soportes pide la solicitud y cuáles llegaron. Los de YA debían venir al radicar; los de
+// DESPUÉS tienen fecha límite (permisoVence). Los opcionales no cuentan para "completos".
+function permSoportesEstado(r, entregados = _perm.sops.get(r.id)) {
+  const hay = entregados || new Set(), hoy = hoyServidor();
+  const req = permisoReglas(r.tipo, r.caso, r.parentesco).soportes.map((s) => {
+    const vence = permisoVence(s, r.desde, r.hasta, r.fecha_solicitud), ok = hay.has(s.k);
+    return { ...s, vence, ok, vencido: !ok && s.cuando !== 'OPC' && !!vence && vence < hoy };
+  });
+  const exig = req.filter((s) => s.cuando !== 'OPC');
+  return { req, exigidos: exig.length, faltan: exig.filter((s) => !s.ok).length, vencidos: req.filter((s) => s.vencido).length };
+}
+function permSoportesChip(r) {
+  if (r.estado === 'ANULADO') return '—';
+  const e = permSoportesEstado(r);
+  if (!e.exigidos) return '<span class="chip chip-gray">No pide</span>';
+  if (!e.faltan) return '<span class="chip chip-green">Completos</span>';
+  return `<span class="chip ${e.vencidos ? 'chip-red' : 'chip-amber'}">Faltan ${e.faltan}${e.vencidos ? ' · vencido' : ''}</span>`;
+}
 
 function permModal() {
   let m = $('perm-modal');
@@ -17884,9 +17908,16 @@ async function cargarPermisos() {
   const body = permModal().querySelector('.perm-body');
   if (!_perm.rows.length) body.innerHTML = '<div class="loading">Cargando…</div>';
   try {
-    const { data, error } = await sb.from('permisos').select('*').order('radicado', { ascending: false }).limit(2000);
+    const [{ data, error }, sops] = await Promise.all([
+      sb.from('permisos').select('*').order('radicado', { ascending: false }).limit(2000),
+      sb.from('permiso_soportes').select('permiso_id, requisito').not('requisito', 'is', null).limit(20000)]);
     if (error) throw error;
     _perm.rows = data || [];
+    _perm.sops = new Map();
+    (sops.data || []).forEach((s) => {
+      if (!_perm.sops.has(s.permiso_id)) _perm.sops.set(s.permiso_id, new Set());
+      _perm.sops.get(s.permiso_id).add(s.requisito);
+    });
     renderPermisos();
     refrescarPermisos();
   } catch (e) {
@@ -17934,7 +17965,7 @@ function renderPermisos() {
   }
 
   const tabla = pstEl('table', 'pst-tabla');
-  const cab = ['#', 'Empleado', 'Cargo / área', 'Tipo', 'Desde', 'Hasta', 'Duración', 'Repone', 'G. Humana', 'Gerencia', 'Estado'];
+  const cab = ['#', 'Empleado', 'Cargo / área', 'Tipo', 'Desde', 'Hasta', 'Duración', 'Repone', 'Soportes', 'G. Humana', 'Gerencia', 'Estado'];
   const thead = pstEl('thead'); const tr = pstEl('tr');
   cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
   thead.appendChild(tr); tabla.appendChild(thead);
@@ -17942,10 +17973,15 @@ function renderPermisos() {
   rows.forEach((r) => {
     const f = pstEl('tr');
     f.dataset.perm = r.id;
-    [`${r.radicado}`, r.nombre || '—', `${r.cargo || '—'}${r.area ? ' · ' + r.area : ''}`,
-      r.tipo || '—', permFechaHora(r.desde), permFechaHora(r.hasta), permDuracion(r),
-      r.reposicion ? 'Sí' : 'No']
+    [`${r.radicado}`, r.nombre || '—', `${r.cargo || '—'}${r.area ? ' · ' + r.area : ''}`]
       .forEach((v) => f.appendChild(pstEl('td', null, v)));
+    const tt = pstEl('td', 'perm-tipo'), sub = permCasoTexto(r), al = r.alertas || [];
+    tt.innerHTML = `${al.length ? `<span title="${esc(al.join('\n'))}">⚠️</span> ` : ''}${esc(r.tipo || '—')}`
+      + (sub ? `<div class="pst-nota">${esc(sub)}</div>` : '');
+    f.appendChild(tt);
+    [permFechaHora(r.desde), permFechaHora(r.hasta), permDuracion(r), r.reposicion ? 'Sí' : 'No']
+      .forEach((v) => f.appendChild(pstEl('td', null, v)));
+    const ts = pstEl('td'); ts.innerHTML = permSoportesChip(r); f.appendChild(ts);
     ['GH', 'GERENCIA'].forEach((inst) => { const c = pstEl('td'); c.innerHTML = permCasilla(r, inst); f.appendChild(c); });
     const td = pstEl('td');
     td.innerHTML = `<span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(r.estado)}</span>`;
@@ -18012,36 +18048,95 @@ async function openPermiso(id) {
       </div>
     </div>`;
     m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    m.addEventListener('change', (e) => { const inp = e.target.closest('input[data-adj]'); if (inp) permAdjuntar(inp); });
     m.querySelector('[data-imprimir]').addEventListener('click', () => permImprimir(_perm.abierto));
     document.body.appendChild(m);
   }
   const body = m.querySelector('.permf-body');
   m.querySelector('h3').textContent = `📝 Radicado # ${r.radicado}`;
-  body.innerHTML = permFichaHtml(r) + '<div class="loading">Cargando soportes…</div>';
+  body.innerHTML = permFichaHtml(r);
   m.hidden = false;
   permConectarFicha(body, r);
+  await permCargarSoportes(body, r);
+}
 
+async function permCargarSoportes(body, r) {
+  const w = body.querySelector('.perm-sops-w');
+  if (!w) return;
   try {
-    const { data } = await sb.rpc('permiso_soportes_de', { p_id: r.id });
-    const cont = body.querySelector('.loading');
-    if (!cont) return;
+    const { data, error } = await sb.rpc('permiso_soportes_de', { p_id: r.id });
+    if (error) throw error;
     const lista = data || [];
-    cont.outerHTML = lista.length
-      ? `<h4 class="pqr-h">Soportes (${lista.length})</h4><div class="perm-sops">${lista.map((s) => {
-        const esImg = String(s.tipo_mime || '').startsWith('image/');
-        return `<a href="${s.archivo}" target="_blank" rel="noopener" class="perm-sop" title="${esc(s.nombre || '')}">
-            ${esImg ? `<img src="${s.archivo}" alt="">` : '<span class="perm-pdf">📄 PDF</span>'}
-            <span>${esc((s.nombre || 'soporte').slice(0, 26))}</span></a>`;
-      }).join('')}</div>`
-      : '<div class="pst-nota">No adjuntó soportes.</div>';
+    _perm.sops.set(r.id, new Set(lista.map((s) => s.requisito).filter(Boolean)));
+    if (_perm.abierto === r) w.innerHTML = permSoportesHtml(r, lista);
   } catch {
-    const c = body.querySelector('.loading');
-    if (c) c.outerHTML = '<div class="pst-nota">No se pudieron cargar los soportes.</div>';
+    w.innerHTML = '<div class="pst-nota">No se pudieron cargar los soportes.</div>';
+  }
+}
+
+// Un renglón por soporte que pide el permiso: si llegó (con la foto), si está en plazo o vencido.
+function permSoportesHtml(r, lista) {
+  const e = permSoportesEstado(r, new Set(lista.map((s) => s.requisito).filter(Boolean)));
+  const mini = (s) => {
+    const esImg = String(s.tipo_mime || '').startsWith('image/');
+    const por = s.subido_por && s.subido_por !== 'EMPLEADO' ? ` · lo adjuntó ${s.subido_por}` : '';
+    return `<a href="${s.archivo}" target="_blank" rel="noopener" class="perm-sop" title="${esc((s.nombre || '') + por)}">
+        ${esImg ? `<img src="${s.archivo}" alt="">` : '<span class="perm-pdf">📄 PDF</span>'}
+        <span>${esc((s.nombre || 'soporte').slice(0, 26))}</span></a>`;
+  };
+  const puede = PERM_GH && r.estado !== 'ANULADO';
+  const filas = e.req.map((s) => {
+    const suyos = lista.filter((x) => x.requisito === s.k);
+    const est = s.ok ? '<span class="chip chip-green">Entregado</span>'
+      : s.cuando === 'OPC' ? '<span class="chip chip-gray">Opcional</span>'
+        : s.vencido ? `<span class="chip chip-red">Vencido el ${esc(fechaLegible(s.vence))}</span>`
+          : s.cuando === 'YA' ? '<span class="chip chip-amber">Faltó al radicar</span>'
+            : `<span class="chip chip-amber">Pendiente · hasta el ${esc(fechaLegible(s.vence))}</span>`;
+    return `<div class="perm-rq ${s.ok ? 'ok' : s.vencido ? 'no' : s.cuando === 'OPC' ? 'opc' : ''}">
+      <div class="perm-rq-t"><b>${esc(s.txt)}</b> ${est}</div>
+      ${suyos.length ? `<div class="perm-sops">${suyos.map(mini).join('')}</div>` : ''}
+      ${puede ? `<label class="btn btn-sm perm-rq-adj">📎 Adjuntar<input type="file" hidden accept="image/*,application/pdf" data-adj="${esc(s.k)}"></label>` : ''}
+    </div>`;
+  }).join('');
+  const conocidos = new Set(e.req.map((s) => s.k));
+  const otros = lista.filter((s) => !conocidos.has(s.requisito));
+  return `<h4 class="pqr-h">📎 Soportes${e.exigidos ? ` (${e.exigidos - e.faltan} de ${e.exigidos})` : ''}</h4>
+    ${filas || '<div class="pst-nota">Este permiso no pide soportes.</div>'}
+    ${otros.length ? `<h4 class="pqr-h">Otros adjuntos</h4><div class="perm-sops">${otros.map(mini).join('')}</div>` : ''}`;
+}
+
+// Gestión Humana adjunta el soporte que le entregaron en papel (sql/165).
+async function permAdjuntar(inp) {
+  const r = _perm.abierto, f = inp.files && inp.files[0];
+  inp.value = '';
+  if (!r || !f) return;
+  const lab = inp.closest('label'), antes = lab.firstChild.textContent;
+  lab.firstChild.textContent = '⏳ Subiendo… ';
+  try {
+    const esPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+    const blob = esPdf ? f : await comprimirFoto(f);
+    const leido = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(new Error('no se pudo leer el archivo'));
+      fr.readAsDataURL(blob);
+    });
+    const mime = esPdf ? 'application/pdf' : 'image/jpeg';
+    const { data, error } = await sb.rpc('permiso_soporte_agregar', {
+      p_id: r.id, p_requisito: inp.dataset.adj, p_nombre: f.name || 'soporte', p_tipo_mime: mime,
+      p_archivo: `data:${mime};base64,${leido.split(',')[1]}` });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    toast('Soporte adjuntado.', 'ok');
+    await permCargarSoportes($('permf-modal').querySelector('.permf-body'), r);
+    renderPermisos();
+  } catch (e) {
+    lab.firstChild.textContent = antes;
+    toast('No se pudo adjuntar: ' + (e.message || e), 'err');
   }
 }
 
 function permFichaHtml(r) {
-  const T = (PERMISO_TIPOS || []).find((t) => t.key === r.tipo);
+  const R = permisoReglas(r.tipo, r.caso, r.parentesco);
   const decision = (titulo, estado, por, en, nota) => `
     <div class="perm-dec ${estado === 'APROBADO' ? 'ok' : estado === 'NEGADO' ? 'no' : ''}">
       <div class="perm-dec-t">${esc(titulo)}</div>
@@ -18066,12 +18161,15 @@ function permFichaHtml(r) {
     <div class="pf-secs">
       ${sinBloque('🕐 El permiso', [['Desde', esc(permFechaHora(r.desde))], ['Hasta', esc(permFechaHora(r.hasta))],
     ['Duración', esc(permDuracion(r))], ['Radicada el', esc(fechaLegible(r.fecha_solicitud))],
-    ['Motivo', esc(r.motivo || '')], ['Lo reemplaza', esc(r.reemplaza || '')],
-    ['Repone el tiempo', r.reposicion ? 'Sí' : 'No'], ['Cómo lo repone', esc(r.forma_reposicion || '')],
+    ['Qué pasó', esc(R.C ? R.C.label : r.caso || '')], ['Familiar', esc(R.P ? R.P.label : r.parentesco || '')],
+    ['Motivo', esc(r.motivo || '')], ['Autorizó (jefe)', esc(r.autoriza || '')],
+    ['Día que compensa', r.compensa_fecha ? esc(fechaLegible(r.compensa_fecha)) : ''],
+    ['Lo reemplaza', esc(r.reemplaza || '')],
+    ['Repone el tiempo', R.repone === 'NO' ? 'No aplica' : r.reposicion ? 'Sí' : 'No'], ['Cómo lo repone', esc(r.forma_reposicion || '')],
     ['Celular', esc(r.celular || '')]])}
-      ${T ? `<section class="pf-sec"><h4>📎 Soportes que exige este permiso</h4>
-        <ul class="perm-req">${T.soportes.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></section>` : ''}
     </div>
+    ${(r.alertas || []).length ? `<div class="perm-alertas">${r.alertas.map((a) => `<div>⚠️ ${esc(a)}</div>`).join('')}</div>` : ''}
+    <div class="perm-sops-w"><div class="loading">Cargando soportes…</div></div>
     <h4 class="pqr-h">Estado del permiso</h4>
     <div class="perm-decs">
       ${decision('Gestión Humana', r.gh_estado, r.gh_por, r.gh_en, r.gh_nota)}
@@ -18129,7 +18227,7 @@ function permConectarFicha(body, r) {
 // ---- El formato F-GH-07, para imprimir ----
 // El documento se arma aparte de la impresion para poder verlo sin abrir una ventana.
 function permFormatoHtml(r, logo) {
-  const T = (PERMISO_TIPOS || []).find((t) => t.key === r.tipo);
+  const S = permSoportesEstado(r);
   const fila = (k, v) => `<tr><th>${esc(k)}</th><td>${v == null ? '' : esc(String(v))}</td></tr>`;
   const dec = (e, por, en, n) => e
     ? `${e}${por ? ` — ${por}` : ''}${en ? ` (${evbCuando(en)})` : ''}${n ? ` · ${n}` : ''}`
@@ -18148,15 +18246,20 @@ function permFormatoHtml(r, logo) {
         ${fila('CARGO:', r.cargo)}
         ${fila('ÁREA:', r.area)}
         ${fila('EMPLEADO QUE REEMPLAZA:', r.reemplaza)}
-        ${fila('TIPO DE PERMISO:', r.tipo)}
+        ${fila('TIPO DE PERMISO:', [r.tipo, permCasoTexto(r)].filter(Boolean).join(' · '))}
+        ${r.autoriza ? fila('AUTORIZÓ (JEFE INMEDIATO):', r.autoriza) : ''}
+        ${r.compensa_fecha ? fila('DÍA QUE COMPENSA:', fechaLegible(r.compensa_fecha)) : ''}
       </table>
-      ${T ? `<table class="pf-t"><tr><th colspan="2" class="pf-sec">SOPORTES QUE EXIGE ESTE PERMISO</th></tr>
-        <tr><td colspan="2"><ul class="pf-ul">${T.soportes.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></td></tr></table>` : ''}
+      ${S.req.length ? `<table class="pf-t"><tr><th colspan="2" class="pf-sec">SOPORTES</th></tr>
+        ${S.req.map((s) => fila(s.txt, s.ok ? 'ENTREGADO' : s.cuando === 'OPC' ? 'OPCIONAL'
+    : s.vencido ? `VENCIDO (${fechaLegible(s.vence)})` : s.cuando === 'YA' ? 'FALTÓ AL RADICAR'
+      : `PENDIENTE — hasta el ${fechaLegible(s.vence)}`)).join('')}</table>` : ''}
       <table class="pf-t">
         ${fila('FECHA Y HORA DEL PERMISO:', `Desde ${permFechaHora(r.desde)}   ·   Hasta ${permFechaHora(r.hasta)}   ·   ${permDuracion(r)}`)}
         ${fila('MOTIVO:', r.motivo)}
         ${fila('TIEMPO DE REPOSICIÓN (SI/NO):', r.reposicion ? 'SI' : 'NO')}
         ${fila('FORMA DE REPOSICIÓN:', r.forma_reposicion)}
+        ${(r.alertas || []).length ? fila('ALERTAS:', r.alertas.join(' · ')) : ''}
         <tr><th>ESTADO DEL PERMISO GERENCIA Y GESTIÓN HUMANA:</th>
           <td><div><b>GERENCIA:</b> ${esc(dec(r.ger_estado, r.ger_por, r.ger_en, r.ger_nota))}</div>
               <div style="margin-top:8px"><b>GESTIÓN HUMANA:</b> ${esc(dec(r.gh_estado, r.gh_por, r.gh_en, r.gh_nota))}</div></td></tr>
@@ -18213,12 +18316,17 @@ async function exportarPermisos(btn) {
   const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳';
   try {
     const XLSX = await import('https://esm.sh/xlsx@0.18.5');
-    const cab = ['Radicado', 'Fecha solicitud', 'Cédula', 'Empleado', 'Cargo', 'Área', 'Tipo', 'Motivo',
-      'Desde', 'Hasta', 'Horas', 'Reemplaza', 'Repone', 'Forma de reposición',
-      'Gestión Humana', 'Decidió GH', 'Gerencia', 'Decidió Gerencia', 'Estado'];
+    const cab = ['Radicado', 'Fecha solicitud', 'Cédula', 'Empleado', 'Cargo', 'Área', 'Tipo', 'Qué pasó / familiar', 'Motivo',
+      'Desde', 'Hasta', 'Horas', 'Reemplaza', 'Repone', 'Forma de reposición', 'Autorizó (jefe)', 'Día que compensa',
+      'Soportes', 'Alertas', 'Gestión Humana', 'Decidió GH', 'Gerencia', 'Decidió Gerencia', 'Estado'];
+    const sopTxt = (r) => {
+      const e = permSoportesEstado(r);
+      return !e.exigidos ? 'No pide' : !e.faltan ? 'Completos' : `Faltan ${e.faltan}${e.vencidos ? ' (vencido)' : ''}`;
+    };
     const aoa = [cab, ...rows.map((r) => [r.radicado, celdaFechaXlsx(r.fecha_solicitud), r.cedula, r.nombre,
-      r.cargo, r.area, r.tipo, r.motivo, permFechaHora(r.desde), permFechaHora(r.hasta), Number(r.horas || 0),
-      r.reemplaza, r.reposicion ? 'SI' : 'NO', r.forma_reposicion,
+      r.cargo, r.area, r.tipo, permCasoTexto(r), r.motivo, permFechaHora(r.desde), permFechaHora(r.hasta), Number(r.horas || 0),
+      r.reemplaza, r.reposicion ? 'SI' : 'NO', r.forma_reposicion, r.autoriza,
+      r.compensa_fecha ? celdaFechaXlsx(r.compensa_fecha) : '', sopTxt(r), (r.alertas || []).join(' · '),
       r.gh_estado, r.gh_por, r.ger_estado, r.ger_por, r.estado])];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Permisos');

@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v356';
+export const APP_VERSION = 'v357';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -34,40 +34,150 @@ export const TABLE_ORDER = [
 // Listas unificadas del PERFIL SOCIODEMOGRÁFICO. Las usan el formulario del admin y el link público
 // de actualización de datos (actualizar-datos.html), para que los datos no se vuelvan a desordenar.
 
-// Tipos de permiso del formato F-GH-07 (v5) con los soportes que el propio formato exige.
-// En el papel esta lista se imprime COMPLETA aunque solo aplique un renglon; aqui se muestra
-// unicamente la del tipo elegido, que es lo que la persona tiene que conseguir.
+// Tipos de permiso del formato F-GH-07 (v5) y la LÓGICA de sus soportes (sql/165).
+// El papel imprime una lista fija por tipo; aquí cada soporte depende de lo que pasó (el caso) y de
+// quién es el familiar (el parentesco), y dice CUÁNDO se puede entregar:
+//   YA       existe antes del permiso y se adjunta al radicar: sin él no se radica.
+//   DESPUES  solo existe cuando el permiso pasó (la asistencia a la cita, el registro de defunción…)
+//            o es una emergencia: se radica sin él y se entrega por el mismo link hasta la fecha límite.
+//   OPC      ayuda, pero no se exige.
+// Los plazos de ley: luto y paternidad, 30 días desde el hecho (Ley 1280 de 2009, Ley 2114 de 2021).
+// Los demás, 5 días desde el regreso. La base valida los mismos tipos, casos y parentescos
+// (_perm_regla en sql/165): si se agrega uno aquí, se agrega allá.
+const ya = (k, txt) => ({ k, txt, cuando: 'YA' });
+const despues = (k, txt, dias = 5, base = 'FIN') => ({ k, txt, cuando: 'DESPUES', dias, base });
+const opc = (k, txt) => ({ k, txt, cuando: 'OPC' });
+
+// Con qué se prueba cada parentesco: el registro civil del empleado solo sirve para los padres.
+const PAR = {
+  'PADRE O MADRE': ['Padre o madre', [['rc_tuyo', 'Tu registro civil de nacimiento (ahí aparecen tus padres)']]],
+  'HIJO(A)': ['Hijo(a)', [['rc_hijo', 'Registro civil de nacimiento de tu hijo(a)']]],
+  'HIJO(A) ADOPTIVO(A)': ['Hijo(a) adoptivo(a)', [['rc_adopcion', 'Registro civil de nacimiento de tu hijo(a) o la sentencia de adopción']]],
+  'HERMANO(A)': ['Hermano(a)', [['rc_tuyo', 'Tu registro civil de nacimiento'],
+    ['rc_hermano', 'Registro civil de nacimiento de tu hermano(a)']]],
+  'ABUELO(A)': ['Abuelo(a)', [['rc_tuyo', 'Tu registro civil de nacimiento'],
+    ['rc_padre', 'Registro civil de nacimiento de tu padre o madre (el hijo de tu abuelo)']]],
+  'NIETO(A)': ['Nieto(a)', [['rc_nieto', 'Registro civil de nacimiento de tu nieto(a)'],
+    ['rc_hijo', 'Registro civil de nacimiento de tu hijo(a), el padre o la madre de tu nieto']]],
+  CONYUGE: ['Cónyuge (esposo o esposa)', [['rc_matrimonio', 'Registro civil de matrimonio']]],
+  'COMPANERO(A) PERMANENTE': ['Compañero(a) permanente', [['extrajuicio', 'Declaración extrajuicio de unión marital de hecho']]],
+  'HIJASTRO(A)': ['Hijastro(a)', [['union', 'Registro civil de matrimonio o declaración extrajuicio con su padre o madre'],
+    ['rc_hijastro', 'Registro civil de nacimiento de tu hijastro(a)']]],
+  'SUEGRO(A)': ['Suegro(a)', [['union', 'Registro civil de matrimonio o declaración extrajuicio con tu pareja'],
+    ['rc_pareja', 'Registro civil de nacimiento de tu pareja']]],
+};
+const parentescos = (keys) => keys.map((key) => ({ key, label: PAR[key][0], prueba: PAR[key][1] }));
+// Luto: hasta 2º de consanguinidad, 1º de afinidad y 1º civil (Ley 1280 de 2009).
+const PAR_LUTO = parentescos(['PADRE O MADRE', 'HIJO(A)', 'HIJO(A) ADOPTIVO(A)', 'HERMANO(A)', 'ABUELO(A)', 'NIETO(A)',
+  'CONYUGE', 'COMPANERO(A) PERMANENTE', 'HIJASTRO(A)', 'SUEGRO(A)']);
+// Calamidad por hospitalización: los que dice el formato (padres, hijos, cónyuge, hijastros o suegros).
+const PAR_CALAMIDAD = parentescos(['PADRE O MADRE', 'HIJO(A)', 'HIJO(A) ADOPTIVO(A)', 'CONYUGE', 'COMPANERO(A) PERMANENTE',
+  'HIJASTRO(A)', 'SUEGRO(A)']);
+const EMERGENCIA = 'Es una emergencia: radica ya y entrega los soportes en los 5 días siguientes a tu regreso.';
+const AUTORIZA_OPC = opc('autorizacion', 'Pantallazo o nota de la autorización de tu jefe (si la tienes)');
+
+// repone: NO = licencia de ley o el permiso ya es la compensación; PREGUNTA = el empleado dice si repone.
+// antes: es un permiso que se pide con anticipación (si se radica ya empezado, queda la alerta).
 export const PERMISO_TIPOS = [
-  { key: 'CITA MEDICA', label: 'Cita médica', icon: '\ud83e\ude7a', soportes: [
-    'Asignación de la cita (si aplica)',
-    'Comprobante de asistencia con el horario de atención'] },
-  { key: 'MATERNIDAD O PATERNIDAD', label: 'Licencia de maternidad o paternidad', icon: '\ud83d\udc76', soportes: [
-    'Incapacidad expedida por la EPS'] },
-  { key: 'PERSONAL', label: 'Personal', icon: '\ud83d\ude4b', soportes: [
-    'Autorización del jefe inmediato'] },
-  { key: 'MATRIMONIO', label: 'Matrimonio', icon: '\ud83d\udc8d', soportes: [
-    'Certificado o registro civil de matrimonio'] },
-  { key: 'CALAMIDAD DOMESTICA', label: 'Calamidad doméstica', icon: '\ud83c\udfe0', soportes: [
-    'Desastre natural: registro fotográfico del lugar; si es vivienda, foto frontal donde se vea la placa con la dirección',
-    'Hospitalización: certificado de la clínica con fecha y hora de ingreso',
-    'Hospitalización: copia del documento del paciente (padres, hijos, cónyuge, hijastros o suegros)'] },
-  { key: 'GRAVE CALAMIDAD DOMESTICA', label: 'Grave calamidad doméstica', icon: '\u26a0\ufe0f', soportes: [
-    'Desastre natural: registro fotográfico del lugar y copia del impuesto predial',
-    'Hospitalización prolongada: certificado de la clínica con fecha y hora de ingreso',
-    'Copia del documento del paciente',
-    'Registro civil de matrimonio (cónyuge) o declaración extrajuicio (compañera permanente)',
-    'Registro civil de nacimiento (hijos)'] },
-  { key: 'LUTO', label: 'Licencia de luto', icon: '\ud83d\udda4', soportes: [
-    'Copia de la cédula del empleado',
-    'Registro civil de nacimiento del empleado',
-    'Certificado de defunción (padres, hijos, hermanos, nietos, abuelos, cónyuge, hijastros, suegros o hijos adoptivos)',
-    'Copia de la cédula del fallecido (si la tiene)'] },
-  { key: 'COMPENSATORIO', label: 'Compensatorio', icon: '\u23f1\ufe0f', soportes: [
-    'Sepelio de compañeros de trabajo: autorización de Gerencia',
-    'Autorización del jefe inmediato'] },
-  { key: 'ESTUDIO', label: 'Estudio', icon: '\ud83c\udf93', soportes: [
-    'Matrícula', 'Certificado de estudio', 'Horarios'] },
+  { key: 'CITA MEDICA', label: 'Cita médica', icon: '🩺', repone: 'PREGUNTA',
+    nota: 'Si el médico te incapacita, la incapacidad se entrega aparte: no es un permiso.',
+    casos: [
+      { key: 'PROGRAMADA', label: 'Tengo una cita programada', antes: true, soportes: [
+        ya('cita', 'Asignación de la cita (mensaje, correo o pantallazo de la EPS)'),
+        despues('asistencia', 'Comprobante de asistencia con el horario de atención')] },
+      { key: 'URGENCIA', label: 'Fui o voy a urgencias', soportes: [
+        despues('urgencias', 'Soporte de la atención de urgencias, con la hora de ingreso y de salida')] }] },
+  { key: 'MATERNIDAD O PATERNIDAD', label: 'Licencia de maternidad o paternidad', icon: '👶', repone: 'NO',
+    casos: [
+      { key: 'MATERNIDAD', label: 'Maternidad', dias: 126,
+        ley: 'La licencia de maternidad es de 18 semanas (Ley 2114 de 2021) y empieza una o dos semanas antes de la fecha probable del parto.',
+        soportes: [
+          ya('cert_medico', 'Certificado médico con el estado de embarazo, la fecha probable del parto y el día en que empieza la licencia'),
+          despues('licencia_eps', 'Licencia de maternidad expedida por la EPS', 30, 'INICIO')] },
+      { key: 'PATERNIDAD', label: 'Paternidad', dias: 14,
+        ley: 'La licencia de paternidad es de 2 semanas desde el nacimiento (Ley 2114 de 2021). El registro civil del bebé se entrega dentro de los 30 días siguientes.',
+        soportes: [despues('rc_bebe', 'Registro civil de nacimiento del bebé', 30, 'INICIO')] }] },
+  { key: 'PERSONAL', label: 'Personal', icon: '🙋', repone: 'PREGUNTA', antes: true, autoriza: true,
+    soportes: [AUTORIZA_OPC] },
+  { key: 'MATRIMONIO', label: 'Matrimonio', icon: '💍', repone: 'PREGUNTA', antes: true,
+    nota: 'El registro civil existe después de la boda: lo entregas al regresar.',
+    soportes: [despues('rc_matrimonio', 'Registro civil o certificado de matrimonio', 30)] },
+  { key: 'CALAMIDAD DOMESTICA', label: 'Calamidad doméstica', icon: '🏠', repone: 'PREGUNTA', nota: EMERGENCIA,
+    casos: [
+      { key: 'HOSPITALIZACION', label: 'Hospitalización de un familiar', parentescos: PAR_CALAMIDAD, soportes: [
+        despues('clinica', 'Certificado de la clínica con la fecha y hora de ingreso'),
+        despues('doc_paciente', 'Documento de identidad del paciente')] },
+      { key: 'DESASTRE', label: 'Desastre en tu vivienda (inundación, incendio, deslizamiento…)', soportes: [
+        despues('fotos', 'Fotos del lugar afectado'),
+        despues('fachada', 'Foto de frente de la vivienda donde se vea la placa con la dirección')] },
+      { key: 'OTRA', label: 'Otra calamidad', soportes: [
+        despues('prueba', 'Un documento que pruebe la calamidad (denuncia, constancia o fotos)')] }] },
+  { key: 'GRAVE CALAMIDAD DOMESTICA', label: 'Grave calamidad doméstica', icon: '⚠️', repone: 'PREGUNTA', nota: EMERGENCIA,
+    casos: [
+      { key: 'HOSPITALIZACION', label: 'Hospitalización prolongada de un familiar', parentescos: PAR_CALAMIDAD, prueba: true,
+        soportes: [
+          despues('clinica', 'Certificado de la clínica con la fecha y hora de ingreso'),
+          despues('doc_paciente', 'Documento de identidad del paciente')] },
+      { key: 'DESASTRE', label: 'Desastre en tu vivienda (inundación, incendio, deslizamiento…)', soportes: [
+        despues('fotos', 'Fotos del lugar afectado'),
+        despues('fachada', 'Foto de frente de la vivienda donde se vea la placa con la dirección'),
+        despues('predial', 'Copia del impuesto predial, o del contrato de arrendamiento si vives en arriendo')] }] },
+  { key: 'LUTO', label: 'Licencia de luto', icon: '🖤', repone: 'NO', habiles: 5,
+    parentescos: PAR_LUTO, prueba: { dias: 30, base: 'INICIO' },
+    ley: 'La licencia de luto es de 5 días hábiles remunerados (Ley 1280 de 2009). Los soportes se entregan dentro de los 30 días siguientes al fallecimiento.',
+    soportes: [
+      despues('defuncion', 'Registro civil de defunción (o certificado de defunción)', 30, 'INICIO'),
+      opc('cedula_fallecido', 'Copia de la cédula del fallecido (si la tiene)')] },
+  { key: 'COMPENSATORIO', label: 'Compensatorio', icon: '⏱️', repone: 'NO',
+    casos: [
+      { key: 'TIEMPO', label: 'Por tiempo que trabajé de más (domingo, festivo u horas extra)', antes: true, autoriza: true,
+        compensa: '¿Qué día trabajaste ese tiempo?', soportes: [AUTORIZA_OPC] },
+      { key: 'SEPELIO', label: 'Sepelio de un compañero de trabajo',
+        nota: 'Lo autoriza Gerencia en la app: no hay que adjuntar nada. Escribe en el motivo el nombre del compañero.', soportes: [] },
+      { key: 'VOTACION', label: 'Por votar (media jornada)', antes: true, compensa: '¿Qué día votaste?',
+        ley: 'Por votar tienes media jornada de descanso remunerado dentro del mes siguiente a las elecciones (Ley 403 de 1997).',
+        soportes: [ya('cert_electoral', 'Certificado electoral')] },
+      { key: 'JURADO', label: 'Por ser jurado de votación (1 día)', antes: true, compensa: '¿Qué día fuiste jurado?',
+        ley: 'Como jurado tienes 1 día de descanso remunerado dentro de los 45 días siguientes a las elecciones (Ley 163 de 1994).',
+        soportes: [ya('cert_jurado', 'Certificado de jurado de votación')] }] },
+  { key: 'ESTUDIO', label: 'Estudio', icon: '🎓', repone: 'PREGUNTA', antes: true,
+    soportes: [ya('matricula', 'Matrícula'), ya('cert_estudio', 'Certificado de estudio'), ya('horario', 'Horario de clases')] },
 ];
+
+// Lo que pide un permiso según su tipo, su caso y el parentesco. Lo usan el link y la app, así la
+// lista de soportes que ve el empleado es la misma con la que Gestión Humana revisa.
+export function permisoReglas(tipo, caso, parentesco) {
+  const T = PERMISO_TIPOS.find((t) => t.key === tipo) || null;
+  const C = (T && T.casos && T.casos.find((c) => c.key === caso)) || null;
+  const de = (k) => (C && C[k] !== undefined ? C[k] : T ? T[k] : undefined);
+  const pars = de('parentescos') || null;
+  const P = (pars && pars.find((p) => p.key === parentesco)) || null;
+  const soportes = [...(de('soportes') || [])];
+  const prueba = de('prueba');
+  if (prueba && P) {
+    const t = prueba === true ? { dias: 5, base: 'FIN' } : prueba;
+    P.prueba.forEach(([k, txt]) => { if (!soportes.some((s) => s.k === k)) soportes.push(despues(k, txt, t.dias, t.base)); });
+  }
+  return {
+    T, C, P, parentescos: pars, soportes,
+    repone: de('repone') || 'PREGUNTA', antes: !!de('antes'), autoriza: !!de('autoriza'),
+    compensa: de('compensa') || null, ley: de('ley') || null, nota: de('nota') || null,
+    dias: de('dias') || null, habiles: de('habiles') || null,
+    // Lo que falta elegir para saber qué soportes pedir.
+    falta: !T ? 'tipo' : T.casos && !C ? 'caso' : pars && !P ? 'parentesco' : null,
+  };
+}
+
+// Hasta cuándo se puede entregar un soporte (aaaa-mm-dd). Los de YA debían llegar al radicar.
+export function permisoVence(s, desde, hasta, radicado) {
+  if (s.cuando === 'OPC') return null;
+  const dia = (v) => String(v || '').slice(0, 10);
+  if (s.cuando === 'YA') return dia(radicado) || null;
+  const d = new Date(`${dia(s.base === 'INICIO' ? desde : hasta)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + s.dias);
+  return d.toISOString().slice(0, 10);
+}
 
 export const PERFIL_LISTAS = {
   tipo: ['CONDUCTOR', 'ADMINISTRATIVO'],
