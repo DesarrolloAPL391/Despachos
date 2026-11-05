@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Certificado laboral · Autobuses El Poblado Laureles S.A.</title>
+  <!-- Lo que WhatsApp muestra al pegar el enlace (lee estas etiquetas, no ejecuta el código). -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Autobuses El Poblado Laureles S.A." />
+  <meta property="og:title" content="Certificado laboral · Autobuses El Poblado Laureles S.A." />
+  <meta property="og:description" content="Tu certificado laboral, expedido por Talento Humano. Ábrelo para verlo o descargarlo en PDF." />
+  <meta property="og:image" content="https://desarrolloapl391.github.io/Despachos/webapp/icons/icon-512.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO del certificado laboral enviado por WhatsApp (sql/162).
+    El mensaje lleva certificado.html#CODIGO en vez del enlace firmado de Supabase (más de 400
+    caracteres, un dominio que nadie reconoce y la cédula en la ruta: parecía un virus).
+    - El código va después del # y no viaja a ningún servidor al abrir la página.
+    - certificado_enlace_abrir(codigo) entrega el PDF solo si el código existe y no ha vencido,
+      y anota que se abrió. No muestra la cédula.
+    - Abierta desde este computador (localhost), los códigos "demo" y "vencido" son una VISTA DE
+      PRUEBA; cualquier otro se consulta de verdad.
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 520px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 22px 20px; text-align: center; }
+    .ic { font-size: 44px; line-height: 1; margin-bottom: 8px; }
+    h2 { font-size: 20px; margin: 0 0 8px; }
+    .txt { color: #333; line-height: 1.5; margin: 0 0 18px; }
+    .doc { display: flex; align-items: center; gap: 12px; text-align: left; border: 1px solid var(--borde); border-radius: 12px; padding: 12px 14px; margin: 0 0 16px; }
+    .doc-ic { font-size: 30px; flex: none; }
+    .doc b { display: block; }
+    .doc small { color: var(--muted); }
+    .nw { white-space: nowrap; }
+    .btn { display: block; width: 100%; padding: 14px 16px; border-radius: 12px; font: inherit; font-weight: 700; font-size: 16px; text-decoration: none; text-align: center; cursor: pointer; border: 0; }
+    .btn + .btn { margin-top: 10px; }
+    .btn-p { background: var(--rojo); color: #fff; }
+    .btn-p:hover { background: var(--rojo2); }
+    .btn-s { background: #fff; color: var(--rojo2); border: 2px solid #f3c0c0; }
+    .nota { font-size: 13px; color: var(--muted); line-height: 1.45; margin: 16px 0 0; }
+    .contacto { margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: #f7f7f7; font-size: 14px; line-height: 1.5; color: #333; }
+    .contacto a { color: var(--rojo2); }
+    .cargando { color: var(--muted); padding: 24px 0; }
+    .prueba { background: #fff7ed; border: 1px dashed #fdba74; color: #9a3412; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-bottom: 14px; }
+    footer { text-align: center; color: var(--muted); font-size: 12.5px; padding: 0 16px 28px; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-192.png" alt="Autobuses El Poblado" />
+    <h1>Certificado laboral</h1>
+    <p>Autobuses El Poblado Laureles S.A. · Talento Humano</p>
+  </header>
+  <main>
+    <div class="card">
+      <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador.</div>
+      <div id="cargando" class="cargando">⏳ Buscando tu certificado…</div>
+
+      <div id="ok" hidden>
+        <div class="ic">📄</div>
+        <h2 id="ok-hola">Hola</h2>
+        <p class="txt">Aquí está tu certificado laboral. Puedes verlo en pantalla o guardarlo en tu celular para enviarlo a donde lo necesites.</p>
+        <div class="doc">
+          <span class="doc-ic">🧾</span>
+          <span><b id="ok-cons">Certificado laboral</b><small id="ok-exp"></small></span>
+        </div>
+        <a id="ver" class="btn btn-p" href="#" target="_blank" rel="noopener noreferrer">📄 Ver el certificado</a>
+        <a id="bajar" class="btn btn-s" href="#" rel="noopener noreferrer">⬇️ Descargar en PDF</a>
+        <p class="nota" id="ok-vence"></p>
+      </div>
+
+      <div id="mal" hidden>
+        <div class="ic" id="mal-ic">🔍</div>
+        <h2 id="mal-t"></h2>
+        <p class="txt" id="mal-txt"></p>
+        <button type="button" id="reintentar" class="btn btn-p" hidden>Intentar de nuevo</button>
+      </div>
+
+      <div id="contacto" class="contacto" hidden></div>
+    </div>
+  </main>
+  <footer>Autobuses El Poblado Laureles S.A. · Conectamos Propósitos</footer>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    const $ = (id) => document.getElementById(id);
+    const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    // "11 de noviembre de 2026", en hora de Colombia.
+    const fecha = (v) => {
+      const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(new Date(v)).split('-');
+      return `${Number(p[2])} de ${MESES[Number(p[1]) - 1]} de ${p[0]}`;
+    };
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    // El código viene después del # (también se acepta ?c= por si alguien lo copia distinto).
+    const codigo = (location.hash.slice(1) || new URLSearchParams(location.search).get('c') || '').trim();
+
+    function contacto(c) {
+      if (!c || (!c.telefono && !c.correo)) return;
+      $('contacto').innerHTML = '¿Dudas o necesitas otro certificado? Comunícate con Talento Humano'
+        + (c.telefono ? ` al <b>${esc(c.telefono)}</b>` : '')
+        + (c.correo ? `${c.telefono ? ' o' : ''} al correo <a href="mailto:${esc(c.correo)}">${esc(c.correo)}</a>` : '') + '.';
+      $('contacto').hidden = false;
+    }
+
+    function mostrarMal(ic, titulo, texto, reintentar) {
+      $('cargando').hidden = true; $('ok').hidden = true;
+      $('mal-ic').textContent = ic; $('mal-t').textContent = titulo; $('mal-txt').textContent = texto;
+      $('reintentar').hidden = !reintentar;
+      $('mal').hidden = false;
+    }
+
+    function mostrar(r) {
+      contacto(r.contacto);
+      if (!r.ok) {
+        if (r.motivo === 'VENCIDO') {
+          return mostrarMal('⏰', 'Este enlace ya venció',
+            `Por seguridad el certificado solo se puede descargar unos días, y este enlace venció el ${fecha(r.vencio)}. `
+            + 'Pídelo de nuevo a Talento Humano y te lo envían otra vez.');
+        }
+        return mostrarMal('🔍', 'No encontramos este certificado',
+          'Revisa que el enlace esté completo, tal como te llegó por WhatsApp. Si el problema sigue, pídelo de nuevo a Talento Humano.');
+      }
+      const nombreArchivo = `Certificado laboral ${r.consecutivo || ''}`.trim() + '.pdf';
+      $('ok-hola').textContent = r.nombre ? `Hola, ${r.nombre}` : 'Hola';
+      $('ok-cons').innerHTML = `Certificado laboral <span class="nw">${esc(r.consecutivo || '')}</span>`;
+      $('ok-exp').textContent = r.expedido ? `Expedido el ${fecha(r.expedido)}` : '';
+      $('ver').href = r.url;
+      // Supabase entrega el archivo como descarga, con este nombre, si se le agrega ?download=.
+      $('bajar').href = r.url + (r.url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(nombreArchivo);
+      $('ok-vence').textContent = `Disponible hasta el ${fecha(r.vence)}. Este enlace es personal: guárdalo en tu celular en vez de reenviarlo.`;
+      $('cargando').hidden = true; $('mal').hidden = true; $('ok').hidden = false;
+    }
+
+    const DEMO_CONTACTO = { telefono: '000 0000 Ext. 000', correo: 'talentohumano@ejemplo.com', empresa: 'AUTOBUSES EL POBLADO LAURELES S.A.' };
+    async function cargar() {
+      $('cargando').hidden = false; $('mal').hidden = true;
+      if (!/^[A-Za-z0-9]{10}$/.test(codigo) && !(PRUEBA && /^(demo|vencido)$/.test(codigo))) {
+        return mostrar({ ok: false, motivo: 'NO_EXISTE' });
+      }
+      if (PRUEBA && codigo === 'demo') {
+        $('prueba').hidden = false;
+        return mostrar({ ok: true, nombre: 'Juan Carlos', consecutivo: 'CL-2026-0000', expedido: new Date().toISOString(),
+          vence: new Date(Date.now() + 7 * 864e5).toISOString(), url: 'icons/certificado-pie.png', contacto: DEMO_CONTACTO });
+      }
+      if (PRUEBA && codigo === 'vencido') {
+        $('prueba').hidden = false;
+        return mostrar({ ok: false, motivo: 'VENCIDO', vencio: new Date(Date.now() - 864e5).toISOString(), contacto: DEMO_CONTACTO });
+      }
+      try {
+        const { data, error } = await sb.rpc('certificado_enlace_abrir', { p_codigo: codigo });
+        if (error) throw error;
+        mostrar(data || { ok: false, motivo: 'NO_EXISTE' });
+      } catch {
+        mostrarMal('📶', 'No pudimos abrir el certificado', 'Revisa tu conexión a internet e intenta de nuevo.', true);
+      }
+    }
+    $('reintentar').addEventListener('click', cargar);
+    cargar();
+  </script>
+</body>
+</html>

@@ -17268,7 +17268,8 @@ function certWaHtml(row, cfg) {
     <div class="cert-wa">
       <div class="cert-wa-t">💬 Enviar por WhatsApp</div>
       <div class="cert-wa-como">WhatsApp no deja adjuntar un archivo desde un enlace, así que hay dos formas:
-        <b>abrir el chat</b> con un enlace privado al PDF, que vence en <b>${dias} día${dias === 1 ? '' : 's'}</b>,
+        <b>abrir el chat</b> con un enlace corto a una página de la empresa donde ve y descarga el PDF
+        (vence en <b>${dias} día${dias === 1 ? '' : 's'}</b>),
         o <b>compartir el PDF</b> para que viaje adjunto${puede ? '' : ' (eso solo desde el celular)'}.</div>
       <label class="cert-wa-l">Celular de quien recibe
         <input type="tel" data-wa-num value="${esc(String(row.celular || '').trim())}"
@@ -17310,6 +17311,10 @@ async function certWaPreparar() {
     est.className = 'cert-wa-est mal';
   }
 }
+
+// El enlace que viaja por WhatsApp (sql/162): una página nuestra con el código después del #.
+// Se arma desde donde está abierta la app, así sirve igual publicada que en el computador.
+const certEnlaceCorto = (codigo) => new URL(`certificado.html#${codigo}`, location.href).href;
 
 // Nombre con el que el documento llega a quien lo recibe.
 const certPdfNombre = (cons) => `Certificado laboral${cons ? ' ' + cons : ''}.pdf`;
@@ -17374,10 +17379,20 @@ async function certWaEnviar() {
     const su = await sb.storage.from('certificados').createSignedUrl(ruta, dias * 86400);
     if (su.error) throw su.error;
 
-    await sb.rpc('certificado_envio_registrar',
-      { p_consecutivo: cons, p_archivo: ruta, p_telefono: tel }).then(() => {}, () => {});
+    // Lo que viaja es el enlace corto: el firmado mide más de 400 caracteres, muestra un dominio
+    // que nadie reconoce y lleva la cédula en la ruta; en WhatsApp parecía un virus. Si el corto
+    // no se pudo crear, se manda el largo como antes: el certificado tiene que llegar.
+    let enlace = su.data.signedUrl;
+    const ec = await sb.rpc('certificado_enlace_crear',
+      { p_consecutivo: cons, p_archivo: ruta, p_telefono: tel, p_url: su.data.signedUrl })
+      .then((r) => r.data, () => null);
+    if (ec && ec.ok && ec.codigo) enlace = certEnlaceCorto(ec.codigo);
+    else {
+      await sb.rpc('certificado_envio_registrar',
+        { p_consecutivo: cons, p_archivo: ruta, p_telefono: tel }).then(() => {}, () => {});
+    }
 
-    const texto = String(txt.value).replace(/\{enlace\}/g, su.data.signedUrl);
+    const texto = String(txt.value).replace(/\{enlace\}/g, enlace);
     window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
     est.textContent = '✅ WhatsApp abierto con el mensaje y el enlace. Solo falta darle enviar.';
     est.className = 'cert-wa-est ok';
