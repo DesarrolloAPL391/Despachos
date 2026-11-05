@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>Solicitud de vacaciones · Autobuses El Poblado</title>
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Solicitud de vacaciones · Autobuses El Poblado Laureles S.A." />
+  <meta property="og:description" content="Radica tu solicitud de vacaciones y consulta cómo va." />
+  <meta property="og:image" content="https://desarrolloapl391.github.io/Despachos/webapp/icons/icon-512.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO para solicitar vacaciones (formato FO-GH-82, sql/163).
+    - El empleado se identifica con cédula + fecha de nacimiento (vacaciones_identificar). Con eso
+      la página recibe solo lo necesario: el nombre de pila, el cargo, los períodos según su
+      ingreso y sus solicitudes anteriores (para que vea cómo van). Nunca el nombre del afiliado.
+    - Las fechas las calcula la base (vacaciones_fechas): días hábiles sin domingos ni festivos, y
+      el sábado solo para quien lo trabaja. Lo que se muestra es lo mismo que queda radicado.
+    - Las notas del formato (8 días mínimo, 15 días de anticipación…) se avisan, no bloquean.
+    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222:
+      no consulta ni radica nada.
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 640px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; min-width: 0; }
+    h2 { font-size: 16px; margin: 0 0 12px; display: flex; gap: 8px; align-items: center; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .full { grid-column: 1 / -1; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; font-weight: 600; color: #333; min-width: 0; }
+    label > input, label > select, label > textarea { display: block; margin-top: 5px; }
+    .req { color: var(--rojo); }
+    input, select, textarea { width: 100%; min-width: 0; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
+    input:focus, select:focus, textarea:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12.5px; display: block; margin-top: 4px; line-height: 1.4; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); margin-top: 14px; }
+    .btn:disabled { opacity: .6; cursor: wait; }
+    .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
+    .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .hola { display: flex; gap: 12px; align-items: center; }
+    .hola .av { width: 46px; height: 46px; border-radius: 50%; background: #fff1f1; display: grid; place-items: center; font-size: 22px; flex: none; }
+    .hola b { font-size: 18px; display: block; }
+    .hola small { color: var(--muted); }
+    .mias { margin-top: 14px; border-top: 1px dashed var(--borde); padding-top: 12px; }
+    .mias h3 { font-size: 14px; margin: 0 0 8px; }
+    .mia { border: 1px solid var(--borde); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: 14px; line-height: 1.45; }
+    .mia .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .c-PENDIENTE, .c-EN { background: #fef3c7; color: #92400e; }
+    .c-APROBADO { background: #dcfce7; color: #15803d; }
+    .c-NEGADO { background: #fee2e2; color: #b91c1c; }
+    .c-ANULADO { background: #e5e7eb; color: #374151; }
+    .mia .nota { color: #b91c1c; font-size: 13px; margin-top: 4px; }
+    .opts { display: grid; gap: 8px; }
+    .opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--borde); border-radius: 12px; padding: 11px 12px; cursor: pointer; font-size: 15px; background: #fff; text-align: left; font: inherit; width: 100%; }
+    .opt:hover { border-color: #f0b8bb; }
+    .opt.on { border-color: var(--rojo); background: #fff5f5; box-shadow: 0 0 0 2px rgba(237,28,36,.12); }
+    .opt .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #cbb; flex: none; margin-top: 2px; }
+    .opt.on .dot { border-color: var(--rojo); background: radial-gradient(var(--rojo) 45%, #fff 50%); }
+    .opt small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+    .tag { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 1px 8px; margin-left: 4px; }
+    .tag.ok { background: #dcfce7; color: #15803d; }
+    .tag.curso { background: #e0e7ff; color: #3730a3; }
+    .tag.ya { background: #fef3c7; color: #92400e; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .chips .opt { width: auto; padding: 9px 14px; align-items: center; }
+    .calc { border-radius: 12px; padding: 12px 14px; margin-top: 12px; font-size: 15px; line-height: 1.5; background: #eef7ee; border: 1px solid #cfe8cf; color: #14532d; }
+    .calc.cargando { background: #f6f6f6; border-color: #e5e5e5; color: var(--muted); }
+    .calc b { color: #0f3d22; }
+    .calc small { display: block; color: #3f6b4f; font-size: 13px; margin-top: 6px; }
+    .avisos { margin-top: 10px; display: grid; gap: 6px; }
+    .aviso { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 9px 12px; font-size: 13.5px; line-height: 1.4; }
+    .notas { font-size: 13.5px; line-height: 1.5; color: #333; margin: 0; padding-left: 18px; }
+    .notas li { margin-bottom: 6px; }
+    .ok-card { text-align: center; padding: 28px 18px; }
+    .ok-card .big { font-size: 46px; }
+    .rad { font-size: 30px; font-weight: 800; color: var(--rojo); margin: 8px 0; }
+    .resumen { text-align: left; border: 1px solid var(--borde); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.6; margin: 12px 0; }
+    .prueba { background: #fff7ed; border: 1px dashed #fdba74; color: #9a3412; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-bottom: 14px; text-align: center; }
+    footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 30px; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-192.png" alt="Autobuses El Poblado" />
+    <h1>Solicitud de vacaciones</h1>
+    <p>Autobuses El Poblado Laureles S.A.</p>
+  </header>
+
+  <main>
+    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 y cualquier fecha.</div>
+
+    <!-- 1 · Quién eres -->
+    <section class="card" id="p1">
+      <h2>🪪 Identifícate</h2>
+      <div class="err" id="err1" hidden></div>
+      <div class="grid">
+        <label>Cédula <span class="req">*</span>
+          <input type="tel" id="cedula" inputmode="numeric" autocomplete="off" placeholder="Sin puntos ni comas" />
+        </label>
+        <label>Fecha de nacimiento <span class="req">*</span>
+          <input type="date" id="fnac" />
+          <span class="hint">Es para confirmar que eres tú.</span>
+        </label>
+      </div>
+      <button type="button" class="btn" id="entrar">Continuar →</button>
+      <p class="hint" style="text-align:center;margin-top:10px">Con estos mismos datos consultas después cómo va tu solicitud.</p>
+    </section>
+
+    <!-- Hola + lo que ya pidió -->
+    <section class="card" id="hola" hidden>
+      <div class="hola"><span class="av">🏖️</span><span><b id="hola-n"></b><small id="hola-c"></small></span></div>
+      <div class="mias" id="mias" hidden><h3>Tus solicitudes</h3><div id="mias-l"></div></div>
+    </section>
+
+    <div id="form" hidden>
+      <!-- 2 · Período -->
+      <section class="card">
+        <h2>📅 ¿De qué período son las vacaciones?</h2>
+        <p class="hint" style="margin:-6px 0 10px">Cada año trabajado desde tu ingreso te da un período de vacaciones.</p>
+        <div class="opts" id="periodos"></div>
+        <label id="periodo-libre-w" hidden>Período <span class="req">*</span>
+          <input type="text" id="periodo-libre" maxlength="60" placeholder="Ej.: 01/02/2025 al 31/01/2026" />
+        </label>
+      </section>
+
+      <!-- 3 · Cuándo y cuántos días -->
+      <section class="card">
+        <h2>🏖️ ¿Cuándo y cuántos días?</h2>
+        <div class="grid">
+          <label>Días de disfrute <span class="req">*</span>
+            <input type="number" id="dias" min="0" max="30" value="15" inputmode="numeric" />
+            <span class="hint">Días hábiles que vas a descansar.</span>
+          </label>
+          <label>Días en dinero
+            <input type="number" id="dinero" min="0" max="15" value="0" inputmode="numeric" />
+            <span class="hint">Días que pides que te paguen en vez de disfrutarlos.</span>
+          </label>
+          <label class="full" id="inicio-w">Fecha de inicio <span class="req">*</span>
+            <input type="date" id="inicio" />
+            <span class="hint">El primer día que no trabajas.</span>
+          </label>
+        </div>
+        <div class="calc" id="calc" hidden></div>
+        <div class="avisos" id="avisos"></div>
+      </section>
+
+      <!-- 4 · Detalles -->
+      <section class="card">
+        <h2>📝 Detalles</h2>
+        <div class="grid">
+          <label class="full">¿Quién te reemplaza?
+            <input type="text" id="reemplaza" maxlength="80" placeholder="Nombre del compañero (si ya lo sabes)" />
+          </label>
+          <label class="full">Celular
+            <input type="tel" id="celular" inputmode="numeric" placeholder="3001234567" />
+            <span class="hint">Por si Gestión Humana necesita confirmarte algo.</span>
+          </label>
+          <div class="full">
+            <label style="margin:0">¿Quién hace la solicitud?</label>
+            <div class="chips" id="por">
+              <button type="button" class="opt on" data-por="EMPLEADO"><span class="dot"></span>Yo (empleado)</button>
+              <button type="button" class="opt" data-por="AFILIADO"><span class="dot"></span>El afiliado</button>
+              <button type="button" class="opt" data-por="EMPRESA"><span class="dot"></span>La empresa</button>
+            </div>
+          </div>
+          <label class="full">Observación
+            <textarea id="obs" rows="2" maxlength="400" placeholder="Algo que Gestión Humana deba saber (opcional)"></textarea>
+          </label>
+        </div>
+      </section>
+
+      <!-- Notas del formato -->
+      <section class="card">
+        <h2>📌 Antes de enviar</h2>
+        <ul class="notas">
+          <li>El tiempo mínimo de disfrute por período cumplido es de <b>ocho (8) días hábiles</b> (Código Sustantivo del Trabajo).</li>
+          <li>Haz la solicitud con mínimo <b>quince (15) días de anticipación</b>.</li>
+          <li id="nota-autoriza">Antes de radicarla debe autorizarla tu jefe directo y Gerencia.</li>
+          <li><b>Enviar esta solicitud no confirma la autorización de tus vacaciones.</b></li>
+        </ul>
+      </section>
+
+      <div class="err" id="err2" hidden></div>
+      <button type="button" class="btn" id="enviar">Enviar la solicitud</button>
+    </div>
+
+    <!-- Acuse -->
+    <section class="card ok-card" id="gracias" hidden>
+      <div class="big">✅</div>
+      <h2 style="justify-content:center">Solicitud radicada</h2>
+      <div class="rad" id="rad-num"></div>
+      <div class="resumen" id="resumen"></div>
+      <p class="hint">Gestión Humana la revisa. Para saber cómo va, vuelve a este link y entra con tu cédula y tu fecha de nacimiento.<br><b>Enviarla no confirma la autorización de tus vacaciones.</b></p>
+      <button type="button" class="btn btn-sec" id="otra">Hacer otra solicitud</button>
+    </section>
+  </main>
+
+  <footer>Autobuses El Poblado Laureles S.A. · Formato FO-GH-82</footer>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    // "martes 1 de diciembre": se arma desde el texto de la fecha para que la zona horaria no la corra.
+    const fLarga = (iso, conDia = true) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return '';
+      const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+      return `${conDia ? DIAS[dow] + ' ' : ''}${+m[3]} de ${MESES[+m[2] - 1]}${+m[1] !== hoy().getFullYear() ? ' de ' + m[1] : ''}`;
+    };
+    const hoy = () => new Date();
+    const hoyIso = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
+    const sumarDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+    const ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobada', NEGADO: 'Negada', ANULADO: 'Anulada' };
+
+    let quien = null;       // lo que devolvió la identificación
+    let periodo = null;     // texto del período elegido
+    let por = 'EMPLEADO';
+    let calculo = null;     // última respuesta de vacaciones_fechas
+
+    if (PRUEBA) $('prueba').hidden = false;
+    $('inicio').min = sumarDias(hoyIso(), 1);
+
+    // ---- Vista de prueba: una persona inventada y el cálculo hecho aquí, sin festivos ----
+    const DEMO = () => ({ ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', tipo: 'CONDUCTOR', sabado_habil: true, tiene_afiliado: true,
+      periodos: [
+        { texto: '10/03/2026 al 09/03/2027', cumplido: false, solicitado: false },
+        { texto: '10/03/2025 al 09/03/2026', cumplido: true, solicitado: false },
+        { texto: '10/03/2024 al 09/03/2025', cumplido: true, solicitado: true }],
+      solicitudes: [{ radicado: 12, periodo: '10/03/2024 al 09/03/2025', inicio: '2025-06-02', fin: '2025-06-18', regreso: '2025-06-19',
+        disfrute: 15, dinero: 0, estado: 'APROBADO', nomina: true }] });
+    const calcDemo = (inicio, dias, sab) => {
+      let d = inicio, n = 0, fin = null;
+      for (let i = 0; i < 120 && !fin; i++) {
+        const w = new Date(d + 'T12:00:00').getDay();
+        if (w !== 0 && (w !== 6 || sab)) { n++; if (n === dias) fin = d; }
+        d = sumarDias(d, 1);
+      }
+      let reg = sumarDias(fin, 1);
+      while ([0, ...(sab ? [] : [6])].includes(new Date(reg + 'T12:00:00').getDay())) reg = sumarDias(reg, 1);
+      return { ok: true, fin, regreso: reg, festivos: [] };
+    };
+
+    // ---- 1 · Identificarse ----
+    $('entrar').addEventListener('click', async () => {
+      const ced = ($('cedula').value || '').replace(/\D/g, '');
+      if (!ced) return mostrarError($('err1'), 'Escribe tu cédula.');
+      if (!$('fnac').value) return mostrarError($('err1'), 'Escribe tu fecha de nacimiento.');
+      mostrarError($('err1'), '');
+      const b = $('entrar'); b.disabled = true; b.textContent = 'Buscando…';
+      try {
+        let data;
+        if (PRUEBA && ced === '99000111222') data = DEMO();
+        else {
+          const r = await sb.rpc('vacaciones_identificar', { p_cedula: ced, p_fecha_nacimiento: $('fnac').value });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
+        if (!data || !data.ok) return mostrarError($('err1'), (data && data.error) || 'No encontramos tus datos.');
+        quien = data;
+        pintarQuien();
+      } catch {
+        mostrarError($('err1'), 'No pudimos conectarnos. Revisa tu internet e intenta de nuevo.');
+      } finally { b.disabled = false; b.textContent = 'Continuar →'; }
+    });
+
+    function pintarQuien() {
+      $('cedula').readOnly = true; $('fnac').readOnly = true; $('entrar').hidden = true;
+      $('hola-n').textContent = `Hola, ${quien.nombre || ''}`;
+      $('hola-c').textContent = quien.cargo || '';
+      $('hola').hidden = false;
+      const mias = quien.solicitudes || [];
+      $('mias').hidden = !mias.length;
+      $('mias-l').innerHTML = mias.map((s) => `<div class="mia">
+          <div class="top"><b>Radicado # ${esc(s.radicado)}</b>
+            <span class="chip c-${esc(String(s.estado).split(' ')[0])}">${esc(ESTADO[s.estado] || s.estado)}${s.nomina ? ' · en nómina' : ''}</span></div>
+          <div>${s.inicio ? `Del ${esc(fLarga(s.inicio))} al ${esc(fLarga(s.fin))} · regresa el ${esc(fLarga(s.regreso))}` : 'Solo días en dinero'}</div>
+          <div class="hint" style="margin:0">Período ${esc(s.periodo)} · ${s.disfrute} día(s) de disfrute${s.dinero ? ` y ${s.dinero} en dinero` : ''}</div>
+          ${s.nota ? `<div class="nota">Motivo: ${esc(s.nota)}</div>` : ''}
+        </div>`).join('');
+      $('nota-autoriza').innerHTML = quien.tiene_afiliado
+        ? 'Como manejas un vehículo de afiliado, <b>tu afiliado</b> debe autorizar estas vacaciones antes de radicarlas.'
+        : 'Antes de radicarla debe autorizarla <b>tu jefe directo y Gerencia</b>.';
+
+      const ps = quien.periodos || [];
+      $('periodos').innerHTML = ps.map((p, i) => `<button type="button" class="opt" data-p="${i}"><span class="dot"></span>
+          <span>${esc(p.texto)} ${p.cumplido ? '<span class="tag ok">cumplido</span>' : '<span class="tag curso">en curso</span>'}
+            ${p.solicitado ? '<span class="tag ya">ya tienes una solicitud</span>' : ''}
+            <small>${p.cumplido ? '' : 'Todavía no lo has cumplido: serían vacaciones anticipadas.'}</small></span></button>`).join('');
+      $('periodo-libre-w').hidden = ps.length > 0;
+      // Por defecto, el período cumplido más viejo que no tenga solicitud.
+      const sugerido = [...ps].reverse().find((p) => p.cumplido && !p.solicitado);
+      if (sugerido) elegirPeriodo(ps.indexOf(sugerido));
+      $('form').hidden = false;
+      $('hola').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      calcular();
+    }
+
+    function elegirPeriodo(i) {
+      periodo = quien.periodos[i].texto;
+      [...$('periodos').children].forEach((b) => b.classList.toggle('on', Number(b.dataset.p) === i));
+      avisos();
+    }
+    $('periodos').addEventListener('click', (e) => { const b = e.target.closest('[data-p]'); if (b) elegirPeriodo(Number(b.dataset.p)); });
+    $('por').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-por]'); if (!b) return;
+      por = b.dataset.por;
+      [...$('por').children].forEach((x) => x.classList.toggle('on', x === b));
+    });
+
+    // ---- 3 · Las fechas las calcula la base, para que lo que se ve sea lo que se radica ----
+    let tCalc = null;
+    const num = (id) => Math.max(0, Math.floor(Number($(id).value) || 0));
+    function calcular() {
+      clearTimeout(tCalc);
+      const dias = num('dias'), inicio = $('inicio').value, box = $('calc');
+      $('inicio-w').hidden = dias === 0;
+      calculo = null;
+      if (!dias) { box.hidden = !num('dinero'); box.className = 'calc'; box.innerHTML = `Pides <b>${num('dinero')} día(s) en dinero</b>, sin salir a vacaciones.`; avisos(); return; }
+      if (!inicio) { box.hidden = true; avisos(); return; }
+      box.hidden = false; box.className = 'calc cargando'; box.textContent = 'Calculando tus fechas…';
+      tCalc = setTimeout(async () => {
+        try {
+          const sab = !!quien.sabado_habil;
+          let r;
+          if (PRUEBA && $('cedula').value.replace(/\D/g, '') === '99000111222') r = calcDemo(inicio, Math.min(dias, 30), sab);
+          else {
+            const x = await sb.rpc('vacaciones_fechas', { p_inicio: inicio, p_dias: Math.min(dias, 30), p_sabado: sab });
+            if (x.error) throw x.error;
+            r = x.data;
+          }
+          if (!r || !r.ok) throw new Error('sin cálculo');
+          calculo = r;
+          const fest = (r.festivos || []).map((f) => fLarga(f, false));
+          box.className = 'calc';
+          box.innerHTML = `Sales a vacaciones el <b>${esc(fLarga(inicio))}</b> y tu último día es el <b>${esc(fLarga(r.fin))}</b>.<br>`
+            + `Regresas a trabajar el <b>${esc(fLarga(r.regreso))}</b>.`
+            + `<small>Se cuentan ${dias} días hábiles: no cuentan los domingos${sab ? '' : ' ni los sábados'}${fest.length ? ` ni los festivos (${esc(fest.join(', '))})` : ' ni los festivos'}.`
+            + `${sab ? ' Los sábados sí cuentan porque los trabajas.' : ''}</small>`;
+        } catch {
+          box.className = 'calc cargando'; box.textContent = 'No pudimos calcular las fechas. Revisa tu conexión.';
+        }
+        avisos();
+      }, 350);
+    }
+    ['dias', 'dinero', 'inicio'].forEach((id) => $(id).addEventListener('input', calcular));
+
+    // Las notas del formato, dichas para su caso. No bloquean: Gestión Humana decide.
+    function avisos() {
+      if (!quien) return;
+      const a = [];
+      const dias = num('dias'), din = num('dinero'), inicio = $('inicio').value;
+      if (dias && inicio) {
+        const ant = Math.round((new Date(inicio + 'T12:00:00') - new Date(hoyIso() + 'T12:00:00')) / 864e5);
+        if (ant < 15) a.push(`Faltan ${ant} día(s) para el inicio: se piden con mínimo 15 días de anticipación.`);
+      }
+      if (dias > 0 && dias < 8) a.push('El mínimo de disfrute por período cumplido es de 8 días hábiles.');
+      if (din > 7) a.push('En dinero se puede pagar hasta la mitad de las vacaciones (7 días por período).');
+      if (dias + din > 15) a.push('Son más de 15 días: si vas a juntar dos períodos, cuéntalo en la observación.');
+      const p = (quien.periodos || []).find((x) => x.texto === periodo);
+      if (p && !p.cumplido) a.push('Ese período todavía no lo has cumplido: serían vacaciones anticipadas.');
+      if (p && p.solicitado) a.push('Ya tienes una solicitud para ese período.');
+      $('avisos').innerHTML = a.map((t) => `<div class="aviso">⚠️ ${esc(t)}</div>`).join('');
+    }
+
+    // ---- Enviar ----
+    $('enviar').addEventListener('click', async () => {
+      const err = $('err2');
+      const per = (quien.periodos || []).length ? periodo : ($('periodo-libre').value || '').trim();
+      const dias = num('dias'), din = num('dinero'), inicio = $('inicio').value;
+      if (!per) return mostrarError(err, 'Elige el período de las vacaciones.');
+      if (dias + din === 0) return mostrarError(err, 'Escribe cuántos días pides.');
+      if (dias > 30 || din > 15) return mostrarError(err, 'Revisa los días: máximo 30 de disfrute y 15 en dinero.');
+      if (dias && !inicio) return mostrarError(err, 'Elige la fecha en que empiezan tus vacaciones.');
+      if (dias && inicio <= hoyIso()) return mostrarError(err, 'La fecha de inicio debe ser posterior a hoy.');
+      mostrarError(err, '');
+      const b = $('enviar'); b.disabled = true; b.textContent = 'Enviando…';
+      try {
+        let data;
+        if (PRUEBA && $('cedula').value.replace(/\D/g, '') === '99000111222') {
+          data = { ok: true, radicado: 999, fin: calculo && calculo.fin, regreso: calculo && calculo.regreso };
+        } else {
+          const r = await sb.rpc('vacaciones_radicar', {
+            p_cedula: $('cedula').value.replace(/\D/g, ''), p_fecha_nacimiento: $('fnac').value,
+            p_periodo: per, p_inicio: dias ? inicio : null, p_dias_disfrute: dias, p_dias_dinero: din,
+            p_reemplaza: $('reemplaza').value.trim() || null, p_solicitada_por: por,
+            p_celular: ($('celular').value || '').replace(/\D/g, '') || null, p_observacion: $('obs').value.trim() || null });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
+        if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo radicar.');
+        $('rad-num').textContent = 'Radicado # ' + data.radicado;
+        $('resumen').innerHTML = `<div><b>Período:</b> ${esc(per)}</div>`
+          + (dias ? `<div><b>Vacaciones:</b> del ${esc(fLarga(inicio))} al ${esc(fLarga(data.fin))} (${dias} días hábiles)</div>`
+            + `<div><b>Regresas:</b> el ${esc(fLarga(data.regreso))}</div>` : '')
+          + (din ? `<div><b>En dinero:</b> ${din} día(s)</div>` : '');
+        ['p1', 'hola', 'form'].forEach((id) => { $(id).hidden = true; });
+        $('gracias').hidden = false;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (ex) {
+        mostrarError(err, (ex && ex.message) ? ex.message : 'No se pudo enviar. Revisa tu conexión e intenta de nuevo.');
+      } finally { b.disabled = false; b.textContent = 'Enviar la solicitud'; }
+    });
+    $('otra').addEventListener('click', () => location.reload());
+  </script>
+</body>
+</html>

@@ -788,6 +788,8 @@ function buildSidebar() {
   if (puedeVerActividades()) addNavAction(gTh, '🎁', 'Actividades y entregas', openActividades, 'nav-actividades');
   // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
   if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
+  // 🏖️ Vacaciones: Gestión Humana, Gerencia y Nómina; el aviso es lo que le falta hacer a QUIEN mira
+  if (VAC_OK) addNavAction(gTh, '🏖️', `Vacaciones${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
 
   // ⚙️ Administración (tablas de configuración + acciones)
   const gAd = addNavGroup(nav, '⚙️', 'Administración', 'admin');
@@ -4740,13 +4742,14 @@ async function cargarAlertasDocumentos() {
 }
 async function refrescarAlertasDocs() {
   // Gestión Humana no ve vehículos ni licencias: solo sus contadores de Talento humano
-  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false), refrescarPermisos(false)]); buildSidebar(); return; }
+  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false), refrescarPermisos(false), refrescarVacaciones(false)]); buildSidebar(); return; }
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
   try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
   try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; } catch { DESBLOQ_PEND = 0; }
   if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]);
   await refrescarPqrsfAcceso(false);
   await refrescarPermisos(false);
+  await refrescarVacaciones(false);
   await refrescarInterv(false);
   await refrescarDisc(false);
   await refrescarComb(false);
@@ -18186,6 +18189,584 @@ async function exportarPermisos(btn) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Permisos');
     XLSX.writeFile(wb, `permisos_${hoyServidor()}.xlsx`);
+  } catch (e) {
+    toast('No se pudo exportar: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ===================================================================================
+// 🏖️ VACACIONES (formato FO-GH-82, sql/163)
+// El empleado radica en vacaciones.html (link público) o Talento Humano la registra aquí cuando
+// la pide el afiliado o la empresa. Aprueban Gestión Humana y Gerencia —a los conductores de
+// afiliados los autoriza su afiliado, en el papel— y Nómina marca "recibido". Las fechas las
+// calcula la base: días hábiles sin domingos ni festivos, y el sábado solo para quien lo trabaja.
+// ===================================================================================
+let VAC_OK = false, VAC_GH = false, VAC_GER = false, VAC_NOM = false, VAC_MIOS = 0;
+const _vac = { rows: [], vista: 'decidir', q: '', abierto: null, persona: null };
+const VAC_VISTAS = [
+  { key: 'decidir', label: 'Por hacer' },
+  { key: 'PENDIENTE', label: 'Pendientes' },
+  { key: 'APROBADO', label: 'Aprobadas' },
+  { key: 'NEGADO', label: 'Negadas' },
+  { key: 'todos', label: 'Todas' },
+];
+const VAC_ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobada', NEGADO: 'Negada', ANULADO: 'Anulada' };
+const VAC_POR = { EMPLEADO: 'Empleado', AFILIADO: 'Afiliado', EMPRESA: 'Empresa' };
+// Las notas del formato, marcadas al radicar. No bloquean: Gestión Humana decide.
+const VAC_ALERTAS = {
+  ANTICIPACION: 'Radicada con menos de 15 días de anticipación',
+  MENOS_8: 'Menos de 8 días hábiles de disfrute',
+  DINERO_MAS_7: 'Más de 7 días en dinero (se puede pagar hasta la mitad)',
+  MAS_15: 'Más de 15 días en total: ¿junta dos períodos?',
+  PERIODO_EN_CURSO: 'El período todavía no se ha cumplido (vacaciones anticipadas)',
+  PERIODO_REPETIDO: 'Ya había otra solicitud para el mismo período',
+};
+
+async function refrescarVacaciones(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('vacaciones_estado');
+    VAC_OK = !!(data && data.ok);
+    VAC_GH = !!(data && data.es_gh);
+    VAC_GER = !!(data && data.es_gerencia);
+    VAC_NOM = !!(data && data.es_nomina);
+    VAC_MIOS = Number((data && data.mios) || 0);
+  } catch { VAC_OK = false; VAC_GH = false; VAC_GER = false; VAC_NOM = false; VAC_MIOS = 0; }
+  if (rebuild) buildSidebar();
+}
+
+function vacLinkUrl() { return new URL('vacaciones.html', location.href).href; }
+const vacFecha = (v) => (v ? fechaLegible(String(v).slice(0, 10)) : '—');
+const vacDias = (n) => `${n} día${Number(n) === 1 ? '' : 's'}`;
+
+// Lo que ESTA cuenta tiene por hacer: es la vista con la que se entra a trabajar.
+function vacMeFalta(r) {
+  if (r.estado === 'ANULADO' || r.estado === 'NEGADO') return false;
+  return (VAC_GH && !r.gh_estado) || (VAC_GER && r.req_gerencia && !r.ger_estado)
+    || (VAC_NOM && r.estado === 'APROBADO' && !r.nom_en);
+}
+
+function vacModal() {
+  let m = $('vac-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'vac-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card perm-card">
+    <div class="modal-head"><h3>🏖️ Vacaciones</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="asp-toolbar">
+      <div class="asp-vistas">${VAC_VISTAS.map((v) =>
+    `<button type="button" class="btn btn-sm" data-vista="${v.key}">${v.label} <b data-n="${v.key}"></b></button>`).join('')}</div>
+      <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula, código o radicado" aria-label="Buscar">
+      <span class="spacer"></span>
+      ${VAC_GH ? '<button type="button" class="btn btn-sm btn-primary" data-nueva>➕ Registrar</button>' : ''}
+      <button type="button" class="btn btn-sm" data-link>🔗 Link para el empleado</button>
+      <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
+    </div>
+    <div class="perm-body vac-body"><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const v = e.target.closest('[data-vista]');
+    if (v) { _vac.vista = v.dataset.vista; renderVacaciones(); return; }
+    if (e.target.closest('[data-nueva]')) { vacRegistrarAbrir(); return; }
+    if (e.target.closest('[data-link]')) { vacCopiarLink(); return; }
+    const x = e.target.closest('[data-excel]'); if (x) { exportarVacaciones(x); return; }
+    if (e.target.closest('[data-recargar]')) { cargarVacaciones(); return; }
+    const t = e.target.closest('[data-vac]'); if (t) openVacacion(Number(t.dataset.vac));
+  });
+  m.querySelector('.asp-q').addEventListener('input', (e) => { _vac.q = e.target.value; renderVacaciones(); });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openVacaciones() {
+  if (!VAC_OK) { toast('No tienes permiso para ver las vacaciones.', 'err'); return; }
+  vacModal().hidden = false;
+  closeMenu();
+  await cargarVacaciones();
+}
+
+async function cargarVacaciones() {
+  const body = vacModal().querySelector('.vac-body');
+  if (!_vac.rows.length) body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.from('vacaciones').select('*').order('radicado', { ascending: false }).limit(3000);
+    if (error) throw error;
+    _vac.rows = data || [];
+    renderVacaciones();
+    refrescarVacaciones();
+  } catch (e) {
+    body.innerHTML = `<div class="rst-empty">No se pudo cargar: ${esc(String(e.message || e))}</div>`;
+  }
+}
+
+function renderVacaciones() {
+  const m = vacModal(), body = m.querySelector('.vac-body');
+  const q = _vac.q.trim().toLowerCase();
+  const todas = _vac.rows;
+  const enTramite = (r) => r.estado === 'PENDIENTE' || r.estado === 'EN TRAMITE';
+  const cuenta = {
+    decidir: todas.filter(vacMeFalta).length,
+    PENDIENTE: todas.filter(enTramite).length,
+    APROBADO: todas.filter((r) => r.estado === 'APROBADO').length,
+    NEGADO: todas.filter((r) => r.estado === 'NEGADO').length,
+    todos: todas.length,
+  };
+  VAC_VISTAS.forEach((v) => {
+    const b = m.querySelector(`[data-n="${v.key}"]`); if (b) b.textContent = cuenta[v.key] || '';
+    const btn = m.querySelector(`[data-vista="${v.key}"]`);
+    if (btn) btn.classList.toggle('btn-primary', _vac.vista === v.key);
+  });
+
+  let rows = _vac.vista === 'decidir' ? todas.filter(vacMeFalta)
+    : _vac.vista === 'todos' ? todas
+      : _vac.vista === 'PENDIENTE' ? todas.filter(enTramite)
+        : todas.filter((r) => r.estado === _vac.vista);
+  if (q) {
+    rows = rows.filter((r) => [r.nombre, r.cedula, String(r.radicado), r.codigo, r.cargo, r.area, r.vehiculo]
+      .some((v) => String(v || '').toLowerCase().includes(q)));
+  }
+  if (!rows.length) {
+    body.innerHTML = `<div class="rst-empty">${_vac.vista === 'decidir'
+      ? 'No tienes solicitudes pendientes. 👏' : 'No hay solicitudes en esta vista.'}</div>`;
+    return;
+  }
+
+  const marca = (v) => (v === 'APROBADO' ? '✅' : v === 'NEGADO' ? '⛔' : '⏳');
+  body.innerHTML = `<div class="pst-tabla-wrap perm-tabla"><table class="pst-tabla vac-tabla">
+    <thead><tr><th>#</th><th>Empleado</th><th>Cargo</th><th>Período</th><th>Inicio</th><th>Último día</th>
+      <th>Regresa</th><th>Disfrute</th><th>Dinero</th><th>G. Humana</th><th>Gerencia</th><th>Nómina</th><th>Estado</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr class="pst-clic" data-vac="${r.id}" tabindex="0" title="Abrir la solicitud">
+      <td>${r.radicado}</td>
+      <td>${esc(r.nombre || '—')}${(r.alertas || []).length
+    ? ` <span class="vac-al" title="${esc(r.alertas.map((a) => VAC_ALERTAS[a] || a).join(' · '))}">⚠️</span>` : ''}</td>
+      <td>${esc(r.cargo || '—')}</td>
+      <td class="vac-nw">${esc(r.periodo || '')}</td>
+      <td class="vac-nw">${esc(vacFecha(r.fecha_inicio))}</td>
+      <td class="vac-nw">${esc(vacFecha(r.fecha_fin))}</td>
+      <td class="vac-nw">${esc(vacFecha(r.fecha_regreso))}</td>
+      <td>${r.dias_disfrute}</td><td>${r.dias_dinero || ''}</td>
+      <td>${marca(r.gh_estado)}</td>
+      <td>${r.req_gerencia ? marca(r.ger_estado) : '<span title="La autoriza el afiliado">—</span>'}</td>
+      <td>${r.nom_en ? '📥' : ''}</td>
+      <td><span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(VAC_ESTADO[r.estado] || r.estado)}</span></td>
+    </tr>`).join('')}</tbody></table></div>`;
+  body.querySelectorAll('[data-vac]').forEach((f) => f.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); openVacacion(Number(f.dataset.vac)); }
+  }));
+}
+
+// ---- Ficha de una solicitud ----
+function openVacacion(id) {
+  const r = _vac.rows.find((x) => x.id === id);
+  if (!r) return;
+  _vac.abierto = r;
+  let m = $('vacf-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'vacf-modal'; m.className = 'modal'; m.hidden = true;
+    m.innerHTML = `<div class="modal-card perm-ficha">
+      <div class="modal-head"><h3>🏖️ Solicitud</h3><span class="spacer"></span>
+        <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+      <div class="permf-body"></div>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-sm" data-imprimir>🖨️ Imprimir formato FO-GH-82</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-x>Cerrar</button>
+      </div>
+    </div>`;
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    m.querySelector('[data-imprimir]').addEventListener('click', () => vacImprimir(_vac.abierto));
+    document.body.appendChild(m);
+  }
+  m.querySelector('h3').textContent = `🏖️ Radicado # ${r.radicado}`;
+  const body = m.querySelector('.permf-body');
+  body.innerHTML = vacFichaHtml(r);
+  m.hidden = false;
+  vacConectarFicha(body, r);
+}
+
+function vacFichaHtml(r) {
+  const decision = (titulo, estado, por, en, nota, extra) => `
+    <div class="perm-dec ${estado === 'APROBADO' || estado === 'RECIBIDO' ? 'ok' : estado === 'NEGADO' ? 'no' : ''}">
+      <div class="perm-dec-t">${esc(titulo)}</div>
+      <div class="perm-dec-e">${estado ? esc(estado === 'RECIBIDO' ? 'Recibido' : VAC_ESTADO[estado] || estado) : (extra || 'Sin decidir')}</div>
+      ${por ? `<div class="pst-nota">${esc(por)} · ${esc(evbCuando(en))}</div>` : ''}
+      ${nota ? `<div class="perm-dec-n">${esc(nota)}</div>` : ''}
+    </div>`;
+  const fest = (r.festivos || []).map((f) => vacFecha(f)).join(', ');
+  const al = r.alertas || [];
+  const vivo = !r.anulado_en && r.estado !== 'NEGADO';
+  return `
+    <header class="pf-top">
+      <div class="pf-av ${r.estado === 'APROBADO' ? 'cond' : 'adm'}">${esc(String(r.radicado))}</div>
+      <div class="pf-idt">
+        <h2>${esc(r.nombre || '')}</h2>
+        <div class="pf-sub">C.C. ${esc(r.cedula || '')}${r.cargo ? ' · ' + esc(r.cargo) : ''}${r.area ? ' · ' + esc(r.area) : ''}</div>
+        <div class="pf-chips">
+          <span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(VAC_ESTADO[r.estado] || r.estado)}</span>
+          <span class="chip chip-indigo">Solicitada por: ${esc(VAC_POR[r.solicitada_por] || r.solicitada_por)}</span>
+          <span class="chip chip-gray">${r.origen === 'APP' ? 'Registrada en la app' : 'Radicada por el link'}</span>
+          ${r.nom_en ? '<span class="chip chip-green">📥 Recibida en nómina</span>' : ''}
+        </div>
+      </div>
+    </header>
+    ${al.length ? `<div class="vac-alertas">${al.map((a) => `<div>⚠️ ${esc(VAC_ALERTAS[a] || a)}${
+    a === 'ANTICIPACION' && r.anticipacion != null ? ` (${esc(vacDias(r.anticipacion))})` : ''}</div>`).join('')}</div>` : ''}
+    <div class="pf-secs">
+      ${sinBloque('🏖️ Las vacaciones', [['Período', esc(r.periodo || '')],
+    ['Fecha de inicio', esc(vacFecha(r.fecha_inicio))], ['Último día (culminación)', esc(vacFecha(r.fecha_fin))],
+    ['Regresa a trabajar', esc(vacFecha(r.fecha_regreso))], ['Días de disfrute', esc(vacDias(r.dias_disfrute))],
+    ['Días en dinero', r.dias_dinero ? esc(vacDias(r.dias_dinero)) : ''],
+    ['El sábado cuenta como hábil', r.sabado_habil ? 'Sí' : 'No'], ['Festivos que caen dentro', esc(fest)]])}
+      ${sinBloque('👤 Datos del formato', [['Código', esc(r.codigo || '')], ['Vehículo asignado', esc(r.vehiculo || '')],
+    ['Afiliado', esc(r.afiliado || (r.flota_propia ? 'Flota de la empresa' : ''))], ['Lo reemplaza', esc(r.reemplaza || '')],
+    ['Celular', esc(r.celular || '')], ['Radicada el', esc(vacFecha(r.fecha_solicitud))],
+    ['Registrada por', esc(r.registrada_por || '')], ['Observación', esc(r.observacion || '')]])}
+    </div>
+    <h4 class="pqr-h">Autorizaciones</h4>
+    <div class="perm-decs">
+      ${decision('Gestión Humana', r.gh_estado, r.gh_por, r.gh_en, r.gh_nota)}
+      ${r.req_gerencia ? decision('Gerencia', r.ger_estado, r.ger_por, r.ger_en, r.ger_nota)
+    : decision('Gerencia', null, null, null, 'Conductor de afiliado: lo autoriza su afiliado, firmando el formato impreso.', 'No aplica')}
+      ${decision('Nómina', r.nom_en ? 'RECIBIDO' : null, r.nom_por, r.nom_en, r.nom_nota,
+    r.estado === 'APROBADO' ? 'Por recibir' : 'Cuando esté aprobada')}
+    </div>
+    ${r.anulado_en ? `<div class="cert-bloqueo">Solicitud anulada por ${esc(r.anulado_por || '')} · ${esc(evbCuando(r.anulado_en))}</div>` : `
+    <div class="perm-acciones">
+      ${VAC_GH && vivo && !r.nom_en ? `<div class="perm-acc-g"><b>Gestión Humana</b>
+        <button type="button" class="btn btn-sm" data-dec="GH:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="GH:NEGADO">⛔ Negar</button></div>` : ''}
+      ${VAC_GER && r.req_gerencia && vivo && !r.nom_en ? `<div class="perm-acc-g"><b>Gerencia</b>
+        <button type="button" class="btn btn-sm" data-dec="GERENCIA:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="GERENCIA:NEGADO">⛔ Negar</button></div>` : ''}
+      ${VAC_NOM && r.estado === 'APROBADO' && !r.nom_en ? `<div class="perm-acc-g"><b>Nómina</b>
+        <button type="button" class="btn btn-sm btn-primary" data-nomina>📥 Recibido en nómina</button></div>` : ''}
+      <label class="perm-nota">Observación <span data-obl hidden>(obligatoria para negar: la persona la ve)</span>
+        <input type="text" data-nota maxlength="200" placeholder="Queda en el formato impreso"></label>
+      ${VAC_GH ? '<button type="button" class="btn btn-sm" data-anular>🗑️ Anular</button>' : ''}
+      <span class="pst-nota" data-msg></span>
+    </div>`}`;
+}
+
+function vacConectarFicha(body, r) {
+  const msg = body.querySelector('[data-msg]');
+  const nota = () => ((body.querySelector('[data-nota]') || {}).value || '').trim() || null;
+  const listo = async (txt) => {
+    toast(txt, 'ok');
+    $('vacf-modal').hidden = true;
+    await cargarVacaciones();
+  };
+  body.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', async () => {
+    const [instancia, estado] = b.dataset.dec.split(':');
+    if (estado === 'NEGADO' && !nota()) {
+      body.querySelector('[data-obl]').hidden = false;
+      msg.textContent = 'Escribe por qué se niega.';
+      body.querySelector('[data-nota]').focus();
+      return;
+    }
+    b.disabled = true; msg.textContent = 'Guardando…';
+    try {
+      const { data, error } = await sb.rpc('vacaciones_decidir',
+        { p_id: r.id, p_instancia: instancia, p_estado: estado, p_nota: nota() });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      await listo(`Solicitud ${estado === 'APROBADO' ? 'aprobada' : 'negada'} por ${instancia === 'GH' ? 'Gestión Humana' : 'Gerencia'}.`);
+    } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); b.disabled = false; }
+  }));
+  const bn = body.querySelector('[data-nomina]');
+  if (bn) bn.addEventListener('click', async () => {
+    bn.disabled = true; msg.textContent = 'Guardando…';
+    try {
+      const { data, error } = await sb.rpc('vacaciones_nomina_recibir', { p_id: r.id, p_nota: nota() });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      await listo('Recibida en nómina.');
+    } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); bn.disabled = false; }
+  });
+  const ba = body.querySelector('[data-anular]');
+  if (ba) ba.addEventListener('click', async () => {
+    if (!confirm('¿Anular esta solicitud? No se borra: queda registrada como anulada.')) return;
+    ba.disabled = true;
+    try {
+      const { data, error } = await sb.rpc('vacaciones_anular', { p_id: r.id, p_nota: nota() });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      await listo('Solicitud anulada.');
+    } catch (e) { msg.textContent = 'No se pudo anular: ' + (e.message || e); ba.disabled = false; }
+  });
+}
+
+// ---- ➕ Registrar desde la app (cuando la pide el afiliado o la empresa) ----
+function vacRegModal() {
+  let m = $('vacr-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'vacr-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card vac-reg">
+    <div class="modal-head"><h3>➕ Registrar vacaciones</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="vac-reg-body">
+      <div class="vac-reg-buscar">
+        <label>Cédula <input type="text" data-ced inputmode="numeric" placeholder="Sin puntos" autocomplete="off"></label>
+        <button type="button" class="btn btn-sm" data-buscar>🔎 Buscar</button>
+      </div>
+      <div data-persona></div>
+      <div data-form hidden>
+        <div class="vac-reg-grid">
+          <label class="vac-full">Período <select data-periodo></select>
+            <input type="text" data-periodo-otro maxlength="60" placeholder="dd/mm/aaaa al dd/mm/aaaa" hidden></label>
+          <label>Días de disfrute <input type="number" data-dias min="0" max="30" value="15"></label>
+          <label>Días en dinero <input type="number" data-dinero min="0" max="15" value="0"></label>
+          <label>Fecha de inicio <input type="date" data-inicio></label>
+          <label class="vac-chk"><input type="checkbox" data-sabado> El sábado cuenta como hábil</label>
+          <label>Solicitada por <select data-por>
+            <option value="EMPRESA">Empresa</option><option value="AFILIADO">Afiliado</option><option value="EMPLEADO">Empleado</option></select></label>
+          <label>Lo reemplaza <input type="text" data-reemplaza maxlength="80"></label>
+          <label class="vac-full">Observación <input type="text" data-obs maxlength="400"></label>
+        </div>
+        <div class="vac-calc" data-calc></div>
+      </div>
+      <div class="pst-nota" data-rmsg></div>
+    </div>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cancelar</button>
+      <button type="button" class="btn btn-primary" data-guardar disabled>Guardar solicitud</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    if (e.target.closest('[data-buscar]')) vacRegBuscar();
+    if (e.target.closest('[data-guardar]')) vacRegGuardar();
+  });
+  m.querySelector('[data-ced]').addEventListener('keydown', (e) => { if (e.key === 'Enter') vacRegBuscar(); });
+  m.querySelector('[data-periodo]').addEventListener('change', (e) => {
+    m.querySelector('[data-periodo-otro]').hidden = e.target.value !== '__otro';
+  });
+  ['[data-dias]', '[data-inicio]', '[data-sabado]', '[data-dinero]'].forEach((s) =>
+    m.querySelector(s).addEventListener('input', vacRegCalcular));
+  document.body.appendChild(m);
+  return m;
+}
+
+function vacRegistrarAbrir() {
+  const m = vacRegModal();
+  _vac.persona = null;
+  m.querySelector('[data-ced]').value = '';
+  m.querySelector('[data-persona]').innerHTML = '';
+  m.querySelector('[data-form]').hidden = true;
+  m.querySelector('[data-guardar]').disabled = true;
+  m.querySelector('[data-rmsg]').textContent = '';
+  m.hidden = false;
+  m.querySelector('[data-ced]').focus();
+}
+
+async function vacRegBuscar() {
+  const m = vacRegModal();
+  const msg = m.querySelector('[data-rmsg]');
+  const ced = m.querySelector('[data-ced]').value.replace(/\D/g, '');
+  if (!ced) { msg.textContent = 'Escribe la cédula.'; return; }
+  msg.textContent = 'Buscando…';
+  try {
+    const { data, error } = await sb.rpc('vacaciones_persona', { p_cedula: ced });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se encontró');
+    _vac.persona = data;
+    msg.textContent = data.estado !== 'ACTIVO' ? 'Esta persona aparece INACTIVA: no se le pueden registrar vacaciones.' : '';
+    m.querySelector('[data-persona]').innerHTML = `<div class="vac-persona">
+      <b>${esc(data.nombre)}</b> · ${esc(data.cargo || '')}${data.area ? ' · ' + esc(data.area) : ''}
+      <div class="pst-nota">Código ${esc(data.codigo || '—')} · Vehículo ${esc(data.vehiculo || '—')} ·
+        ${data.afiliado ? `Afiliado: ${esc(data.afiliado)} (lo autoriza el afiliado)` : 'Flota de la empresa (autoriza Gerencia)'} ·
+        Ingreso ${esc(vacFecha(data.fecha_ingreso))}</div></div>`;
+    const sel = m.querySelector('[data-periodo]');
+    sel.innerHTML = (data.periodos || []).map((p) => `<option value="${esc(p.texto)}">${esc(p.texto)}${
+      p.cumplido ? '' : ' (en curso)'}${p.solicitado ? ' · ya tiene solicitud' : ''}</option>`).join('')
+      + '<option value="__otro">Otro período…</option>';
+    const sug = [...(data.periodos || [])].reverse().find((p) => p.cumplido && !p.solicitado);
+    if (sug) sel.value = sug.texto;
+    m.querySelector('[data-periodo-otro]').hidden = sel.value !== '__otro';
+    m.querySelector('[data-sabado]').checked = !!data.sabado_habil;
+    m.querySelector('[data-form]').hidden = data.estado !== 'ACTIVO';
+    m.querySelector('[data-guardar]').disabled = data.estado !== 'ACTIVO';
+    vacRegCalcular();
+  } catch (e) {
+    _vac.persona = null;
+    m.querySelector('[data-persona]').innerHTML = '';
+    m.querySelector('[data-form]').hidden = true;
+    msg.textContent = 'No se pudo: ' + (e.message || e);
+  }
+}
+
+let _vacCalcT = null;
+function vacRegCalcular() {
+  clearTimeout(_vacCalcT);
+  const m = vacRegModal(), box = m.querySelector('[data-calc]');
+  const dias = Math.floor(Number(m.querySelector('[data-dias]').value) || 0);
+  const inicio = m.querySelector('[data-inicio]').value;
+  if (!dias || !inicio) { box.textContent = dias ? 'Elige la fecha de inicio para ver hasta cuándo van.' : 'Solo días en dinero.'; return; }
+  box.textContent = 'Calculando…';
+  _vacCalcT = setTimeout(async () => {
+    try {
+      const { data } = await sb.rpc('vacaciones_fechas',
+        { p_inicio: inicio, p_dias: Math.min(dias, 30), p_sabado: m.querySelector('[data-sabado]').checked });
+      if (!data?.ok) throw new Error();
+      const fest = (data.festivos || []).map((f) => vacFecha(f));
+      box.innerHTML = `Último día: <b>${esc(vacFecha(data.fin))}</b> · regresa el <b>${esc(vacFecha(data.regreso))}</b>`
+        + (fest.length ? ` · festivos dentro: ${esc(fest.join(', '))}` : '');
+    } catch { box.textContent = 'No se pudo calcular.'; }
+  }, 300);
+}
+
+async function vacRegGuardar() {
+  const m = vacRegModal(), msg = m.querySelector('[data-rmsg]'), b = m.querySelector('[data-guardar]');
+  const p = _vac.persona;
+  if (!p) return;
+  const sel = m.querySelector('[data-periodo]').value;
+  const periodo = sel === '__otro' ? m.querySelector('[data-periodo-otro]').value.trim() : sel;
+  const dias = Math.floor(Number(m.querySelector('[data-dias]').value) || 0);
+  if (!periodo) { msg.textContent = 'Escribe el período.'; return; }
+  b.disabled = true; msg.textContent = 'Guardando…';
+  try {
+    const { data, error } = await sb.rpc('vacaciones_registrar', {
+      p_cedula: p.cedula, p_periodo: periodo, p_inicio: dias ? (m.querySelector('[data-inicio]').value || null) : null,
+      p_dias_disfrute: dias, p_dias_dinero: Math.floor(Number(m.querySelector('[data-dinero]').value) || 0),
+      p_reemplaza: m.querySelector('[data-reemplaza]').value.trim() || null,
+      p_solicitada_por: m.querySelector('[data-por]').value, p_sabado_habil: m.querySelector('[data-sabado]').checked,
+      p_observacion: m.querySelector('[data-obs]').value.trim() || null });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    m.hidden = true;
+    toast(`Solicitud registrada: radicado # ${data.radicado}.`, 'ok');
+    await cargarVacaciones();
+    openVacacion(data.id);
+  } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); b.disabled = false; }
+}
+
+// ---- El formato FO-GH-82, para imprimir y firmar ----
+// Las firmas que se hacen en la app (Gestión Humana, Gerencia, Nómina) salen ya con quién y
+// cuándo; afiliado/jefe inmediato y coordinador de ruta firman sobre el papel.
+function vacNombreApellidos(nombre) {
+  // En el perfil van primero los dos apellidos: "PEREZ GOMEZ JUAN CARLOS".
+  const p = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+  const n = p.length >= 3 ? 2 : 1;
+  return { apellidos: p.slice(0, n).join(' '), nombres: p.slice(n).join(' ') };
+}
+
+function vacFormatoHtml(r, logo) {
+  const np = vacNombreApellidos(r.nombre);
+  const fila = (k, v, sub) => `<tr><th>${esc(k)}${sub ? ` <small>${esc(sub)}</small>` : ''}</th><td>${v == null ? '' : esc(String(v))}</td></tr>`;
+  const caja = (v) => `<span class="fv-box">${r.solicitada_por === v ? 'X' : ''}</span>`;
+  const sello = (estado, por, en) => (estado ? `<div class="fv-sello">${esc(estado)} en la app<br>${esc(por || '')}<br>${esc(evbCuando(en))}</div>` : '');
+  return `
+    <div class="fv-hoja">
+      <table class="fv-enc"><tr>
+        <td class="fv-logo">${logo ? `<img src="${logo}" alt="">` : ''}</td>
+        <td class="fv-tit">SOLICITUD DE VACACIONES</td>
+        <td class="fv-cod"><b>Código: FO-GH-82</b><br>Versión: 2<br>Fecha: 17/08/2023<br><b>Radicado # ${esc(String(r.radicado))}</b></td>
+      </tr></table>
+      <table class="fv-t">
+        ${fila('Fecha de Solicitud', vacFecha(r.fecha_solicitud))}
+        <tr><td colspan="2" class="fv-sec">DATOS PERSONALES</td></tr>
+        ${fila('Nombres', np.nombres)}
+        ${fila('Apellidos', np.apellidos)}
+        ${fila('N° Cédula', r.cedula)}
+        ${fila('Cargo', r.cargo)}
+        ${fila('Área', r.area)}
+        ${fila('Empleado que reemplaza', r.reemplaza)}
+        ${fila('Código', r.tipo_personal === 'CONDUCTOR' ? r.codigo : '', '(Conductor)')}
+        ${fila('N° Vehículo asignado', r.vehiculo)}
+        <tr><td colspan="2" class="fv-sec">INFORMACIÓN GENERAL</td></tr>
+        ${fila('Nombres y Apellidos del Afiliado', r.afiliado, '(Si aplica)')}
+        ${fila('Período solicitado', r.periodo)}
+        ${fila('Fecha de inicio', r.fecha_inicio ? vacFecha(r.fecha_inicio) : '')}
+        ${fila('Fecha de culminación', r.fecha_fin ? `${vacFecha(r.fecha_fin)}   (regresa el ${vacFecha(r.fecha_regreso)})` : '')}
+        ${fila('Días de disfrute', r.dias_disfrute ? `${r.dias_disfrute} días hábiles` : '0')}
+        ${fila('Días en dinero', r.dias_dinero || '0')}
+      </table>
+      <div class="fv-por"><b>Solicitud realizada por:</b>
+        ${caja('EMPLEADO')} Empleado ${caja('AFILIADO')} Afiliado ${caja('EMPRESA')} Empresa</div>
+      <div class="fv-notas"><b>NOTAS:</b>
+        <div>• De acuerdo al Código Sustantivo de Trabajo, el tiempo de disfrute mínimo permitido por periodo cumplido de vacaciones son ocho (8) días hábiles.</div>
+        <div>• Favor hacer la solicitud de su período de vacaciones mínimo, con quince (15) días de anterioridad.</div>
+        <div>• Recuerde, antes de radicar dicha solicitud debe hacerlas autorizar por: El Afiliado del vehículo (Conductores de afiliados), jefe directo y Gerencia (Conductores APL, Despachadores, Administrativos).</div>
+        <div><b>• El simple diligenciamiento de este formato no confirma la autorización de sus vacaciones.</b></div>
+      </div>
+      <div class="fv-firmas-t">FIRMAS:</div>
+      <table class="fv-firmas">
+        <tr><td><div class="fv-esp"></div>Empleado</td>
+          <td><div class="fv-esp"></div>Afiliado/Jefe Inmediato</td>
+          <td><div class="fv-esp">${r.req_gerencia ? sello(r.ger_estado, r.ger_por, r.ger_en) : '<div class="fv-sello">No aplica: conductor de afiliado</div>'}</div>Gerencia</td></tr>
+        <tr><td><div class="fv-esp"></div>Coordinador de Ruta</td>
+          <td><div class="fv-esp">${sello(r.gh_estado, r.gh_por, r.gh_en)}</div>Jefe Gestión Humana</td>
+          <td><div class="fv-esp">${r.nom_en ? sello('RECIBIDO', r.nom_por, r.nom_en) : ''}</div>Recibido Nómina<br>Fecha: ${r.nom_en ? esc(fechaLegible(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date(r.nom_en)))) : ''}</td></tr>
+      </table>
+    </div>`;
+}
+
+const VAC_FORMATO_CSS = `
+    @page { size: letter; margin: 1.1cm 1.5cm; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; font-size: 10pt; }
+    table { width: 100%; border-collapse: collapse; }
+    .fv-enc td { border: 1px solid #000; padding: 5px 8px; vertical-align: middle; }
+    .fv-logo { width: 150px; text-align: center; }
+    .fv-logo img { height: 52px; }
+    .fv-tit { text-align: center; font-weight: 700; font-size: 14pt; }
+    .fv-cod { width: 160px; font-size: 9pt; line-height: 1.35; }
+    .fv-t { margin-top: 10px; font-size: 9.5pt; }
+    .fv-t th, .fv-t td { border: 1px solid #000; padding: 3px 8px; text-align: left; vertical-align: middle; }
+    .fv-t th { width: 34%; font-weight: 700; }
+    .fv-t th small { font-size: 7.5pt; }
+    .fv-sec { text-align: center; font-weight: 700; }
+    .fv-por { margin: 12px 0 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .fv-box { display: inline-grid; place-items: center; width: 26px; height: 18px; border: 1px solid #000; font-weight: 700; margin-left: 18px; }
+    .fv-notas { font-size: 8.8pt; line-height: 1.35; }
+    .fv-notas div { margin-top: 2px; }
+    .fv-firmas-t { font-weight: 700; margin-top: 12px; font-size: 9pt; }
+    .fv-firmas { margin-top: 4px; }
+    .fv-firmas td { width: 33%; text-align: center; font-weight: 700; font-size: 9pt; padding: 0 12px 14px; vertical-align: bottom; }
+    .fv-esp { height: 52px; border-bottom: 1px solid #000; margin-bottom: 4px; display: flex; align-items: flex-end; justify-content: center; }
+    .fv-sello { font-weight: 400; font-size: 7.5pt; line-height: 1.25; color: #1d4ed8; padding-bottom: 3px; }
+`;
+
+async function vacImprimir(r) {
+  if (!r) return;
+  const logo = await certLogoDataUri();
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite las ventanas emergentes para imprimir.', 'err'); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`
+    + `<title>Vacaciones ${r.radicado}</title><style>${VAC_FORMATO_CSS}</style></head><body>`
+    + vacFormatoHtml(r, logo)
+    + `<script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.close();
+}
+
+function vacCopiarLink() {
+  const url = vacLinkUrl();
+  navigator.clipboard?.writeText(url).then(
+    () => toast('Link copiado. Compártelo con los empleados.', 'ok'),
+    () => prompt('Copia este link:', url));
+}
+
+async function exportarVacaciones(btn) {
+  const rows = _vac.rows;
+  if (!rows.length) { toast('No hay solicitudes para exportar.', 'err'); return; }
+  const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const cab = ['Radicado', 'Fecha solicitud', 'Cédula', 'Empleado', 'Cargo', 'Área', 'Código', 'Vehículo', 'Afiliado',
+      'Período', 'Inicio', 'Último día', 'Regresa', 'Días disfrute', 'Días dinero', 'Sábado hábil', 'Reemplaza',
+      'Solicitada por', 'Origen', 'Alertas', 'Gestión Humana', 'Decidió GH', 'Gerencia', 'Decidió Gerencia',
+      'Recibido nómina', 'Estado'];
+    const aoa = [cab, ...rows.map((r) => [r.radicado, celdaFechaXlsx(r.fecha_solicitud), r.cedula, r.nombre, r.cargo, r.area,
+      r.codigo, r.vehiculo, r.afiliado, r.periodo, celdaFechaXlsx(r.fecha_inicio), celdaFechaXlsx(r.fecha_fin),
+      celdaFechaXlsx(r.fecha_regreso), r.dias_disfrute, r.dias_dinero, r.sabado_habil ? 'SI' : 'NO', r.reemplaza,
+      VAC_POR[r.solicitada_por] || r.solicitada_por, r.origen === 'APP' ? 'App' : 'Link',
+      (r.alertas || []).map((a) => VAC_ALERTAS[a] || a).join(' · '),
+      r.gh_estado, r.gh_por, r.req_gerencia ? r.ger_estado : 'NO APLICA', r.ger_por,
+      celdaFechaXlsx(r.nom_en), VAC_ESTADO[r.estado] || r.estado])];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Vacaciones');
+    XLSX.writeFile(wb, `vacaciones_${hoyServidor()}.xlsx`);
   } catch (e) {
     toast('No se pudo exportar: ' + (e.message || e), 'err');
   } finally { btn.disabled = false; btn.textContent = prev; }
