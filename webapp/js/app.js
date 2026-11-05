@@ -791,7 +791,9 @@ function buildSidebar() {
   // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
   if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
   // 🏖️ Vacaciones: Gestión Humana, Gerencia y Nómina; el aviso es lo que le falta hacer a QUIEN mira
-  if (VAC_OK) addNavAction(gTh, '🏖️', `Vacaciones${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
+  if (VAC_OK && !VAC_AFI) addNavAction(gTh, '🏖️', `Vacaciones${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
+  // El afiliado aprueba las vacaciones de los conductores de sus carros (sql/169).
+  if (VAC_AFI) addNavAction(nav, '🏖️', `Vacaciones de mis conductores${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
 
   // ⚙️ Administración (tablas de configuración + acciones)
   const gAd = addNavGroup(nav, '⚙️', 'Administración', 'admin');
@@ -18507,7 +18509,10 @@ async function exportarPermisos(btn) {
 // afiliados los autoriza su afiliado, en el papel— y Nómina marca "recibido". Las fechas las
 // calcula la base: días hábiles sin domingos ni festivos, y el sábado solo para quien lo trabaja.
 // ===================================================================================
-let VAC_OK = false, VAC_GH = false, VAC_GER = false, VAC_NOM = false, VAC_MIOS = 0;
+let VAC_OK = false, VAC_GH = false, VAC_GER = false, VAC_NOM = false, VAC_AFI = false, VAC_MIOS = 0;
+// Quién aprueba por el área (sql/169): el afiliado con su cuenta; jefe y coordinador, Gestión Humana en su nombre.
+const VAC_AREA = { AFILIADO: 'Afiliado', COORDINADOR: 'Coordinador de ruta', JEFE: 'Jefe inmediato' };
+const VAC_AREA_DE = { AFILIADO: 'del afiliado', COORDINADOR: 'del coordinador de ruta', JEFE: 'del jefe inmediato' };
 const _vac = { rows: [], vista: 'decidir', q: '', abierto: null, persona: null, recien: new Set() };
 const VAC_VISTAS = [
   { key: 'decidir', label: 'Por hacer' },
@@ -18535,8 +18540,9 @@ async function refrescarVacaciones(rebuild = true) {
     VAC_GH = !!(data && data.es_gh);
     VAC_GER = !!(data && data.es_gerencia);
     VAC_NOM = !!(data && data.es_nomina);
+    VAC_AFI = !!(data && data.es_afiliado);
     VAC_MIOS = Number((data && data.mios) || 0);
-  } catch { VAC_OK = false; VAC_GH = false; VAC_GER = false; VAC_NOM = false; VAC_MIOS = 0; }
+  } catch { VAC_OK = false; VAC_GH = false; VAC_GER = false; VAC_NOM = false; VAC_AFI = false; VAC_MIOS = 0; }
   if (rebuild) buildSidebar();
 }
 
@@ -18547,7 +18553,10 @@ const vacDias = (n) => `${n} día${Number(n) === 1 ? '' : 's'}`;
 // Lo que ESTA cuenta tiene por hacer: es la vista con la que se entra a trabajar.
 function vacMeFalta(r) {
   if (r.estado === 'ANULADO' || r.estado === 'NEGADO') return false;
-  return (VAC_GH && !r.gh_estado) || (VAC_GER && r.req_gerencia && !r.ger_estado)
+  const areaLista = r.area_estado === 'APROBADO' || !r.area_tipo;
+  return (VAC_AFI && r.area_tipo === 'AFILIADO' && !r.area_estado)
+    || (VAC_GH && !r.gh_estado && (areaLista || (r.area_tipo !== 'AFILIADO' && !r.area_estado)))
+    || (VAC_GER && r.req_gerencia && !r.ger_estado && r.gh_estado === 'APROBADO')
     || (VAC_NOM && r.estado === 'APROBADO' && !r.nom_en);
 }
 
@@ -18557,7 +18566,7 @@ function vacModal() {
   m = document.createElement('div');
   m.id = 'vac-modal'; m.className = 'modal'; m.hidden = true;
   m.innerHTML = `<div class="modal-card perm-card">
-    <div class="modal-head"><h3>🏖️ Vacaciones</h3><span class="spacer"></span>
+    <div class="modal-head"><h3>🏖️ ${VAC_AFI ? 'Vacaciones de mis conductores' : 'Vacaciones'}</h3><span class="spacer"></span>
       <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
     <div class="asp-toolbar">
       <div class="asp-vistas">${VAC_VISTAS.map((v) =>
@@ -18565,7 +18574,7 @@ function vacModal() {
       <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula, código o radicado" aria-label="Buscar">
       <span class="spacer"></span>
       ${VAC_GH ? '<button type="button" class="btn btn-sm btn-primary" data-nueva>➕ Registrar</button>' : ''}
-      <button type="button" class="btn btn-sm" data-link>🔗 Link para el empleado</button>
+      ${VAC_AFI ? '' : '<button type="button" class="btn btn-sm" data-link>🔗 Link para el empleado</button>'}
       <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
       <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
     </div>
@@ -18599,9 +18608,16 @@ async function cargarVacaciones() {
   const body = vacModal().querySelector('.vac-body');
   if (!_vac.rows.length) body.innerHTML = '<div class="loading">Cargando…</div>';
   try {
-    const { data, error } = await sb.from('vacaciones').select('*').order('radicado', { ascending: false }).limit(3000);
-    if (error) throw error;
-    _vac.rows = data || [];
+    // El afiliado no lee la tabla: solo las de los conductores de sus carros, sin correos (sql/169).
+    if (VAC_AFI) {
+      const { data, error } = await sb.rpc('vacaciones_afiliado');
+      if (error) throw error;
+      _vac.rows = (data && data.ok && data.filas) || [];
+    } else {
+      const { data, error } = await sb.from('vacaciones').select('*').order('radicado', { ascending: false }).limit(3000);
+      if (error) throw error;
+      _vac.rows = data || [];
+    }
     renderVacaciones();
     refrescarVacaciones();
   } catch (e) {
@@ -18642,10 +18658,12 @@ function renderVacaciones() {
     return;
   }
 
-  body.innerHTML = `${VAC_GH || VAC_GER || VAC_NOM ? '<div class="ap-ayuda">✔ Marca la casilla de tu área para aprobar; si te equivocas, desmárcala. Para negar, abre la solicitud (pide el motivo).</div>' : ''}
+  body.innerHTML = `${VAC_GH || VAC_GER || VAC_NOM || VAC_AFI ? `<div class="ap-ayuda">✔ ${VAC_AFI
+    ? 'Marca la casilla para aprobar las vacaciones de tu conductor; si te equivocas, desmárcala. Para negar, abre la solicitud (pide el motivo).'
+    : 'Marca la casilla de tu área para aprobar; si te equivocas, desmárcala. Van en orden: primero el área (afiliado, jefe o coordinador), luego Gestión Humana, Gerencia y Nómina. Para negar, abre la solicitud (pide el motivo).'}</div>` : ''}
     <div class="pst-tabla-wrap perm-tabla"><table class="pst-tabla vac-tabla">
     <thead><tr><th>#</th><th>Empleado</th><th>Cargo</th><th>Período</th><th>Inicio</th><th>Último día</th>
-      <th>Regresa</th><th>Disfrute</th><th>Dinero</th><th>G. Humana</th><th>Gerencia</th><th>Nómina</th><th>Estado</th></tr></thead>
+      <th>Regresa</th><th>Disfrute</th><th>Dinero</th><th title="Afiliado, jefe inmediato o coordinador de ruta">Área</th><th>G. Humana</th><th>Gerencia</th><th>Nómina</th><th>Estado</th></tr></thead>
     <tbody>${rows.map((r) => `<tr class="pst-clic" data-vac="${r.id}" tabindex="0" title="Abrir la solicitud">
       <td>${r.radicado}</td>
       <td>${esc(r.nombre || '—')}${(r.alertas || []).length
@@ -18656,6 +18674,7 @@ function renderVacaciones() {
       <td class="vac-nw">${esc(vacFecha(r.fecha_fin))}</td>
       <td class="vac-nw">${esc(vacFecha(r.fecha_regreso))}</td>
       <td>${r.dias_disfrute}</td><td>${r.dias_dinero || ''}</td>
+      <td>${vacCasilla(r, 'AREA')}</td>
       <td>${vacCasilla(r, 'GH')}</td>
       <td>${vacCasilla(r, 'GERENCIA')}</td>
       <td>${vacCasilla(r, 'NOMINA')}</td>
@@ -18677,18 +18696,37 @@ function vacCasilla(r, inst) {
     return `<input type="checkbox" class="ap-chk" data-ap="NOMINA" data-id="${r.id}"${r.nom_en ? ' checked' : ''}
       title="${r.nom_en ? 'Recibida: desmarca si fue un error' : 'Marca cuando Nómina la reciba'}" aria-label="Recibido en nómina">`;
   }
+  if (inst === 'AREA') {
+    if (!r.area_tipo) return '—';
+    const quien = VAC_AREA[r.area_tipo];
+    const puedeA = (VAC_AFI && r.area_tipo === 'AFILIADO') || VAC_GH;
+    // Con Gestión Humana ya decidida, lo del área no se mueve (sql/169).
+    if (!puedeA || cerrada || r.nom_en || r.area_estado === 'NEGADO' || r.gh_estado) {
+      return `<span title="${esc(quien)}${r.area_en_nombre ? ' · registrado por Gestión Humana en su nombre' : ''}">${marca(r.area_estado)}</span>`;
+    }
+    return `<input type="checkbox" class="ap-chk" data-ap="AREA" data-id="${r.id}"${r.area_estado === 'APROBADO' ? ' checked' : ''}
+      title="${esc(r.area_estado === 'APROBADO' ? 'Aprobada: desmarca para quitar la aprobación'
+    : VAC_AFI ? 'Marca para aprobar' : `${quien}: marca en su nombre (queda con la fecha de hoy; la fecha y el soporte se ponen en la ficha)`)}"
+      aria-label="Aprobar (${esc(quien)})">`;
+  }
   if (inst === 'GERENCIA' && !r.req_gerencia) return '<span title="La autoriza el afiliado">—</span>';
   const est = inst === 'GH' ? r.gh_estado : r.ger_estado;
   const puede = inst === 'GH' ? VAC_GH : VAC_GER;
   if (!puede || cerrada || r.nom_en || est === 'NEGADO') return marca(est);
-  return `<input type="checkbox" class="ap-chk" data-ap="${inst}" data-id="${r.id}"${est === 'APROBADO' ? ' checked' : ''}
-    title="${est === 'APROBADO' ? 'Aprobada: desmarca para quitar la aprobación' : 'Marca para aprobar'}"
+  // El orden: el área antes que Gestión Humana, y Gestión Humana antes que Gerencia.
+  const espera = !est && (inst === 'GH' ? (r.area_tipo && r.area_estado !== 'APROBADO' ? `Primero aprueba el ${VAC_AREA[r.area_tipo].toLowerCase()}` : '')
+    : (r.gh_estado !== 'APROBADO' ? 'Primero da su visto bueno Gestión Humana' : ''));
+  const fija = inst === 'GH' && est === 'APROBADO' && r.ger_estado ? 'Gerencia ya decidió: para quitar esta, primero Gerencia quita la suya' : '';
+  return `<input type="checkbox" class="ap-chk${espera || fija ? ' ing-bloq' : ''}" data-ap="${inst}" data-id="${r.id}"${est === 'APROBADO' ? ' checked' : ''}${espera || fija ? ' disabled' : ''}
+    title="${esc(espera || fija || (est === 'APROBADO' ? 'Aprobada: desmarca para quitar la aprobación' : 'Marca para aprobar'))}"
     aria-label="Aprobar (${inst === 'GH' ? 'Gestión Humana' : 'Gerencia'})">`;
 }
 
 async function vacCheck(cb) {
   const id = Number(cb.dataset.id), inst = cb.dataset.ap, marcar = cb.checked;
-  const quien = { GH: 'Gestión Humana', GERENCIA: 'Gerencia', NOMINA: 'Nómina' }[inst];
+  const fila = _vac.rows.find((x) => x.id === id) || {};
+  const quien = inst === 'AREA' ? (VAC_AFI ? 'ti' : `Gestión Humana en nombre ${VAC_AREA_DE[fila.area_tipo] || 'del área'}`)
+    : { GH: 'Gestión Humana', GERENCIA: 'Gerencia', NOMINA: 'Nómina' }[inst];
   cb.disabled = true;
   try {
     const { data, error } = inst === 'NOMINA'
@@ -18777,21 +18815,37 @@ function vacFichaHtml(r) {
     ['Celular', esc(r.celular || '')], ['Radicada el', esc(vacFecha(r.fecha_solicitud))],
     ['Registrada por', esc(r.registrada_por || '')], ['Observación', esc(r.observacion || '')]])}
     </div>
-    <h4 class="pqr-h">Autorizaciones</h4>
+    <h4 class="pqr-h">Autorizaciones <small style="font-weight:400;color:var(--muted)">· en orden: ${esc(VAC_AREA[r.area_tipo] || 'Área')} → Gestión Humana${r.req_gerencia ? ' → Gerencia' : ''} → Nómina</small></h4>
     <div class="perm-decs">
+      ${r.area_tipo ? decision(VAC_AREA[r.area_tipo], r.area_estado,
+    r.area_en_nombre ? `Gestión Humana en su nombre${r.area_por ? ' (' + r.area_por + ')' : ''}` : (r.area_por || (r.area_estado ? 'Desde su cuenta' : '')),
+    r.area_en, [r.area_nota, r.area_fecha ? `Autorizó el ${vacFecha(r.area_fecha)}` : ''].filter(Boolean).join(' · '),
+    r.area_tipo === 'AFILIADO' ? 'Lo aprueba el afiliado desde su cuenta' : 'Lo marca Gestión Humana en su nombre') : ''}
+      ${r.area_doc ? '<button type="button" class="btn btn-sm" data-soporte-ver style="align-self:center">📎 Ver soporte del área</button>' : ''}
       ${decision('Gestión Humana', r.gh_estado, r.gh_por, r.gh_en, r.gh_nota)}
       ${r.req_gerencia ? decision('Gerencia', r.ger_estado, r.ger_por, r.ger_en, r.ger_nota)
-    : decision('Gerencia', null, null, null, 'Conductor de afiliado: lo autoriza su afiliado, firmando el formato impreso.', 'No aplica')}
+    : decision('Gerencia', null, null, null, 'Conductor de afiliado: lo autoriza su afiliado.', 'No aplica')}
       ${decision('Nómina', r.nom_en ? 'RECIBIDO' : null, r.nom_por, r.nom_en, r.nom_nota,
     r.estado === 'APROBADO' ? 'Por recibir' : 'Cuando esté aprobada')}
     </div>
     ${r.anulado_en ? `<div class="cert-bloqueo">Solicitud anulada por ${esc(r.anulado_por || '')} · ${esc(evbCuando(r.anulado_en))}</div>` : `
     <div class="perm-acciones">
+      ${vivo && !r.nom_en && !r.gh_estado && r.area_tipo && ((VAC_AFI && r.area_tipo === 'AFILIADO') || VAC_GH) ? `<div class="perm-acc-g">
+        <b>${esc(VAC_AFI ? 'Como afiliado' : `${VAC_AREA[r.area_tipo]} (en su nombre)`)}</b>
+        <button type="button" class="btn btn-sm" data-dec="AREA:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="AREA:NEGADO">⛔ Negar</button>
+        ${r.area_estado ? '<button type="button" class="btn btn-sm" data-dec="AREA:PENDIENTE">↩️ Quitar</button>' : ''}
+        ${VAC_AFI ? '' : `<label style="font-size:12.5px;display:inline-flex;gap:6px;align-items:center">Autorizó el
+          <input type="date" data-afecha max="${esc(hoyServidor())}" value="${esc(r.area_fecha || hoyServidor())}" style="padding:4px 6px"></label>
+          <label class="btn btn-sm" style="cursor:pointer">📎 Soporte<input type="file" data-asoporte accept=".pdf,image/jpeg,image/png,image/webp" hidden></label>
+          <span class="pst-nota" data-asop-n></span>`}</div>` : ''}
       ${VAC_GH && vivo && !r.nom_en ? `<div class="perm-acc-g"><b>Gestión Humana</b>
-        <button type="button" class="btn btn-sm" data-dec="GH:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="GH:APROBADO"${r.area_tipo && r.area_estado !== 'APROBADO'
+    ? ` disabled title="Primero aprueba el ${esc(VAC_AREA[r.area_tipo].toLowerCase())}"` : ''}>✅ Aprobar</button>
         <button type="button" class="btn btn-sm" data-dec="GH:NEGADO">⛔ Negar</button></div>` : ''}
       ${VAC_GER && r.req_gerencia && vivo && !r.nom_en ? `<div class="perm-acc-g"><b>Gerencia</b>
-        <button type="button" class="btn btn-sm" data-dec="GERENCIA:APROBADO">✅ Aprobar</button>
+        <button type="button" class="btn btn-sm" data-dec="GERENCIA:APROBADO"${r.gh_estado !== 'APROBADO'
+    ? ' disabled title="Primero da su visto bueno Gestión Humana"' : ''}>✅ Aprobar</button>
         <button type="button" class="btn btn-sm" data-dec="GERENCIA:NEGADO">⛔ Negar</button></div>` : ''}
       ${VAC_NOM && r.estado === 'APROBADO' && !r.nom_en ? `<div class="perm-acc-g"><b>Nómina</b>
         <button type="button" class="btn btn-sm btn-primary" data-nomina>📥 Recibido en nómina</button></div>` : ''}
@@ -18820,13 +18874,38 @@ function vacConectarFicha(body, r) {
     }
     b.disabled = true; msg.textContent = 'Guardando…';
     try {
-      const { data, error } = await sb.rpc('vacaciones_decidir',
-        { p_id: r.id, p_instancia: instancia, p_estado: estado, p_nota: nota() });
+      const args = { p_id: r.id, p_instancia: instancia, p_estado: estado, p_nota: nota() };
+      // Gestión Humana en nombre del área: la fecha en que autorizó y, si hay, el soporte (sql/169).
+      if (instancia === 'AREA' && !VAC_AFI && estado !== 'PENDIENTE') {
+        args.p_fecha = (body.querySelector('[data-afecha]') || {}).value || null;
+        const f = ((body.querySelector('[data-asoporte]') || {}).files || [])[0];
+        if (f) {
+          const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[f.type];
+          if (!ext) throw new Error('el soporte debe ser PDF o imagen');
+          const path = `v/${r.id}/area-${Date.now()}.${ext}`;
+          const up = await sb.storage.from('vacaciones').upload(path, f, { contentType: f.type, upsert: false });
+          if (up.error) throw up.error;
+          args.p_doc_path = path; args.p_doc_nombre = f.name;
+        }
+      }
+      const { data, error } = await sb.rpc('vacaciones_decidir', args);
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || 'no se pudo');
-      await listo(`Solicitud ${estado === 'APROBADO' ? 'aprobada' : 'negada'} por ${instancia === 'GH' ? 'Gestión Humana' : 'Gerencia'}.`);
+      const quien = instancia === 'AREA' ? (VAC_AFI ? 'el afiliado' : `Gestión Humana en nombre ${VAC_AREA_DE[r.area_tipo]}`)
+        : instancia === 'GH' ? 'Gestión Humana' : 'Gerencia';
+      await listo(estado === 'PENDIENTE' ? 'Se quitó la decisión.' : `Solicitud ${estado === 'APROBADO' ? 'aprobada' : 'negada'} por ${quien}.`);
     } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); b.disabled = false; }
   }));
+  const fs = body.querySelector('[data-asoporte]');
+  if (fs) fs.addEventListener('change', () => { body.querySelector('[data-asop-n]').textContent = fs.files[0] ? fs.files[0].name : ''; });
+  const sv = body.querySelector('[data-soporte-ver]');
+  if (sv) sv.addEventListener('click', async () => {
+    try {
+      const { data, error } = await sb.storage.from('vacaciones').createSignedUrl(r.area_doc.path, 300);
+      if (error) throw error;
+      window.open(data.signedUrl, '_blank', 'noopener');
+    } catch (e) { toast('No se pudo abrir el soporte: ' + (e.message || e), 'err'); }
+  });
   const bn = body.querySelector('[data-nomina]');
   if (bn) bn.addEventListener('click', async () => {
     bn.disabled = true; msg.textContent = 'Guardando…';
@@ -18962,9 +19041,12 @@ function vacRegCalcular() {
       const { data } = await sb.rpc('vacaciones_fechas',
         { p_inicio: inicio, p_dias: Math.min(dias, 30), p_sabado: m.querySelector('[data-sabado]').checked });
       if (!data?.ok) throw new Error();
-      const fest = (data.festivos || []).map((f) => vacFecha(f));
-      box.innerHTML = `Último día: <b>${esc(vacFecha(data.fin))}</b> · regresa el <b>${esc(vacFecha(data.regreso))}</b>`
-        + (fest.length ? ` · festivos dentro: ${esc(fest.join(', '))}` : '');
+      // Los festivos con su nombre (sql/168); si la base todavía no los nombra, solo la fecha.
+      const fest = (data.festivos_det || (data.festivos || []).map((f) => ({ fecha: f })))
+        .map((f) => vacFecha(f.fecha) + (f.nombre ? ` (${f.nombre})` : ''));
+      box.innerHTML = `Inicio: <b>${esc(vacFecha(inicio))}</b> · culminación: <b>${esc(vacFecha(data.fin))}</b>`
+        + ` · entra a trabajar el <b>${esc(vacFecha(data.regreso))}</b>`
+        + (fest.length ? `<br>Festivos que no cuentan: ${esc(fest.join(', '))}` : '');
     } catch { box.textContent = 'No se pudo calcular.'; }
   }, 300);
 }
@@ -19009,6 +19091,8 @@ function vacFormatoHtml(r, logo) {
   const fila = (k, v, sub) => `<tr><th>${esc(k)}${sub ? ` <small>${esc(sub)}</small>` : ''}</th><td>${v == null ? '' : esc(String(v))}</td></tr>`;
   const caja = (v) => `<span class="fv-box">${r.solicitada_por === v ? 'X' : ''}</span>`;
   const sello = (estado, por, en) => (estado ? `<div class="fv-sello">${esc(estado)} en la app<br>${esc(por || '')}<br>${esc(evbCuando(en))}</div>` : '');
+  const selloArea = sello(r.area_estado, r.area_en_nombre ? `Gestión Humana en su nombre · autorizó el ${vacFecha(r.area_fecha)}`
+    : (r.area_por || 'desde su cuenta'), r.area_en);
   return `
     <div class="fv-hoja">
       <table class="fv-enc"><tr>
@@ -19046,9 +19130,9 @@ function vacFormatoHtml(r, logo) {
       <div class="fv-firmas-t">FIRMAS:</div>
       <table class="fv-firmas">
         <tr><td><div class="fv-esp"></div>Empleado</td>
-          <td><div class="fv-esp"></div>Afiliado/Jefe Inmediato</td>
+          <td><div class="fv-esp">${r.area_tipo !== 'COORDINADOR' ? selloArea : ''}</div>Afiliado/Jefe Inmediato</td>
           <td><div class="fv-esp">${r.req_gerencia ? sello(r.ger_estado, r.ger_por, r.ger_en) : '<div class="fv-sello">No aplica: conductor de afiliado</div>'}</div>Gerencia</td></tr>
-        <tr><td><div class="fv-esp"></div>Coordinador de Ruta</td>
+        <tr><td><div class="fv-esp">${r.area_tipo === 'COORDINADOR' ? selloArea : ''}</div>Coordinador de Ruta</td>
           <td><div class="fv-esp">${sello(r.gh_estado, r.gh_por, r.gh_en)}</div>Jefe Gestión Humana</td>
           <td><div class="fv-esp">${r.nom_en ? sello('RECIBIDO', r.nom_por, r.nom_en) : ''}</div>Recibido Nómina<br>Fecha: ${r.nom_en ? esc(fechaLegible(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date(r.nom_en)))) : ''}</td></tr>
       </table>
@@ -19107,13 +19191,15 @@ async function exportarVacaciones(btn) {
     const XLSX = await import('https://esm.sh/xlsx@0.18.5');
     const cab = ['Radicado', 'Fecha solicitud', 'Cédula', 'Empleado', 'Cargo', 'Área', 'Código', 'Vehículo', 'Afiliado',
       'Período', 'Inicio', 'Último día', 'Regresa', 'Días disfrute', 'Días dinero', 'Sábado hábil', 'Reemplaza',
-      'Solicitada por', 'Origen', 'Alertas', 'Gestión Humana', 'Decidió GH', 'Gerencia', 'Decidió Gerencia',
+      'Solicitada por', 'Origen', 'Alertas', 'Aprueba por el área', 'Área', 'Área: registrado por GH', 'Área: autorizó el',
+      'Gestión Humana', 'Decidió GH', 'Gerencia', 'Decidió Gerencia',
       'Recibido nómina', 'Estado'];
     const aoa = [cab, ...rows.map((r) => [r.radicado, celdaFechaXlsx(r.fecha_solicitud), r.cedula, r.nombre, r.cargo, r.area,
       r.codigo, r.vehiculo, r.afiliado, r.periodo, celdaFechaXlsx(r.fecha_inicio), celdaFechaXlsx(r.fecha_fin),
       celdaFechaXlsx(r.fecha_regreso), r.dias_disfrute, r.dias_dinero, r.sabado_habil ? 'SI' : 'NO', r.reemplaza,
       VAC_POR[r.solicitada_por] || r.solicitada_por, r.origen === 'APP' ? 'App' : 'Link',
       (r.alertas || []).map((a) => VAC_ALERTAS[a] || a).join(' · '),
+      VAC_AREA[r.area_tipo] || '', r.area_estado, r.area_en_nombre ? 'SI' : '', celdaFechaXlsx(r.area_fecha),
       r.gh_estado, r.gh_por, r.req_gerencia ? r.ger_estado : 'NO APLICA', r.ger_por,
       celdaFechaXlsx(r.nom_en), VAC_ESTADO[r.estado] || r.estado])];
     const wb = XLSX.utils.book_new();

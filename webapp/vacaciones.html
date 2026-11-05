@@ -78,6 +78,26 @@
     .calc.cargando { background: #f6f6f6; border-color: #e5e5e5; color: var(--muted); }
     .calc b { color: #0f3d22; }
     .calc small { display: block; color: #3f6b4f; font-size: 13px; margin-top: 6px; }
+    .ro { display: block; margin-top: 5px; padding: 11px 12px; border: 1px dashed var(--borde); border-radius: 10px; background: #fafafa; font-size: 16px; font-weight: 600; color: var(--muted); }
+    .ro.listo { border-style: solid; border-color: #cfe8cf; background: #eef7ee; color: #14532d; }
+    .f3 { display: grid; gap: 6px; }
+    .f3 > div { display: flex; justify-content: space-between; gap: 4px 10px; align-items: baseline; flex-wrap: wrap; }
+    .f3 span { font-size: 13.5px; color: #3f6b4f; }
+    .f3 b { font-size: 16px; }
+    .f3 .entra { background: #fff; border: 1px solid #bbe5bb; border-radius: 10px; padding: 8px 10px; margin-top: 2px; }
+    .f3 .entra b { font-size: 18px; color: #15803d; }
+    .cal { margin-top: 12px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .cal .h { font-size: 11px; font-weight: 700; color: #6b7280; text-align: center; }
+    .cal .d { border-radius: 8px; text-align: center; font-size: 13px; padding: 6px 0 4px; line-height: 1.1; color: #cbd5e1; }
+    .calc .cal .d small { display: block; font-size: 9.5px; margin: 1px 0 0; color: inherit; font-weight: 600; text-transform: uppercase; }
+    .cal .hab { background: #15803d; color: #fff; font-weight: 700; }
+    .cal .dom { background: #e5e7eb; color: #374151; }
+    .cal .sab { background: #f3f4f6; color: #4b5563; }
+    .cal .fes { background: #fee2e2; color: #b91c1c; font-weight: 700; }
+    .cal .reg { background: #1d4ed8; color: #fff; font-weight: 700; }
+    .leyenda { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; font-size: 12px; color: #374151; }
+    .leyenda i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+    .calc .ojo { display: block; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 8px; padding: 7px 10px; margin-top: 10px; font-size: 13.5px; }
     .avisos { margin-top: 10px; display: grid; gap: 6px; }
     .aviso { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 9px 12px; font-size: 13.5px; line-height: 1.4; }
     .notas { font-size: 13.5px; line-height: 1.5; color: #333; margin: 0; padding-left: 18px; }
@@ -146,9 +166,13 @@
             <input type="number" id="dinero" min="0" max="15" value="0" inputmode="numeric" />
             <span class="hint">Días que pides que te paguen en vez de disfrutarlos.</span>
           </label>
-          <label class="full" id="inicio-w">Fecha de inicio <span class="req">*</span>
+          <label id="inicio-w">Fecha de inicio <span class="req">*</span>
             <input type="date" id="inicio" />
             <span class="hint">El primer día que no trabajas.</span>
+          </label>
+          <label id="fin-w">Fecha de culminación
+            <span class="ro" id="fin-ro">Se calcula al elegir el inicio</span>
+            <span class="hint">Tu último día de vacaciones. La calcula el sistema sin domingos ni festivos.</span>
           </label>
         </div>
         <div class="calc" id="calc" hidden></div>
@@ -227,6 +251,7 @@
     const hoy = () => new Date();
     const hoyIso = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
     const sumarDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const dowIso = (iso) => new Date(iso + 'T12:00:00').getDay();
     const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
     const ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobada', NEGADO: 'Negada', ANULADO: 'Anulada' };
 
@@ -238,7 +263,7 @@
     if (PRUEBA) $('prueba').hidden = false;
     $('inicio').min = sumarDias(hoyIso(), 1);
 
-    // ---- Vista de prueba: una persona inventada y el cálculo hecho aquí, sin festivos ----
+    // ---- Vista de prueba: una persona inventada y el cálculo hecho aquí ----
     const DEMO = () => ({ ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', tipo: 'CONDUCTOR', sabado_habil: true, tiene_afiliado: true,
       periodos: [
         { texto: '10/03/2026 al 09/03/2027', cumplido: false, solicitado: false },
@@ -246,16 +271,40 @@
         { texto: '10/03/2024 al 09/03/2025', cumplido: true, solicitado: true }],
       solicitudes: [{ radicado: 12, periodo: '10/03/2024 al 09/03/2025', inicio: '2025-06-02', fin: '2025-06-18', regreso: '2025-06-19',
         disfrute: 15, dinero: 0, estado: 'APROBADO', nomina: true }] });
+    // Solo para la vista de prueba: los festivos con las mismas reglas de festivo_nombre() (sql/168).
+    // Con una cédula real las fechas y los festivos los da la base (vacaciones_fechas).
+    const pascua = (y) => {
+      const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+      const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+      const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+      const x = h + l - 7 * m + 114;
+      return `${y}-${String(Math.floor(x / 31)).padStart(2, '0')}-${String((x % 31) + 1).padStart(2, '0')}`;
+    };
+    const lunes = (iso) => { const w = dowIso(iso); return w === 1 ? iso : sumarDias(iso, (8 - w) % 7); };
+    const festivosDe = (y) => {
+      const p = pascua(y), f = (m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      return [[f(1, 1), 'Año Nuevo'], [lunes(f(1, 6)), 'Reyes Magos'], [lunes(f(3, 19)), 'San José'], [sumarDias(p, -3), 'Jueves Santo'],
+        [sumarDias(p, -2), 'Viernes Santo'], [f(5, 1), 'Día del Trabajo'], [lunes(sumarDias(p, 39)), 'Ascensión del Señor'],
+        [lunes(sumarDias(p, 60)), 'Corpus Christi'], [lunes(sumarDias(p, 68)), 'Sagrado Corazón'], [lunes(f(6, 29)), 'San Pedro y San Pablo'],
+        ...(y >= 2026 ? [[lunes(f(7, 9)), 'Virgen de Chiquinquirá']] : []), [f(7, 20), 'Independencia de Colombia'],
+        [f(8, 7), 'Batalla de Boyacá'], [lunes(f(8, 15)), 'Asunción de la Virgen'], [lunes(f(10, 12)), 'Día de la Raza'],
+        [lunes(f(11, 1)), 'Todos los Santos'], [lunes(f(11, 11)), 'Independencia de Cartagena'], [f(12, 8), 'Inmaculada Concepción'],
+        [f(12, 25), 'Navidad']];
+    };
+    const festNombre = (iso) => (festivosDe(+iso.slice(0, 4)).find(([d]) => d === iso) || [])[1] || null;
     const calcDemo = (inicio, dias, sab) => {
-      let d = inicio, n = 0, fin = null;
-      for (let i = 0; i < 120 && !fin; i++) {
-        const w = new Date(d + 'T12:00:00').getDay();
-        if (w !== 0 && (w !== 6 || sab)) { n++; if (n === dias) fin = d; }
+      const cuenta = (d) => { const w = dowIso(d); return w !== 0 && (w !== 6 || sab); };
+      let d = inicio, n = 0, fin = null; const festivos = [];
+      for (let i = 0; i < 200 && !fin; i++) {
+        if (cuenta(d) && festNombre(d)) festivos.push(d);
+        else if (cuenta(d)) { n++; if (n === dias) fin = d; }
         d = sumarDias(d, 1);
       }
       let reg = sumarDias(fin, 1);
-      while ([0, ...(sab ? [] : [6])].includes(new Date(reg + 'T12:00:00').getDay())) reg = sumarDias(reg, 1);
-      return { ok: true, fin, regreso: reg, festivos: [] };
+      while (!cuenta(reg) || festNombre(reg)) reg = sumarDias(reg, 1);
+      const det = [];
+      for (let x = inicio; x < reg; x = sumarDias(x, 1)) { if (festNombre(x)) det.push({ fecha: x, nombre: festNombre(x) }); }
+      return { ok: true, fin, regreso: reg, festivos, festivos_det: det };
     };
 
     // ---- 1 · Identificarse ----
@@ -291,7 +340,7 @@
       $('mias-l').innerHTML = mias.map((s) => `<div class="mia">
           <div class="top"><b>Radicado # ${esc(s.radicado)}</b>
             <span class="chip c-${esc(String(s.estado).split(' ')[0])}">${esc(ESTADO[s.estado] || s.estado)}${s.nomina ? ' · en nómina' : ''}</span></div>
-          <div>${s.inicio ? `Del ${esc(fLarga(s.inicio))} al ${esc(fLarga(s.fin))} · regresa el ${esc(fLarga(s.regreso))}` : 'Solo días en dinero'}</div>
+          <div>${s.inicio ? `Del ${esc(fLarga(s.inicio))} al ${esc(fLarga(s.fin))} · entras el ${esc(fLarga(s.regreso))}` : 'Solo días en dinero'}</div>
           <div class="hint" style="margin:0">Período ${esc(s.periodo)} · ${s.disfrute} día(s) de disfrute${s.dinero ? ` y ${s.dinero} en dinero` : ''}</div>
           ${s.nota ? `<div class="nota">Motivo: ${esc(s.nota)}</div>` : ''}
         </div>`).join('');
@@ -328,14 +377,38 @@
     // ---- 3 · Las fechas las calcula la base, para que lo que se ve sea lo que se radica ----
     let tCalc = null;
     const num = (id) => Math.max(0, Math.floor(Number($(id).value) || 0));
+    // El calendario de las vacaciones, de la semana del inicio a la del regreso: qué día cuenta y por qué no.
+    function calendarioHtml(inicio, fin, regreso, sab, nom) {
+      const desde = sumarDias(inicio, -((dowIso(inicio) + 6) % 7)), hasta = sumarDias(regreso, (7 - dowIso(regreso)) % 7);
+      let h = ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((x) => `<div class="h">${x}</div>`).join('');
+      for (let d = desde; d <= hasta; d = sumarDias(d, 1)) {
+        const w = dowIso(d), dia = +d.slice(8, 10);
+        let cls = 'd', tit = '', et = dia === 1 || d === desde ? MESES[+d.slice(5, 7) - 1].slice(0, 3) : '';
+        if (d === regreso) { cls += ' reg'; tit = 'Entras a trabajar'; et = 'entras'; }
+        else if (d >= inicio && d < regreso) {
+          if (nom[d]) { cls += ' fes'; tit = 'Festivo: ' + nom[d]; et = 'festivo'; }
+          else if (w === 0) { cls += ' dom'; tit = 'Domingo: no cuenta'; et = 'dom'; }
+          else if (w === 6 && !sab) { cls += ' sab'; tit = 'Sábado: no lo trabajas, no cuenta'; et = 'sáb'; }
+          else if (d <= fin) { cls += ' hab'; tit = 'Día de vacaciones'; }
+        }
+        h += `<div class="${cls}" title="${esc(tit)}">${dia}${et ? `<small>${esc(et)}</small>` : ''}</div>`;
+      }
+      return `<div class="cal">${h}</div><div class="leyenda"><span><i style="background:#15803d"></i>Día de vacaciones</span>`
+        + `<span><i style="background:#e5e7eb"></i>${sab ? 'Domingo' : 'Domingo o sábado'}: no cuenta</span>`
+        + `<span><i style="background:#fee2e2"></i>Festivo: no cuenta</span><span><i style="background:#1d4ed8"></i>Entras a trabajar</span></div>`;
+    }
+
     function calcular() {
       clearTimeout(tCalc);
-      const dias = num('dias'), inicio = $('inicio').value, box = $('calc');
+      const dias = num('dias'), inicio = $('inicio').value, box = $('calc'), finRo = $('fin-ro');
       $('inicio-w').hidden = dias === 0;
+      $('fin-w').hidden = dias === 0;
+      finRo.className = 'ro'; finRo.textContent = 'Se calcula al elegir el inicio';
       calculo = null;
       if (!dias) { box.hidden = !num('dinero'); box.className = 'calc'; box.innerHTML = `Pides <b>${num('dinero')} día(s) en dinero</b>, sin salir a vacaciones.`; avisos(); return; }
       if (!inicio) { box.hidden = true; avisos(); return; }
       box.hidden = false; box.className = 'calc cargando'; box.textContent = 'Calculando tus fechas…';
+      finRo.textContent = 'Calculando…';
       tCalc = setTimeout(async () => {
         try {
           const sab = !!quien.sabado_habil;
@@ -348,13 +421,42 @@
           }
           if (!r || !r.ok) throw new Error('sin cálculo');
           calculo = r;
-          const fest = (r.festivos || []).map((f) => fLarga(f, false));
+          // Los festivos con su nombre (sql/168); si la base todavía no los nombra, solo la fecha.
+          const nom = {};
+          (r.festivos_det || (r.festivos || []).map((f) => ({ fecha: f, nombre: '' })))
+            .forEach((f) => { nom[String(f.fecha).slice(0, 10)] = f.nombre || 'festivo'; });
+          // Qué no contó entre el inicio y el último día, para decirlo con nombre propio.
+          let dom = 0, sabs = 0; const fes = [];
+          for (let d = inicio; d <= r.fin; d = sumarDias(d, 1)) {
+            const w = dowIso(d);
+            if (nom[d]) fes.push(`${fLarga(d)} (${nom[d]})`);
+            else if (w === 0) dom++;
+            else if (w === 6 && !sab) sabs++;
+          }
+          const no = [dom ? `${dom} domingo${dom > 1 ? 's' : ''}` : '', sabs ? `${sabs} sábado${sabs > 1 ? 's' : ''}` : '',
+            fes.length ? `${fes.length} festivo${fes.length > 1 ? 's' : ''}: ${fes.join(', ')}` : ''].filter(Boolean);
+          // El día que entra puede correrse por un festivo pegado al último día.
+          const puente = [];
+          for (let d = sumarDias(r.fin, 1); d < r.regreso; d = sumarDias(d, 1)) { if (nom[d]) puente.push(`${fLarga(d)} es festivo (${nom[d]})`); }
+          // Si eligió un día que no trabaja, las vacaciones empiezan a contar después.
+          let primero = inicio;
+          while (nom[primero] || dowIso(primero) === 0 || (dowIso(primero) === 6 && !sab)) primero = sumarDias(primero, 1);
+          const porque = nom[inicio] ? `es festivo (${nom[inicio]})` : dowIso(inicio) === 0 ? 'es domingo' : 'es sábado y no lo trabajas';
+          finRo.className = 'ro listo'; finRo.textContent = fLarga(r.fin);
           box.className = 'calc';
-          box.innerHTML = `Sales a vacaciones el <b>${esc(fLarga(inicio))}</b> y tu último día es el <b>${esc(fLarga(r.fin))}</b>.<br>`
-            + `Regresas a trabajar el <b>${esc(fLarga(r.regreso))}</b>.`
-            + `<small>Se cuentan ${dias} días hábiles: no cuentan los domingos${sab ? '' : ' ni los sábados'}${fest.length ? ` ni los festivos (${esc(fest.join(', '))})` : ' ni los festivos'}.`
-            + `${sab ? ' Los sábados sí cuentan porque los trabajas.' : ''}</small>`;
+          box.innerHTML = `<div class="f3">`
+            + `<div><span>🏖️ Inicio de tus vacaciones</span><b>${esc(fLarga(inicio))}</b></div>`
+            + `<div><span>🏁 Culminación (último día)</span><b>${esc(fLarga(r.fin))}</b></div>`
+            + `<div class="entra"><span>✅ Entras a trabajar el</span><b>${esc(fLarga(r.regreso))}</b></div></div>`
+            + (primero !== inicio ? `<span class="ojo">⚠️ El ${esc(fLarga(inicio, false))} ${esc(porque)}: tus vacaciones empiezan a contar el ${esc(fLarga(primero))}.</span>` : '')
+            + calendarioHtml(inicio, r.fin, r.regreso, sab, nom)
+            + `<small>Son ${dias} días hábiles de vacaciones, como dice el Código Sustantivo del Trabajo (art. 186).`
+            + (no.length ? ` Entre el inicio y el último día no cuentan ${esc(no.join('; '))}.` : '')
+            + (puente.length ? ` Entras el ${esc(fLarga(r.regreso))} porque el ${esc(puente.join(' y el '))}.` : '')
+            + (sab ? ' Los sábados sí cuentan porque los trabajas.' : ' Los sábados no cuentan porque no los trabajas.')
+            + ` Los festivos son los de la ley colombiana (Ley 51 de 1983 y Ley 2578 de 2026).</small>`;
         } catch {
+          finRo.className = 'ro'; finRo.textContent = 'No se pudo calcular';
           box.className = 'calc cargando'; box.textContent = 'No pudimos calcular las fechas. Revisa tu conexión.';
         }
         avisos();
@@ -408,8 +510,9 @@
         if (!data || !data.ok) throw new Error((data && data.error) || 'No se pudo radicar.');
         $('rad-num').textContent = 'Radicado # ' + data.radicado;
         $('resumen').innerHTML = `<div><b>Período:</b> ${esc(per)}</div>`
-          + (dias ? `<div><b>Vacaciones:</b> del ${esc(fLarga(inicio))} al ${esc(fLarga(data.fin))} (${dias} días hábiles)</div>`
-            + `<div><b>Regresas:</b> el ${esc(fLarga(data.regreso))}</div>` : '')
+          + (dias ? `<div><b>Inicio:</b> ${esc(fLarga(inicio))}</div>`
+            + `<div><b>Culminación:</b> ${esc(fLarga(data.fin))} (${dias} días hábiles)</div>`
+            + `<div><b>Entras a trabajar:</b> el ${esc(fLarga(data.regreso))}</div>` : '')
           + (din ? `<div><b>En dinero:</b> ${din} día(s)</div>` : '');
         ['p1', 'hola', 'form'].forEach((id) => { $(id).hidden = true; });
         $('gracias').hidden = false;
