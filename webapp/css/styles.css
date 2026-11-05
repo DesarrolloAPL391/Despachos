@@ -3511,7 +3511,11 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .rcl-despues { color: #1d4ed8; font-weight: 700; }
 
 /* ---------- 🏖️ Vacaciones (sql/163) ---------- */
-.vac-tabla { min-width: 1100px; }
+.vac-tabla { min-width: 940px; } /* las casillas de aprobar tienen que verse sin deslizar */
+/* `tbody td` es nowrap en toda la app: aquí el período y el cargo sí parten en dos líneas */
+.vac-tabla td { white-space: normal; }
+.vac-tabla td.vac-nw { white-space: nowrap; }
+.vac-per { min-width: 96px; }
 .vac-nw { white-space: nowrap; }
 .vac-al { cursor: help; }
 .vac-alertas { margin: 0 0 12px; padding: 9px 12px; border-radius: 10px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 13px; display: grid; gap: 3px; }
@@ -3527,3 +3531,8 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .vac-reg-grid .vac-full { grid-column: 1 / -1; }
 .vac-reg-grid .vac-chk { flex-direction: row; align-items: center; gap: 6px; padding-top: 18px; }
 .vac-calc { margin-top: 12px; padding: 9px 12px; border-radius: 10px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #14532d; font-size: 13.5px; }
+
+/* ---------- ✔ Aprobar con un check (sql/164) ---------- */
+.ap-chk { width: 19px; height: 19px; accent-color: #16a34a; cursor: pointer; vertical-align: middle; margin: 0; }
+.ap-chk:disabled { cursor: wait; }
+.ap-ayuda { font-size: 12.5px; color: #475569; margin: 8px 12px; }

@@ -17800,7 +17800,7 @@ async function cfGuardar(r, card, msg) {
 // quedaba en blanco.
 // ===================================================================================
 let PERM_OK = false, PERM_GH = false, PERM_GER = false, PERM_MIOS = 0;
-const _perm = { rows: [], vista: 'decidir', q: '', abierto: null };
+const _perm = { rows: [], vista: 'decidir', q: '', abierto: null, recien: new Set() };
 const PERM_VISTAS = [
   { key: 'decidir', label: 'Por decidir' },
   { key: 'PENDIENTE', label: 'Pendientes' },
@@ -17859,8 +17859,10 @@ function permModal() {
   </div>`;
   m.addEventListener('click', (e) => {
     if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const ap = e.target.closest('[data-ap]');
+    if (ap) { permCheck(ap); return; }
     const v = e.target.closest('[data-vista]');
-    if (v) { _perm.vista = v.dataset.vista; renderPermisos(); return; }
+    if (v) { _perm.vista = v.dataset.vista; _perm.recien.clear(); renderPermisos(); return; }
     if (e.target.closest('[data-link]')) { permCopiarLink(); return; }
     const x = e.target.closest('[data-excel]'); if (x) { exportarPermisos(x); return; }
     if (e.target.closest('[data-recargar]')) { cargarPermisos(); return; }
@@ -17915,7 +17917,8 @@ function renderPermisos() {
     if (btn) btn.classList.toggle('btn-primary', _perm.vista === v.key);
   });
 
-  let rows = _perm.vista === 'decidir' ? todas.filter(permMeFalta)
+  // Lo recién marcado sigue a la vista hasta cambiar de pestaña, por si hay que desmarcarlo.
+  let rows = _perm.vista === 'decidir' ? todas.filter((r) => permMeFalta(r) || _perm.recien.has(r.id))
     : _perm.vista === 'todos' ? todas
       : _perm.vista === 'PENDIENTE' ? todas.filter((r) => r.estado === 'PENDIENTE' || r.estado === 'EN TRAMITE')
         : todas.filter((r) => r.estado === _perm.vista);
@@ -17936,14 +17939,14 @@ function renderPermisos() {
   cab.forEach((c) => tr.appendChild(pstEl('th', null, c)));
   thead.appendChild(tr); tabla.appendChild(thead);
   const tb = pstEl('tbody');
-  const marca = (v) => v === 'APROBADO' ? '✅' : v === 'NEGADO' ? '⛔' : '⏳';
   rows.forEach((r) => {
     const f = pstEl('tr');
     f.dataset.perm = r.id;
     [`${r.radicado}`, r.nombre || '—', `${r.cargo || '—'}${r.area ? ' · ' + r.area : ''}`,
       r.tipo || '—', permFechaHora(r.desde), permFechaHora(r.hasta), permDuracion(r),
-      r.reposicion ? 'Sí' : 'No', marca(r.gh_estado), marca(r.ger_estado)]
+      r.reposicion ? 'Sí' : 'No']
       .forEach((v) => f.appendChild(pstEl('td', null, v)));
+    ['GH', 'GERENCIA'].forEach((inst) => { const c = pstEl('td'); c.innerHTML = permCasilla(r, inst); f.appendChild(c); });
     const td = pstEl('td');
     td.innerHTML = `<span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(r.estado)}</span>`;
     f.appendChild(td);
@@ -17952,10 +17955,41 @@ function renderPermisos() {
     tb.appendChild(f);
   });
   tabla.appendChild(tb);
-  body.innerHTML = '';
+  body.innerHTML = PERM_GH || PERM_GER ? '<div class="ap-ayuda">✔ Marca la casilla de tu área para aprobar; si te equivocas, desmárcala. Para negar, abre la solicitud (pide el motivo).</div>' : '';
   const wrap = pstEl('div', 'pst-tabla-wrap perm-tabla');
   wrap.appendChild(tabla);
   body.appendChild(wrap);
+}
+
+// La casilla de cada instancia en la lista (sql/164), igual que en Vacaciones.
+function permCasilla(r, inst) {
+  const marca = (v) => (v === 'APROBADO' ? '✅' : v === 'NEGADO' ? '⛔' : '⏳');
+  const est = inst === 'GH' ? r.gh_estado : r.ger_estado;
+  const puede = inst === 'GH' ? PERM_GH : PERM_GER;
+  if (!puede || r.estado === 'ANULADO' || r.estado === 'NEGADO') return marca(est);
+  return `<input type="checkbox" class="ap-chk" data-ap="${inst}" data-id="${r.id}"${est === 'APROBADO' ? ' checked' : ''}
+    title="${est === 'APROBADO' ? 'Aprobado: desmarca para quitar la aprobación' : 'Marca para aprobar'}"
+    aria-label="Aprobar (${inst === 'GH' ? 'Gestión Humana' : 'Gerencia'})">`;
+}
+
+async function permCheck(cb) {
+  const id = Number(cb.dataset.id), inst = cb.dataset.ap, marcar = cb.checked;
+  const quien = inst === 'GH' ? 'Gestión Humana' : 'Gerencia';
+  cb.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('permiso_decidir',
+      { p_id: id, p_instancia: inst, p_estado: marcar ? 'APROBADO' : 'PENDIENTE', p_nota: null });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    _perm.recien.add(id);
+    toast(marcar ? `Aprobado por ${quien}.` : `Se quitó la aprobación de ${quien}.`, 'ok');
+    const body = permModal().querySelector('.perm-body'), y = body.scrollTop;
+    await cargarPermisos();
+    body.scrollTop = y;
+  } catch (e) {
+    cb.checked = !marcar; cb.disabled = false;
+    toast('No se pudo: ' + (e.message || e), 'err');
+  }
 }
 
 // ---- Ficha de una solicitud ----
@@ -18202,7 +18236,7 @@ async function exportarPermisos(btn) {
 // calcula la base: días hábiles sin domingos ni festivos, y el sábado solo para quien lo trabaja.
 // ===================================================================================
 let VAC_OK = false, VAC_GH = false, VAC_GER = false, VAC_NOM = false, VAC_MIOS = 0;
-const _vac = { rows: [], vista: 'decidir', q: '', abierto: null, persona: null };
+const _vac = { rows: [], vista: 'decidir', q: '', abierto: null, persona: null, recien: new Set() };
 const VAC_VISTAS = [
   { key: 'decidir', label: 'Por hacer' },
   { key: 'PENDIENTE', label: 'Pendientes' },
@@ -18267,8 +18301,10 @@ function vacModal() {
   </div>`;
   m.addEventListener('click', (e) => {
     if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const ap = e.target.closest('[data-ap]');
+    if (ap) { vacCheck(ap); return; }
     const v = e.target.closest('[data-vista]');
-    if (v) { _vac.vista = v.dataset.vista; renderVacaciones(); return; }
+    if (v) { _vac.vista = v.dataset.vista; _vac.recien.clear(); renderVacaciones(); return; }
     if (e.target.closest('[data-nueva]')) { vacRegistrarAbrir(); return; }
     if (e.target.closest('[data-link]')) { vacCopiarLink(); return; }
     const x = e.target.closest('[data-excel]'); if (x) { exportarVacaciones(x); return; }
@@ -18319,7 +18355,8 @@ function renderVacaciones() {
     if (btn) btn.classList.toggle('btn-primary', _vac.vista === v.key);
   });
 
-  let rows = _vac.vista === 'decidir' ? todas.filter(vacMeFalta)
+  // Lo recién marcado sigue a la vista hasta cambiar de pestaña, por si hay que desmarcarlo.
+  let rows = _vac.vista === 'decidir' ? todas.filter((r) => vacMeFalta(r) || _vac.recien.has(r.id))
     : _vac.vista === 'todos' ? todas
       : _vac.vista === 'PENDIENTE' ? todas.filter(enTramite)
         : todas.filter((r) => r.estado === _vac.vista);
@@ -18333,8 +18370,8 @@ function renderVacaciones() {
     return;
   }
 
-  const marca = (v) => (v === 'APROBADO' ? '✅' : v === 'NEGADO' ? '⛔' : '⏳');
-  body.innerHTML = `<div class="pst-tabla-wrap perm-tabla"><table class="pst-tabla vac-tabla">
+  body.innerHTML = `${VAC_GH || VAC_GER || VAC_NOM ? '<div class="ap-ayuda">✔ Marca la casilla de tu área para aprobar; si te equivocas, desmárcala. Para negar, abre la solicitud (pide el motivo).</div>' : ''}
+    <div class="pst-tabla-wrap perm-tabla"><table class="pst-tabla vac-tabla">
     <thead><tr><th>#</th><th>Empleado</th><th>Cargo</th><th>Período</th><th>Inicio</th><th>Último día</th>
       <th>Regresa</th><th>Disfrute</th><th>Dinero</th><th>G. Humana</th><th>Gerencia</th><th>Nómina</th><th>Estado</th></tr></thead>
     <tbody>${rows.map((r) => `<tr class="pst-clic" data-vac="${r.id}" tabindex="0" title="Abrir la solicitud">
@@ -18342,19 +18379,62 @@ function renderVacaciones() {
       <td>${esc(r.nombre || '—')}${(r.alertas || []).length
     ? ` <span class="vac-al" title="${esc(r.alertas.map((a) => VAC_ALERTAS[a] || a).join(' · '))}">⚠️</span>` : ''}</td>
       <td>${esc(r.cargo || '—')}</td>
-      <td class="vac-nw">${esc(r.periodo || '')}</td>
+      <td class="vac-per">${esc(r.periodo || '')}</td>
       <td class="vac-nw">${esc(vacFecha(r.fecha_inicio))}</td>
       <td class="vac-nw">${esc(vacFecha(r.fecha_fin))}</td>
       <td class="vac-nw">${esc(vacFecha(r.fecha_regreso))}</td>
       <td>${r.dias_disfrute}</td><td>${r.dias_dinero || ''}</td>
-      <td>${marca(r.gh_estado)}</td>
-      <td>${r.req_gerencia ? marca(r.ger_estado) : '<span title="La autoriza el afiliado">—</span>'}</td>
-      <td>${r.nom_en ? '📥' : ''}</td>
+      <td>${vacCasilla(r, 'GH')}</td>
+      <td>${vacCasilla(r, 'GERENCIA')}</td>
+      <td>${vacCasilla(r, 'NOMINA')}</td>
       <td><span class="chip ${PERM_CHIP[r.estado] || 'chip-gray'}">${esc(VAC_ESTADO[r.estado] || r.estado)}</span></td>
     </tr>`).join('')}</tbody></table></div>`;
   body.querySelectorAll('[data-vac]').forEach((f) => f.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); openVacacion(Number(f.dataset.vac)); }
   }));
+}
+
+// La casilla de cada área en la lista (sql/164): quien firma esa casilla la marca para aprobar y
+// la desmarca si se equivocó; las de las otras áreas solo se ven. Negar es desde la ficha, porque
+// pide motivo, y una negada ya no se marca desde aquí.
+function vacCasilla(r, inst) {
+  const marca = (v) => (v === 'APROBADO' ? '✅' : v === 'NEGADO' ? '⛔' : '⏳');
+  const cerrada = r.anulado_en || r.estado === 'NEGADO';
+  if (inst === 'NOMINA') {
+    if (!VAC_NOM || cerrada || r.estado !== 'APROBADO') return r.nom_en ? '📥' : '';
+    return `<input type="checkbox" class="ap-chk" data-ap="NOMINA" data-id="${r.id}"${r.nom_en ? ' checked' : ''}
+      title="${r.nom_en ? 'Recibida: desmarca si fue un error' : 'Marca cuando Nómina la reciba'}" aria-label="Recibido en nómina">`;
+  }
+  if (inst === 'GERENCIA' && !r.req_gerencia) return '<span title="La autoriza el afiliado">—</span>';
+  const est = inst === 'GH' ? r.gh_estado : r.ger_estado;
+  const puede = inst === 'GH' ? VAC_GH : VAC_GER;
+  if (!puede || cerrada || r.nom_en || est === 'NEGADO') return marca(est);
+  return `<input type="checkbox" class="ap-chk" data-ap="${inst}" data-id="${r.id}"${est === 'APROBADO' ? ' checked' : ''}
+    title="${est === 'APROBADO' ? 'Aprobada: desmarca para quitar la aprobación' : 'Marca para aprobar'}"
+    aria-label="Aprobar (${inst === 'GH' ? 'Gestión Humana' : 'Gerencia'})">`;
+}
+
+async function vacCheck(cb) {
+  const id = Number(cb.dataset.id), inst = cb.dataset.ap, marcar = cb.checked;
+  const quien = { GH: 'Gestión Humana', GERENCIA: 'Gerencia', NOMINA: 'Nómina' }[inst];
+  cb.disabled = true;
+  try {
+    const { data, error } = inst === 'NOMINA'
+      ? await sb.rpc(marcar ? 'vacaciones_nomina_recibir' : 'vacaciones_nomina_quitar', { p_id: id })
+      : await sb.rpc('vacaciones_decidir', { p_id: id, p_instancia: inst, p_estado: marcar ? 'APROBADO' : 'PENDIENTE', p_nota: null });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    _vac.recien.add(id);
+    toast(inst === 'NOMINA' ? (marcar ? 'Recibida en nómina.' : 'Se quitó el recibido de nómina.')
+      : (marcar ? `Aprobada por ${quien}.` : `Se quitó la aprobación de ${quien}.`), 'ok');
+    // Se recarga sin perder el lugar en la lista: se marcan varias seguidas.
+    const body = vacModal().querySelector('.vac-body'), y = body.scrollTop;
+    await cargarVacaciones();
+    body.scrollTop = y;
+  } catch (e) {
+    cb.checked = !marcar; cb.disabled = false;
+    toast('No se pudo: ' + (e.message || e), 'err');
+  }
 }
 
 // ---- Ficha de una solicitud ----
