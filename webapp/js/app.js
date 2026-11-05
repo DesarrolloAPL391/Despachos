@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, tiempoEntre } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, ANTECEDENTES_DESDE, ANTECEDENTES_ENT, antecedentesObligatoria, antecedentesEsConductor, antecedentesFaltan, ingresoRequisitos, tiempoEntre } from './config.js';
 import { listaEditor, leerLista } from './hoja-vida.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -785,6 +785,8 @@ function buildSidebar() {
   if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
   if (isTalentoHumano()) addNavAction(gTh, '✨', `Novedades${NOV_PEND ? ` <span class="nav-badge">${NOV_PEND}</span>` : ''}`, () => openNovedades(), 'nav-novedades');
   if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
+  if (isTalentoHumano()) addNavAction(gTh, '🔎', `Verificación de antecedentes${ANT_PEND.length ? ` <span class="nav-badge">${ANT_PEND.length}</span>` : ''}`, openAntecedentes, 'nav-antecedentes');
+  if (ING_OK) addNavAction(gTh, '✅', `Aprobación de ingresos${ING_MIOS ? ` <span class="nav-badge">${ING_MIOS}</span>` : ''}`, openIngresos, 'nav-ingresos');
   if (puedeVerActividades()) addNavAction(gTh, '🎁', 'Actividades y entregas', openActividades, 'nav-actividades');
   // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
   if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
@@ -4742,14 +4744,15 @@ async function cargarAlertasDocumentos() {
 }
 async function refrescarAlertasDocs() {
   // Gestión Humana no ve vehículos ni licencias: solo sus contadores de Talento humano
-  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false), refrescarPermisos(false), refrescarVacaciones(false)]); buildSidebar(); return; }
+  if (isGestionHumana()) { await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarPqrsfAcceso(false), refrescarPermisos(false), refrescarVacaciones(false), refrescarAntecedentes(false), refrescarIngresos(false)]); buildSidebar(); return; }
   try { DOC_ALERTAS = await cargarAlertasDocumentos(); } catch { DOC_ALERTAS = []; }
   try { PV_REPROG = await cargarPreventivasReprog(); } catch { PV_REPROG = []; }
   try { const { data } = await sb.rpc('doc_desbloqueos_pendientes_n'); DESBLOQ_PEND = data || 0; } catch { DESBLOQ_PEND = 0; }
-  if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false)]);
+  if (isTalentoHumano()) await Promise.all([refrescarPerfilActPend(false), refrescarAspNuevos(false), refrescarAntecedentes(false)]);
   await refrescarPqrsfAcceso(false);
   await refrescarPermisos(false);
   await refrescarVacaciones(false);
+  await refrescarIngresos(false);
   await refrescarInterv(false);
   await refrescarDisc(false);
   await refrescarComb(false);
@@ -16025,7 +16028,9 @@ function pfHistorialHtml(hist) {
         <div class="muted">${esc(h.cargo || '')}${h.novedad_retiro ? ' · Retiro: ' + esc(h.novedad_retiro) : ''}</div>
         <div class="pf-sel-fila"><button type="button" class="pf-link" data-sel="${esc(h.id)}">📋 Espacio del empleador</button>
           ${h.seleccion && h.seleccion.estado ? `<span class="${chipClass(h.seleccion.estado)}">${esc(h.seleccion.estado)}</span>`
-            : `<span class="muted">${h.seleccion && Object.keys(h.seleccion).length ? 'en proceso' : 'sin diligenciar'}</span>`}</div></div></li>`;
+            : `<span class="muted">${h.seleccion && Object.keys(h.seleccion).length ? 'en proceso' : 'sin diligenciar'}</span>`}
+          ${(h.seleccion || {}).antecedentes_verificado_en ? '<span class="chip chip-green">🔎 Antecedentes verificados</span>'
+            : antecedentesObligatoria(h) ? '<span class="chip chip-red">🔎 Antecedentes pendientes</span>' : ''}</div></div></li>`;
   }).join('')}</ol></section>`;
 }
 
@@ -16079,6 +16084,9 @@ function pfRender(row, hist, sin) {
     porCorregir ? `<div class="pf-aviso ambar">📝 Campos por corregir: <b>${esc(porCorregir)}</b></div>` : '',
     hvFalta.length ? `<div class="pf-aviso ambar">📋 Hoja de vida FO-GH-03 incompleta, falta: <b>${esc(hvFalta.join(', '))}</b>.
       ${isTalentoHumano() ? '<button type="button" class="pf-link" data-hvlink>🔗 Enviarle su link personal para que la llene</button>' : ''}</div>` : '',
+    ...(hist || []).filter((h) => antecedentesObligatoria(h) && !h.fecha_retiro && !(h.seleccion || {}).antecedentes_verificado_en)
+      .map((h) => `<div class="pf-aviso rojo">🔎 Falta la <b>verificación de antecedentes</b> del ingreso del ${esc(fechaLegible(h.fecha_ingreso))}: es obligatoria desde el ${esc(fechaLegible(ANTECEDENTES_DESDE))}.
+        <button type="button" class="pf-link" data-sel="${esc(h.id)}">📋 Verificar ahora</button></div>`),
   ].filter(Boolean).join('');
 
   m.querySelector('h3').textContent = '🪪 Ficha de la persona';
@@ -16149,22 +16157,53 @@ function selControl(k, t, o, v) {
 }
 function abrirSeleccion(row, h, alGuardar) {
   const m = selModal();
+  document.body.appendChild(m);          // encima de la lista de pendientes si se abrió desde ahí
   const s = h.seleccion || {};
+  const oblig = antecedentesObligatoria(h), conductor = antecedentesEsConductor(h), hoy = hoyServidor();
   m.querySelector('h3').textContent = `📋 Espacio del empleador · ingreso ${fechaLegible(h.fecha_ingreso || '') || 'sin fecha'}`;
   m.querySelector('[data-por]').textContent = s.por ? `Última vez: ${s.por} · ${fmtFechaHora(s.en)}` : '';
   m.querySelector('.pf-sel-body').innerHTML = `
     <p class="muted pf-sel-quien">${esc(row.nombre || '')} · ${esc(h.cargo || row.cargo || '')}${s.aspirante_id ? ' · <b>viene del proceso de aspirantes</b>: revisa y completa' : ''}</p>
     <div class="pf-sel-err error" hidden></div>
-    ${PERFIL_SELECCION.map((g) => `<section class="pf-sel-grupo"><h4>${esc(g.grupo)}</h4>${g.antecedentes
-      ? `<div class="pf-sel-ant"><span>Entidad</span><span>Resultado</span><span>Fecha de verificación</span><span>Observaciones</span>
-          ${g.campos.map((c) => `<b>${esc(c.l)}</b>${selControl(c.k + '_resultado', 'enum', c.o, s[c.k + '_resultado'])}
-            ${selControl(c.k + '_fecha', 'date', null, s[c.k + '_fecha'])}${selControl(c.k + '_obs', 'text', null, s[c.k + '_obs'])}`).join('')}</div>`
+    ${PERFIL_SELECCION.map((g) => `<section class="pf-sel-grupo${g.antecedentes ? ' pf-sel-antg' : ''}"><h4>${esc(g.grupo)}</h4>${g.antecedentes
+      ? `<div class="pf-ant-oblig${oblig ? ' si' : ''}">${oblig
+        ? `🔒 <b>Obligatoria para este ingreso:</b> resultado, fecha y documento de la consulta en cada entidad${conductor ? '' : ' (SIMIT solo en cargos de conducción)'}. Tener antecedentes no impide el ingreso; no verificarlos, sí.`
+        : `Ingreso anterior al ${esc(fechaLegible(ANTECEDENTES_DESDE))}: la verificación es opcional.`}</div>
+        <div class="pf-sel-ant"><span>Entidad</span><span>Resultado</span><span>Fecha de verificación</span><span>Documento</span><span>Observaciones</span>
+          ${g.campos.map((c) => `<b>${esc(c.l)}${c.k !== 'simit' || conductor ? ' <i class="req">*</i>' : ' <small class="muted">(si aplica)</small>'}</b>
+            ${selControl(c.k + '_resultado', 'enum', c.o, s[c.k + '_resultado'])}
+            ${selControl(c.k + '_fecha', 'date', null, s[c.k + '_fecha']).replace('type="date"', `type="date" max="${hoy}"`)}
+            <div class="pf-ant-doc" data-antcelda="${c.k}">${antDocCelda(c.k, s)}</div>
+            ${selControl(c.k + '_obs', 'text', null, s[c.k + '_obs'])}`).join('')}</div>
+        <div class="pf-ant-ver">
+          <div class="pf-ant-falta" data-antfalta></div>
+          <label class="pf-ant-chk"><input type="checkbox" data-antver${s.antecedentes_verificado_en ? ' checked' : ''}>
+            <span>Verifiqué los antecedentes de esta persona en cada entidad y adjunté los documentos de la consulta.</span></label>
+          <div class="muted pf-ant-quien" data-antquien></div>
+        </div>`
       : `<div class="pf-sel-grid">${g.campos.map((c) => `<label class="${c.t === 'textarea' ? 'full' : ''}"><span>${esc(c.l)}</span>
           ${selControl(c.k, c.t, c.o, s[c.k])}</label>`).join('')}</div>`}</section>`).join('')}`;
+  // En los ingresos del módulo ✅ Aprobación de ingresos (sql/167) el estado y las aprobaciones se
+  // calculan con el check list: aquí solo se ven.
+  if (oblig) {
+    ['estado', 'aprob_gerencia', 'aprob_gerencia_fecha', 'aprob_afiliado', 'aprob_afiliado_fecha', 'aprob_junta', 'aprob_junta_fecha']
+      .forEach((k) => { const el = m.querySelector(`[data-sk="${k}"]`); if (el) { el.disabled = true; el.title = 'Se llena solo desde ✅ Aprobación de ingresos'; } });
+    const ap = [...m.querySelectorAll('.pf-sel-grupo h4')].find((x) => x.textContent === 'Aprobaciones');
+    if (ap) ap.insertAdjacentHTML('afterend', '<div class="pf-ant-oblig">Este ingreso se aprueba con el check list de <b>✅ Aprobación de ingresos</b> (Talento humano): el estado del proceso y estas aprobaciones se llenan solos. Los comentarios sí se escriben aquí.</div>');
+  }
+  const cuerpo = m.querySelector('.pf-sel-body');
+  cuerpo.oninput = cuerpo.onchange = (e) => {
+    const doc = e.target.closest('input[data-antdoc]');
+    if (doc) { if (e.type === 'change') antSubirDoc(m, h, doc); return; }
+    if (e.target.closest('.pf-sel-antg')) antActualizar(m, h);
+  };
+  cuerpo.onclick = (e) => { const b = e.target.closest('[data-antverdoc]'); if (b) antVerDoc(b.dataset.antverdoc); };
+  antActualizar(m, h);
   const btn = m.querySelector('[data-guardar]');
   btn.onclick = async () => {
     const datos = {};
     m.querySelectorAll('[data-sk]').forEach((el) => { const v = el.value.trim(); if (v) datos[el.dataset.sk] = v; });
+    if (m.querySelector('[data-antver]').checked) datos.antecedentes_verificado = 'true';
     btn.disabled = true;
     showBusy('Guardando…');
     try {
@@ -16172,7 +16211,9 @@ function abrirSeleccion(row, h, alGuardar) {
       if (error) throw error;
       h.seleccion = data.seleccion;
       m.hidden = true;
-      toast('Espacio del empleador guardado', 'ok');
+      toast(data.verificacion_quitada ? 'Guardado. Cambiaron los antecedentes: Gestión Humana debe volver a firmar la verificación.'
+        : 'Espacio del empleador guardado', data.verificacion_quitada ? 'err' : 'ok');
+      refrescarAntecedentes();
       alGuardar();
     } catch (e) {
       const er = m.querySelector('.pf-sel-err');
@@ -16181,6 +16222,127 @@ function abrirSeleccion(row, h, alGuardar) {
   };
   m.querySelector('.pf-sel-err').hidden = true;
   m.hidden = false;
+}
+
+// ---- 🔎 Verificación de antecedentes (sql/166) ----
+// El documento de cada entidad va al bucket privado `antecedentes` y queda registrado en el
+// espacio del empleador al momento (no espera a "Guardar"). La firma la pone solo Gestión Humana.
+function antDocCelda(k, s) {
+  const d = s[k + '_doc'];
+  const subir = `<label class="btn btn-sm pf-ant-subir" title="${d ? 'Cambiar el documento' : 'Adjuntar el documento de la consulta'}">${d ? '🔄' : '📎 Adjuntar'}<input type="file" hidden accept="application/pdf,image/*" data-antdoc="${k}"></label>`;
+  return d && typeof d === 'object'
+    ? `<button type="button" class="pf-link" data-antverdoc="${esc(d.path)}" title="${esc(d.nombre || '')}">📄 Ver</button>${subir}` : subir;
+}
+// Lo que hay en pantalla (aún sin guardar) más los documentos ya registrados.
+function antActualizar(m, h) {
+  const sv = h.seleccion || {}, s = { ...sv };
+  m.querySelectorAll('.pf-sel-antg [data-sk]').forEach((el) => { s[el.dataset.sk] = el.value.trim(); });
+  const falta = antecedentesFaltan(s, antecedentesEsConductor(h)), gh = isGestionHumana();
+  const chk = m.querySelector('[data-antver]'), fb = m.querySelector('[data-antfalta]');
+  fb.className = 'pf-ant-falta ' + (falta.length ? 'falta' : 'ok');
+  fb.textContent = falta.length ? `⏳ Falta: ${falta.join(' · ')}` : '✅ Resultado, fecha y documento completos en cada entidad.';
+  chk.disabled = !gh || (falta.length > 0 && !chk.checked);
+  m.querySelector('[data-antquien]').textContent = sv.antecedentes_verificado_en
+    ? `✍️ Firmó ${sv.antecedentes_verificado_nombre || sv.antecedentes_verificado_por || 'Gestión Humana'} · ${fmtFechaHora(sv.antecedentes_verificado_en)}`
+    : !gh ? 'Solo Gestión Humana firma la verificación.'
+      : falta.length ? 'Completa lo que falta para poder firmar.' : 'Marca la casilla y guarda para firmar la verificación.';
+  // Con hallazgos la observación ayuda a Gerencia a decidir: se sugiere, no se exige.
+  ANTECEDENTES_ENT.forEach(([k]) => {
+    const obs = m.querySelector(`[data-sk="${k}_obs"]`);
+    const con = /^CON /.test(s[k + '_resultado'] || '');
+    obs.classList.toggle('pf-ant-obs-sug', con && !obs.value.trim());
+    obs.placeholder = con ? 'Explica el hallazgo (si lo necesita)' : '';
+  });
+}
+async function antSubirDoc(m, h, inp) {
+  const f = inp.files && inp.files[0];
+  inp.value = '';
+  if (!f) return;
+  const k = inp.dataset.antdoc, celda = m.querySelector(`[data-antcelda="${k}"]`), er = m.querySelector('.pf-sel-err');
+  er.hidden = true;
+  const esPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+  if (!esPdf && !/^image\//.test(f.type)) { er.textContent = 'El documento debe ser un PDF o una foto.'; er.hidden = false; return; }
+  celda.innerHTML = '<span class="muted">Subiendo…</span>';
+  try {
+    const blob = esPdf ? f : await comprimirFoto(f, 1800, 0.82);
+    if (blob.size > 10 * 1024 * 1024) throw new Error('el documento pesa más de 10 MB');
+    const path = `v/${h.id}/${k}-${Date.now()}.${esPdf ? 'pdf' : 'jpg'}`;
+    const up = await sb.storage.from('antecedentes').upload(path, blob, { contentType: esPdf ? 'application/pdf' : 'image/jpeg', upsert: false });
+    if (up.error) throw up.error;
+    const { data, error } = await sb.rpc('perfil_antecedente_doc', { p_vinculacion: h.id, p_entidad: k, p_path: path, p_nombre: f.name || null });
+    if (error) throw error;
+    h.seleccion = data.seleccion;
+    if (data.verificacion_quitada) {
+      m.querySelector('[data-antver]').checked = false;
+      toast('Cambió un documento: Gestión Humana debe volver a firmar la verificación.', 'err');
+    } else toast('Documento adjuntado.', 'ok');
+  } catch (e) {
+    er.textContent = 'No se pudo adjuntar el documento: ' + (e.message || e); er.hidden = false;
+  }
+  celda.innerHTML = antDocCelda(k, h.seleccion || {});
+  antActualizar(m, h);
+}
+async function antVerDoc(path) {
+  const w = window.open('', '_blank');
+  const { data, error } = await sb.storage.from('antecedentes').createSignedUrl(path, 300);
+  if (error || !data) { if (w) w.close(); toast('No se pudo abrir el documento.', 'err'); return; }
+  if (w) w.location = data.signedUrl; else window.open(data.signedUrl, '_blank');
+}
+
+// Ingresos activos desde ANTECEDENTES_DESDE que todavía no tienen la verificación firmada.
+let ANT_PEND = [];
+async function refrescarAntecedentes(rebuild = true) {
+  if (!isTalentoHumano()) { ANT_PEND = []; return; }
+  try {
+    const { data } = await sb.rpc('antecedentes_pendientes');
+    ANT_PEND = (data && data.ok && data.pendientes) || [];
+  } catch { ANT_PEND = []; }
+  if (rebuild) buildSidebar();
+}
+function antModal() {
+  let m = $('ant-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'ant-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card ant-card">
+    <div class="modal-head"><h3>🔎 Verificación de antecedentes</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="ant-body"><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    if (e.target.closest('[data-recargar]')) { cargarAntecedentes(); return; }
+    const b = e.target.closest('[data-antabrir]');
+    if (b) {
+      const p = ANT_PEND[Number(b.dataset.antabrir)];
+      if (p) abrirSeleccion({ nombre: p.nombre, cedula: p.cedula, cargo: p.cargo_perfil }, p.vinculacion, () => cargarAntecedentes());
+    }
+  });
+  document.body.appendChild(m);
+  return m;
+}
+async function openAntecedentes() {
+  if (!isTalentoHumano()) return;
+  closeMenu();
+  antModal().hidden = false;
+  await cargarAntecedentes();
+}
+async function cargarAntecedentes() {
+  const body = antModal().querySelector('.ant-body');
+  await refrescarAntecedentes();
+  const intro = `<p class="ant-intro">Ingresos activos desde el <b>${esc(fechaLegible(ANTECEDENTES_DESDE))}</b> que todavía no tienen la
+    verificación de antecedentes firmada por Gestión Humana. Sin ella el ingreso no se puede aprobar.</p>`;
+  if (!ANT_PEND.length) { body.innerHTML = intro + '<div class="rst-empty">No hay ingresos pendientes de verificación. 👏</div>'; return; }
+  body.innerHTML = intro + `<div class="pst-tabla-wrap"><table class="pst-tabla ant-tabla"><thead><tr>
+      <th>Empleado</th><th>Cédula</th><th>Cargo</th><th>Ingreso</th><th>Lo que falta</th><th></th></tr></thead><tbody>
+    ${ANT_PEND.map((p, i) => {
+    const v = p.vinculacion || {}, falta = p.faltan || [];
+    return `<tr><td>${esc(p.nombre || '')}</td><td>${esc(p.cedula || '')}</td><td>${esc(v.cargo || p.cargo_perfil || '')}</td>
+        <td>${esc(fechaLegible(v.fecha_ingreso || ''))}</td>
+        <td class="ant-falta">${falta.length ? esc(falta.length > 4 ? `${falta.length} datos por llenar` : falta.join(' · ')) : 'Solo falta la firma'}</td>
+        <td><button type="button" class="btn btn-sm" data-antabrir="${i}">📋 Verificar</button></td></tr>`;
+  }).join('')}</tbody></table></div>`;
 }
 
 // ===================================================================================
@@ -16444,7 +16606,9 @@ function hvdBloques(row, hist, firma, vin, foto) {
   const ENT = [['procuraduria', 'Procuraduría'], ['contraloria', 'Contraloría'], ['policia', 'Policía'], ['simit', 'SIMIT']];
   add(`<table class="hv-t" style="margin-bottom:0"><thead><tr><th colspan="4" style="padding:6px">Verificación de antecedentes</th></tr>
       <tr><th>Entidad</th><th>Resultado</th><th>Fecha de verificación</th><th>Observaciones</th></tr></thead>
-    <tbody>${ENT.map(([k, l]) => `<tr><td>${l}</td><td>${hvdV(s[k + '_resultado'])}</td><td>${hvdF(s[k + '_fecha'])}</td><td>${hvdV(s[k + '_obs'])}</td></tr>`).join('')}
+    <tbody>${ENT.map(([k, l]) => `<tr><td>${l}</td><td>${hvdV(s[k + '_resultado'])}</td><td>${hvdF(s[k + '_fecha'])}</td><td>${hvdV(s[k + '_obs'])}${s[k + '_doc'] ? ' <span class="hv-i">(soporte adjunto)</span>' : ''}</td></tr>`).join('')}
+      <tr><td colspan="4"><b>Verificó (Gestión Humana):</b> ${s.antecedentes_verificado_en
+    ? `${hvdV(s.antecedentes_verificado_nombre || s.antecedentes_verificado_por)} · ${esc(fmtFechaHora(s.antecedentes_verificado_en))}` : 'sin firmar'}</td></tr>
       <tr><td colspan="4"><b>¿Presenta acuerdo de pago?</b>: ${hvdSiNo(s.acuerdo_pago)} &nbsp;&nbsp;&nbsp;&nbsp; <b>¿Registra foto multas?</b>: ${hvdSiNo(s.fotomultas)}</td></tr>
       <tr><td colspan="4" style="height:58px"><b>Observaciones generales:</b> ${hvdV(s.observaciones)}</td></tr></tbody></table>
     <div style="height:14px"></div>`);
@@ -18955,6 +19119,384 @@ async function exportarVacaciones(btn) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Vacaciones');
     XLSX.writeFile(wb, `vacaciones_${hoyServidor()}.xlsx`);
+  } catch (e) {
+    toast('No se pudo exportar: ' + (e.message || e), 'err');
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ===================================================================================
+// ✅ APROBACIÓN DE INGRESOS (sql/167) — el módulo de aprobados y rechazados
+// Gestión Humana chequea los requisitos del ingreso y da su visto bueno (que también exige la
+// verificación de antecedentes firmada, sql/166); después aprueban Gerencia, el afiliado (si el
+// conductor maneja un carro de afiliado) y la Junta Directiva (si aplica). El afiliado y la Junta
+// autorizan por fuera: Gestión Humana marca su casilla con la fecha de la autorización y el soporte.
+// El estado lo calcula la base: APROBADO si aprueban todas las instancias; RECHAZADO si una rechaza.
+// ===================================================================================
+let ING_OK = false, ING_TH = false, ING_GER = false, ING_MIOS = 0;
+const _ing = { rows: [], vista: 'hacer', q: '', recien: new Set() };
+const ING_VISTAS = [
+  { key: 'hacer', label: 'Por hacer' },
+  { key: 'PROCESO', label: 'En proceso' },
+  { key: 'APROBADO', label: 'Aprobados' },
+  { key: 'NO APROBADO', label: 'Rechazados' },
+  { key: 'todos', label: 'Todos' },
+];
+const ING_INST = [
+  { k: 'GH', pre: 'apr_gh', l: 'Gestión Humana', titulo: 'Gestión Humana · visto bueno' },
+  { k: 'GERENCIA', pre: 'apr_ger', l: 'Gerencia', titulo: 'Gerencia' },
+  { k: 'AFILIADO', pre: 'apr_afi', l: 'Afiliado', titulo: 'Afiliado' },
+  { k: 'JUNTA', pre: 'apr_jun', l: 'Junta Directiva', titulo: 'Junta Directiva' },
+];
+const ingInst = (k) => ING_INST.find((i) => i.k === k);
+const ingEstadoTxt = (e) => (e === 'APROBADO' ? 'Aprobado' : e === 'NO APROBADO' ? 'Rechazado' : 'En proceso');
+const ingEstadoChip = (e) => (e === 'APROBADO' ? 'chip-green' : e === 'NO APROBADO' ? 'chip-red' : 'chip-amber');
+const ingSel = (r) => (r.vinculacion && r.vinculacion.seleccion) || {};
+function ingDec(r, inst) {
+  const s = ingSel(r), p = ingInst(inst).pre;
+  return { estado: s[p + '_estado'] || null, por: s[p + '_por'], nombre: s[p + '_nombre'], en: s[p + '_en'],
+    nota: s[p + '_nota'], fecha: s[p + '_fecha'], doc: s[p + '_doc'] };
+}
+const ingAplica = (r, inst) => (inst === 'AFILIADO' ? !!r.afiliado : inst === 'JUNTA' ? ingSel(r).apr_junta_aplica === true : true);
+const ingReqTotal = (r) => ingresoRequisitos(r.conductor).length;
+
+async function refrescarIngresos(rebuild = true) {
+  try {
+    const { data } = await sb.rpc('ingresos_aprobacion');
+    ING_OK = !!(data && data.ok);
+    ING_TH = !!(data && data.es_th);
+    ING_GER = !!(data && data.es_gerencia);
+    _ing.rows = (data && data.filas) || [];
+  } catch { ING_OK = false; _ing.rows = []; }
+  ING_MIOS = _ing.rows.filter(ingMeFalta).length;
+  if (rebuild) buildSidebar();
+}
+
+// Lo que ESTA cuenta tiene por hacer: Gestión Humana su visto bueno y las casillas del afiliado y
+// de la Junta; Gerencia la suya, cuando Gestión Humana ya dio el visto bueno.
+function ingMeFalta(r) {
+  if (r.fecha_retiro || r.estado) return false;
+  const gh = ingDec(r, 'GH').estado;
+  if (ING_TH && !gh) return true;
+  if (gh !== 'APROBADO') return false;
+  return (ING_GER && !ingDec(r, 'GERENCIA').estado)
+    || (ING_TH && ingAplica(r, 'AFILIADO') && !ingDec(r, 'AFILIADO').estado)
+    || (ING_TH && ingAplica(r, 'JUNTA') && !ingDec(r, 'JUNTA').estado);
+}
+
+function ingModal() {
+  let m = $('ing-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'ing-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card perm-card">
+    <div class="modal-head"><h3>✅ Aprobación de ingresos</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="asp-toolbar">
+      <div class="asp-vistas">${ING_VISTAS.map((v) =>
+    `<button type="button" class="btn btn-sm" data-vista="${v.key}">${v.label} <b data-n="${v.key}"></b></button>`).join('')}</div>
+      <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula o cargo" aria-label="Buscar">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
+    </div>
+    <div class="perm-body ing-body"><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const ap = e.target.closest('[data-ap]');
+    if (ap) { ingCheck(ap); return; }
+    const v = e.target.closest('[data-vista]');
+    if (v) { _ing.vista = v.dataset.vista; _ing.recien.clear(); renderIngresos(); return; }
+    const x = e.target.closest('[data-excel]'); if (x) { exportarIngresos(x); return; }
+    if (e.target.closest('[data-recargar]')) { cargarIngresos(); return; }
+    const t = e.target.closest('[data-ing]'); if (t) openIngreso(Number(t.dataset.ing));
+  });
+  m.querySelector('.asp-q').addEventListener('input', (e) => { _ing.q = e.target.value; renderIngresos(); });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openIngresos() {
+  if (!ING_OK) { toast('No tienes permiso para ver la aprobación de ingresos.', 'err'); return; }
+  ingModal().hidden = false;
+  closeMenu();
+  await cargarIngresos();
+}
+
+async function cargarIngresos() {
+  const body = ingModal().querySelector('.ing-body');
+  if (!_ing.rows.length) body.innerHTML = '<div class="loading">Cargando…</div>';
+  await refrescarIngresos();
+  renderIngresos();
+}
+
+function renderIngresos() {
+  const m = ingModal(), body = m.querySelector('.ing-body');
+  const q = _ing.q.trim().toLowerCase();
+  const todas = _ing.rows;
+  const cuenta = {
+    hacer: todas.filter(ingMeFalta).length,
+    PROCESO: todas.filter((r) => !r.estado).length,
+    APROBADO: todas.filter((r) => r.estado === 'APROBADO').length,
+    'NO APROBADO': todas.filter((r) => r.estado === 'NO APROBADO').length,
+    todos: todas.length,
+  };
+  ING_VISTAS.forEach((v) => {
+    const b = m.querySelector(`[data-n="${v.key}"]`); if (b) b.textContent = cuenta[v.key] || '';
+    const btn = m.querySelector(`[data-vista="${v.key}"]`);
+    if (btn) btn.classList.toggle('btn-primary', _ing.vista === v.key);
+  });
+  // Lo recién marcado sigue a la vista hasta cambiar de pestaña, por si hay que desmarcarlo.
+  let rows = _ing.vista === 'hacer' ? todas.filter((r) => ingMeFalta(r) || _ing.recien.has(r.id))
+    : _ing.vista === 'todos' ? todas
+      : _ing.vista === 'PROCESO' ? todas.filter((r) => !r.estado)
+        : todas.filter((r) => r.estado === _ing.vista);
+  if (q) rows = rows.filter((r) => [r.nombre, r.cedula, r.cargo].some((v) => String(v || '').toLowerCase().includes(q)));
+
+  const intro = `<div class="ap-ayuda">Ingresos desde el ${esc(fechaLegible(ANTECEDENTES_DESDE))}. Gestión Humana chequea los requisitos
+    y da su visto bueno; después marcan Gerencia, el afiliado y la Junta (si aplica). ✔ Marca la casilla para aprobar; si te equivocas,
+    desmárcala. Para rechazar, abre el ingreso (pide el motivo).</div>`;
+  if (!rows.length) {
+    body.innerHTML = intro + `<div class="rst-empty">${_ing.vista === 'hacer' ? 'No tienes ingresos por aprobar. 👏' : 'No hay ingresos en esta vista.'}</div>`;
+    return;
+  }
+  body.innerHTML = intro + `<div class="pst-tabla-wrap perm-tabla"><table class="pst-tabla ing-tabla">
+    <thead><tr><th>Empleado</th><th>Cargo</th><th>Ingreso</th><th>Requisitos</th><th>Antecedentes</th>
+      <th>G. Humana</th><th>Gerencia</th><th>Afiliado</th><th>Junta</th><th>Estado</th></tr></thead>
+    <tbody>${rows.map((r) => {
+    const n = ingReqTotal(r), ok = n - (r.requisitos_faltan || []).length;
+    return `<tr class="pst-clic" data-ing="${r.id}" tabindex="0" title="Abrir el ingreso">
+      <td>${esc(r.nombre || '—')}<small>C.C. ${esc(r.cedula || '')}</small></td>
+      <td>${esc(r.cargo || '—')}${r.afiliado ? '<small>carro de afiliado</small>' : ''}</td>
+      <td class="ing-nw">${esc(fechaLegible(r.fecha_ingreso || ''))}${r.fecha_retiro ? `<small>retiro ${esc(fechaLegible(r.fecha_retiro))}</small>` : ''}</td>
+      <td class="ing-nw"><span class="chip ${ok === n ? 'chip-green' : 'chip-amber'}">${ok}/${n}</span></td>
+      <td class="ing-nw">${r.antecedentes ? '✅ firmados' : `⏳ ${r.antecedentes_faltan ? `faltan ${r.antecedentes_faltan}` : 'sin firma'}`}</td>
+      ${ING_INST.map((i) => `<td>${ingCasilla(r, i.k)}</td>`).join('')}
+      <td><span class="chip ${ingEstadoChip(r.estado)}">${esc(ingEstadoTxt(r.estado))}</span></td>
+    </tr>`;
+  }).join('')}</tbody></table></div>`;
+  body.querySelectorAll('[data-ing]').forEach((f) => f.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); openIngreso(Number(f.dataset.ing)); }
+  }));
+}
+
+// La casilla de cada instancia en la lista. Gestión Humana solo marca su visto bueno con los
+// requisitos y los antecedentes completos; las demás, después de ese visto bueno.
+function ingCasilla(r, inst) {
+  if (!ingAplica(r, inst)) {
+    return `<span class="muted" title="${inst === 'AFILIADO' ? 'Flota de la empresa o no es conductor' : 'No pasa por la Junta Directiva'}">—</span>`;
+  }
+  const d = ingDec(r, inst);
+  const marca = d.estado === 'APROBADO' ? '✅' : d.estado === 'RECHAZADO' ? '⛔' : '⏳';
+  const puede = inst === 'GERENCIA' ? ING_GER : ING_TH;
+  if (!puede || d.estado === 'RECHAZADO' || r.fecha_retiro) {
+    return `<span title="${esc(d.estado ? `${d.estado} · ${d.nombre || d.por || ''}${d.nota ? ' · ' + d.nota : ''}` : 'Sin decidir')}">${marca}</span>`;
+  }
+  const listo = inst === 'GH' ? !(r.requisitos_faltan || []).length && r.antecedentes : ingDec(r, 'GH').estado === 'APROBADO';
+  const bloqueo = d.estado === 'APROBADO' || listo ? ''
+    : inst === 'GH' ? 'Faltan requisitos o la verificación de antecedentes firmada' : 'Primero el visto bueno de Gestión Humana';
+  return `<input type="checkbox" class="ap-chk${bloqueo ? ' ing-bloq' : ''}" data-ap="${inst}" data-id="${r.id}"${d.estado === 'APROBADO' ? ' checked' : ''}${bloqueo ? ' disabled' : ''}
+    title="${esc(bloqueo || (d.estado === 'APROBADO' ? 'Aprobado: desmarca para quitar la aprobación' : 'Marca para aprobar'))}"
+    aria-label="Aprobar (${esc(ingInst(inst).l)})">`;
+}
+
+async function ingCheck(cb) {
+  const id = Number(cb.dataset.id), inst = cb.dataset.ap, marcar = cb.checked;
+  cb.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('ingreso_decidir', { p_vinculacion: id, p_instancia: inst, p_estado: marcar ? 'APROBADO' : 'PENDIENTE' });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    _ing.recien.add(id);
+    toast(marcar ? `Aprobado por ${ingInst(inst).l}.${data.estado === 'APROBADO' ? ' El ingreso quedó APROBADO.' : ''}`
+      : `Se quitó la aprobación de ${ingInst(inst).l}.`, 'ok');
+    const body = ingModal().querySelector('.ing-body'), y = body.scrollTop;
+    await cargarIngresos();
+    body.scrollTop = y;
+  } catch (e) {
+    cb.checked = !marcar; cb.disabled = false;
+    toast('No se pudo: ' + (e.message || e), 'err');
+  }
+}
+
+// ---- La ficha del ingreso: el check list de requisitos y las aprobaciones ----
+function openIngreso(id) {
+  const r = _ing.rows.find((x) => x.id === id);
+  if (!r) return;
+  let m = $('ingf-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'ingf-modal'; m.className = 'modal'; m.hidden = true;
+    m.innerHTML = `<div class="modal-card perm-ficha">
+      <div class="modal-head"><h3>✅ Ingreso</h3><span class="spacer"></span>
+        <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+      <div class="permf-body"></div>
+      <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+    </div>`;
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    document.body.appendChild(m);
+  }
+  document.body.appendChild(m);
+  m.querySelector('h3').textContent = `✅ Ingreso del ${fechaLegible(r.fecha_ingreso || '')}`;
+  const body = m.querySelector('.permf-body');
+  body.innerHTML = ingFichaHtml(r);
+  m.hidden = false;
+  ingConectarFicha(body, r);
+  ingBitacora(body, r);
+}
+
+function ingFichaHtml(r) {
+  const s = ingSel(r), reqs = ingresoRequisitos(r.conductor), falta = new Set(r.requisitos_faltan || []);
+  const d = (inst) => ingDec(r, inst);
+  // El paso anterior: Gestión Humana necesita requisitos y antecedentes; las demás, su visto bueno.
+  const listoGh = !falta.size && r.antecedentes, conGh = d('GH').estado === 'APROBADO';
+  const tarjeta = (i) => {
+    const x = d(i.k), aplica = ingAplica(r, i.k);
+    const puede = aplica && !r.fecha_retiro && (i.k === 'GERENCIA' ? ING_GER : ING_TH);
+    const espera = i.k === 'GH' ? (listoGh ? '' : 'Faltan requisitos o la verificación de antecedentes firmada')
+      : (conGh ? '' : 'Primero el visto bueno de Gestión Humana');
+    const externa = i.k === 'AFILIADO' || i.k === 'JUNTA';
+    return `<div class="perm-dec ${x.estado === 'APROBADO' ? 'ok' : x.estado === 'RECHAZADO' ? 'no' : ''}">
+      <div class="perm-dec-t">${esc(i.k === 'AFILIADO' && r.afiliado ? `Afiliado · ${r.afiliado}` : i.titulo)}</div>
+      <div class="perm-dec-e">${!aplica ? 'No aplica' : x.estado ? esc(x.estado === 'APROBADO' ? 'Aprobado' : 'Rechazado') : 'Sin decidir'}</div>
+      ${x.estado ? `<div class="pst-nota">${externa ? `Autorizó el ${esc(fechaLegible(x.fecha || ''))} · lo registró ` : ''}${esc(x.nombre || x.por || '')} · ${esc(evbCuando(x.en))}</div>` : ''}
+      ${x.nota ? `<div class="perm-dec-n">${esc(x.nota)}</div>` : ''}
+      ${puede && !x.estado && espera ? `<div class="pst-nota">⏳ ${esc(espera)}.</div>` : ''}
+      ${x.doc ? `<button type="button" class="pf-link" data-ingdoc="${esc(x.doc.path)}">📄 Ver soporte</button>` : ''}
+      ${puede ? `<div class="ing-acc">
+        ${externa && !x.estado ? `<label>Fecha de la autorización <input type="date" data-fecha="${i.k}" value="${hoyServidor()}" max="${hoyServidor()}"></label>
+          <label class="btn btn-sm">📎 Soporte<input type="file" hidden accept="application/pdf,image/*" data-soporte="${i.k}"></label><span class="muted" data-soporte-n="${i.k}"></span>` : ''}
+        ${!x.estado ? `<button type="button" class="btn btn-sm" data-dec="${i.k}:APROBADO"${espera ? ` disabled title="${esc(espera)}"` : ''}>✅ Aprobar</button>
+          <button type="button" class="btn btn-sm" data-dec="${i.k}:RECHAZADO">⛔ Rechazar</button>`
+    : `<button type="button" class="btn btn-sm" data-dec="${i.k}:PENDIENTE">↩️ Quitar la decisión</button>`}
+      </div>` : ''}
+    </div>`;
+  };
+  return `
+    <header class="pf-top">
+      <div class="pf-av ${r.estado === 'APROBADO' ? 'cond' : 'adm'}">${r.estado === 'APROBADO' ? '✅' : r.estado === 'NO APROBADO' ? '⛔' : '⏳'}</div>
+      <div class="pf-idt">
+        <h2>${esc(r.nombre || '')}</h2>
+        <div class="pf-sub">C.C. ${esc(r.cedula || '')}${r.cargo ? ' · ' + esc(r.cargo) : ''}${r.area ? ' · ' + esc(r.area) : ''}</div>
+        <div class="pf-chips">
+          <span class="chip ${ingEstadoChip(r.estado)}">${esc(ingEstadoTxt(r.estado))}</span>
+          ${r.conductor ? '<span class="chip chip-indigo">Cargo de conducción</span>' : ''}
+          ${r.afiliado ? '<span class="chip chip-blue">Carro de afiliado</span>' : ''}
+          ${r.fecha_retiro ? `<span class="chip chip-gray">Retirado el ${esc(fechaLegible(r.fecha_retiro))}</span>` : ''}
+        </div>
+      </div>
+    </header>
+    <h4 class="pqr-h">📋 Requisitos del ingreso <span class="muted">(los chequea Gestión Humana)</span></h4>
+    <ul class="ing-req">
+      <li class="${r.antecedentes ? 'ok' : ''}">${r.antecedentes ? '✅' : '⏳'} <span class="ing-req-t">Verificación de antecedentes firmada por Gestión Humana
+        ${r.antecedentes ? `<small>${esc(s.antecedentes_verificado_nombre || '')} · ${esc(fmtFechaHora(s.antecedentes_verificado_en))}</small>`
+    : `<small>${r.antecedentes_faltan ? `faltan ${r.antecedentes_faltan} datos` : 'falta la firma'}</small>`}</span>
+        ${ING_TH ? '<button type="button" class="btn btn-sm" data-espacio>📋 Abrir espacio del empleador</button>' : ''}</li>
+      ${reqs.map((q) => `<li class="${falta.has(q.k) ? '' : 'ok'}"><label><input type="checkbox" data-req="${q.k}"${falta.has(q.k) ? '' : ' checked'}${ING_TH && !r.fecha_retiro ? '' : ' disabled'}>
+        <span>${esc(q.l)}</span></label></li>`).join('')}
+    </ul>
+    <label class="ing-junta"><input type="checkbox" data-junta${s.apr_junta_aplica === true ? ' checked' : ''}${ING_TH && !r.fecha_retiro ? '' : ' disabled'}>
+      Este ingreso pasa también por la Junta Directiva</label>
+    <h4 class="pqr-h">✍️ Aprobaciones</h4>
+    <div class="perm-decs">${ING_INST.map(tarjeta).join('')}</div>
+    ${ING_TH || ING_GER ? `<label class="perm-nota ing-motivo">Motivo u observación <span class="muted">(obligatorio para rechazar)</span>
+      <input type="text" data-nota maxlength="300" placeholder="Queda en la bitácora del ingreso"></label>` : ''}
+    <span class="pst-nota" data-msg></span>
+    <h4 class="pqr-h">🗂️ Bitácora</h4>
+    <div data-bitacora><div class="loading">Cargando…</div></div>`;
+}
+
+function ingConectarFicha(body, r) {
+  const msg = body.querySelector('[data-msg]');
+  const nota = () => ((body.querySelector('[data-nota]') || {}).value || '').trim() || null;
+  const refrescar = async (txt, tipo = 'ok') => {
+    toast(txt, tipo);
+    await cargarIngresos();
+    if (_ing.rows.some((x) => x.id === r.id)) openIngreso(r.id);
+  };
+  const be = body.querySelector('[data-espacio]');
+  if (be) be.addEventListener('click', () => abrirSeleccion({ nombre: r.nombre, cedula: r.cedula, cargo: r.cargo }, r.vinculacion,
+    () => refrescar('Espacio del empleador guardado.')));
+  // El check list: cada cambio se guarda al momento
+  body.querySelectorAll('[data-req], [data-junta]').forEach((cb) => cb.addEventListener('change', async () => {
+    const req = {};
+    body.querySelectorAll('[data-req]').forEach((x) => { if (x.checked) req[x.dataset.req] = true; });
+    body.querySelectorAll('[data-req], [data-junta]').forEach((x) => { x.disabled = true; });
+    try {
+      const { data, error } = await sb.rpc('ingreso_requisitos_guardar', {
+        p_vinculacion: r.id, p_requisitos: req, p_junta_aplica: !!(body.querySelector('[data-junta]') || {}).checked });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      await refrescar(data.gh_quitado ? 'Se desmarcó un requisito: se quitó el visto bueno de Gestión Humana.' : 'Requisitos guardados.',
+        data.gh_quitado ? 'err' : 'ok');
+    } catch (e) { msg.textContent = 'No se pudo guardar: ' + (e.message || e); await refrescar('No se pudo guardar.', 'err'); }
+  }));
+  body.querySelectorAll('[data-soporte]').forEach((inp) => inp.addEventListener('change', () => {
+    const f = inp.files && inp.files[0];
+    body.querySelector(`[data-soporte-n="${inp.dataset.soporte}"]`).textContent = f ? f.name.slice(0, 30) : '';
+  }));
+  body.querySelectorAll('[data-ingdoc]').forEach((b) => b.addEventListener('click', () => antVerDoc(b.dataset.ingdoc)));
+  body.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', async () => {
+    const [inst, estado] = b.dataset.dec.split(':');
+    if (estado === 'RECHAZADO' && !nota()) {
+      msg.textContent = 'Escribe el motivo del rechazo.';
+      body.querySelector('[data-nota]').focus();
+      return;
+    }
+    b.disabled = true; msg.textContent = 'Guardando…';
+    try {
+      const args = { p_vinculacion: r.id, p_instancia: inst, p_estado: estado, p_nota: nota() };
+      const fe = body.querySelector(`[data-fecha="${inst}"]`);
+      if (fe && fe.value) args.p_fecha = fe.value;
+      const so = body.querySelector(`[data-soporte="${inst}"]`), f = so && so.files && so.files[0];
+      if (f && estado !== 'PENDIENTE') {
+        const esPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+        const blob = esPdf ? f : await comprimirFoto(f, 1800, 0.82);
+        const path = `v/${r.id}/aprob_${inst.toLowerCase()}-${Date.now()}.${esPdf ? 'pdf' : 'jpg'}`;
+        const up = await sb.storage.from('antecedentes').upload(path, blob, { contentType: esPdf ? 'application/pdf' : 'image/jpeg', upsert: false });
+        if (up.error) throw up.error;
+        args.p_doc_path = path; args.p_doc_nombre = f.name || null;
+      }
+      const { data, error } = await sb.rpc('ingreso_decidir', args);
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+      await refrescar(estado === 'PENDIENTE' ? `Se quitó la decisión de ${ingInst(inst).l}.`
+        : `${estado === 'APROBADO' ? 'Aprobado' : 'Rechazado'} por ${ingInst(inst).l}.${data.estado ? ` El ingreso quedó ${ingEstadoTxt(data.estado).toUpperCase()}.` : ''}`);
+    } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); b.disabled = false; }
+  }));
+}
+
+// Cada decisión, quién y cuándo (aprobaciones_log, modulo INGRESOS).
+async function ingBitacora(body, r) {
+  const w = body.querySelector('[data-bitacora]');
+  try {
+    const { data, error } = await sb.from('aprobaciones_log').select('instancia, estado, nota, por, en')
+      .eq('modulo', 'INGRESOS').eq('registro_id', r.id).order('en', { ascending: false }).limit(40);
+    if (error) throw error;
+    const ESTADO = { APROBADO: 'aprobó', RECHAZADO: 'rechazó', PENDIENTE: 'quitó su decisión', QUITADO: 'se quitó el visto bueno' };
+    w.innerHTML = (data || []).length ? `<ul class="ing-bit">${data.map((x) => `<li><b>${esc(fmtFechaHora(x.en))}</b> ·
+      ${esc((ingInst(x.instancia) || {}).l || x.instancia)} ${esc(ESTADO[x.estado] || x.estado)}
+      ${x.por === 'sistema' ? '(automático)' : `· ${esc(x.por || '')}`}${x.nota ? ` · <i>${esc(x.nota)}</i>` : ''}</li>`).join('')}</ul>`
+      : '<div class="pst-nota">Todavía no hay decisiones.</div>';
+  } catch { w.innerHTML = '<div class="pst-nota">No se pudo cargar la bitácora.</div>'; }
+}
+
+async function exportarIngresos(btn) {
+  const rows = _ing.rows;
+  if (!rows.length) { toast('No hay ingresos para exportar.', 'err'); return; }
+  const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const dec = (r, k) => { if (!ingAplica(r, k)) return 'NO APLICA'; const x = ingDec(r, k); return x.estado || 'PENDIENTE'; };
+    const motivo = (r) => ING_INST.map((i) => ingDec(r, i.k)).filter((x) => x.estado === 'RECHAZADO').map((x) => x.nota).join(' · ');
+    const aoa = [['Cédula', 'Empleado', 'Cargo', 'Ingreso', 'Retiro', 'Requisitos', 'Antecedentes', 'Gestión Humana', 'Gerencia',
+      'Afiliado', 'Junta Directiva', 'Estado', 'Motivo del rechazo'],
+    ...rows.map((r) => [r.cedula, r.nombre, r.cargo, celdaFechaXlsx(r.fecha_ingreso), r.fecha_retiro ? celdaFechaXlsx(r.fecha_retiro) : '',
+      `${ingReqTotal(r) - (r.requisitos_faltan || []).length}/${ingReqTotal(r)}`, r.antecedentes ? 'FIRMADOS' : 'PENDIENTES',
+      dec(r, 'GH'), dec(r, 'GERENCIA'), dec(r, 'AFILIADO'), dec(r, 'JUNTA'), ingEstadoTxt(r.estado).toUpperCase(), motivo(r)])];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Ingresos');
+    XLSX.writeFile(wb, `aprobacion_ingresos_${hoyServidor()}.xlsx`);
   } catch (e) {
     toast('No se pudo exportar: ' + (e.message || e), 'err');
   } finally { btn.disabled = false; btn.textContent = prev; }

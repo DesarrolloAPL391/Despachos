@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v357';
+export const APP_VERSION = 'v358';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -371,6 +371,41 @@ export const PERFIL_SELECCION = [
     { k: 'aprob_junta', l: 'Aprobado por Junta Directiva (si aplica)' }, { k: 'aprob_junta_fecha', l: 'Fecha', t: 'date' },
     { k: 'comentarios', l: 'Comentarios de aprobación', t: 'textarea' }] },
 ];
+
+// Verificación de antecedentes obligatoria por ingreso (sql/166). Desde esta fecha de ingreso, cada
+// entidad necesita resultado, fecha y el documento de la consulta, y la firma de Gestión Humana; sin
+// ella el ingreso no se aprueba. SIMIT solo para cargos de conducción (lo dice el formato).
+// Espejo de _antec_desde, _antec_conductor y _antec_faltan en la base: si cambia uno, cambia el otro.
+export const ANTECEDENTES_DESDE = '2026-11-01';
+export const ANTECEDENTES_ENT = [['procuraduria', 'Procuraduría'], ['contraloria', 'Contraloría'], ['policia', 'Policía'], ['simit', 'SIMIT']];
+export const antecedentesObligatoria = (v) => !!(v && v.fecha_ingreso && String(v.fecha_ingreso).slice(0, 10) >= ANTECEDENTES_DESDE);
+export const antecedentesEsConductor = (v) => !!v && (v.tipo === 'CONDUCTOR' || /conduct/i.test(v.cargo || ''));
+export function antecedentesFaltan(sel, conductor) {
+  const s = sel || {}, falta = [];
+  ANTECEDENTES_ENT.forEach(([k, l]) => {
+    if (k === 'simit' && !conductor) return;
+    if (!String(s[k + '_resultado'] || '').trim()) falta.push(`${l}: resultado`);
+    if (!String(s[k + '_fecha'] || '').trim()) falta.push(`${l}: fecha`);
+    if (!s[k + '_doc'] || typeof s[k + '_doc'] !== 'object') falta.push(`${l}: documento`);
+  });
+  return falta;
+}
+
+// Aprobación de ingresos (sql/167): lo que Gestión Humana chequea antes de su visto bueno. Los de
+// conducción solo para esos cargos. La verificación de antecedentes no está aquí: sale de la firma
+// de la sección 7 (sql/166). Espejo de _ing_requisitos en la base: si cambia uno, cambia el otro.
+export const INGRESO_REQUISITOS = [
+  { k: 'hoja_vida', l: 'Hoja de vida FO-GH-03 y documentos personales (cédula, certificados)' },
+  { k: 'referencias', l: 'Referencias laborales verificadas' },
+  { k: 'entrevista', l: 'Entrevista con Gestión Humana' },
+  { k: 'examen_medico', l: 'Examen médico de ingreso con concepto apto' },
+  { k: 'seguridad_social', l: 'Afiliación a EPS, pensión, ARL y caja de compensación' },
+  { k: 'contrato', l: 'Contrato de trabajo firmado' },
+  { k: 'licencia', l: 'Licencia de conducción vigente, verificada en el RUNT', conductor: true },
+  { k: 'psicotecnicas', l: 'Pruebas psicotécnica y psicosensométrica', conductor: true },
+  { k: 'prueba_manejo', l: 'Prueba de manejo aprobada', conductor: true },
+];
+export const ingresoRequisitos = (conductor) => INGRESO_REQUISITOS.filter((r) => !r.conductor || conductor);
 
 // ---- 🧑‍✈️ PROCESO DE ASPIRANTES A CONDUCTOR (sql/77) ----
 // Lo usan el link público (trabaja-con-nosotros.html) y la pantalla del admin.

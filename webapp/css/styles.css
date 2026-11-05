@@ -2487,7 +2487,7 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pf-lista .chip { font-size: 10.5px; padding: 1px 7px; }
 .pf-firma { display: block; max-width: 220px; max-height: 80px; margin-top: 6px; border-bottom: 1px solid var(--border); }
 .pf-sel-fila { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
-.pf-sel-card { max-width: 860px; width: 96vw; }
+.pf-sel-card { max-width: 940px; width: 96vw; }
 .pf-sel-body { padding: 14px 20px; overflow-y: auto; }
 .pf-sel-quien { margin: 0 0 10px; font-size: 13px; }
 .pf-sel-grupo { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
@@ -2495,11 +2495,46 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .pf-sel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .pf-sel-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
 .pf-sel-grid label.full { grid-column: 1 / -1; }
-.pf-sel-ant { display: grid; grid-template-columns: 110px 1fr 140px 1.3fr; gap: 6px 8px; align-items: center; font-size: 12px; }
+.pf-sel-ant { display: grid; grid-template-columns: 112px 1fr 138px 132px 1.2fr; gap: 6px 8px; align-items: center; font-size: 12px; }
 .pf-sel-ant > span { color: var(--muted); font-weight: 700; }
 .pf-sel-card input, .pf-sel-card select, .pf-sel-card textarea {
   width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; font: inherit; font-size: 13px; background: #fff; color: var(--text);
 }
+/* 🔎 Verificación de antecedentes obligatoria (sql/166) */
+.pf-sel-ant .req { color: var(--primary); font-style: normal; }
+.pf-ant-doc { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pf-ant-subir { cursor: pointer; }
+.pf-ant-oblig { font-size: 12px; color: #475569; background: #f8fafc; border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; margin-bottom: 8px; }
+.pf-ant-oblig.si { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.pf-ant-ver { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 10px; display: grid; gap: 6px; }
+.pf-ant-falta { font-size: 12.5px; }
+.pf-ant-falta.falta { color: #b45309; }
+.pf-ant-falta.ok { color: #15803d; }
+.pf-ant-chk { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; }
+.pf-sel-card .pf-ant-chk input { width: 18px; height: 18px; padding: 0; margin: 1px 0 0; accent-color: #16a34a; flex: none; }
+.pf-ant-quien { font-size: 12px; }
+.pf-sel-card .pf-ant-obs-sug { border-color: #f59e0b; background: #fffbeb; }
+.ant-card { max-width: 1040px; }
+.ant-body { padding: 0 6px 10px; overflow: auto; max-height: 72vh; }
+.ant-intro { margin: 12px 12px 10px; font-size: 13px; color: var(--muted); }
+.ant-tabla td.ant-falta { white-space: normal; min-width: 220px; color: #b45309; font-size: 12px; }
+/* ✅ Aprobación de ingresos (sql/167) */
+.ing-tabla td { white-space: normal; }
+.ing-tabla td.ing-nw { white-space: nowrap; }
+.ing-tabla small { display: block; color: var(--muted); font-size: 11.5px; }
+.ap-chk.ing-bloq:disabled { cursor: not-allowed; opacity: .4; }
+.ing-req { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ing-req li { border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ing-req li.ok { border-color: #bbf7d0; background: #f0fdf4; }
+.ing-req label { display: flex; gap: 8px; align-items: center; cursor: pointer; flex: 1; }
+.ing-req-t { flex: 1; }
+.ing-req small { display: block; color: var(--muted); font-size: 11.5px; }
+.ing-req input, .ing-junta input { width: 17px; height: 17px; accent-color: #16a34a; flex: none; }
+.ing-junta { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.ing-acc { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: 12px; }
+.ing-acc input[type=date] { padding: 5px 7px; border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12.5px; margin-left: 4px; }
+.ing-motivo { display: block; margin-top: 12px; }
+.ing-bit { list-style: none; margin: 0; padding: 0; font-size: 12.5px; color: #334155; display: grid; gap: 4px; }
 @media (max-width: 640px) {
   .pf-sel-grid { grid-template-columns: 1fr; }
   .pf-sel-ant { grid-template-columns: 1fr 1fr; }
