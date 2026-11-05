@@ -774,24 +774,29 @@ function buildSidebar() {
 
   // 👥 Talento humano (solo admin): perfil sociodemográfico, historial y el link de actualización de datos
   const gTh = addNavGroup(nav, '👥', 'Talento humano', 'th');
-  for (const name of vis) { if (TBL_GROUP[name] === 'th') addTableBtn(gTh, name); }
-  // Estadísticas: un submenú con un tema por entrada (cumpleaños, rotación, salud…)
-  if (isTalentoHumano()) {
-    const gSt = addNavGroup(gTh, '📊', 'Estadísticas', 'thstats');
-    PST_BLOQUES.forEach((b) => addNavAction(gSt, b.icon, b.label, () => openPerfilStats(b.key), 'nav-pst-' + b.key));
+  // Administración lo ve por etapas, con TODO lo de Gestión Humana y lo que la app todavía no tiene
+  // (🗺️ mapa, 05/11/2026). Los demás roles siguen con la lista de siempre.
+  if (isAdmin()) thMenuPorEtapas(gTh);
+  else {
+    for (const name of vis) { if (TBL_GROUP[name] === 'th') addTableBtn(gTh, name); }
+    // Estadísticas: un submenú con un tema por entrada (cumpleaños, rotación, salud…)
+    if (isTalentoHumano()) {
+      const gSt = addNavGroup(gTh, '📊', 'Estadísticas', 'thstats');
+      PST_BLOQUES.forEach((b) => addNavAction(gSt, b.icon, b.label, () => openPerfilStats(b.key), 'nav-pst-' + b.key));
+    }
+    if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
+    if (isTalentoHumano()) addNavAction(gTh, '📢', 'Link general (para todos)', openPerfilLink, 'nav-perfil-link');
+    if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
+    if (isTalentoHumano()) addNavAction(gTh, '✨', `Novedades${NOV_PEND ? ` <span class="nav-badge">${NOV_PEND}</span>` : ''}`, () => openNovedades(), 'nav-novedades');
+    if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
+    if (isTalentoHumano()) addNavAction(gTh, '🔎', `Verificación de antecedentes${ANT_PEND.length ? ` <span class="nav-badge">${ANT_PEND.length}</span>` : ''}`, openAntecedentes, 'nav-antecedentes');
+    if (ING_OK) addNavAction(gTh, '✅', `Aprobación de ingresos${ING_MIOS ? ` <span class="nav-badge">${ING_MIOS}</span>` : ''}`, openIngresos, 'nav-ingresos');
+    if (puedeVerActividades()) addNavAction(gTh, '🎁', 'Actividades y entregas', openActividades, 'nav-actividades');
+    // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
+    if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
+    // 🏖️ Vacaciones: Gestión Humana, Gerencia y Nómina; el aviso es lo que le falta hacer a QUIEN mira
+    if (VAC_OK && !VAC_AFI) addNavAction(gTh, '🏖️', `Vacaciones${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
   }
-  if (isTalentoHumano()) addNavAction(gTh, '📨', `Actualizaciones de datos${PERFIL_ACT_PEND ? ` <span class="nav-badge">${PERFIL_ACT_PEND}</span>` : ''}`, openPerfilActualizaciones, 'nav-perfil-act');
-  if (isTalentoHumano()) addNavAction(gTh, '📢', 'Link general (para todos)', openPerfilLink, 'nav-perfil-link');
-  if (isTalentoHumano()) addNavAction(gTh, '✍️', 'Firmas del certificado', openCertFirmas, 'nav-cert-firmas');
-  if (isTalentoHumano()) addNavAction(gTh, '✨', `Novedades${NOV_PEND ? ` <span class="nav-badge">${NOV_PEND}</span>` : ''}`, () => openNovedades(), 'nav-novedades');
-  if (isTalentoHumano()) addNavAction(gTh, '🧑‍✈️', `Aspirantes a conductor${ASP_NUEVOS ? ` <span class="nav-badge">${ASP_NUEVOS}</span>` : ''}`, openAspirantes, 'nav-aspirantes');
-  if (isTalentoHumano()) addNavAction(gTh, '🔎', `Verificación de antecedentes${ANT_PEND.length ? ` <span class="nav-badge">${ANT_PEND.length}</span>` : ''}`, openAntecedentes, 'nav-antecedentes');
-  if (ING_OK) addNavAction(gTh, '✅', `Aprobación de ingresos${ING_MIOS ? ` <span class="nav-badge">${ING_MIOS}</span>` : ''}`, openIngresos, 'nav-ingresos');
-  if (puedeVerActividades()) addNavAction(gTh, '🎁', 'Actividades y entregas', openActividades, 'nav-actividades');
-  // 📝 Permisos: lo ven Gestion Humana y Gerencia; el aviso es lo que le falta decidir a QUIEN mira
-  if (PERM_OK) addNavAction(gTh, '📝', `Permisos y licencias${PERM_MIOS ? ` <span class="nav-badge">${PERM_MIOS}</span>` : ''}`, openPermisos, 'nav-permisos');
-  // 🏖️ Vacaciones: Gestión Humana, Gerencia y Nómina; el aviso es lo que le falta hacer a QUIEN mira
-  if (VAC_OK && !VAC_AFI) addNavAction(gTh, '🏖️', `Vacaciones${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
   // El afiliado aprueba las vacaciones de los conductores de sus carros (sql/169).
   if (VAC_AFI) addNavAction(nav, '🏖️', `Vacaciones de mis conductores${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
 
@@ -13228,6 +13233,285 @@ async function avisarNovedades() {
   if (visto === hoy) return;
   try { localStorage.setItem('nov_' + NOV_VER, hoy); } catch (e) { /* */ }
   openNovedades(st);
+}
+
+// ===================================================================================
+// 🗺️ MAPA DE GESTIÓN HUMANA: qué tiene la app y qué no
+// ===================================================================================
+// Pedido del 05/11/2026: "todo lo que tenga que ver con Gestión Humana en el menú lo debes de
+// incluir, para saber qué se tiene y qué no desde la aplicación". Es UNA lista: de aquí salen el
+// menú 👥 Talento humano por etapas (por ahora solo administración) y la pantalla del mapa.
+// e: 'si' está en la app · 'parte' está a medias · 'no' todavía no está (se lleva por fuera).
+// Lo que vive en otro grupo del menú (Disciplinarios, Seguridad vial…) también sale aquí, con su
+// propio id para no repetir el del otro grupo. Cuando algo se construya: cambiar su 'e' y su abrir.
+const TH_ESTADOS = { si: ['✅', 'En la app', 'chip-green'], parte: ['🟡', 'En parte', 'chip-amber'], no: ['⬜', 'No está', 'chip-gray'] };
+function thMapa() {
+  const enPerfil = (msg) => () => { selectTable('perfilsociodemografico'); toast(msg, 'ok'); };
+  return [
+    { k: 'seleccion', icon: '🧲', t: 'Selección e ingreso', items: [
+      { k: 'aspirantes', icon: '🧑‍✈️', l: 'Aspirantes a conductor', e: 'si', id: 'nav-aspirantes', badge: () => ASP_NUEVOS,
+        que: 'El aspirante se inscribe por el link y sube sus documentos; Gestión Humana lo lleva por etapas y al contratarlo queda en el perfil.',
+        quien: 'Gestión Humana', ver: isTalentoHumano, abrir: openAspirantes, link: aspLinkUrl },
+      { k: 'hoja_vida', icon: '📋', l: 'Hoja de vida FO-GH-03', e: 'si',
+        que: 'La llena el colaborador por su link (5 pasos y firma) o el aspirante; Gestión Humana completa su parte y la saca en PDF.',
+        donde: 'Perfil sociodemográfico → abrir a la persona → 📋 Hoja de vida (PDF)', quien: 'Gestión Humana',
+        ver: isTalentoHumano, abrir: enPerfil('Abre a la persona y usa 📋 Hoja de vida (PDF).') },
+      { k: 'cedula', icon: '🪪', l: 'Lectura de la cédula', e: 'parte',
+        que: 'En los links se toma foto del frente y del reverso y se lee sola. Falta la pistola lectora (el escáner con cámara se desmontó el 01/11).',
+        quien: 'El personal, en los links' },
+      { k: 'antecedentes', icon: '🔎', l: 'Verificación de antecedentes', e: 'si', id: 'nav-antecedentes', badge: () => ANT_PEND.length,
+        que: 'Procuraduría, Contraloría, Policía y SIMIT (en conducción), con el documento y la firma de quien verificó, en cada ingreso desde el 01/11/2026.',
+        quien: 'Gestión Humana', ver: isTalentoHumano, abrir: openAntecedentes },
+      { k: 'ingresos', icon: '✅', l: 'Aprobación de ingresos', e: 'si', id: 'nav-ingresos', badge: () => ING_MIOS,
+        que: 'Check list de requisitos y aprobaciones en orden: Gestión Humana, Gerencia y, cuando aplica, el afiliado y la Junta Directiva.',
+        quien: 'Gestión Humana y Gerencia', ver: () => ING_OK, abrir: openIngresos },
+      { k: 'examenes', icon: '🩺', l: 'Exámenes médicos', e: 'parte',
+        que: 'El de ingreso solo se chequea en la aprobación de ingresos. No quedan el certificado ni las recomendaciones, y nada avisa del examen periódico ni del de egreso.',
+        quien: 'Gestión Humana' },
+      { k: 'contrato', icon: '✍️', l: 'Contrato de trabajo', e: 'parte',
+        que: 'Se chequea que esté firmado en la aprobación de ingresos; el contrato se hace por fuera y el documento no queda en la app.',
+        quien: 'Gestión Humana' },
+      { k: 'afiliaciones', icon: '🏥', l: 'Afiliaciones a seguridad social', e: 'parte',
+        que: 'Se chequean al ingreso y el perfil guarda la EPS y el fondo de pensión; los soportes de afiliación (EPS, pensión, ARL, caja) no quedan.',
+        quien: 'Gestión Humana' },
+      { k: 'induccion', icon: '🎓', l: 'Inducción y reinducción', e: 'no',
+        que: 'Quién la recibió, cuándo, con qué temas y su firma.', quien: 'Gestión Humana' },
+    ] },
+    { k: 'personal', icon: '👤', t: 'Datos del personal', items: [
+      { k: 'perfil', tabla: 'perfilsociodemografico', l: 'Perfil sociodemográfico', e: 'si',
+        que: 'Una ficha por persona con sus datos, salario, salud y familia, de donde salen la hoja de vida y el certificado.', quien: 'Gestión Humana' },
+      { k: 'vinculaciones', tabla: 'perfil_vinculaciones', l: 'Historial de vinculaciones', e: 'si',
+        que: 'Cada entrada y salida de la persona: fecha de ingreso, cargo, retiro y motivo.', quien: 'Gestión Humana' },
+      { k: 'actualizaciones', icon: '📨', l: 'Actualizaciones de datos', e: 'si', id: 'nav-perfil-act', badge: () => PERFIL_ACT_PEND,
+        que: 'Lo que el personal corrige por el link queda pendiente hasta que Gestión Humana lo revisa y lo pasa al perfil.',
+        quien: 'Gestión Humana', ver: isTalentoHumano, abrir: openPerfilActualizaciones, link: perfilLinkUrl },
+      { k: 'link_general', icon: '📢', l: 'Link general (para todos)', e: 'si', id: 'nav-perfil-link',
+        que: 'Un solo enlace para mandarle a todo el personal y que actualice sus datos.', quien: 'Gestión Humana', ver: isTalentoHumano, abrir: openPerfilLink },
+      { k: 'sync', icon: '🔄', l: 'Personal desde la hoja', e: 'si', id: 'nav-th-sync',
+        que: 'Conductores y administrativos se traen solos de la hoja de Google dos veces al día.',
+        donde: '⚙️ Administración → 🔄 Personal desde la hoja', quien: 'Administración', ver: isAdmin, abrir: openSyncPersonal },
+      { k: 'estadisticas', icon: '📊', l: 'Estadísticas del personal', e: 'si',
+        que: 'Cumpleaños, rotación (ingresos y retiros), demografía, laboral y salarios, salud y seguridad social, familia, licencias y calidad de los datos.',
+        donde: '👥 Talento humano → 📊 Estadísticas', quien: 'Gestión Humana', ver: isTalentoHumano, abrir: () => openPerfilStats('resumen') },
+      { k: 'por_afiliado', icon: '🚌', l: 'Conductores por afiliado', e: 'no',
+        que: 'Está en el Power BI de indicadores de Gestión Humana (página Afiliados) y no en las estadísticas de la app.', quien: 'Gestión Humana' },
+    ] },
+    { k: 'tiempo', icon: '📅', t: 'Tiempo y ausencias', items: [
+      { k: 'permisos', icon: '📝', l: 'Permisos y licencias', e: 'si', id: 'nav-permisos', badge: () => PERM_MIOS,
+        que: 'Formato F-GH-07: el empleado lo radica por el link con los soportes que pide cada permiso; aprueban Gestión Humana y Gerencia.',
+        quien: 'Gestión Humana y Gerencia', ver: () => PERM_OK, abrir: openPermisos, link: permLinkUrl },
+      { k: 'vacaciones', icon: '🏖️', l: 'Vacaciones', e: 'si', id: 'nav-vacaciones', badge: () => VAC_MIOS,
+        que: 'Formato FO-GH-82 con días hábiles, domingos y festivos; aprueban el área (afiliado, jefe o coordinador), Gestión Humana y Gerencia si aplica, y Nómina recibe.',
+        quien: 'Gestión Humana, Gerencia, Nómina y afiliados', ver: () => VAC_OK, abrir: openVacaciones, link: vacLinkUrl },
+      { k: 'labores', tabla: 'asistencia', l: 'Inicio y fin de labores', e: 'si',
+        que: 'Los monitores marcan el inicio y el fin; se cruza con los horarios y avisa del ingreso tarde.',
+        donde: '🚌 Despachos → Inicio y fin de labores', quien: 'Monitores y administración' },
+      { k: 'incapacidades', icon: '🤒', l: 'Incapacidades', e: 'no',
+        que: 'El soporte, los días, las prórrogas y el cobro a la EPS o la ARL; junto con permisos y vacaciones daría el ausentismo.', quien: 'Gestión Humana y Nómina' },
+      { k: 'nomina', icon: '💰', l: 'Novedades de nómina', e: 'no',
+        que: 'Horas extra, recargos, descuentos y demás novedades del mes; hoy a Nómina solo le llegan las vacaciones por la app.', quien: 'Nómina' },
+    ] },
+    { k: 'bienestar', icon: '🎁', t: 'Bienestar y desarrollo', items: [
+      { k: 'actividades', icon: '🎁', l: 'Actividades y entregas', e: 'si', id: 'nav-actividades',
+        que: 'A quién se le dio qué (entradas, bonos, dotación), con foto y firma; una entrega por persona.',
+        quien: 'Gestión Humana', ver: puedeVerActividades, abrir: openActividades },
+      { k: 'dotacion', icon: '👕', l: 'Dotación', e: 'parte',
+        que: 'Se registra como una entrega en Actividades y entregas. No lleva las tallas ni controla las tres entregas al año que pide la ley a quien gana hasta dos salarios mínimos (CST art. 230).',
+        donde: '👥 Talento humano → 🎁 Actividades y entregas', quien: 'Gestión Humana', ver: puedeVerActividades, abrir: openActividades },
+      { k: 'cumple', icon: '🎂', l: 'Cumpleaños', e: 'si', id: 'nav-th-cumple',
+        que: 'Quién cumple años, sacado del perfil.', donde: '👥 Talento humano → 📊 Estadísticas', quien: 'Gestión Humana',
+        ver: isTalentoHumano, abrir: () => openPerfilStats('cumple') },
+      { k: 'capacitaciones', icon: '📚', l: 'Capacitaciones', e: 'no',
+        que: 'El plan del año, quién asistió (con firma) y la evaluación.', quien: 'Gestión Humana' },
+      { k: 'desempeno', icon: '📈', l: 'Evaluación de desempeño', e: 'no',
+        que: 'La evaluación periódica de cada persona y su plan de mejora.', quien: 'Gestión Humana y los jefes' },
+      { k: 'clima', icon: '🌤️', l: 'Clima laboral y encuestas', e: 'no',
+        que: 'Encuestas al personal y sus resultados.', quien: 'Gestión Humana' },
+    ] },
+    { k: 'conducta', icon: '⚖️', t: 'Disciplina y seguridad', items: [
+      { k: 'disciplinarios', icon: '⚖️', l: 'Procesos disciplinarios', e: 'si', id: 'nav-th-disc', badge: () => DC_PEND,
+        que: 'Del hecho a la diligencia de descargos y la medida; la etapa sale de las fechas y queda el expediente completo.',
+        donde: '⚖️ Disciplinarios', quien: 'Gestión Humana', ver: puedeVerDisc, abrir: () => openDisc(puedeGestionarDisc() ? 'bandeja' : 'historico') },
+      { k: 'siniestros', tabla: 'siniestros', l: 'Siniestros', e: 'si',
+        que: 'Los choques y daños de los vehículos que se reportan en AppSheet, con el conductor.',
+        donde: '🛡️ Seguridad vial → Siniestros', quien: 'Gestión Humana y seguridad vial' },
+      { k: 'conduccion', icon: '🚦', l: 'Excesos de velocidad', e: 'si', id: 'nav-th-conduccion',
+        que: 'Los excesos de velocidad y las puertas abiertas que mide el GPS, por conductor.',
+        donde: '🛡️ Seguridad vial', quien: 'Gestión Humana y seguridad vial',
+        ver: () => visibleTables().includes('eventos_bus'), abrir: () => abrirConduccion('VELOCIDAD') },
+      { k: 'licencias', icon: '🪪', l: 'Licencias de conductores', e: 'si', id: 'nav-th-licencias', badge: () => LIC_PEND,
+        que: 'La licencia vencida o por vencer avisa al despachar; el despachador sube la foto y, al aprobarla, se actualiza el perfil.',
+        donde: '🚫 Restricciones y documentos', quien: 'Operaciones y administración', ver: () => isAdmin() || isOperaciones(), abrir: openLicencias },
+      { k: 'at', icon: '🚑', l: 'Accidentes de trabajo', e: 'no',
+        que: 'El reporte del accidente laboral de la persona (FURAT) y su investigación; los siniestros de los vehículos sí están.', quien: 'Gestión Humana (SST)' },
+    ] },
+    { k: 'docs', icon: '📄', t: 'Certificados y avisos', items: [
+      { k: 'certificado', icon: '📄', l: 'Certificado laboral', e: 'si',
+        que: 'Formato DO-GH-02 con todo el historial de entradas a la empresa; se manda por WhatsApp con un enlace corto.',
+        donde: 'Perfil sociodemográfico → abrir a la persona → 📄 Certificado laboral', quien: 'Gestión Humana',
+        ver: isTalentoHumano, abrir: enPerfil('Abre a la persona y usa 📄 Certificado laboral.') },
+      { k: 'firmas', icon: '✍️', l: 'Firmas del certificado', e: 'si', id: 'nav-cert-firmas',
+        que: 'Quién firma los certificados, con su firma.', quien: 'Gestión Humana', ver: isTalentoHumano, abrir: openCertFirmas },
+      { k: 'avisos', icon: '📢', l: 'Avisos al personal', e: 'si', id: 'nav-th-avisos',
+        que: 'Avisos que no se cierran sin confirmar, por rol, con el control de quién falta.',
+        donde: '⚙️ Administración → 📢 Avisos al personal', quien: 'Administración', ver: isAdmin, abrir: openAvisos },
+      { k: 'novedades', icon: '✨', l: 'Novedades', e: 'si', id: 'nav-novedades', badge: () => NOV_PEND,
+        que: 'Lo que falta configurar de cada módulo nuevo.', quien: 'Gestión Humana y administración', ver: isTalentoHumano, abrir: () => openNovedades() },
+    ] },
+    { k: 'retiro', icon: '🚪', t: 'Retiro', items: [
+      { k: 'retiro', icon: '🗂️', l: 'Registro del retiro', e: 'parte',
+        que: 'El historial guarda la fecha y el motivo del retiro, y la rotación sale en las estadísticas. No hay un paso a paso del retiro.',
+        donde: '👥 Talento humano → 📊 Estadísticas → Rotación', quien: 'Gestión Humana', ver: isTalentoHumano, abrir: () => openPerfilStats('rotacion') },
+      { k: 'paz_salvo', icon: '🧾', l: 'Paz y salvo', e: 'no',
+        que: 'Que cada área confirme que la persona no debe nada (dotación, carné, herramientas, dinero). La app del Kardex tiene uno; esta no.', quien: 'Gestión Humana y las áreas' },
+      { k: 'entrevista_retiro', icon: '💬', l: 'Entrevista de retiro', e: 'no',
+        que: 'Por qué se va la persona, en sus palabras, para medir las causas de la rotación.', quien: 'Gestión Humana' },
+      { k: 'liquidacion', icon: '🧮', l: 'Liquidación del contrato', e: 'no',
+        que: 'El cálculo de lo que se le paga al salir (prestaciones y vacaciones pendientes).', quien: 'Nómina' },
+    ] },
+  ];
+}
+function thVer(it) { return it.tabla ? visibleTables().includes(it.tabla) : !!(it.ver && it.ver()); }
+function thAbrir(it) { return it.tabla ? () => selectTable(it.tabla) : (it.abrir || null); }
+function thItem(k) {
+  for (const et of thMapa()) { const it = et.items.find((x) => x.k === k); if (it) return { it, et }; }
+  return null;
+}
+
+// El menú 👥 Talento humano por etapas. Lo que no está (o está a medias sin pantalla) sale en gris
+// y lleva al mapa; las estadísticas siguen en su submenú, debajo de Datos del personal.
+function thMenuPorEtapas(gTh) {
+  addNavAction(gTh, '🗺️', 'Mapa: qué hay y qué falta', () => openThMapa(), 'nav-th-mapa');
+  thMapa().forEach((et) => {
+    const g = addNavGroup(gTh, et.icon, et.t, 'th-' + et.k);
+    et.items.forEach((it) => {
+      if (it.k === 'estadisticas') return;
+      if (it.e === 'no' || !thAbrir(it)) { thNavFalta(g, it); return; }
+      if (!thVer(it)) return;
+      if (it.tabla) { addTableBtn(g, it.tabla); return; }
+      const n = it.badge ? it.badge() : 0;
+      const nombre = it.e === 'parte' ? `<span class="nav-l">${it.l} <span class="nav-parte-t">en parte</span></span>` : it.l;
+      addNavAction(g, it.icon, nombre + (n ? ` <span class="nav-badge">${n}</span>` : ''), it.abrir, it.id || 'nav-th-' + it.k);
+    });
+    if (et.k === 'personal' && isTalentoHumano()) {
+      const gSt = addNavGroup(gTh, '📊', 'Estadísticas', 'thstats');
+      PST_BLOQUES.forEach((b) => addNavAction(gSt, b.icon, b.label, () => openPerfilStats(b.key), 'nav-pst-' + b.key));
+    }
+  });
+}
+function thNavFalta(g, it) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'nav-action nav-falta'; b.id = 'nav-th-' + it.k; b.title = it.que || '';
+  b.innerHTML = `<span>${it.icon}</span> <span class="nav-l">${it.l} `
+    + (it.e === 'no' ? '<span class="nav-falta-t">no está</span>' : '<span class="nav-parte-t">en parte</span>') + '</span>';
+  b.onclick = () => { openThMapa(it.k); closeMenu(); };
+  g.appendChild(b);
+}
+
+// La pantalla: cada proceso con su estado, qué hace o qué le falta, quién lo usa, dónde está y su link.
+let _thmFiltro = 'todo';
+function thMapaModal() {
+  let m = $('thm-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'thm-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card nov-card thm-card">
+    <div class="modal-head"><h3>🗺️ Gestión Humana en la app · qué hay y qué falta</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="nov-body thm-body"></div>
+    <div class="modal-foot"><span class="nov-pie">Lo que está en gris se lleva hoy por fuera de la app (papel, Excel u otra aplicación). El mapa también está en <b>👥 Talento humano → 🗺️ Mapa</b>.</span>
+      <span class="spacer"></span><button type="button" class="btn" data-thm-xls>⬇️ Excel</button>
+      <button type="button" class="btn btn-primary" data-x>Cerrar</button></div></div>`;
+  m.addEventListener('click', (e) => {
+    const f = e.target.closest('[data-thm-f]');
+    if (f) { _thmFiltro = f.dataset.thmF; thMapaPintar(m); return; }
+    const c = e.target.closest('[data-thm-copiar]');
+    if (c) { thCopiar(c.dataset.thmCopiar); return; }
+    const a = e.target.closest('[data-thm-abrir]');
+    if (a) {
+      const x = thItem(a.dataset.thmAbrir); const fn = x && thAbrir(x.it);
+      if (fn) { m.hidden = true; fn(); }
+      return;
+    }
+    if (e.target.closest('[data-thm-xls]')) { thMapaExcel(); return; }
+    if (e.target === m || e.target.closest('[data-x]')) m.hidden = true;
+  });
+  document.body.appendChild(m);
+  return m;
+}
+function thMapaPintar(m) {
+  const mapa = thMapa();
+  const todos = mapa.flatMap((et) => et.items);
+  const cuenta = (e) => todos.filter((it) => it.e === e).length;
+  const boton = (k, txt) => `<button type="button" class="btn btn-sm${_thmFiltro === k ? ' btn-primary' : ''}" data-thm-f="${k}">${txt}</button>`;
+  const secs = mapa.map((et) => {
+    const its = et.items.filter((it) => _thmFiltro === 'todo' || it.e === _thmFiltro);
+    if (!its.length) return '';
+    const si = et.items.filter((it) => it.e === 'si').length;
+    return `<section class="nov-mod thm-et"><h4>${et.icon} ${esc(et.t)} <small>${si} de ${et.items.length} en la app</small></h4>
+      <ul class="thm-list">${its.map((it) => thFilaHtml(it, et)).join('')}</ul></section>`;
+  });
+  m.querySelector('.thm-body').innerHTML = `<p class="nov-intro">Todo lo de Gestión Humana, esté o no en la app:
+      <b class="nov-v">✅ en la app</b>, <b class="nov-a">🟡 en parte</b> y <b>⬜ no está</b> (se lleva por fuera). <b>Abrir</b> te lleva a donde está.</p>
+    <div class="thm-res"><b>${cuenta('si')}</b> de <b>${todos.length}</b> procesos están en la app · <b>${cuenta('parte')}</b> en parte · <b>${cuenta('no')}</b> no están</div>
+    <div class="thm-filtros">${boton('todo', 'Todo')}${boton('si', '✅ En la app')}${boton('parte', '🟡 En parte')}${boton('no', '⬜ No está')}</div>`
+    + secs.join('');
+}
+function thDonde(it, et) { return it.donde || (it.e === 'no' ? '' : `👥 Talento humano → ${et.icon} ${et.t}`); }
+function thFilaHtml(it, et) {
+  const [ic, txt, cls] = TH_ESTADOS[it.e];
+  const abrir = thAbrir(it) && thVer(it);
+  const donde = it.e === 'no' ? '' : thDonde(it, et);
+  const link = it.link ? `<div class="nov-url"><input type="text" readonly value="${esc(it.link())}" aria-label="Link de ${esc(it.l)}">
+      <button type="button" class="btn btn-sm" data-thm-copiar="${it.k}">📋 Copiar link</button></div>` : '';
+  return `<li class="thm-it thm-${it.e}" data-thm-k="${it.k}">
+    <span class="thm-ic">${it.icon || TABLES[it.tabla]?.icon || '•'}</span>
+    <div class="thm-tx"><div class="thm-nom"><b>${esc(it.l)}</b> <span class="chip ${cls}">${ic} ${txt}</span></div>
+      <div class="thm-que">${esc(it.que || '')}</div>
+      <div class="thm-meta">👤 ${esc(it.quien || '')}${donde ? ` · 📍 ${esc(donde)}` : ''}</div>${link}</div>
+    ${abrir ? `<button type="button" class="btn btn-sm" data-thm-abrir="${it.k}">Abrir</button>` : ''}</li>`;
+}
+async function thCopiar(k) {
+  const x = thItem(k); if (!x || !x.it.link) return;
+  try { await navigator.clipboard.writeText(x.it.link()); }
+  catch (e) { const i = $('thm-modal')?.querySelector(`[data-thm-k="${k}"] input`); if (i) { i.select(); document.execCommand('copy'); } }
+  toast('Enlace copiado', 'ok');
+}
+function openThMapa(k) {
+  if (!isAdmin()) return;               // lo nuevo, por ahora, solo para administración
+  const m = thMapaModal();
+  if (k) _thmFiltro = 'todo';
+  thMapaPintar(m);
+  closeMenu();
+  m.hidden = false;
+  const li = k && m.querySelector(`[data-thm-k="${k}"]`);
+  if (li) {
+    li.classList.add('thm-foco'); li.scrollIntoView({ block: 'center' });
+    setTimeout(() => li.classList.remove('thm-foco'), 2500);
+  }
+}
+// El mismo mapa en Excel, para mandarlo o llevarlo a una reunión.
+async function thMapaExcel() {
+  const aoa = [['Etapa', 'Proceso', 'Estado', 'Qué hace / qué le falta', 'Quién lo usa', 'Dónde está', 'Link']];
+  thMapa().forEach((et) => et.items.forEach((it) => aoa.push([et.t, it.l, TH_ESTADOS[it.e][1], it.que || '', it.quien || '',
+    thDonde(it, et), it.link ? it.link() : ''])));
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 22 }, { wch: 30 }, { wch: 11 }, { wch: 90 }, { wch: 30 }, { wch: 45 }, { wch: 50 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Gestion Humana');
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `gestion_humana_en_la_app_${hoyServidor()}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`Excel generado: ${aoa.length - 1} procesos.`, 'ok');
+  } catch (e) {
+    toast('No se pudo generar el Excel: ' + (e.message || e) + (navigator.onLine ? '' : ' — necesitas internet.'), 'err');
+  }
 }
 
 // ===================================================================================
