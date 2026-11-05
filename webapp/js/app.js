@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, ANTECEDENTES_DESDE, ANTECEDENTES_ENT, antecedentesObligatoria, antecedentesEsConductor, antecedentesFaltan, ingresoRequisitos, tiempoEntre } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, reemplazoOpciones, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, ANTECEDENTES_DESDE, ANTECEDENTES_ENT, antecedentesObligatoria, antecedentesEsConductor, antecedentesFaltan, ingresoRequisitos, tiempoEntre } from './config.js';
 import { listaEditor, leerLista } from './hoja-vida.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -13298,10 +13298,10 @@ function thMapa() {
     ] },
     { k: 'tiempo', icon: '📅', t: 'Tiempo y ausencias', items: [
       { k: 'permisos', icon: '📝', l: 'Permisos y licencias', e: 'si', id: 'nav-permisos', badge: () => PERM_MIOS,
-        que: 'Formato F-GH-07: el empleado lo radica por el link con los soportes que pide cada permiso; aprueban Gestión Humana y Gerencia.',
+        que: 'Formato F-GH-07: el empleado lo radica por el link con los soportes que pide cada permiso; aprueban Gestión Humana y Gerencia. Cómo va lo consulta en mis-solicitudes.html.',
         quien: 'Gestión Humana y Gerencia', ver: () => PERM_OK, abrir: openPermisos, link: permLinkUrl },
       { k: 'vacaciones', icon: '🏖️', l: 'Vacaciones', e: 'si', id: 'nav-vacaciones', badge: () => VAC_MIOS,
-        que: 'Formato FO-GH-82 con días hábiles, domingos y festivos; aprueban el área (afiliado, jefe o coordinador), Gestión Humana y Gerencia si aplica, y Nómina recibe.',
+        que: 'Formato FO-GH-82 con días hábiles, domingos y festivos; aprueban el área (afiliado, jefe o coordinador), Gestión Humana y Gerencia si aplica, y Nómina recibe. El empleado ve paso a paso en quién va en mis-solicitudes.html.',
         quien: 'Gestión Humana, Gerencia, Nómina y afiliados', ver: () => VAC_OK, abrir: openVacaciones, link: vacLinkUrl },
       { k: 'labores', tabla: 'asistencia', l: 'Inicio y fin de labores', e: 'si',
         que: 'Los monitores marcan el inicio y el fin; se cruza con los horarios y avisa del ingreso tarde.',
@@ -18273,6 +18273,8 @@ async function refrescarPermisos(rebuild = true) {
 }
 
 function permLinkUrl() { return new URL('permisos.html', location.href).href; }
+// Donde el empleado consulta cómo van sus permisos y vacaciones, paso a paso (sql/171).
+function consultaLinkUrl() { return new URL('mis-solicitudes.html', location.href).href; }
 
 // Cuánto duró, dicho como lo diría una persona.
 function permDuracion(r) {
@@ -18325,7 +18327,7 @@ function permModal() {
     `<button type="button" class="btn btn-sm" data-vista="${v.key}">${v.label} <b data-n="${v.key}"></b></button>`).join('')}</div>
       <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula o radicado" aria-label="Buscar">
       <span class="spacer"></span>
-      <button type="button" class="btn btn-sm" data-link>🔗 Link para el empleado</button>
+      <button type="button" class="btn btn-sm" data-link title="Copia el link para pedir y el de consultar cómo va">🔗 Links para el empleado</button>
       <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
       <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
     </div>
@@ -18754,10 +18756,11 @@ async function permImprimir(r) {
 }
 
 function permCopiarLink() {
-  const url = permLinkUrl();
-  navigator.clipboard?.writeText(url).then(
-    () => toast('Link copiado. Compártelo con los empleados.', 'ok'),
-    () => prompt('Copia este link:', url));
+  // Los dos links: el de pedir el permiso y el de consultar cómo va.
+  const txt = `Solicitud de permiso: ${permLinkUrl()}\n¿Cómo va mi solicitud?: ${consultaLinkUrl()}`;
+  navigator.clipboard?.writeText(txt).then(
+    () => toast('Links copiados: el de pedir el permiso y el de consultar cómo va. Compártelos con los empleados.', 'ok'),
+    () => prompt('Copia estos links:', txt.replace('\n', ' · ')));
 }
 
 async function exportarPermisos(btn) {
@@ -18858,7 +18861,7 @@ function vacModal() {
       <input type="search" class="asp-q" placeholder="🔎 Nombre, cédula, código o radicado" aria-label="Buscar">
       <span class="spacer"></span>
       ${VAC_GH ? '<button type="button" class="btn btn-sm btn-primary" data-nueva>➕ Registrar</button>' : ''}
-      ${VAC_AFI ? '' : '<button type="button" class="btn btn-sm" data-link>🔗 Link para el empleado</button>'}
+      ${VAC_AFI ? '' : '<button type="button" class="btn btn-sm" data-link title="Copia el link para pedir y el de consultar cómo va">🔗 Links para el empleado</button>'}
       <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
       <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
     </div>
@@ -19238,7 +19241,7 @@ function vacRegModal() {
           <label class="vac-chk"><input type="checkbox" data-sabado> El sábado cuenta como hábil</label>
           <label>Solicitada por <select data-por>
             <option value="EMPRESA">Empresa</option><option value="AFILIADO">Afiliado</option><option value="EMPLEADO">Empleado</option></select></label>
-          <label>Lo reemplaza <input type="text" data-reemplaza maxlength="80"></label>
+          <label data-reemplaza-w hidden>Lo reemplaza <select data-reemplaza></select></label>
           <label class="vac-full">Observación <input type="text" data-obs maxlength="400"></label>
         </div>
         <div class="vac-calc" data-calc></div>
@@ -19301,6 +19304,9 @@ async function vacRegBuscar() {
     if (sug) sel.value = sug.texto;
     m.querySelector('[data-periodo-otro]').hidden = sel.value !== '__otro';
     m.querySelector('[data-sabado]').checked = !!data.sabado_habil;
+    // Quién lo reemplaza: solo a administrativos que no son despachadores ni gestores (sql/170).
+    m.querySelector('[data-reemplaza-w]').hidden = !Array.isArray(data.reemplazo);
+    m.querySelector('[data-reemplaza]').innerHTML = reemplazoOpciones(data.reemplazo);
     m.querySelector('[data-form]').hidden = data.estado !== 'ACTIVO';
     m.querySelector('[data-guardar]').disabled = data.estado !== 'ACTIVO';
     vacRegCalcular();
@@ -19348,7 +19354,7 @@ async function vacRegGuardar() {
     const { data, error } = await sb.rpc('vacaciones_registrar', {
       p_cedula: p.cedula, p_periodo: periodo, p_inicio: dias ? (m.querySelector('[data-inicio]').value || null) : null,
       p_dias_disfrute: dias, p_dias_dinero: Math.floor(Number(m.querySelector('[data-dinero]').value) || 0),
-      p_reemplaza: m.querySelector('[data-reemplaza]').value.trim() || null,
+      p_reemplaza: Array.isArray(p.reemplazo) ? (m.querySelector('[data-reemplaza]').value || null) : null,
       p_solicitada_por: m.querySelector('[data-por]').value, p_sabado_habil: m.querySelector('[data-sabado]').checked,
       p_observacion: m.querySelector('[data-obs]').value.trim() || null });
     if (error) throw error;
@@ -19461,10 +19467,11 @@ async function vacImprimir(r) {
 }
 
 function vacCopiarLink() {
-  const url = vacLinkUrl();
-  navigator.clipboard?.writeText(url).then(
-    () => toast('Link copiado. Compártelo con los empleados.', 'ok'),
-    () => prompt('Copia este link:', url));
+  // Los dos links: el de pedir las vacaciones y el de consultar cómo van.
+  const txt = `Solicitud de vacaciones: ${vacLinkUrl()}\n¿Cómo va mi solicitud?: ${consultaLinkUrl()}`;
+  navigator.clipboard?.writeText(txt).then(
+    () => toast('Links copiados: el de pedir vacaciones y el de consultar cómo van. Compártelos con los empleados.', 'ok'),
+    () => prompt('Copia estos links:', txt.replace('\n', ' · ')));
 }
 
 async function exportarVacaciones(btn) {

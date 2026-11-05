@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v360';
+export const APP_VERSION = 'v361';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -177,6 +177,25 @@ export function permisoVence(s, desde, hasta, radicado) {
   if (Number.isNaN(d.getTime())) return null;
   d.setDate(d.getDate() + s.dias);
   return d.toISOString().slice(0, 10);
+}
+
+// "¿Quién te reemplaza?" (sql/170): la base manda la lista solo cuando aplica (administrativos que no
+// son despachadores ni gestores; null = no se pregunta). Son los administrativos activos, agrupados por
+// área y la del empleado primero. El valor es el nombre tal como está en el Perfil.
+export function reemplazoOpciones(lista, vacio = '— Todavía no se sabe —') {
+  const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const nombre = (s) => String(s || '').toLowerCase().replace(/(^|\s)(\S)/g, (m, a, b) => a + b.toUpperCase());
+  const frase = (s) => { const t = String(s || '').toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); };
+  let h = `<option value="">${e(vacio)}</option>`, area;
+  (lista || []).forEach((p, i) => {
+    if (i === 0 || (p.a || '') !== area) {
+      if (i) h += '</optgroup>';
+      area = p.a || '';
+      h += `<optgroup label="${e(area ? frase(area) : 'Sin área')}">`;
+    }
+    h += `<option value="${e(p.n)}">${e(nombre(p.n))}${p.c ? ' · ' + e(frase(p.c)) : ''}</option>`;
+  });
+  return (lista || []).length ? h + '</optgroup>' : h;
 }
 
 export const PERFIL_LISTAS = {

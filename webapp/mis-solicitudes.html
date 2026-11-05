@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#ED1C24" />
+  <title>¿Cómo va mi solicitud? · Autobuses El Poblado</title>
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="¿Cómo va mi permiso o mis vacaciones? · Autobuses El Poblado Laureles S.A." />
+  <meta property="og:description" content="Consulta paso a paso el estado de tus permisos y tus vacaciones." />
+  <meta property="og:image" content="https://desarrolloapl391.github.io/Despachos/webapp/icons/icon-512.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <!--
+    LINK PÚBLICO para consultar el estado de los permisos y las vacaciones (sql/171).
+    - El empleado se identifica con cédula + fecha de nacimiento (mis_solicitudes, con el mismo freno de
+      intentos que los links de permisos y vacaciones) y ve sus solicitudes con cada paso: quién ya
+      aprobó, en quién va y qué sigue. Nunca quién firmó; el motivo solo si se negó.
+    - Permisos: Gestión Humana y Gerencia, a la vez. Vacaciones: el área → Gestión Humana → Gerencia
+      (si aplica) → Nómina, en ese orden (sql/169).
+    - Los soportes que le faltan a un permiso salen de permisoReglas (config.js), y se entregan en el
+      link de permisos.
+    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222
+      (conductor) o 99000111223 (administrativo): no consulta nada.
+  -->
+  <style>
+    :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--fondo); color: var(--txt); font-size: 16px; }
+    header { background: linear-gradient(135deg, #ED1C24 0%, #D5141B 55%, #B70E14 100%); color: #fff; padding: 22px 16px 58px; text-align: center; }
+    header img { width: 64px; height: 64px; border-radius: 14px; background: #fff; padding: 6px; }
+    header h1 { font-size: 21px; margin: 10px 0 4px; }
+    header p { margin: 0; opacity: .92; font-size: 14px; }
+    main { max-width: 640px; margin: -40px auto 40px; padding: 0 16px; }
+    .card { background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(237,28,36,.10); padding: 18px; margin-bottom: 14px; min-width: 0; }
+    h2 { font-size: 16px; margin: 0 0 12px; display: flex; gap: 8px; align-items: center; }
+    h2 .n { margin-left: auto; font-size: 13px; color: var(--muted); font-weight: 600; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    label { display: block; font-size: 13px; font-weight: 600; color: #333; min-width: 0; }
+    label > input { display: block; margin-top: 5px; }
+    .req { color: var(--rojo); }
+    input { width: 100%; min-width: 0; font: inherit; font-size: 16px; padding: 11px 12px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; color: var(--txt); }
+    input:focus { outline: 2px solid rgba(237,28,36,.35); border-color: var(--rojo); }
+    .hint { font-weight: 400; color: var(--muted); font-size: 12.5px; display: block; margin-top: 4px; line-height: 1.4; }
+    .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); margin-top: 14px; text-align: center; text-decoration: none; }
+    .btn:disabled { opacity: .6; cursor: wait; }
+    .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
+    .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
+    .hola { display: flex; gap: 12px; align-items: center; }
+    .hola .av { width: 46px; height: 46px; border-radius: 50%; background: #fff1f1; display: grid; place-items: center; font-size: 22px; flex: none; }
+    .hola b { font-size: 18px; display: block; }
+    .hola small { color: var(--muted); }
+    .vacio { color: var(--muted); font-size: 14px; margin: 0; }
+    .sol { border: 1px solid var(--borde); border-radius: 12px; padding: 12px; margin-top: 10px; font-size: 14px; line-height: 1.45; }
+    .sol .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .sol .que { font-weight: 600; margin-top: 2px; }
+    .sol .cuando { color: var(--muted); font-size: 13px; }
+    .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .c-PENDIENTE, .c-EN { background: #fef3c7; color: #92400e; }
+    .c-APROBADO { background: #dcfce7; color: #15803d; }
+    .c-NEGADO { background: #fee2e2; color: #b91c1c; }
+    .c-ANULADO { background: #e5e7eb; color: #374151; }
+    /* El mensaje de lo que sigue y los pasos, uno por renglón (se lee bien en el celular) */
+    .sigue { border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13.5px; background: #fff7ed; color: #9a3412; }
+    .sigue.ok { background: #eef7ee; color: #14532d; }
+    .sigue.no { background: #fff1f1; color: #b3121b; }
+    .sigue.gris { background: #f3f4f6; color: #374151; }
+    .pasos { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+    .paso { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start; font-size: 13.5px; }
+    .paso .ic { font-size: 16px; line-height: 1.3; text-align: center; }
+    .paso b { font-weight: 600; }
+    .paso small { display: block; color: var(--muted); font-size: 12.5px; }
+    .paso.ahora b { color: #9a3412; }
+    .paso.despues { opacity: .6; }
+    .falta { margin-top: 8px; border-top: 1px dashed var(--borde); padding-top: 8px; font-size: 13px; }
+    .falta ul { margin: 4px 0 0; padding-left: 18px; }
+    .falta a { color: var(--rojo2); font-weight: 600; }
+    .vencido { color: #b91c1c; font-weight: 600; }
+    .acciones { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .acciones .btn { margin-top: 0; font-size: 15px; padding: 12px; }
+    .prueba { background: #fff7ed; border: 1px dashed #fdba74; color: #9a3412; border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-bottom: 14px; text-align: center; }
+    footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 30px; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/logo.png" alt="" onerror="this.style.display='none'" />
+    <h1>¿Cómo va mi solicitud?</h1>
+    <p>Permisos y vacaciones · Autobuses El Poblado Laureles S.A.</p>
+  </header>
+
+  <main>
+    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 (conductor) o 99000111223 (administrativo) y cualquier fecha.</div>
+
+    <section class="card" id="p1">
+      <h2>🪪 Identifícate</h2>
+      <div class="err" id="err1" hidden></div>
+      <div class="grid">
+        <label>Cédula <span class="req">*</span>
+          <input type="tel" id="cedula" inputmode="numeric" autocomplete="off" placeholder="Sin puntos ni comas" />
+        </label>
+        <label>Fecha de nacimiento <span class="req">*</span>
+          <input type="date" id="fnac" />
+          <span class="hint">Es para confirmar que eres tú.</span>
+        </label>
+      </div>
+      <button type="button" class="btn" id="entrar">Ver mis solicitudes →</button>
+    </section>
+
+    <div id="res" hidden>
+      <section class="card">
+        <div class="hola"><span class="av">🔎</span><span><b id="hola-n"></b><small id="hola-c"></small></span></div>
+      </section>
+      <section class="card">
+        <h2>📝 Tus permisos <span class="n" id="perm-n"></span></h2>
+        <div id="perm-l"></div>
+      </section>
+      <section class="card">
+        <h2>🏖️ Tus vacaciones <span class="n" id="vac-n"></span></h2>
+        <div id="vac-l"></div>
+      </section>
+      <div class="acciones">
+        <a class="btn btn-sec" href="permisos.html">📝 Pedir un permiso</a>
+        <a class="btn btn-sec" href="vacaciones.html">🏖️ Pedir vacaciones</a>
+      </div>
+      <button type="button" class="btn btn-sec" id="otra">Consultar otra cédula</button>
+    </div>
+  </main>
+
+  <footer>Autobuses El Poblado Laureles S.A. · Gestión Humana</footer>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, permisoReglas, permisoVence } from './js/config.js';
+
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    // "martes 1 de diciembre": se arma desde el texto de la fecha para que la zona horaria no la corra.
+    const fLarga = (iso, conDia = true) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return '';
+      const dow = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay();
+      return `${conDia ? DIAS[dow] + ' ' : ''}${+m[3]} de ${MESES[+m[2] - 1]}${+m[1] !== new Date().getFullYear() ? ' de ' + m[1] : ''}`;
+    };
+    const fHora = (v) => { const s = String(v || ''); return s.length > 10 ? `${fLarga(s)}, ${s.slice(11, 16)}` : fLarga(s); };
+    const hoyIso = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date());
+    const sumarDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+    const ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobada', NEGADO: 'Negada', ANULADO: 'Anulada' };
+    const ced = () => ($('cedula').value || '').replace(/\D/g, '');
+    const esPrueba = () => PRUEBA && ['99000111222', '99000111223'].includes(ced());
+    const AREA = { AFILIADO: 'Tu afiliado (dueño del vehículo)', COORDINADOR: 'Coordinador de ruta', JEFE: 'Tu jefe inmediato' };
+
+    if (PRUEBA) $('prueba').hidden = false;
+
+    // ---- Vista de prueba: solicitudes inventadas en distintos momentos del trámite ----
+    const DEMO = () => {
+      const h = hoyIso(), d = (n) => sumarDias(h, n);
+      return ced() === '99000111223'
+        ? { ok: true, nombre: 'Laura', cargo: 'AUXILIAR CONTABLE',
+            permisos: [{ radicado: 401, fecha_solicitud: d(-3), tipo: 'ESTUDIO', desde: d(2) + 'T14:00:00', hasta: d(2) + 'T18:00:00',
+              estado: 'NEGADO', gh: 'APROBADO', gh_en: d(-2), ger: 'NEGADO', ger_en: d(-1), nota: 'Ese día hay cierre contable: pídelo para la otra semana.', entregados: ['matricula', 'cert_estudio', 'horario'] }],
+            vacaciones: [{ radicado: 18, fecha_solicitud: d(-30), periodo: '01/02/2025 al 31/01/2026', inicio: d(8), fin: d(28), regreso: d(29),
+              disfrute: 15, dinero: 0, estado: 'APROBADO', area_tipo: 'JEFE', area: 'APROBADO', area_en: d(-28), gh: 'APROBADO', gh_en: d(-25),
+              req_gerencia: true, ger: 'APROBADO', ger_en: d(-20), nomina_en: d(-10) }] }
+        : { ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR',
+            permisos: [
+              { radicado: 412, fecha_solicitud: d(-1), tipo: 'CITA MEDICA', caso: null, desde: d(3) + 'T07:00:00', hasta: d(3) + 'T11:00:00',
+                estado: 'EN TRAMITE', gh: 'APROBADO', gh_en: d(0), ger: null, entregados: [] },
+              { radicado: 398, fecha_solicitud: d(-12), tipo: 'LUTO', parentesco: 'HERMANO(A)', desde: d(-12) + 'T06:00:00', hasta: d(-5) + 'T06:00:00',
+                estado: 'APROBADO', gh: 'APROBADO', gh_en: d(-11), ger: 'APROBADO', ger_en: d(-10), entregados: ['defuncion'] }],
+            vacaciones: [{ radicado: 21, fecha_solicitud: d(-2), periodo: '10/03/2025 al 09/03/2026', inicio: d(25), fin: d(41), regreso: d(42),
+              disfrute: 15, dinero: 0, estado: 'EN TRAMITE', area_tipo: 'AFILIADO', area: 'APROBADO', area_en: d(-1), gh: null,
+              req_gerencia: false, ger: null, nomina_en: null }] };
+    };
+
+    $('entrar').addEventListener('click', async () => {
+      if (!ced()) return mostrarError($('err1'), 'Escribe tu cédula.');
+      if (!$('fnac').value) return mostrarError($('err1'), 'Escribe tu fecha de nacimiento.');
+      mostrarError($('err1'), '');
+      const b = $('entrar'); b.disabled = true; b.textContent = 'Buscando…';
+      try {
+        let data;
+        if (esPrueba()) data = DEMO();
+        else {
+          const r = await sb.rpc('mis_solicitudes', { p_cedula: ced(), p_fecha_nacimiento: $('fnac').value });
+          if (r.error) throw r.error;
+          data = r.data;
+        }
+        if (!data || !data.ok) return mostrarError($('err1'), (data && data.error) || 'No encontramos tus datos.');
+        pintar(data);
+      } catch {
+        mostrarError($('err1'), 'No pudimos conectarnos. Revisa tu internet e intenta de nuevo.');
+      } finally { b.disabled = false; b.textContent = 'Ver mis solicitudes →'; }
+    });
+    $('otra').addEventListener('click', () => location.reload());
+
+    // Un paso: ✅ aprobó / ❌ negó / ⏳ en quién va / · después
+    const paso = (nombre, est, fecha, cual) => {
+      const [ic, txt, cls] = est === 'APROBADO' ? ['✅', `Aprobó${fecha ? ' el ' + fLarga(fecha) : ''}`, '']
+        : est === 'NEGADO' ? ['❌', `Negó${fecha ? ' el ' + fLarga(fecha) : ''}`, '']
+          : est === 'RECIBIDO' ? ['✅', `La recibió${fecha ? ' el ' + fLarga(fecha) : ''}`, '']
+            : cual === 'ahora' ? ['⏳', 'La está revisando ahora', 'ahora'] : ['·', 'Después', 'despues'];
+      return `<li class="paso ${cls}"><span class="ic">${ic}</span><span><b>${esc(nombre)}</b><small>${esc(txt)}</small></span></li>`;
+    };
+    const chip = (e) => `<span class="chip c-${esc(String(e).split(' ')[0])}">${esc(ESTADO[e] || e)}</span>`;
+
+    function pintar(d) {
+      $('p1').hidden = true; $('res').hidden = false;
+      $('hola-n').textContent = `Hola, ${d.nombre || ''}`;
+      $('hola-c').textContent = d.cargo || '';
+      const P = d.permisos || [], V = d.vacaciones || [];
+      $('perm-n').textContent = P.length ? `${P.length} en el último año` : '';
+      $('vac-n').textContent = V.length ? `${V.length}` : '';
+      $('perm-l').innerHTML = P.length ? P.map(permisoHtml).join('') : '<p class="vacio">No tienes permisos radicados en el último año.</p>';
+      $('vac-l').innerHTML = V.length ? V.map(vacHtml).join('') : '<p class="vacio">No tienes solicitudes de vacaciones.</p>';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // Permisos: Gestión Humana y Gerencia revisan a la vez.
+    function permisoHtml(p) {
+      const R = permisoReglas(p.tipo, p.caso, p.parentesco);
+      const nombre = [R.T ? R.T.label : p.tipo, R.C && R.C.label, R.P && R.P.label].filter(Boolean).join(' · ');
+      const faltan = [!p.gh && 'Gestión Humana', !p.ger && 'Gerencia'].filter(Boolean);
+      const sigue = p.estado === 'ANULADO' ? `<div class="sigue gris">Esta solicitud se anuló${p.anulado_en ? ' el ' + esc(fLarga(p.anulado_en)) : ''}.</div>`
+        : p.estado === 'NEGADO' ? `<div class="sigue no">No se aprobó.${p.nota ? ' Motivo: ' + esc(p.nota) : ''}</div>`
+          : p.estado === 'APROBADO' ? '<div class="sigue ok">Tu permiso está aprobado.</div>'
+            : `<div class="sigue">Falta que lo apruebe${faltan.length > 1 ? 'n' : ''} ${esc(faltan.join(' y '))}.</div>`;
+      const vivo = !['ANULADO', 'NEGADO'].includes(p.estado);
+      const falta = vivo ? R.soportes.filter((s) => s.cuando !== 'OPC' && !(p.entregados || []).includes(s.k))
+        .map((s) => ({ ...s, vence: permisoVence(s, p.desde, p.hasta, p.fecha_solicitud) })) : [];
+      return `<div class="sol">
+        <div class="top"><b>Radicado # ${esc(p.radicado)}</b>${chip(p.estado)}</div>
+        <div class="que">${esc(nombre)}</div>
+        <div class="cuando">Del ${esc(fHora(p.desde))} al ${esc(fHora(p.hasta))}</div>
+        ${sigue}
+        ${p.estado === 'ANULADO' ? '' : `<ul class="pasos">${paso('Gestión Humana', p.gh, p.gh_en, 'ahora')}${paso('Gerencia', p.ger, p.ger_en, 'ahora')}</ul>`}
+        ${falta.length ? `<div class="falta">📎 <b>Te falta entregar:</b><ul>${falta.map((s) => {
+          const venc = s.vence && s.vence < hoyIso();
+          return `<li>${esc(s.txt)}${s.vence ? ` — <span class="${venc ? 'vencido' : ''}">${venc ? 'se venció el' : 'hasta el'} ${esc(fLarga(s.vence))}</span>` : ''}</li>`;
+        }).join('')}</ul><a href="permisos.html">Entrégalo en el link de permisos →</a></div>` : ''}
+      </div>`;
+    }
+
+    // Vacaciones: el área → Gestión Humana → Gerencia (si aplica) → Nómina, en ese orden.
+    function vacHtml(v) {
+      const pasos = [];
+      if (v.area_tipo) pasos.push({ n: AREA[v.area_tipo] || 'El área', e: v.area, f: v.area_en });
+      pasos.push({ n: 'Gestión Humana', e: v.gh, f: v.gh_en });
+      if (v.req_gerencia) pasos.push({ n: 'Gerencia', e: v.ger, f: v.ger_en });
+      pasos.push({ n: 'Nómina', e: v.nomina_en ? 'RECIBIDO' : null, f: v.nomina_en });
+      const negado = pasos.findIndex((x) => x.e === 'NEGADO');
+      const ahora = pasos.findIndex((x) => !x.e);
+      const lista = pasos.filter((x, i) => negado < 0 || i <= negado)
+        .map((x, i) => paso(x.n, x.e, x.f, i === ahora ? 'ahora' : 'despues')).join('');
+      const fechas = v.inicio ? `Del ${esc(fLarga(v.inicio))} al ${esc(fLarga(v.fin))} · entras el ${esc(fLarga(v.regreso))}` : 'Solo días en dinero';
+      const sigue = v.estado === 'ANULADO' ? `<div class="sigue gris">Esta solicitud se anuló${v.anulado_en ? ' el ' + esc(fLarga(v.anulado_en)) : ''}.</div>`
+        : v.estado === 'NEGADO' ? `<div class="sigue no">No se aprobaron.${v.nota ? ' Motivo: ' + esc(v.nota) : ''}</div>`
+          : v.estado === 'APROBADO' ? `<div class="sigue ok">Tus vacaciones están aprobadas.${v.inicio ? ` Sales el ${esc(fLarga(v.inicio))} y entras a trabajar el <b>${esc(fLarga(v.regreso))}</b>.` : ''}${v.nomina_en ? ' Nómina ya las recibió.' : ' Falta que Nómina las reciba.'}</div>`
+            : `<div class="sigue">Va en: <b>${esc(ahora >= 0 ? pasos[ahora].n : 'revisión')}</b>.</div>`;
+      return `<div class="sol">
+        <div class="top"><b>Radicado # ${esc(v.radicado)}</b>${chip(v.estado)}</div>
+        <div class="que">Período ${esc(v.periodo)} · ${v.disfrute} día(s) de disfrute${v.dinero ? ` y ${v.dinero} en dinero` : ''}</div>
+        <div class="cuando">${fechas}</div>
+        ${sigue}
+        ${v.estado === 'ANULADO' ? '' : `<ul class="pasos">${lista}</ul>`}
+      </div>`;
+    }
+  </script>
+</body>
+</html>

@@ -19,8 +19,10 @@
     - Las fechas las calcula la base (vacaciones_fechas): días hábiles sin domingos ni festivos, y
       el sábado solo para quien lo trabaja. Lo que se muestra es lo mismo que queda radicado.
     - Las notas del formato (8 días mínimo, 15 días de anticipación…) se avisan, no bloquean.
-    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222:
-      no consulta ni radica nada.
+    - "¿Quién te reemplaza?" (sql/170) solo sale si la base manda la lista ('reemplazo'): a los
+      administrativos que no son despachadores ni gestores. Se elige de los administrativos activos.
+    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222
+      (conductor) o 99000111223 (administrativo): no consulta ni radica nada.
   -->
   <style>
     :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
@@ -46,6 +48,8 @@
     .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); margin-top: 14px; }
     .btn:disabled { opacity: .6; cursor: wait; }
     .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
+    a.btn { text-align: center; text-decoration: none; }
+    .consulta { display: block; text-align: center; margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--rojo2); }
     .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
     .hola { display: flex; gap: 12px; align-items: center; }
     .hola .av { width: 46px; height: 46px; border-radius: 50%; background: #fff1f1; display: grid; place-items: center; font-size: 22px; flex: none; }
@@ -118,7 +122,7 @@
   </header>
 
   <main>
-    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 y cualquier fecha.</div>
+    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 (conductor) o 99000111223 (administrativo) y cualquier fecha.</div>
 
     <!-- 1 · Quién eres -->
     <section class="card" id="p1">
@@ -135,6 +139,7 @@
       </div>
       <button type="button" class="btn" id="entrar">Continuar →</button>
       <p class="hint" style="text-align:center;margin-top:10px">Con estos mismos datos consultas después cómo va tu solicitud.</p>
+      <a class="consulta" href="mis-solicitudes.html">🔎 ¿Ya radicaste? Mira cómo van tus vacaciones</a>
     </section>
 
     <!-- Hola + lo que ya pidió -->
@@ -183,8 +188,9 @@
       <section class="card">
         <h2>📝 Detalles</h2>
         <div class="grid">
-          <label class="full">¿Quién te reemplaza?
-            <input type="text" id="reemplaza" maxlength="80" placeholder="Nombre del compañero (si ya lo sabes)" />
+          <label class="full" id="reemplaza-w" hidden>¿Quién te reemplaza?
+            <select id="reemplaza"></select>
+            <span class="hint">Elige al compañero administrativo que hace tus funciones en tus vacaciones.</span>
           </label>
           <label class="full">Celular
             <input type="tel" id="celular" inputmode="numeric" placeholder="3001234567" />
@@ -225,7 +231,8 @@
       <h2 style="justify-content:center">Solicitud radicada</h2>
       <div class="rad" id="rad-num"></div>
       <div class="resumen" id="resumen"></div>
-      <p class="hint">Gestión Humana la revisa. Para saber cómo va, vuelve a este link y entra con tu cédula y tu fecha de nacimiento.<br><b>Enviarla no confirma la autorización de tus vacaciones.</b></p>
+      <p class="hint">Gestión Humana la revisa. Para saber cómo va, entra a la consulta con tu cédula y tu fecha de nacimiento.<br><b>Enviarla no confirma la autorización de tus vacaciones.</b></p>
+      <a class="btn" href="mis-solicitudes.html">🔎 Ver cómo va mi solicitud</a>
       <button type="button" class="btn btn-sec" id="otra">Hacer otra solicitud</button>
     </section>
   </main>
@@ -234,7 +241,7 @@
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-    import { SUPABASE_URL, SUPABASE_ANON_KEY } from './js/config.js';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, reemplazoOpciones } from './js/config.js';
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
     const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -254,6 +261,8 @@
     const dowIso = (iso) => new Date(iso + 'T12:00:00').getDay();
     const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
     const ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobada', NEGADO: 'Negada', ANULADO: 'Anulada' };
+    const ced = () => ($('cedula').value || '').replace(/\D/g, '');
+    const esPrueba = () => PRUEBA && ['99000111222', '99000111223'].includes(ced());
 
     let quien = null;       // lo que devolvió la identificación
     let periodo = null;     // texto del período elegido
@@ -263,8 +272,16 @@
     if (PRUEBA) $('prueba').hidden = false;
     $('inicio').min = sumarDias(hoyIso(), 1);
 
-    // ---- Vista de prueba: una persona inventada y el cálculo hecho aquí ----
-    const DEMO = () => ({ ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', tipo: 'CONDUCTOR', sabado_habil: true, tiene_afiliado: true,
+    // ---- Vista de prueba: personas inventadas y el cálculo hecho aquí. Al administrativo se le
+    //      pregunta quién lo reemplaza (con compañeros inventados); al conductor no. ----
+    const DEMO = () => ced() === '99000111223'
+      ? { ok: true, nombre: 'Laura', cargo: 'AUXILIAR CONTABLE', tipo: 'ADMINISTRATIVO', sabado_habil: false, tiene_afiliado: false,
+          periodos: [{ texto: '01/02/2025 al 31/01/2026', cumplido: true, solicitado: false }], solicitudes: [],
+          reemplazo: [{ n: 'GOMEZ RESTREPO ANA MARIA', c: 'ANALISTA DE NOMINA', a: 'CONTABILIDAD' },
+            { n: 'PEREZ MESA LUIS FERNANDO', c: 'SUBCOORDINADOR CONTABLE', a: 'CONTABILIDAD' },
+            { n: 'RIOS CANO PAULA ANDREA', c: 'ANALISTA SST', a: 'RECURSO HUMANO' },
+            { n: 'TORO VELEZ CARLOS ANDRES', c: 'DESPACHADOR Y/O CONTROL', a: 'CONTROL' }] }
+      : ({ ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', tipo: 'CONDUCTOR', sabado_habil: true, tiene_afiliado: true, reemplazo: null,
       periodos: [
         { texto: '10/03/2026 al 09/03/2027', cumplido: false, solicitado: false },
         { texto: '10/03/2025 al 09/03/2026', cumplido: true, solicitado: false },
@@ -309,16 +326,15 @@
 
     // ---- 1 · Identificarse ----
     $('entrar').addEventListener('click', async () => {
-      const ced = ($('cedula').value || '').replace(/\D/g, '');
-      if (!ced) return mostrarError($('err1'), 'Escribe tu cédula.');
+      if (!ced()) return mostrarError($('err1'), 'Escribe tu cédula.');
       if (!$('fnac').value) return mostrarError($('err1'), 'Escribe tu fecha de nacimiento.');
       mostrarError($('err1'), '');
       const b = $('entrar'); b.disabled = true; b.textContent = 'Buscando…';
       try {
         let data;
-        if (PRUEBA && ced === '99000111222') data = DEMO();
+        if (esPrueba()) data = DEMO();
         else {
-          const r = await sb.rpc('vacaciones_identificar', { p_cedula: ced, p_fecha_nacimiento: $('fnac').value });
+          const r = await sb.rpc('vacaciones_identificar', { p_cedula: ced(), p_fecha_nacimiento: $('fnac').value });
           if (r.error) throw r.error;
           data = r.data;
         }
@@ -335,6 +351,9 @@
       $('hola-n').textContent = `Hola, ${quien.nombre || ''}`;
       $('hola-c').textContent = quien.cargo || '';
       $('hola').hidden = false;
+      // Solo a los administrativos que no son despachadores ni gestores (la base decide, sql/170).
+      $('reemplaza-w').hidden = !Array.isArray(quien.reemplazo);
+      $('reemplaza').innerHTML = reemplazoOpciones(quien.reemplazo);
       const mias = quien.solicitudes || [];
       $('mias').hidden = !mias.length;
       $('mias-l').innerHTML = mias.map((s) => `<div class="mia">
@@ -413,7 +432,7 @@
         try {
           const sab = !!quien.sabado_habil;
           let r;
-          if (PRUEBA && $('cedula').value.replace(/\D/g, '') === '99000111222') r = calcDemo(inicio, Math.min(dias, 30), sab);
+          if (esPrueba()) r = calcDemo(inicio, Math.min(dias, 30), sab);
           else {
             const x = await sb.rpc('vacaciones_fechas', { p_inicio: inicio, p_dias: Math.min(dias, 30), p_sabado: sab });
             if (x.error) throw x.error;
@@ -496,13 +515,13 @@
       const b = $('enviar'); b.disabled = true; b.textContent = 'Enviando…';
       try {
         let data;
-        if (PRUEBA && $('cedula').value.replace(/\D/g, '') === '99000111222') {
+        if (esPrueba()) {
           data = { ok: true, radicado: 999, fin: calculo && calculo.fin, regreso: calculo && calculo.regreso };
         } else {
           const r = await sb.rpc('vacaciones_radicar', {
-            p_cedula: $('cedula').value.replace(/\D/g, ''), p_fecha_nacimiento: $('fnac').value,
+            p_cedula: ced(), p_fecha_nacimiento: $('fnac').value,
             p_periodo: per, p_inicio: dias ? inicio : null, p_dias_disfrute: dias, p_dias_dinero: din,
-            p_reemplaza: $('reemplaza').value.trim() || null, p_solicitada_por: por,
+            p_reemplaza: Array.isArray(quien.reemplazo) ? ($('reemplaza').value || null) : null, p_solicitada_por: por,
             p_celular: ($('celular').value || '').replace(/\D/g, '') || null, p_observacion: $('obs').value.trim() || null });
           if (r.error) throw r.error;
           data = r.data;

@@ -21,8 +21,10 @@
       después (la asistencia a la cita, el registro de defunción…) o son de una emergencia se
       entregan después por este mismo link, hasta la fecha límite.
     - Cada soporte sube en su propia llamada (permiso_soporte_subir), ya comprimido aquí.
-    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222:
-      no consulta ni radica nada.
+    - "¿Quién te reemplaza?" (sql/170) solo sale si la base manda la lista ('reemplazo'): a los
+      administrativos que no son despachadores ni gestores. Se elige de los administrativos activos.
+    - Abierta desde este computador (localhost) es una VISTA DE PRUEBA con la cédula 99000111222
+      (conductor) o 99000111223 (administrativo): no consulta ni radica nada.
   -->
   <style>
     :root { --rojo: #ED1C24; --rojo2: #B70E14; --txt: #1c1c1c; --muted: #6b6b6b; --borde: #e6dada; --fondo: #f6f5f5; --ok: #16a34a; }
@@ -49,6 +51,8 @@
     .btn { display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; background: var(--rojo); color: #fff; box-shadow: 0 8px 18px rgba(237,28,36,.28); margin-top: 14px; }
     .btn:disabled { opacity: .6; cursor: wait; }
     .btn-sec { background: #fff; color: var(--txt); border: 1px solid var(--borde); box-shadow: none; }
+    a.btn { text-align: center; text-decoration: none; }
+    .consulta { display: block; text-align: center; margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--rojo2); }
     .err { background: #fff1f1; border: 1px solid #ffd2d2; color: #b3121b; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 12px; }
     .hola { display: flex; gap: 12px; align-items: center; }
     .hola .av { width: 46px; height: 46px; border-radius: 50%; background: #fff1f1; display: grid; place-items: center; font-size: 22px; flex: none; }
@@ -116,7 +120,7 @@
   </header>
 
   <main>
-    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 y cualquier fecha.</div>
+    <div id="prueba" class="prueba" hidden>Vista de prueba: abierta desde este computador. Usa la cédula 99000111222 (conductor) o 99000111223 (administrativo) y cualquier fecha.</div>
 
     <!-- 1 · Quién eres -->
     <section class="card" id="p1">
@@ -133,6 +137,7 @@
       </div>
       <button type="button" class="btn" id="entrar">Continuar →</button>
       <p class="hint" style="text-align:center;margin-top:10px">Con estos mismos datos entregas después los soportes que te falten.</p>
+      <a class="consulta" href="mis-solicitudes.html">🔎 ¿Ya radicaste? Mira cómo va tu permiso</a>
     </section>
 
     <!-- Hola + sus solicitudes, con los soportes que le faltan -->
@@ -186,8 +191,9 @@
             <input type="text" id="autoriza" maxlength="80" placeholder="Nombre de tu jefe inmediato" />
             <span class="hint">Este permiso necesita el visto bueno de tu jefe antes de radicarlo.</span>
           </label>
-          <label class="full">¿Quién te reemplaza?
-            <input type="text" id="reemplaza" maxlength="80" placeholder="Nombre del compañero (si aplica)" />
+          <label class="full" id="reemplaza-w" hidden>¿Quién te reemplaza?
+            <select id="reemplaza"></select>
+            <span class="hint">Elige al compañero administrativo que hace tus funciones mientras no estás.</span>
           </label>
           <div class="full" id="repone-w" hidden>
             <label style="margin:0">¿Vas a reponer el tiempo? <span class="req">*</span></label>
@@ -224,7 +230,8 @@
       <h2 style="justify-content:center">Solicitud radicada</h2>
       <div class="rad" id="rad-num"></div>
       <div class="resumen" id="resumen"></div>
-      <p class="hint">Guarda este número. Para entregar un soporte que te falte o ver cómo va, vuelve a este link y entra con tu cédula y tu fecha de nacimiento.</p>
+      <p class="hint">Guarda este número. Para entregar un soporte que te falte, vuelve a este link y entra con tu cédula y tu fecha de nacimiento.</p>
+      <a class="btn" href="mis-solicitudes.html">🔎 Ver cómo va mi solicitud</a>
       <button type="button" class="btn btn-sec" id="otra">Hacer otra solicitud</button>
     </section>
   </main>
@@ -233,7 +240,7 @@
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERMISO_TIPOS, permisoReglas, permisoVence } from './js/config.js';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, PERMISO_TIPOS, permisoReglas, permisoVence, reemplazoOpciones } from './js/config.js';
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
     const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -256,7 +263,7 @@
     const mostrarError = (el, txt) => { el.textContent = txt || ''; el.hidden = !txt; if (txt) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
     const ESTADO = { PENDIENTE: 'Pendiente', 'EN TRAMITE': 'En trámite', APROBADO: 'Aprobado', NEGADO: 'Negado', ANULADO: 'Anulado' };
     const ced = () => ($('cedula').value || '').replace(/\D/g, '');
-    const esPrueba = () => PRUEBA && ced() === '99000111222';
+    const esPrueba = () => PRUEBA && ['99000111222', '99000111223'].includes(ced());
 
     let quien = null;                       // lo que devolvió permiso_mis
     let tipo = null, caso = null, parentesco = null, repone = null;
@@ -271,11 +278,18 @@
       return [R.T ? R.T.label : p.tipo, R.C && R.C.label, R.P && R.P.label].filter(Boolean).join(' · ');
     };
 
-    // ---- Vista de prueba: una persona inventada, con un luto al que le falta un soporte ----
-    const DEMO = () => ({ ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', sabado_habil: true,
-      permisos: [{ radicado: 12, fecha_solicitud: sumarDias(hoyIso(), -6), tipo: 'LUTO', caso: null, parentesco: 'HERMANO(A)',
-        desde: sumarDias(hoyIso(), -6) + 'T06:00:00', hasta: sumarDias(hoyIso(), 1) + 'T06:00:00', estado: 'APROBADO',
-        entregados: ['defuncion'] }] });
+    // ---- Vista de prueba: personas inventadas. El conductor tiene un luto al que le falta un soporte;
+    //      al administrativo se le pregunta quién lo reemplaza (con compañeros inventados). ----
+    const DEMO = () => ced() === '99000111223'
+      ? { ok: true, nombre: 'Laura', cargo: 'AUXILIAR CONTABLE', sabado_habil: false, permisos: [],
+          reemplazo: [{ n: 'GOMEZ RESTREPO ANA MARIA', c: 'ANALISTA DE NOMINA', a: 'CONTABILIDAD' },
+            { n: 'PEREZ MESA LUIS FERNANDO', c: 'SUBCOORDINADOR CONTABLE', a: 'CONTABILIDAD' },
+            { n: 'RIOS CANO PAULA ANDREA', c: 'ANALISTA SST', a: 'RECURSO HUMANO' },
+            { n: 'TORO VELEZ CARLOS ANDRES', c: 'DESPACHADOR Y/O CONTROL', a: 'CONTROL' }] }
+      : { ok: true, nombre: 'Juan Carlos', cargo: 'CONDUCTOR', sabado_habil: true, reemplazo: null,
+          permisos: [{ radicado: 12, fecha_solicitud: sumarDias(hoyIso(), -6), tipo: 'LUTO', caso: null, parentesco: 'HERMANO(A)',
+            desde: sumarDias(hoyIso(), -6) + 'T06:00:00', hasta: sumarDias(hoyIso(), 1) + 'T06:00:00', estado: 'APROBADO',
+            entregados: ['defuncion'] }] };
     const calcDemo = (inicio, dias, sab) => {
       let d = inicio, n = 0, fin = null;
       for (let i = 0; i < 60 && !fin; i++) {
@@ -352,6 +366,9 @@
         $('hola-c').textContent = quien.cargo || '';
         $('hola').hidden = false;
         pintarMias();
+        // Solo a los administrativos que no son despachadores ni gestores (la base decide, sql/170).
+        $('reemplaza-w').hidden = !Array.isArray(quien.reemplazo);
+        $('reemplaza').innerHTML = reemplazoOpciones(quien.reemplazo);
         $('form').hidden = false;
         $('hola').scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch {
@@ -585,7 +602,7 @@
           const r = await sb.rpc('permiso_radicar', {
             p_cedula: ced(), p_fecha_nacimiento: $('fnac').value, p_tipo: tipo, p_caso: caso, p_parentesco: parentesco,
             p_motivo: $('motivo').value.trim(), p_desde: d, p_hasta: h,
-            p_reemplaza: $('reemplaza').value.trim() || null,
+            p_reemplaza: Array.isArray(quien.reemplazo) ? ($('reemplaza').value || null) : null,
             p_reposicion: R.repone === 'PREGUNTA' ? repone === 'SI' : null,
             p_forma_reposicion: repone === 'SI' ? $('forma').value.trim() : null,
             p_celular: ($('celular').value || '').replace(/\D/g, '') || null,
