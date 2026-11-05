@@ -16720,27 +16720,34 @@ const CERT_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'juli
 
 const certPesos = (n) => '$' + Number(n || 0).toLocaleString('es-CO');
 
-// "15 de abril de 2026", como van las fechas en el formato. `fechaLegible` da dd/mm/aaaa, que
-// sirve en una tabla pero no en una carta.
-function certFechaLarga(v) {
+// "12/07/2025": así van las fechas del periodo en el formato de noviembre de 2026. Se arma a
+// mano desde el texto de la fecha para que la zona horaria no la corra un día.
+function certFechaCorta(v) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
-  if (!m) return String(v || '');
-  return `${Number(m[3])} de ${CERT_MESES[Number(m[2]) - 1]} de ${m[1]}`;
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v || '');
 }
 
-// Un renglón del historial: "Del 6 de marzo de 2023 al 5 de noviembre de 2023."
+// Un renglón del historial, como en el formato: "12/07/2025 – 06/03/2026".
 // Si en ese periodo tenía otro cargo, se dice; repetir el mismo en cada línea sobra.
 // A una persona ya retirada no se le escribe "Contrato vigente" aunque le falte la fecha de
 // retiro: eso es un dato por corregir, y la pantalla de revisión lo avisa aparte.
 function certPeriodoTexto(p, inactivo, cargoActual) {
-  const d = p.desde ? certFechaLarga(p.desde) : '';
-  const h = p.hasta ? certFechaLarga(p.hasta) : '';
+  const d = p.desde ? certFechaCorta(p.desde) : '';
+  const h = p.hasta ? certFechaCorta(p.hasta) : '';
   const otro = p.cargo && String(p.cargo).toUpperCase() !== String(cargoActual || '').toUpperCase()
     ? `, como ${p.cargo}` : '';
-  if (d && h) return `Del ${d} al ${h}${otro}.`;
-  if (d) return `Desde el ${d}${otro}.` + (inactivo ? '' : ' Contrato vigente.');
-  if (h) return `Hasta el ${h}${otro}.`;
+  if (d && h) return `${d} – ${h}${otro}`;
+  if (d) return inactivo ? `Desde el ${d}${otro}` : `${d} – Contrato vigente${otro}`;
+  if (h) return `Hasta el ${h}${otro}`;
   return '—';
+}
+
+// En la firma la empresa va como en el modelo: "Autobuses el Poblado Laureles S.A.".
+function certTitulo(s) {
+  return String(s || '').toLowerCase().split(/\s+/).filter(Boolean).map((w, i) => (/\./.test(w)
+    ? w.toUpperCase()
+    : (i && /^(el|la|los|las|de|del|y)$/.test(w)) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
 }
 
 // El logo, ya convertido a imagen embebida: si se imprime desde otra ventana, una ruta relativa
@@ -16756,6 +16763,23 @@ async function certLogoDataUri() {
   } catch { return ''; }
 }
 
+// La franja del pie de página (logo, Vigilado SuperTransporte y los sellos de certificación),
+// también embebida: en la ventana de imprimir una ruta relativa no resolvería.
+let _certFranja = '';
+async function certFranjaDataUri() {
+  if (_certFranja) return _certFranja;
+  try {
+    const r = await fetch('icons/certificado-pie.png');
+    if (!r.ok) return '';
+    const b = await r.blob();
+    _certFranja = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(b);
+    });
+  } catch { _certFranja = ''; }
+  return _certFranja;
+}
+
 async function certLeerConfig() {
   if (_certCfg) return _certCfg;
   const { data, error } = await sb.rpc('certificado_config_leer');
@@ -16765,10 +16789,14 @@ async function certLeerConfig() {
 }
 
 // ---- El documento ----
-// Reproduce el formato que entregó Talento Humano (octubre de 2026): membrete con el logo a la
-// derecha, la fecha arriba, "El suscrito <cargo> … CERTIFICA QUE", el periodo en dos líneas y
-// una sola firma. Lo único que se aparta del modelo es lo que el modelo no podía prever:
-//   · si la persona está retirada dice "laboró" y la fecha de retiro real, no "Contrato vigente";
+// Reproduce el formato que actualizó Talento Humano (noviembre de 2026): el membrete en texto
+// arriba, la fecha, "El suscrito <cargo> … CERTIFICA QUE", un renglón por periodo
+// ("1 periodo: 12/07/2025 – 06/03/2026"), una sola firma y, al pie de la hoja, la franja con el
+// logo, Vigilado SuperTransporte y los sellos de certificación. En el Word el logo del
+// encabezado queda por fuera de la hoja y no se imprime: el logo va en la franja.
+// Lo único que se aparta del modelo es lo que el modelo no podía prever:
+//   · el modelo es de una persona retirada ("laboró", "último salario"); si está activa dice
+//     "labora", "salario" y "Contrato vigente";
 //   · si se expide sin salario, se omite ese pedazo de la frase;
 //   · si la ficha dice el sexo, concuerda ("El señor" / "La señora") en vez de "El(la) señor(a)".
 function certDocHtml(row, cfg, opts) {
@@ -16781,31 +16809,27 @@ function certDocHtml(row, cfg, opts) {
   const labora = inactivo ? 'laboró' : 'labora';
 
   const contrato = row.tipo_contrato
-    ? `, desempeñando sus labores bajo un contrato laboral a Término <b>${esc(row.tipo_contrato)}</b>`
+    ? ` desempeñando sus labores bajo un contrato laboral a Término <b>${esc(row.tipo_contrato)}</b>`
     : '';
   const frase = (o.conSalario && row.salario)
-    ? ` y devengando un Salario de <b>${certPesos(row.salario)}</b>`
+    ? ` y devengando un ${inactivo ? 'último salario' : 'salario'} de `
+      + `$<b>${Number(row.salario).toLocaleString('es-CO')}</b>`
     : '';
 
-  // Historial: 306 personas han entrado más de una vez. Con un solo periodo el documento
-  // queda exactamente como el formato de Talento Humano; con varios, cada entrada lleva su
-  // renglón, porque certificar solo el último sería certificar media vida laboral.
-  const per = (o.hist && o.hist.ok && Array.isArray(o.hist.periodos)) ? o.hist.periodos : [];
+  // Historial: 306 personas han entrado más de una vez y certificar solo el último periodo
+  // sería certificar media vida laboral, así que cada entrada lleva su renglón. Con una sola
+  // entrada sale la de la ficha (y si el historial no cargó, también).
+  const hist = (o.hist && o.hist.ok && Array.isArray(o.hist.periodos)) ? o.hist.periodos : [];
+  const per = hist.length > 1 ? hist : [{ desde: row.fecha_ingreso, hasta: row.fecha_retiro }];
   const varios = per.length > 1;
-  const bloqueFechas = varios
-    ? `<div class="cl-fechas">${per.map((p, i) => `<div><span>Periodo ${i + 1}:</span>`
-      + `${esc(certPeriodoTexto(p, inactivo, row.cargo))}</div>`).join('')}</div>`
-    : `<div class="cl-fechas">
-      <div><span>Fecha de Ingreso:</span>${row.fecha_ingreso ? certFechaLarga(row.fecha_ingreso) + '.' : '—'}</div>
-      <div><span>Fecha de retiro:</span>${row.fecha_retiro ? certFechaLarga(row.fecha_retiro) + '.'
-      : (inactivo ? '—' : 'Contrato vigente.')}</div>
-    </div>`;
+  const bloqueFechas = `<div class="cl-fechas">${per.map((p, i) => `<div><b>${i + 1} periodo:</b> `
+    + `${esc(certPeriodoTexto(p, inactivo, row.cargo))}</div>`).join('')}</div>`;
 
   const hoy = new Date();
   const fechaHoy = `${cfg.ciudad || 'Medellín'}, ${hoy.getDate()} de ${CERT_MESES[hoy.getMonth()]} `
     + `de ${hoy.getFullYear()}.`;
 
-  // Quien firma es el que diga la configuración (sql/144): el formato nuevo lo firma Talento
+  // Quien firma es el que diga la configuración (sql/144): el formato lo firma Talento
   // Humano, no la Gerencia, pero eso se cambia sin tocar el código.
   const n = cfg.firma_rol === 'GERENTE' ? '1' : '2';
   const fNom = cfg['firmante' + n + '_nombre'];
@@ -16815,28 +16839,25 @@ function certDocHtml(row, cfg, opts) {
   const fDx = Number(cfg['firmante' + n + '_dx']) || 0;
   const fDy = Number(cfg['firmante' + n + '_dy']) || 0;
 
-  // El pie de verificación: teléfono con extensiones y el correo a donde escriben a confirmar.
+  // El renglón de verificación: teléfono con extensiones y el correo a donde escriben a confirmar.
   const tel = [cfg.telefono, cfg.telefono_ext ? `Ext. ${cfg.telefono_ext}` : '']
     .filter(Boolean).join(' ');
-  const pie = (tel || cfg.correo_contacto)
+  const verif = (tel || cfg.correo_contacto)
     ? 'Cualquier información con gusto será suministrada comunicándose al '
-      + `${esc(tel)}${cfg.correo_contacto ? ` o al correo ${esc(cfg.correo_contacto)}` : ''}`
+      + `${esc(tel)}${cfg.correo_contacto ? ` o al correo <span class="cl-link">${esc(cfg.correo_contacto)}</span>` : ''}`
     : '';
 
-  const web = String(cfg.empresa_web || '').replace(/^https?:\/\//, '');
+  const web = String(cfg.empresa_web || '').trim();
+  const webTxt = web && !/^https?:\/\//i.test(web) ? 'https://' + web : web;
 
   return `
   <div class="cl-hoja">
     <div class="cl-mb">
-      <div class="cl-mbt">
-        <div class="cl-emp">${esc(emp)}</div>
-        <div class="cl-nit">${esc(cfg.empresa_nit || '')}</div>
-        <div class="cl-dir">${esc(cfg.empresa_direccion || '')}
-          ${cfg.empresa_correo ? esc(cfg.empresa_correo) : ''}
-          ${web ? esc(web) : ''}</div>
-        ${cfg.empresa_whatsapp ? `<div class="cl-dir">WhatsApp ${esc(cfg.empresa_whatsapp)}</div>` : ''}
-      </div>
-      ${o.logo ? `<img class="cl-logo" src="${o.logo}" alt="">` : ''}
+      <div>${esc(emp)}</div>
+      ${cfg.empresa_nit ? `<div class="cl-gris">${esc(cfg.empresa_nit)}</div>` : ''}
+      <div class="cl-gris">${esc(cfg.empresa_direccion || '')} ${esc(cfg.empresa_correo || '')}</div>
+      ${webTxt ? `<div>${esc(webTxt)}</div>` : ''}
+      ${cfg.empresa_whatsapp ? `<div>WhatsApp ${esc(cfg.empresa_whatsapp)}</div>` : ''}
     </div>
 
     <p class="cl-p cl-fecha">${esc(fechaHoy)}</p>
@@ -16846,60 +16867,59 @@ function certDocHtml(row, cfg, opts) {
 
     <div class="cl-tit">CERTIFICA QUE:</div>
 
-    <p class="cl-p">
-      ${trato} <u><b>${esc(row.nombre || '')}</b></u> ${ido} con cédula de ciudadanía
-      No. <u><b>${esc(row.cedula || '')}</b></u> ${labora} para la compañía como
+    <p class="cl-p cl-cuerpo">
+      ${trato} <b>${esc(row.nombre || '')}</b> ${ido} con cédula de ciudadanía
+      No. <b>${esc(row.cedula || '')}</b> ${labora} para la compañía como
       <b>${esc(row.cargo || '')}</b>${contrato}${frase},
       para ${varios ? 'los siguientes periodos' : 'el siguiente periodo'}:
     </p>
 
     ${bloqueFechas}
 
-    ${pie ? `<p class="cl-p cl-tel">${pie}</p>` : ''}
+    ${verif ? `<p class="cl-p cl-tel">${verif}</p>` : ''}
 
     <p class="cl-p cl-cord">Cordialmente,</p>
 
     <div class="cl-f">
-      ${fImg
+      <div class="cl-fimg">${fImg
     ? `<img src="${esc(fImg)}" alt="" style="height:${fAlto}px;transform:translate(${fDx}px,${fDy}px)">`
-    : '<div class="cl-fl"></div>'}
+    : ''}</div>
       <div class="cl-fn">${esc(fNom || '')}</div>
       <div class="cl-fn">${esc(fCargo || '')}</div>
-      <div class="cl-fn">${esc(emp)}</div>
+      <div class="cl-fn">${esc(certTitulo(emp))}</div>
     </div>
+
+    ${o.franja ? `<img class="cl-franja" src="${o.franja}" alt="">` : ''}
   </div>`;
 }
 
 // Estilos del documento: van embebidos porque se imprime en una ventana aparte.
-// Los márgenes son los de la plantilla de Word (el derecho es ancho a propósito: el membrete
-// y el logo se salen a ese costado, el texto no).
+// La hoja mide lo que una carta y las distancias son las del Word de Talento Humano exportado
+// a PDF (medidas en cm), así la vista previa, lo impreso y el PDF de WhatsApp salen iguales.
+// La franja del pie va pegada al borde de abajo de la hoja, como el pie de página del Word.
 // `.cl-doc` envuelve al documento en vez de usar `body`: la vista previa vive DENTRO de la
 // aplicación, y una regla sobre `body` le cambiaba la tipografía a toda la pantalla.
 const CERT_CSS = `
-  @page { size: letter; margin: 1.5cm 4.2cm 1.3cm 1.9cm; }
+  @page { size: letter; margin: 0; }
   .cl-doc { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
-  .cl-hoja { font-size: 12pt; line-height: 1.5; }
-  .cl-mb { display: flex; align-items: flex-start; gap: 14px; margin: 0 -3.4cm 26px 0; }
-  .cl-mbt { flex: 1; padding-top: 4px; }
-  .cl-logo { width: 3.5cm; flex: none; }
-  .cl-emp { font-weight: 700; font-size: 11pt; }
-  .cl-nit { font-weight: 700; font-size: 10pt; }
-  .cl-dir { font-size: 8.5pt; line-height: 1.35; }
-  .cl-p { text-align: justify; margin: 0 0 16px; }
-  .cl-fecha { margin-bottom: 30px; }
-  .cl-suscrito { margin-bottom: 20px; }
-  .cl-tit { text-align: center; font-weight: 700; margin: 0 0 20px; }
-  .cl-fechas { margin: 22px 0 26px; font-weight: 700; }
-  /* En dos columnas de verdad: un periodo largo parte la línea bajo el texto, no bajo la
-     etiqueta, que es como se veía antes ("como AUXILIAR." colgando a la izquierda). */
-  .cl-fechas div { margin-bottom: 4px; display: flex; align-items: baseline; }
-  .cl-fechas span { flex: none; width: 4.6cm; }
-  .cl-tel { margin-top: 26px; }
-  .cl-cord { margin: 34px 0 0; }
-  .cl-f { margin-top: 64px; }
-  .cl-f img { display: block; margin-bottom: 2px; }
-  .cl-fl { height: 10px; }
+  .cl-hoja { position: relative; box-sizing: border-box; width: 21.59cm; min-height: 27.9cm;
+    padding: 1.5cm 2.84cm 4.6cm 2.9cm; background: #fff; font-size: 12pt; line-height: 1.15; }
+  .cl-mb { margin-left: -.25cm; font-size: 10pt; font-weight: 700; line-height: 1.08; }
+  .cl-gris { color: #666; }
+  .cl-p { text-align: justify; margin: 0; }
+  .cl-fecha { margin-top: 1.8cm; }
+  .cl-suscrito { margin-top: .97cm; }
+  .cl-tit { text-align: center; font-weight: 700; margin-top: .66cm; }
+  .cl-cuerpo { margin: .89cm -.15cm 0 0; line-height: 1; }
+  .cl-fechas { margin-top: 1.33cm; }
+  .cl-fechas div + div { margin-top: .12cm; }
+  .cl-tel { margin: .96cm -.25cm 0 0; }
+  .cl-link { color: #0563c1; text-decoration: underline; }
+  .cl-cord { margin-top: 1.2cm; }
+  .cl-fimg { height: 1.44cm; display: flex; align-items: flex-end; }
+  .cl-fimg img { display: block; }
   .cl-fn { font-weight: 700; }
+  .cl-franja { position: absolute; left: .59cm; bottom: .46cm; width: 20.64cm; height: 4.02cm; }
 `;
 
 // ---- Pantalla: primero se revisa, se decide lo del salario, y solo entonces se genera ----
@@ -16957,8 +16977,8 @@ function certRevisionHtml(row) {
       </div>
       ${certHistRevHtml(row, inactivo)}
       ${inactivo
-    ? '<div class="cert-nota-est">Esta persona está <b>INACTIVA</b>: el certificado dice «laboró» y lleva la fecha de retiro.</div>'
-    : '<div class="cert-nota-est">Esta persona está <b>ACTIVA</b>: el certificado dice «labora» y en la fecha de retiro sale «Contrato vigente».</div>'}
+    ? '<div class="cert-nota-est">Esta persona está <b>INACTIVA</b>: el certificado dice «laboró» y «último salario», y lleva la fecha de retiro.</div>'
+    : '<div class="cert-nota-est">Esta persona está <b>ACTIVA</b>: el certificado dice «labora» y en el periodo sale «Contrato vigente».</div>'}
       ${falta.length
     ? `<div class="cert-bloqueo">No se puede expedir sin ${falta.join(', ')}. Corrige la ficha primero.</div>` : ''}
     </div>`;
@@ -17006,11 +17026,10 @@ function certOpciones() {
   return {
     conSalario: _certSal === true,
     dirigidoA: dir ? dir.value.trim() : '',   // no se imprime: queda en el registro de expedición
-    logo: _certLogo || '',
+    franja: _certFranja,
     hist: _certHist,
   };
 }
-let _certLogo = '';
 let _certHist = null;   // periodos trabajados de la persona abierta (sql/146)
 
 // Revisar (1) · ver el documento armado (2) · enviarlo por WhatsApp (3).
@@ -17036,6 +17055,11 @@ function certPintar() {
   const prev = certModal().querySelector('[data-paso2]');
   prev.innerHTML = `<style>${CERT_CSS}</style><div class="cl-doc">`
     + certDocHtml(_certRow, _certCfg, certOpciones()) + '</div>';
+  // La hoja mide lo que una carta: si no cabe se achica entera (zoom) en vez de reacomodar el
+  // texto, porque lo que se ve tiene que ser lo que sale impreso.
+  const hoja = prev.querySelector('.cl-hoja');
+  const cabe = (prev.clientWidth - 2 * parseFloat(getComputedStyle(prev).paddingLeft)) / hoja.offsetWidth;
+  hoja.style.zoom = cabe > 0 && cabe < 1 ? cabe.toFixed(3) : '';
 }
 
 async function openCertificado(row) {
@@ -17051,7 +17075,7 @@ async function openCertificado(row) {
   try {
     const [cfg] = await Promise.all([
       certLeerConfig(),
-      certLogoDataUri().then((d) => { _certLogo = d; }),
+      certFranjaDataUri(),
       // Si el historial falla, el certificado sale con el periodo de la ficha, como antes.
       sb.rpc('certificado_historial', { p_cedula: row.cedula })
         .then((r) => { _certHist = (r.data && r.data.ok) ? r.data : null; }, () => {}),
@@ -17163,11 +17187,10 @@ async function certPdfBlob(row, cfg, o) {
     const d = fr.contentDocument;
     d.open();
     d.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><style>${CERT_CSS}</style>`
-      + `<style>html,body{margin:0}.cl-doc{width:21.6cm;box-sizing:border-box;`
-      + `padding:1.5cm 4.2cm 1.3cm 1.9cm;background:#fff}</style></head>`
+      + `<style>html,body{margin:0}.cl-doc{width:21.59cm;background:#fff}</style></head>`
       + `<body><div class="cl-doc">${certDocHtml(row, cfg, o)}</div></body></html>`);
     d.close();
-    // El logo va embebido (data URI), pero esperar a las imágenes evita una hoja sin membrete.
+    // La franja va embebida (data URI), pero esperar a las imágenes evita una hoja sin pie.
     await new Promise((res) => { if (d.readyState === 'complete') res(); else fr.onload = res; });
     await Promise.all(Array.from(d.images).map((im) => (im.complete ? null
       : new Promise((r) => { im.onload = im.onerror = r; }))).filter(Boolean));
@@ -17191,7 +17214,7 @@ async function certPdfBlob(row, cfg, o) {
   } finally { fr.remove(); }
 }
 
-// "AMARILES ESCOBAR GIOVANNY ANDRES" → "Giovanny Andrés": en Colombia van primero los dos
+// "PEREZ GOMEZ JUAN CARLOS" → "Juan Carlos": en Colombia van primero los dos
 // apellidos. Es un saludo, no un dato legal; con menos de tres palabras se deja el nombre tal cual.
 function certNombrePila(nombre) {
   const p = String(nombre || '').trim().split(/\s+/).filter(Boolean);
