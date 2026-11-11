@@ -660,6 +660,8 @@ function buildSidebar() {
     const avGps = GPS_ALERTAS ? ` <span class="nav-badge">${GPS_ALERTAS}</span>` : '';
     addNavAction(gOp, '🛰️', 'Salud del GPS' + avGps, openGpsSalud, 'nav-gpssalud');
   }
+  // 📷 QR obligatorio en cada despacho (sql/178): en local, el control solo para administración.
+  if (isAdmin()) addNavAction(gOp, '📷', 'QR, fotos y carnets', openQrControl, 'nav-qr-control');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
 
   // 📈 Cumplimiento y análisis
@@ -5279,6 +5281,14 @@ $('modal-save').addEventListener('click', async () => {
     payload[key] = data.id;
   }
 
+  // 📷 QR obligatorio (sql/178): marcar el viaje como hecho editando la fila se saltaría el QR del bus.
+  // El único camino es ✈️ Despachar, que lo pide. El admin conserva la corrección a mano.
+  if (qrdModo() === 'obligatorio' && cfg.dispatchable && !isAdmin() && !isAuditor()) {
+    const hecho = (v) => ['SI', 'DESPACHADO'].includes(String(v || '').trim().toUpperCase());
+    if (hecho(payload.estado_despacho) && !hecho(editing?.estado_despacho)) {
+      err.textContent = '📷 Para marcar que el viaje se realizó usa ✈️ Despachar en la fila: ahí se lee el QR del bus.'; err.hidden = false; return;
+    }
+  }
   // Resumen: el Despachador que ABRE es quien tiene la sesión. Se fija SOLO al crear (apertura);
   // al editar/cerrar NO se sobrescribe (son 2 despachadores en turnos distintos: uno abre, otro
   // cierra, y debe quedar registrado quién abrió). El admin/auditor (sin despachador_id en
@@ -7671,6 +7681,7 @@ async function openNuevoDespacho() {
     $('nd-desp').value = CTX?.despachador_id ? String(CTX.despachador_id) : '';
     $('nd-desp-name').value = CTX?.nombre || sessionUser?.email || '';
     enhanceById('nd-ruta', 'nd-movil', 'nd-cond');
+    qrdPreparar('nd');   // 📷 QR obligatorio del bus (sql/178): en libre, el QR dice qué bus sale
     if ($('nd-estacion')) $('nd-estacion').checked = false;
     if ($('nd-estacion-wrap')) $('nd-estacion-wrap').hidden = true;
     if ($('nd-puesto-todos')) $('nd-puesto-todos').checked = false;
@@ -7729,6 +7740,7 @@ async function avisoRestriccionND() {
 async function traerConductorND() {
   const vehId = $('nd-movil').value;
   if (!vehId) return;
+  if (!$('nd-modal').hidden && _qrd.nd?.cond?.estado === 'LEIDO') return; // 🪪 manda el carnet
   const nombre = await nombreConductorDeVehiculo(vehId, $('nd-fecha').value || null);
   if (!nombre) return;
   const sel = $('nd-cond');
@@ -24095,6 +24107,7 @@ async function doDispatch(intent) {
   };
   const ins = await sb.from('despachos').upsert(payload, { onConflict: 'id' });
   if (ins.error) throw ins.error;
+  if (intent.qr && !intent.qrGuardado) { await qrdGuardar(intent.qr, 'despachos', intent.id, intent.vehId, 'CREADO'); intent.qrGuardado = true; }
   const { data: sd, error: se } = await sb.rpc('despachar_sonar', {
     p_mid: intent.mId || '', p_itinerary: intent.itid, p_drvid: intent.drvId,
     p_utc: sonarFechaHora(intent.fecha, intent.hora), // hora seleccionada (Colombia); '' = ahora
@@ -24134,6 +24147,7 @@ async function doDispatch(intent) {
 $('nd-save').addEventListener('click', async () => {
   if ($('nd-save').dataset.busy === '1') return; // evita doble click / doble despacho
   const err = $('nd-error'); err.hidden = true;
+  { const falta = qrdFalta('nd'); if (falta) { err.textContent = '📷 ' + falta; err.hidden = false; return; } }
   const itid = $('nd-ruta').value;
   const vehVal = $('nd-movil').value;
   const drvId = $('nd-cond').value;
@@ -24157,6 +24171,7 @@ $('nd-save').addEventListener('click', async () => {
     vehId: Number(vehVal), movilNum: vrow?.numero || null, mId: vrow?.numero ? (await gpsIdFor(vrow.numero)) : null,
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
     despId: Number($('nd-desp').value) || null, com: $('nd-com').value.trim(),
+    qr: qrdInstantanea('nd'),   // QR del bus + foto + carnet: viajan con el despacho (también en la cola sin conexión)
   };
 
   // Bloqueo por preventiva RECHAZADA: suspendido hasta que operaciones apruebe la nueva revisión
@@ -24201,6 +24216,7 @@ $('nd-save').addEventListener('click', async () => {
     err.textContent = 'Despacho cancelado: se requiere la ubicación (GPS) para despachar.'; err.hidden = false;
     return;
   }
+  intent.qr = await qrdListo(intent.qr); // la foto ya sellada, o dentro del paquete si no alcanzó a subir (sql/179)
 
   // Sin internet → guardar offline y salir
   if (!navigator.onLine) {
@@ -24443,6 +24459,7 @@ async function _openSonarInterno(row) {
   await updateSonarInfo();
   updateSonarProg();           // muestra el móvil programado y avisa si hay cambio
   $('sonar-modal').hidden = false;
+  qrdPreparar('s');            // 📷 QR obligatorio del bus (sql/178)
 }
 // Trae el conductor registrado en Resumen para el móvil elegido (mapeado a conductor SONAR)
 async function traerConductorSonar() {
@@ -24450,6 +24467,8 @@ async function traerConductorSonar() {
   const setNote = (cls, txt) => { if (note) { note.hidden = false; note.className = 'field full ' + cls; note.textContent = txt; } };
   const vehId = $('s-mov').value;
   if (!vehId) { if (note) note.hidden = true; return; }
+  // 🪪 si ya se leyó el carnet, el conductor es el del carnet (no se pisa con el del Resumen)
+  if (!$('sonar-modal').hidden && _qrd.s?.cond?.estado === 'LEIDO') return;
   // Conductor de Resumen para la fecha del despacho (la del viaje, no la del celular)
   const fechaDesp = sonarRow?.fecha ? String(sonarRow.fecha).slice(0, 10) : hoyServidor();
   const nombre = await nombreConductorDeVehiculo(vehId, fechaDesp);
@@ -24499,6 +24518,7 @@ function aplicarSonarRealizo() {
   }
   $('sonar-send').textContent = sonarSinEnvio ? 'Guardar' : (esNo ? 'Guardar novedad' : (tSin && verSinSonar ? 'Registrar (sin SONAR)' : 'Despachar'));
   if (!ocultarDespacho) updateSonarProg(); // vuelve a mostrar el programado al regresar a SÍ
+  if (_qrd.s) { qrdBloquear('s'); qrdPintar('s'); } // el QR solo se pide si el viaje SÍ se realizó
 }
 $('s-realizo').addEventListener('change', aplicarSonarRealizo);
 // Si cambian el itinerario, recalcular si va SIN SONAR (MADRUGADA/CENTRO) y reajustar el modal
@@ -24539,6 +24559,7 @@ async function marcarRealizadoSinSonar() {
     if (error) { err.textContent = 'No se pudo guardar: ' + error.message; err.hidden = false; return; }
     if (!data || !data.length) { err.textContent = 'No se guardó: tu turno terminó o el registro no es editable.'; err.hidden = false; return; }
     toast('Marcado: se realizó el viaje', 'ok');
+    qrdRegistrar('s', sonarTable, sonarRow.id, Number($('s-mov').value) || sonarRow.vehiculo_id || sonarRow.vehiculo_programado_id, 'REALIZADO');
     closeSonar();
     if (current === sonarTable) loadData();
   } finally {
@@ -24605,6 +24626,7 @@ async function despacharSinSonar() {
     const { data, error } = await sb.from(sonarTable).update(patch).eq('id', sonarRow.id).select();
     if (error) { err.textContent = 'No se pudo registrar: ' + error.message; err.hidden = false; btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); return; }
     if (!data || !data.length) { err.textContent = 'No se guardó: tu turno terminó o el registro no es editable.'; err.hidden = false; btn.dataset.busy = '0'; btn.disabled = false; aplicarSonarRealizo(); return; }
+    qrdRegistrar('s', sonarTable, sonarRow.id, newVehId, 'REGISTRADO');
     const res = $('sonar-result'); res.hidden = false; res.className = 'sonar-result ok';
     res.textContent = (verSinSonar ? '✅ Despacho registrado (sin SONAR).' : '✅ Despacho registrado.') + '\n📍 Ubicación registrada: ' + ubicGps;
     toast(verSinSonar ? 'Despacho registrado (sin SONAR)' : 'Despacho registrado', 'ok');
@@ -24618,6 +24640,11 @@ $('s-drv').addEventListener('change', () => { const n = $('s-cond-note'); if (n)
 $('sonar-send').addEventListener('click', async () => {
   const btn = $('sonar-send');
   if (btn.dataset.busy === '1') return; // evita doble click / doble despacho
+  // 📷 QR obligatorio del bus (sql/178): SÍ realizó → hay que haberlo leído (o dar el motivo)
+  if ($('s-realizo').value === 'SI') {
+    const falta = qrdFalta('s');
+    if (falta) { const e = $('sonar-error'); e.textContent = '📷 ' + falta; e.hidden = false; return; }
+  }
   // Bloqueo por preventiva RECHAZADA: aplica a CUALQUIER "sí despachó/realizó" desde las tablas
   // (SONAR o sin SONAR). "No realizó" sí se permite. Suspendido hasta que operaciones apruebe.
   if ($('s-realizo').value === 'SI') {
@@ -24793,6 +24820,7 @@ $('sonar-send').addEventListener('click', async () => {
       await sb.from(sonarTable).update(patch).eq('id', sonarRow.id);
       if (current === sonarTable) loadData();
     }
+    qrdRegistrar('s', sonarRow?.id ? sonarTable : 'mapa', sonarRow?.id || null, vr.id, 'DESPACHADO', data.regid);
     res.className = 'sonar-result ok';
     res.textContent = (data.sanado
         ? '✅ Despachado. Al móvil le habían cambiado el GPS: se actualizó su Id (mId ' + data.midNuevo + ') y se despachó bien.'
@@ -24807,6 +24835,7 @@ $('sonar-send').addEventListener('click', async () => {
     sonarRow = null;
     btn.disabled = true; btn.textContent = 'Despachado ✓';
   } else {
+    qrdRegistrar('s', sonarRow?.id ? sonarTable : 'mapa', sonarRow?.id || null, vr.id, 'PENDIENTE SONAR');
     res.className = 'sonar-result err';
     res.textContent = '⚠️ SONAR no confirmó: ' + (data?.error || sonarDescripcion(data?.response) || ('Respuesta HTTP ' + (data?.status ?? '?')))
       + '\n→ Quedó como PENDIENTE SONAR. Reenvíalo con el botón ▶ cuando SONAR responda.'
@@ -27242,5 +27271,657 @@ $('perfil-kick-btn').addEventListener('click', async () => {
   if (rp.data?.ok) toast(`Cuenta bloqueada: sesión cerrada y clave nueva → ${pass}`, 'ok');
   else toast('Sesión cerrada, pero no se pudo cambiar la clave: ' + (rp.data?.error || '?'), 'err');
 });
+
+// ============================================================ 📷 QR OBLIGATORIO EN CADA DESPACHO (sql/178 + sql/179)
+// Ensayo en LOCAL (11/11/2026). En cada viaje que se despacha hay que, en UNA sola pasada de cámara:
+//   1) leer el QR del bus (el sticker que imprime la app trae la PLACA),
+//   2) tomar la FOTO del bus seguida, con la misma cámara (nunca de la galería), y
+//   3) leer el QR del CARNET del conductor.
+// Vale para ✈️ de las tablas de puesto y de Despachos, "Nuevo despacho" libre, despachar desde el mapa y
+// las rutas sin SONAR (MADRUGADA/CENTRO, 136II). Decisiones del usuario:
+//  - Fila con bus: el QR TIENE QUE SER de ese bus; para despachar otro, se edita la fila primero.
+//  - Despacho libre, fila sin bus o desde el mapa: el QR dice qué bus sale.
+//  - Sin QR del bus: MOTIVO, y la foto del bus igual (salvo "la cámara no abre").
+//  - El carnet dice qué conductor sale; si no se puede leer: motivo y se elige de la lista.
+//  - "Antifoto": la foto lleva pegado el recorte de donde se leyó el QR (delata una pantalla o una
+//    fotocopia), la hora, el despachador y el GPS, escritos DENTRO de la imagen. La base la "sella" al
+//    subirla con la posición del bus en SONAR: si el celular estaba lejos del bus, queda marcado para
+//    control (no bloquea: hay buses con el GPS dañado). Al despachador no se le muestra la distancia.
+// "NO realizó el viaje" no pide nada (el bus no salió). El auditor no despacha. Marcar "SI" editando la
+// fila a mano queda bloqueado (modal-save): el único camino es ✈️.
+// ARRANQUE (sql/180): la hora en que se vuelve obligatorio vive en la BASE (despacho_qr_config) y se compara
+// con la hora del SERVIDOR. Sin hora → apagado; antes de la hora → PRÁCTICA (sale el recuadro, no bloquea);
+// desde la hora → obligatorio. Así se corre o se apaga sin volver a publicar. El carnet tiene su propio switch.
+const QR_REGLAS_KEY = 'apl_qr_reglas';
+let _qrReglas = (() => {
+  const base = { desde: null, carnet: true, offset: 0, cargado: 0 };
+  try { return Object.assign(base, JSON.parse(localStorage.getItem(QR_REGLAS_KEY) || '{}'), { cargado: 0 }); } catch { return base; }
+})();
+async function qrdCargarReglas(forzar = false) {
+  if (!forzar && Date.now() - _qrReglas.cargado < 300000) return _qrReglas;
+  try {
+    const { data, error } = await sb.rpc('despacho_qr_reglas');
+    if (!error && data?.ok) {
+      _qrReglas = { desde: data.desde ? new Date(data.desde).getTime() : null, carnet: data.carnet !== false,
+        offset: data.ahora ? new Date(data.ahora).getTime() - Date.now() : 0, cargado: Date.now() };
+      try { localStorage.setItem(QR_REGLAS_KEY, JSON.stringify({ desde: _qrReglas.desde, carnet: _qrReglas.carnet, offset: _qrReglas.offset })); } catch { /* */ }
+    }
+  } catch { /* sin conexión: se queda con lo último que supo */ }
+  return _qrReglas;
+}
+function qrdModo() {
+  if (!_qrReglas.desde) return 'off';
+  return Date.now() + (_qrReglas.offset || 0) >= _qrReglas.desde ? 'obligatorio' : 'practica';
+}
+function qrdCarnetAplica() { return _qrReglas.carnet !== false; }
+// "hoy a las 10:30 a. m." o "el jueves 12 a las 10:30 a. m."
+function qrdHoraInicio() {
+  try {
+    const d = new Date(_qrReglas.desde), o = { timeZone: 'America/Bogota' };
+    const hora = d.toLocaleTimeString('es-CO', { ...o, hour: 'numeric', minute: '2-digit', hour12: true });
+    const hoy = new Date(Date.now() + (_qrReglas.offset || 0)).toLocaleDateString('en-CA', o);
+    return d.toLocaleDateString('en-CA', o) === hoy ? `hoy a las ${hora}` : `el ${d.toLocaleDateString('es-CO', { ...o, weekday: 'long', day: 'numeric' })} a las ${hora}`;
+  } catch { return ''; }
+}
+const QR_MOTIVOS = ['Sticker dañado o ilegible', 'El bus no tiene sticker', 'La cámara no abre o no enfoca']; // = _qr_motivos() en la base
+const QR_MOTIVOS_CARNET = ['El conductor no tiene el carnet', 'Carnet dañado o ilegible', 'La cámara no abre o no enfoca']; // = _qr_motivos_carnet()
+const QR_SIN_CAMARA = 'La cámara no abre o no enfoca';
+const _qrd = {};   // estado por ventana: 's' = ✈️ despachar, 'nd' = nuevo despacho libre
+const QRD_MODAL = {
+  s: { sel: 's-mov', drv: 's-drv', fijo: () => { const r = sonarRow; const id = r ? (r.vehiculo_id || r.vehiculo_programado_id) : null; return id ? Number(id) : null; } },
+  nd: { sel: 'nd-movil', drv: 'nd-cond', fijo: () => null },
+};
+function qrdAplica(m) {
+  if (isAuditor() || qrdModo() === 'off') return false;
+  return m === 'nd' || $('s-realizo')?.value === 'SI';
+}
+// Número del bus según la opción del selector ("5609 · ABC123")
+function qrdNumeroDe(sel, id) {
+  const o = [...sel.options].find((x) => x.value === String(id));
+  return o ? String(o.textContent).split('·')[0].trim() : String(id);
+}
+function qrdNuevo(fijo, fijoNum) {
+  return { estado: null, texto: null, motivo: null, vehId: null, movil: null, placa: '', leido_en: null, pidiendo: false, error: null,
+    recorte: null, foto: null, cond: null, condPidiendo: false, condAviso: null, fijo, fijoNum };
+}
+function qrdPreparar(m) {
+  const cfg = QRD_MODAL[m], sel = $(cfg.sel); if (!sel) return;
+  const fijo = cfg.fijo();
+  if (_qrd[m]?.foto?.url) URL.revokeObjectURL(_qrd[m].foto.url);
+  _qrd[m] = qrdNuevo(fijo, fijo ? qrdNumeroDe(sel, fijo) : null);
+  let box = $(`${m}-qrbox`);
+  if (!box) {
+    box = document.createElement('div');
+    box.id = `${m}-qrbox`; box.className = 'field full qrd';
+    const campo = sel.closest('.field');
+    campo.parentNode.insertBefore(box, campo);
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      const st = _qrd[m]; e.preventDefault();
+      if (b.matches('[data-qrd-todo]')) qrdCamara(m, qrdPasosPendientes(m));
+      else if (b.matches('[data-qrd-leer]')) qrdCamara(m, ['bus', 'foto', ...(st.cond || !qrdCarnetAplica() ? [] : ['carnet'])]);  // otro QR = otra foto
+      else if (b.matches('[data-qrd-sin]')) { Object.assign(st, { pidiendo: true, error: null }); qrdPintar(m); }
+      else if (b.matches('[data-qrd-foto]')) qrdCamara(m, ['foto', ...(st.cond || !qrdCarnetAplica() ? [] : ['carnet'])]);
+      else if (b.matches('[data-qrd-carnet]')) qrdCamara(m, ['carnet']);
+      else if (b.matches('[data-qrd-sincarnet]')) { st.condPidiendo = true; qrdPintar(m); }
+      else if (b.matches('[data-qrd-verfoto]') && st.foto?.url) window.open(st.foto.url, '_blank');
+    });
+    box.addEventListener('change', (e) => {
+      const st = _qrd[m];
+      const s = e.target.closest('[data-qrd-motivo]');
+      if (s && s.value) {
+        Object.assign(st, { estado: 'SIN_QR', motivo: s.value, texto: null, vehId: null, leido_en: new Date().toISOString(), pidiendo: false, error: null, recorte: null });
+        qrdBloquear(m); qrdPintar(m); return;
+      }
+      const c = e.target.closest('[data-qrd-motivo-carnet]');
+      if (c && c.value) {
+        st.cond = { estado: 'SIN_QR', motivo: c.value, texto: null, drId: null, nombre: null, leido_en: new Date().toISOString() };
+        st.condPidiendo = false; st.condAviso = null;
+        qrdBloquear(m); qrdPintar(m);
+      }
+    });
+  }
+  qrdBloquear(m); qrdPintar(m);
+  // la hora de arranque y el switch del carnet vienen de la base (cache de 5 min)
+  const st0 = _qrd[m];
+  qrdCargarReglas().then(() => { if (_qrd[m] === st0) { qrdBloquear(m); qrdPintar(m); } });
+}
+// Lo que falta, en orden: el QR del bus, la foto y el carnet
+function qrdPasosPendientes(m) {
+  const st = _qrd[m], p = [];
+  if (!st.estado) p.push('bus');
+  if (qrdFotoNecesaria(m) && (!st.estado || !qrdFotoOk(m))) p.push('foto');
+  if (!st.cond && qrdCarnetAplica()) p.push('carnet');
+  return p;
+}
+function qrdFotoNecesaria(m) { const st = _qrd[m]; return !(st?.estado === 'SIN_QR' && st.motivo === QR_SIN_CAMARA); }
+// La foto sirve si es del bus que se va a despachar
+function qrdFotoOk(m) { const st = _qrd[m], sel = $(QRD_MODAL[m].sel); return !!(st?.foto && sel && String(st.foto.vehId) === String(sel.value)); }
+// El móvil: en una fila con bus queda fijo; en libre lo pone el QR. Solo con "sin QR" se escoge de la
+// lista. El conductor: lo pone el carnet; solo con "sin carnet" se escoge de la lista.
+function qrdBloquear(m) {
+  const st = _qrd[m]; if (!st) return;
+  const bloquear = (sel, on, titulo) => {
+    if (!sel) return;
+    sel.disabled = on;
+    const inp = sel.parentNode?.classList?.contains('combo') ? sel.parentNode.querySelector('.combo-input') : null;
+    if (inp) { inp.disabled = on; inp.title = on ? titulo : ''; }
+  };
+  bloquear($(QRD_MODAL[m].sel), qrdAplica(m) && (!!st.fijo || st.estado !== 'SIN_QR'),
+    st.fijo ? 'El bus de esta fila (para otro, edita la fila)' : 'Lo pone el QR del bus');
+  bloquear($(QRD_MODAL[m].drv), qrdAplica(m) && qrdCarnetAplica() && st.cond?.estado === 'LEIDO', 'Lo pone el carnet del conductor');
+}
+function qrdFila(cls, ico, texto, botones = '') {
+  return `<div class="qrd-paso ${cls}"><span class="qrd-ico">${ico}</span><span class="qrd-txt">${texto}</span>${botones ? `<span class="qrd-btns">${botones}</span>` : ''}</div>`;
+}
+function qrdPintar(m) {
+  const box = $(`${m}-qrbox`), st = _qrd[m]; if (!box || !st) return;
+  box.hidden = !qrdAplica(m);
+  if (box.hidden) return;
+  const sel = $(QRD_MODAL[m].sel);
+  const de = st.fijo ? ` del bus <b>${esc(st.fijoNum)}</b>` : ' del bus';
+  const nada = !st.estado && !st.pidiendo && !st.foto && !st.cond && !st.condPidiendo;
+  const carnet = qrdCarnetAplica();
+  const h = [];
+  if (qrdModo() === 'practica') h.push(`<div class="qrd-practica">🕥 <b>Práctica</b> · obligatorio desde ${esc(qrdHoraInicio())} · por ahora no te bloquea</div>`);
+  if (nada) {
+    h.push(`<div class="qrd-tit">📷 Para despachar: QR${de} → foto del bus${carnet ? ' → carnet del conductor' : ''}</div>
+      <div class="qrd-fila"><button type="button" class="btn btn-primary" data-qrd-todo>📷 Empezar</button>
+        <button type="button" class="btn-link" data-qrd-sin>No se puede leer el QR del bus</button>
+        ${carnet ? '<button type="button" class="btn-link" data-qrd-sincarnet>No se puede leer el carnet</button>' : ''}</div>`);
+    box.className = 'field full qrd pend';
+    box.innerHTML = h.join('');
+    return;
+  }
+  // 1) QR del bus
+  if (st.estado === 'LEIDO') h.push(qrdFila('ok', '✅', `QR del bus <b>${esc(st.movil)}</b>${st.placa ? ` · ${esc(st.placa)}` : ''} · ${esc(hm5(st.leido_en))}`,
+    '<button type="button" class="btn btn-sm" data-qrd-leer>↺ Leer otra vez</button>'));
+  else if (st.estado === 'SIN_QR') h.push(qrdFila('sin', '⚠️', `Sin QR del bus: <b>${esc(st.motivo)}</b>.${st.fijo ? '' : ' Elige el bus en Móvil.'}`,
+    '<button type="button" class="btn btn-sm" data-qrd-leer>📷 Leer el QR</button>'));
+  else if (st.pidiendo) h.push(`<div class="qrd-paso pend"><label class="qrd-motivo"><span>¿Por qué no se puede leer el QR${de}?</span>
+      <select data-qrd-motivo><option value="">Elige el motivo…</option>${QR_MOTIVOS.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
+      <div class="qrd-nota">Se despacha igual, con la foto del bus, y queda marcado para que control lo revise.</div>
+      <div class="qrd-fila"><button type="button" class="btn btn-sm" data-qrd-leer>📷 Mejor intentar con el QR</button></div></div>`);
+  else h.push(qrdFila('pend', '1', `QR${de}`, '<button type="button" class="btn btn-sm" data-qrd-leer>📷 Leer</button><button type="button" class="btn-link" data-qrd-sin>No se puede leer</button>'));
+  // 2) foto del bus
+  const busListo = st.estado === 'LEIDO' || (st.estado === 'SIN_QR' && sel?.value);
+  if (!qrdFotoNecesaria(m)) h.push(qrdFila('na', '—', 'Foto del bus: no aplica (la cámara no abre)'));
+  else if (qrdFotoOk(m)) h.push(qrdFila('ok', `<img class="qrd-mini" src="${st.foto.url}" alt="Foto del bus">`,
+    `Foto del bus <b>${esc(st.foto.movil)}</b> · ${esc(hm5(st.foto.capturada_en))}`,
+    '<button type="button" class="btn btn-sm" data-qrd-verfoto>Ver</button><button type="button" class="btn btn-sm" data-qrd-foto>↺ Repetir</button>'));
+  else if (busListo) h.push(qrdFila('pend', '2', st.foto ? 'Foto del bus: <b>el bus cambió</b>, tómala otra vez' : 'Foto del bus, con el número a la vista',
+    '<button type="button" class="btn btn-sm" data-qrd-foto>📸 Tomar</button>'));
+  else h.push(qrdFila('pend', '2', 'Foto del bus <small>(se toma seguida del QR)</small>'));
+  // 3) carnet del conductor
+  if (!carnet) { /* el carnet está apagado (sql/180) */ }
+  else if (st.cond?.estado === 'LEIDO') h.push(qrdFila('ok', '✅', `Carnet: <b>${esc(st.cond.nombre)}</b> · ${esc(hm5(st.cond.leido_en))}`
+      + (st.condAviso ? `<div class="qrd-nota">${esc(st.condAviso)}</div>` : ''),
+    '<button type="button" class="btn btn-sm" data-qrd-carnet>↺ Leer otra vez</button>'));
+  else if (st.cond?.estado === 'SIN_QR') h.push(qrdFila('sin', '⚠️', `Sin carnet: <b>${esc(st.cond.motivo)}</b>. Elige el conductor de la lista.`,
+    '<button type="button" class="btn btn-sm" data-qrd-carnet>🪪 Leer el carnet</button>'));
+  else if (st.condPidiendo) h.push(`<div class="qrd-paso pend"><label class="qrd-motivo"><span>¿Por qué no se puede leer el carnet del conductor?</span>
+      <select data-qrd-motivo-carnet><option value="">Elige el motivo…</option>${QR_MOTIVOS_CARNET.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
+      <div class="qrd-nota">El conductor se elige de la lista y queda marcado para control.</div>
+      <div class="qrd-fila"><button type="button" class="btn btn-sm" data-qrd-carnet>🪪 Mejor intentar con el carnet</button></div></div>`);
+  else h.push(qrdFila('pend', '3', 'Carnet del conductor', '<button type="button" class="btn btn-sm" data-qrd-carnet>🪪 Leer</button><button type="button" class="btn-link" data-qrd-sincarnet>No se puede leer</button>'));
+  if (st.error) h.push(`<div class="qrd-err">⚠️ ${esc(st.error)}</div>`);
+  const falta = qrdPendiente(m);
+  const conAviso = st.estado === 'SIN_QR' || st.cond?.estado === 'SIN_QR';
+  box.className = `field full qrd ${falta ? 'pend' : (conAviso ? 'sin' : 'ok')}`;
+  if (falta && st.estado && qrdPasosPendientes(m).length > 1) h.push('<div class="qrd-fila"><button type="button" class="btn btn-primary" data-qrd-todo>📷 Seguir con lo que falta</button></div>');
+  box.innerHTML = h.join('');
+}
+function hm5(iso) { try { return new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' }); } catch { return ''; } }
+function qrdFechaHora(iso) { try { return new Date(iso).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'America/Bogota' }); } catch { return ''; } }
+// El bus del QR: placa exacta, número exacto o la placa dentro del texto (URL o JSON). Igual que la base.
+function qrdBuscarBus(texto, vehs) {
+  const bruto = String(texto || '').trim();
+  let cand = [bruto];
+  try { const j = JSON.parse(bruto); if (j && typeof j === 'object') { const c = [j.placa, j.plate, j.movil, j.numero, j.numero_interno, j.bus].filter((x) => x != null).map(String); if (c.length) cand = c; } } catch { /* texto */ }
+  for (const c of cand) {
+    const t = normPlaca(c); if (!t) continue;
+    const v = vehs.find((x) => normPlaca(x.placa) && normPlaca(x.placa) === t) || vehs.find((x) => normPlaca(x.numero) === t)
+      || vehs.find((x) => normPlaca(x.placa).length >= 5 && t.includes(normPlaca(x.placa)));
+    if (v) return v;
+  }
+  return null;
+}
+// Para comparar nombres: sin tildes, solo letras y números, en mayúscula (= _norm_alnum en la base)
+function qrdAlnum(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+// El conductor del carnet: el QR trae el NOMBRE (también se acepta el código, o un JSON que los traiga).
+// La base además acepta la cédula (aquí no se cargan cédulas al celular).
+function qrdBuscarConductor(texto, drs) {
+  const bruto = String(texto || '').trim();
+  let cand = [bruto];
+  try { const j = JSON.parse(bruto); if (j && typeof j === 'object') { const c = ['nombre', 'name', 'conductor', 'cedula', 'documento', 'doc', 'codigo', 'id'].map((k) => j[k]).filter((x) => x != null).map(String); if (c.length) cand = c; } } catch { /* texto */ }
+  for (const c of cand) {
+    const t = qrdAlnum(c); if (!t) continue;
+    const d = drs.find((x) => qrdAlnum(x.nombre) && qrdAlnum(x.nombre) === t) || drs.find((x) => x.codigo && qrdAlnum(x.codigo) === t)
+      || drs.find((x) => { const n = qrdAlnum(x.nombre); return n.length >= 8 && t.includes(n); });
+    if (d) return d;
+  }
+  return null;
+}
+function qrdValidarBus(m, texto, vehs) {
+  const st = _qrd[m], sel = $(QRD_MODAL[m].sel);
+  const v = qrdBuscarBus(texto, vehs);
+  if (!v) return { error: `Ese QR no es de un bus de la empresa (leyó: "${String(texto).slice(0, 40)}").` };
+  if (st.fijo && Number(v.id) !== st.fijo) return { error: `Este QR es del bus ${v.numero} y la fila es del bus ${st.fijoNum}. Busca el bus ${st.fijoNum}, o edita la fila para cambiar el móvil.` };
+  if (!st.fijo && ![...sel.options].some((o) => o.value === String(v.id))) return { error: `El bus ${v.numero} no está entre los móviles que puedes despachar aquí.` };
+  return { v };
+}
+function qrdAplicarBus(m, texto, v) {
+  const st = _qrd[m], sel = $(QRD_MODAL[m].sel);
+  Object.assign(st, { estado: 'LEIDO', texto: String(texto).trim(), motivo: null, vehId: Number(v.id), movil: v.numero, placa: v.placa || '',
+    leido_en: new Date().toISOString(), pidiendo: false, error: null });
+  if (!st.fijo && sel.value !== String(v.id)) {
+    sel.disabled = false; sel.value = String(v.id); sel._comboSync && sel._comboSync();
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  qrdBloquear(m); qrdPintar(m);
+}
+function qrdValidarCarnet(m, texto, drs) {
+  const drv = $(QRD_MODAL[m].drv);
+  const d = qrdBuscarConductor(texto, drs);
+  if (!d) return { error: `No encontré ese carnet entre los conductores habilitados en SONAR (leyó: "${String(texto).slice(0, 40)}").` };
+  if (drv && ![...drv.options].some((o) => o.value === String(d.dr_id))) return { error: `${d.nombre} no está en la lista de conductores de este despacho.` };
+  return { d };
+}
+function qrdAplicarCarnet(m, texto, d) {
+  const st = _qrd[m], drv = $(QRD_MODAL[m].drv);
+  st.cond = { estado: 'LEIDO', texto: String(texto).trim(), drId: String(d.dr_id), nombre: d.nombre || '', motivo: null, leido_en: new Date().toISOString() };
+  st.condPidiendo = false; st.condAviso = null;
+  if (drv && drv.value !== String(d.dr_id)) {
+    drv.disabled = false; drv.value = String(d.dr_id); drv._comboSync && drv._comboSync();
+    drv.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  qrdBloquear(m); qrdPintar(m);
+  qrdAvisoResumen(m, st);
+}
+// Si el Resumen tenía a otro conductor para ese bus, se avisa (sale con el del carnet: puede ser la jornada 2)
+async function qrdAvisoResumen(m, st) {
+  const sel = $(QRD_MODAL[m].sel); if (!sel?.value) return;
+  const fecha = m === 's' && sonarRow?.fecha ? String(sonarRow.fecha).slice(0, 10) : hoyServidor();
+  let nom = null; try { nom = await nombreConductorDeVehiculo(sel.value, fecha); } catch { /* sin aviso */ }
+  if (st === _qrd[m] && st.cond?.estado === 'LEIDO' && nom && qrdAlnum(nom) !== qrdAlnum(st.cond.nombre)) {
+    st.condAviso = `En el Resumen de hoy este bus tiene a ${nom}. Sale con el del carnet.`; qrdPintar(m);
+  }
+}
+// ¿Falta algo para despachar? null = listo. Solo bloquea desde la hora de arranque (antes es práctica).
+function qrdFalta(m) { return qrdModo() === 'obligatorio' ? qrdPendiente(m) : null; }
+function qrdPendiente(m) {
+  if (!qrdAplica(m)) return null;
+  const st = _qrd[m], sel = $(QRD_MODAL[m].sel), drv = $(QRD_MODAL[m].drv);
+  if (!st || !st.estado) return 'Falta leer el QR del bus. Si no se puede leer, toca "No se puede leer" y elige el motivo.';
+  if (st.estado === 'LEIDO' && String(sel.value) !== String(st.vehId)) return 'El móvil cambió después de leer el QR: vuelve a leerlo.';
+  if (st.estado === 'SIN_QR' && !sel.value) return 'Elige el bus en Móvil.';
+  if (qrdFotoNecesaria(m) && !qrdFotoOk(m)) return st.foto ? 'El bus cambió después de la foto: tómala otra vez.' : 'Falta la foto del bus.';
+  if (!qrdCarnetAplica()) return null;
+  if (!st.cond) return 'Falta leer el carnet del conductor. Si no se puede, toca "No se puede leer" y elige el motivo.';
+  if (st.cond.estado === 'LEIDO' && drv && String(drv.value) !== st.cond.drId) return 'El conductor cambió después de leer el carnet: vuelve a leerlo.';
+  return null;
+}
+
+// ---- la cámara del despacho: QR del bus → foto → carnet, en UNA sola sesión de cámara
+function qrdAcciones() {
+  let a = $('qr-acciones');
+  if (!a) { a = document.createElement('div'); a.id = 'qr-acciones'; a.className = 'qr-acciones'; a.hidden = true; $('qr-status').after(a); }
+  return a;
+}
+// Decodificador: el nativo (Android) o jsQR. Devuelve fn(video) → texto | null
+async function qrdCrearDecodificador() {
+  if ('BarcodeDetector' in window) {
+    try {
+      const f = await window.BarcodeDetector.getSupportedFormats();
+      if (f.includes('qr_code')) { const det = new window.BarcodeDetector({ formats: ['qr_code'] }); return async (v) => { const c = await det.detect(v); return c && c.length ? c[0].rawValue : null; }; }
+    } catch { /* jsQR */ }
+  }
+  try { await ensureJsQR(); } catch { return null; }
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
+  return async (v) => {
+    cv.width = v.videoWidth; cv.height = v.videoHeight; ctx.drawImage(v, 0, 0, cv.width, cv.height);
+    const r = window.jsQR(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, { inversionAttempts: 'dontInvert' });
+    return r ? r.data : null;
+  };
+}
+// Un cuadro de la cámara en vivo (máx. `max` px del lado largo)
+function qrdCuadro(video, max = 1280) {
+  const k = Math.min(1, max / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(video.videoWidth * k)); c.height = Math.max(1, Math.round(video.videoHeight * k));
+  c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+  return c;
+}
+// GPS del celular con su precisión. No bloquea: null si no hay.
+function qrdGps(ms = 10000) {
+  return new Promise((r) => {
+    if (!navigator.geolocation) { r(null); return; }
+    let listo = false; const fin = (v) => { if (!listo) { listo = true; clearTimeout(t); r(v); } };
+    const t = setTimeout(() => fin(null), ms);
+    navigator.geolocation.getCurrentPosition((p) => fin({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+      () => fin(null), { enableHighAccuracy: true, timeout: ms, maximumAge: 30000 });
+  });
+}
+// La foto que se guarda: el bus + el recorte de donde se leyó el QR + una franja con bus, hora, despachador
+// y GPS. Lo escrito queda DENTRO de la imagen: no sirve para otro bus ni para otro día.
+function qrdComponer(foto, recorte, lineas) {
+  const k = Math.min(1, 800 / Math.max(foto.width, foto.height));
+  const W = Math.round(foto.width * k), H = Math.round(foto.height * k), banda = Math.max(46, Math.round(H * 0.12));
+  const c = document.createElement('canvas'); c.width = W; c.height = H + banda;
+  const g = c.getContext('2d');
+  g.drawImage(foto, 0, 0, W, H);
+  if (recorte) {
+    const w = Math.round(W * 0.3), h = Math.round((w * recorte.height) / recorte.width), x = W - w - 10, y = 10, pie = Math.max(14, Math.round(w * 0.1));
+    g.fillStyle = '#fff'; g.fillRect(x - 3, y - 3, w + 6, h + pie + 6);
+    g.drawImage(recorte, x, y, w, h);
+    g.fillStyle = '#111'; g.font = `600 ${Math.round(pie * 0.8)}px system-ui, sans-serif`; g.textBaseline = 'middle';
+    g.fillText('Donde se leyó el QR', x + 4, y + h + pie / 2 + 1, w - 8);
+  }
+  g.fillStyle = '#111'; g.fillRect(0, H, W, banda);
+  g.fillStyle = '#fff'; g.font = `600 ${Math.max(12, Math.round(banda / 3.3))}px system-ui, sans-serif`; g.textBaseline = 'middle';
+  lineas.slice(0, 2).forEach((t, i) => g.fillText(t, 10, H + banda * (i ? 0.72 : 0.3), W - 20));
+  return c;
+}
+function qrdBlobB64(b) { return new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result)); fr.onerror = () => r(null); fr.readAsDataURL(b); }); }
+function qrdB64Blob(d) {
+  const bin = atob(String(d).split(',')[1] || ''); const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Blob([u], { type: 'image/jpeg' });
+}
+// Sube la foto a su carpeta y la base la SELLA (posición del celular y del bus en ese momento). Nunca lanza.
+async function qrdSubirFoto(f) {
+  if (f.selloId) return f.selloId;
+  try {
+    if (!f.path) {
+      const path = `${sessionUser?.id}/${hoyServidor()}/${Date.now()}-${String(f.movil || '').replace(/[^0-9A-Za-z]/g, '')}.jpg`;
+      const up = await sb.storage.from('despacho-fotos').upload(path, f.blob, { contentType: 'image/jpeg', upsert: false });
+      if (up.error) throw up.error;
+      f.path = path;
+    }
+    const { data, error } = await sb.rpc('despacho_foto_sellar', {
+      p_vehiculo_id: Number(f.vehId), p_foto_path: f.path,
+      p_lat: f.gps ? f.gps.lat : null, p_lon: f.gps ? f.gps.lon : null, p_precision_m: f.gps?.acc != null ? Math.round(f.gps.acc) : null,
+      p_capturada_en: f.capturada_en,
+    });
+    if (error) throw error;
+    if (!data?.ok) { f.error = data?.error || 'no se pudo sellar'; f.path = null; return null; }
+    f.selloId = data.id; f.error = null;
+    return f.selloId;
+  } catch (e) { f.error = e.message || String(e); return null; }
+}
+// Lee QRs hasta que `validar(texto)` devuelva null (sirve) o se cierre la cámara. Un QR que no sirve se
+// avisa en la cámara y se sigue leyendo (no hay que volver a abrirla).
+function qrdEsperarQr(ses, video, leer, validar, msg) {
+  return new Promise((resolve) => {
+    let malo = null, hasta = 0, listo = false;
+    const fin = (v) => { if (!listo) { listo = true; resolve(v); } };
+    ses.alCerrar.push(() => fin(null));
+    const tick = async () => {
+      if (ses.fin || !qrStream) { fin(null); return; }
+      if (video.readyState >= 2 && video.videoWidth) {
+        let t = null; try { t = await leer(video); } catch { /* cuadro sin QR */ }
+        t = t && String(t).trim();
+        if (ses.fin) { fin(null); return; }
+        if (t && !(t === malo && Date.now() < hasta)) {
+          const err = await validar(t);
+          if (!err) { fin(t); return; }
+          malo = t; hasta = Date.now() + 2500; msg(err, 'err');
+        }
+      }
+      qrRAF = requestAnimationFrame(tick);
+    };
+    qrRAF = requestAnimationFrame(tick);
+  });
+}
+async function qrdPasoBus(m, ses, video, leer, msg) {
+  const st = _qrd[m], vehs = await loadVehiculos();
+  msg(st.fijo ? `Apunta al QR del bus ${st.fijoNum}…` : 'Apunta al QR del bus que va a salir…');
+  let bus = null;
+  const t = await qrdEsperarQr(ses, video, leer, (texto) => { const r = qrdValidarBus(m, texto, vehs); if (r.error) return r.error; bus = r.v; return null; }, msg);
+  if (!t) return false;
+  st.recorte = qrdCuadro(video, 480);   // el cuadro exacto donde se leyó el QR
+  qrdAplicarBus(m, t, bus);
+  msg(`✅ QR del bus ${bus.numero}`, 'ok');
+  return true;
+}
+async function qrdPasoFoto(m, ses, video, acc, msg, gpsP) {
+  const st = _qrd[m], sel = $(QRD_MODAL[m].sel);
+  const vehId = st.estado === 'LEIDO' ? st.vehId : (Number(sel.value) || null);
+  if (!vehId) { msg('Primero elige el bus en Móvil.', 'err'); return false; }
+  const movil = st.estado === 'LEIDO' ? st.movil : qrdNumeroDe(sel, vehId);
+  msg(`Aléjate y toma el bus ${movil} completo, con el número a la vista.`);
+  acc.innerHTML = '<button type="button" class="btn btn-primary qr-disparo" data-disparo>📸 Tomar la foto</button>'; acc.hidden = false;
+  const ok = await new Promise((r) => { acc.querySelector('[data-disparo]').onclick = () => r(true); ses.alCerrar.push(() => r(false)); });
+  if (!ok || ses.fin) return false;
+  acc.querySelector('[data-disparo]').disabled = true;
+  const cuadro = qrdCuadro(video, 1280);
+  const capturada_en = new Date().toISOString();
+  msg('Guardando la foto…');
+  const gps = await Promise.race([gpsP, new Promise((r) => setTimeout(() => r(null), 3000))]);
+  const lineas = [
+    `Bus ${movil}${st.estado === 'LEIDO' && st.placa ? ' · ' + st.placa : ''} · ${qrdFechaHora(capturada_en)}`,
+    `${CTX?.nombre || sessionUser?.email || ''}${gps ? ` · GPS ${gps.lat.toFixed(5)}, ${gps.lon.toFixed(5)} ±${Math.round(gps.acc)} m` : ' · sin GPS'}`,
+  ];
+  const lienzo = qrdComponer(cuadro, st.estado === 'LEIDO' ? st.recorte : null, lineas);
+  const blob = await new Promise((r) => lienzo.toBlob(r, 'image/jpeg', 0.62));
+  acc.hidden = true; acc.innerHTML = '';
+  if (!blob) { msg('No se pudo guardar la foto. Tómala otra vez.', 'err'); return false; }
+  if (st.foto?.url) URL.revokeObjectURL(st.foto.url);
+  st.foto = { vehId, movil, blob, url: URL.createObjectURL(blob), capturada_en, gps, path: null, selloId: null, error: null };
+  st.foto.subida = qrdSubirFoto(st.foto);   // se sube y se sella ya, mientras el despachador sigue
+  qrdPintar(m);
+  msg('✅ Foto guardada', 'ok');
+  return true;
+}
+async function qrdPasoCarnet(m, ses, video, leer, acc, msg) {
+  const st = _qrd[m], drs = await loadDrivers();
+  msg('Apunta al QR del carnet del conductor…');
+  acc.innerHTML = '<button type="button" class="btn btn-link" data-nocarnet>No se puede leer el carnet</button>'; acc.hidden = false;
+  acc.querySelector('[data-nocarnet]').onclick = () => { st.condPidiendo = true; ses.terminar(); };
+  let d = null;
+  const t = await qrdEsperarQr(ses, video, leer, (texto) => { const r = qrdValidarCarnet(m, texto, drs); if (r.error) return r.error; d = r.d; return null; }, msg);
+  acc.hidden = true; acc.innerHTML = '';
+  if (!t) return false;
+  qrdAplicarCarnet(m, t, d);
+  msg(`✅ Carnet de ${d.nombre}`, 'ok');
+  return true;
+}
+// Abre la cámara y hace los pasos en orden ('bus', 'foto', 'carnet'). Cancelar cierra y deja lo ya hecho.
+async function qrdCamara(m, pasos) {
+  const st = _qrd[m]; if (!st || !pasos.length) return;
+  const modal = $('qr-modal'), video = $('qr-video'), status = $('qr-status'), acc = qrdAcciones();
+  const titulo = modal.querySelector('.modal-head h3'), titulo0 = titulo.textContent, marco = modal.querySelector('.qr-frame');
+  const msg = (t, cls = '') => { status.className = 'qr-status' + (cls ? ' ' + cls : ''); status.textContent = t; };
+  stopQr();
+  msg('Iniciando cámara…'); acc.hidden = true; acc.innerHTML = '';
+  modal.hidden = false;
+  let resolver; const hecho = new Promise((r) => { resolver = r; });
+  const ses = { fin: false, alCerrar: [] };
+  ses.terminar = () => {
+    if (ses.fin) return; ses.fin = true;
+    ses.alCerrar.forEach((f) => { try { f(); } catch { /* */ } });
+    stopQr(); modal.hidden = true; titulo.textContent = titulo0; acc.hidden = true; acc.innerHTML = ''; if (marco) marco.hidden = false;
+    if (qrResolve === ses.terminar) qrResolve = null;
+    qrdBloquear(m); qrdPintar(m); resolver();
+  };
+  qrResolve = ses.terminar;   // ✕ y Cancelar del lector cierran la sesión
+  const gpsP = pasos.includes('foto') ? qrdGps() : Promise.resolve(null);
+  try {
+    qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
+  } catch {
+    msg('No se pudo abrir la cámara. Da el permiso de cámara, o usa "No se puede leer" y elige el motivo.', 'err');
+    return hecho;
+  }
+  if (ses.fin) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; return hecho; }
+  video.srcObject = qrStream;
+  try { await video.play(); } catch { /* */ }
+  const leer = pasos.some((p) => p !== 'foto') ? await qrdCrearDecodificador() : null;
+  if (pasos.some((p) => p !== 'foto') && !leer) { msg('No se pudo cargar el lector de QR. Revisa la conexión.', 'err'); return hecho; }
+  for (let i = 0; i < pasos.length && !ses.fin; i++) {
+    const paso = pasos[i], n = pasos.length > 1 ? `${i + 1}/${pasos.length} · ` : '';
+    if (marco) marco.hidden = paso === 'foto';
+    let ok = false;
+    if (paso === 'bus') { titulo.textContent = `📷 ${n}QR del bus`; ok = await qrdPasoBus(m, ses, video, leer, msg); }
+    else if (paso === 'foto') { titulo.textContent = `📸 ${n}Foto del bus`; ok = await qrdPasoFoto(m, ses, video, acc, msg, gpsP); }
+    else if (paso === 'carnet') { titulo.textContent = `🪪 ${n}Carnet del conductor`; ok = await qrdPasoCarnet(m, ses, video, leer, acc, msg); }
+    if (!ok) { if (!ses.fin && paso === 'foto') continue; return hecho; }   // sin bus para la foto: sigue con el carnet
+    if (i < pasos.length - 1) await new Promise((r) => setTimeout(r, 700));    // que alcance a ver el ✅
+  }
+  ses.terminar();
+  return hecho;
+}
+function qrdLeer(m) { return qrdCamara(m, ['bus', 'foto', ...(_qrd[m]?.cond || !qrdCarnetAplica() ? [] : ['carnet'])]); }
+
+// ---- lo que viaja con el despacho
+// Instantánea (sin consumir): en Nuevo despacho se arma antes de las confirmaciones.
+function qrdInstantanea(m) {
+  const st = _qrd[m]; if (!st || !st.estado) return null;
+  const drv = $(QRD_MODAL[m].drv);
+  return { estado: st.estado, texto: st.texto, motivo: st.motivo, leido_en: st.leido_en,
+    cond: st.cond ? { estado: st.cond.estado, texto: st.cond.texto, motivo: st.cond.motivo, drId: st.cond.drId || drv?.value || null } : null,
+    _foto: qrdFotoOk(m) ? st.foto : null };
+}
+// Espera (poco) a que la foto termine de subir y sellarse. Si no alcanzó (sin señal), la foto viaja DENTRO
+// del paquete y se sube al registrar (también desde la cola sin conexión). Devuelve un objeto plano.
+async function qrdListo(snap) {
+  if (!snap) return null;
+  const { _foto, ...p } = snap;
+  if (_foto) {
+    if (!_foto.selloId) await Promise.race([_foto.subida, new Promise((r) => setTimeout(r, 8000))]);
+    if (_foto.selloId) p.selloId = _foto.selloId;
+    else p.foto = { b64: await qrdBlobB64(_foto.blob), vehId: _foto.vehId, movil: _foto.movil, capturada_en: _foto.capturada_en, gps: _foto.gps, path: _foto.path || null };
+  }
+  return p;
+}
+async function qrdGuardar(qr, tabla, filaId, vehId, resultado, regid = null) {
+  if (!qr || !vehId) return;
+  try {
+    let sello = qr.selloId || null;
+    if (!sello && qr.foto?.b64) {
+      const f = { vehId: qr.foto.vehId, movil: qr.foto.movil, blob: qrdB64Blob(qr.foto.b64), capturada_en: qr.foto.capturada_en, gps: qr.foto.gps, path: qr.foto.path, selloId: null };
+      sello = await qrdSubirFoto(f);
+      if (sello) { qr.selloId = sello; delete qr.foto; }   // si se reintenta, no se sube dos veces
+    }
+    const c = qr.cond || {};
+    const args = {
+      p_tabla: tabla, p_fila_id: filaId == null ? null : String(filaId), p_vehiculo_id: Number(vehId), p_estado: qr.estado,
+      p_qr_texto: qr.texto, p_motivo: qr.motivo, p_leido_en: qr.leido_en, p_resultado: resultado, p_regid: regid == null ? null : String(regid),
+      p_sello_id: sello, p_cond_estado: c.estado || null, p_cond_qr_texto: c.texto || null, p_cond_dr_id: c.drId || null, p_cond_motivo: c.motivo || null,
+    };
+    let { data, error } = await sb.rpc('despacho_qr_registrar', args);
+    // si la foto no casa con este despacho, se registra igual la lectura (y la base la marca "sin foto")
+    if (!error && data && !data.ok && sello) ({ data, error } = await sb.rpc('despacho_qr_registrar', Object.assign(args, { p_sello_id: null })));
+    if (error || !data?.ok) console.warn('El QR del despacho no quedó registrado:', error?.message || data?.error);
+  } catch (e) { console.warn('El QR del despacho no quedó registrado:', e); }
+}
+// ✈️: se consume al despachar (una lectura = un despacho) y se guarda en segundo plano
+function qrdRegistrar(m, tabla, filaId, vehId, resultado, regid = null) {
+  const snap = qrdInstantanea(m); if (!snap) return Promise.resolve();
+  const st = _qrd[m], url = st.foto?.url;
+  if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
+  Object.assign(st, { estado: null, foto: null, cond: null, recorte: null, condAviso: null });
+  const box = $(`${m}-qrbox`); if (box) box.hidden = true;   // ya despachado: no invita a leer de nuevo
+  return qrdListo(snap).then((qr) => qrdGuardar(qr, tabla, filaId, vehId, resultado, regid));
+}
+
+// ---- 📷 Control del QR en los despachos (administración, por ahora)
+const _qrCtl = { desde: null, hasta: null, d: null };
+function qrCtlModal() {
+  let m = $('qr-ctl-modal'); if (m) return m;
+  m = document.createElement('div');
+  m.id = 'qr-ctl-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card vig-card">
+    <div class="modal-head"><h3>📷 QR, fotos y carnets en los despachos</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="asp-toolbar vig-toolbar">
+      <label class="vig-f">Desde <input type="date" data-desde></label>
+      <label class="vig-f">Hasta <input type="date" data-hasta></label>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-recargar aria-label="Recargar">🔄</button>
+    </div>
+    <div class="vig-body" data-body><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    if (e.target.closest('[data-recargar]')) { qrCtlCargar(); return; }
+    const f = e.target.closest('[data-foto-path]'); if (f) qrCtlVerFoto(f.dataset.fotoPath);
+  });
+  m.querySelector('[data-desde]').addEventListener('change', (e) => { _qrCtl.desde = e.target.value; qrCtlCargar(); });
+  m.querySelector('[data-hasta]').addEventListener('change', (e) => { _qrCtl.hasta = e.target.value; qrCtlCargar(); });
+  document.body.appendChild(m);
+  return m;
+}
+async function qrCtlVerFoto(path) {
+  const w = window.open('', '_blank');
+  const { data, error } = await sb.storage.from('despacho-fotos').createSignedUrl(path, 600);
+  if (error || !data?.signedUrl) { if (w) w.close(); toast('No se pudo abrir la foto: ' + (error?.message || ''), 'err'); return; }
+  if (w) w.location = data.signedUrl; else window.open(data.signedUrl, '_blank');
+}
+async function openQrControl() {
+  if (!isAdmin()) return;
+  const m = qrCtlModal();
+  _qrCtl.desde = _qrCtl.desde || hoyServidor(); _qrCtl.hasta = _qrCtl.hasta || hoyServidor();
+  m.querySelector('[data-desde]').value = _qrCtl.desde; m.querySelector('[data-hasta]').value = _qrCtl.hasta;
+  m.hidden = false; closeMenu();
+  await qrCtlCargar();
+}
+function qrDist(mts) { if (mts == null) return ''; return mts < 1000 ? `${mts} m` : `${(mts / 1000).toFixed(1).replace('.', ',')} km`; }
+// Qué pasó con un despacho para revisar, en palabras
+function qrCtlProblemas(x) {
+  const p = [];
+  if (x.estado === 'SIN_QR') p.push(`Sin QR: ${esc(x.motivo || '')}`);
+  if (x.coincide === false) p.push(`El QR no era de ese bus <small>(${esc(String(x.qr_texto || '').slice(0, 30))})</small>`);
+  if (x.foto_estado === 'FALTA') p.push('<b class="qrc-mal">Sin foto</b>');
+  if (x.gps_estado === 'LEJOS') p.push(`<b class="qrc-mal">A ${qrDist(x.distancia_m)} del bus</b>`);
+  if (x.gps_estado === 'TARDE') p.push('Foto subida tarde (sin señal)');
+  if (x.cond_estado === 'SIN_QR') p.push(`Sin carnet: ${esc(x.cond_motivo || '')}`);
+  if (x.cond_coincide === false) p.push('<b class="qrc-mal">El carnet no era del conductor</b>');
+  return p.join(' · ');
+}
+async function qrCtlCargar() {
+  const m = qrCtlModal(), body = m.querySelector('[data-body]');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  let d;
+  try {
+    const r = await sb.rpc('despacho_qr_control', { p_desde: _qrCtl.desde, p_hasta: _qrCtl.hasta });
+    if (r.error) throw r.error;
+    d = r.data; if (!d?.ok) throw new Error(d?.error || 'no se pudo');
+  } catch (e) { body.innerHTML = `<div class="cump-empty">No se pudo cargar: ${esc(e.message || e)}</div>`; return; }
+  const n = (x) => Number(x || 0).toLocaleString('es-CO');
+  const despTot = (d.tablas || []).reduce((a, t) => a + t.despachos, 0), sinTot = (d.tablas || []).reduce((a, t) => a + t.sin_lectura, 0);
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+  const fo = d.fotos || {}, ca = d.carnet || {};
+  body.innerHTML = `<div class="qrc-tarjetas">
+      <div class="qrc-t"><div class="k">Despachos con lectura</div><div class="v">${n(despTot - sinTot)} <small>de ${n(despTot)}</small></div><div class="d">${pct(despTot - sinTot, despTot)}% de los viajes despachados en las tablas</div></div>
+      <div class="qrc-t"><div class="k">QR del bus</div><div class="v">${n(d.leidos)} <small>leídos</small></div><div class="d">${d.no_coincide ? `<b class="qrc-mal">${n(d.no_coincide)} no eran de ese bus</b> · ` : ''}${n(d.sin_qr)} sin QR${Object.keys(d.por_motivo || {}).length ? ': ' + Object.entries(d.por_motivo).map(([k, v]) => `${esc(k)} ${v}`).join(' · ') : ''}</div></div>
+      <div class="qrc-t ${fo.lejos || fo.falta ? 'alerta' : ''}"><div class="k">Fotos del bus</div><div class="v">${n(fo.con_foto)} <small>con foto</small></div><div class="d">${fo.lejos ? `<b class="qrc-mal">${n(fo.lejos)} lejos del bus</b> · ` : ''}${n(fo.falta)} sin foto · ${n(fo.bus_sin_gps)} bus sin GPS · ${n(fo.cel_sin_gps)} celular sin GPS${fo.tarde ? ` · ${n(fo.tarde)} subidas tarde` : ''}</div></div>
+      <div class="qrc-t ${ca.no_coincide ? 'alerta' : ''}"><div class="k">Carnet del conductor</div><div class="v">${n(ca.leidos)} <small>leídos</small></div><div class="d">${ca.no_coincide ? `<b class="qrc-mal">${n(ca.no_coincide)} no eran del conductor</b> · ` : ''}${n(ca.sin_carnet)} sin carnet${Object.keys(ca.por_motivo || {}).length ? ': ' + Object.entries(ca.por_motivo).map(([k, v]) => `${esc(k)} ${v}`).join(' · ') : ''}</div></div>
+    </div>
+    <h4 class="qrc-h">Por tabla</h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Tabla</th><th>Despachos</th><th>Sin lectura de QR</th></tr></thead><tbody>
+      ${(d.tablas || []).map((t) => `<tr><td>${esc(t.label)}</td><td>${n(t.despachos)}</td><td>${n(t.sin_lectura)} <small>(${pct(t.sin_lectura, t.despachos)}%)</small></td></tr>`).join('') || '<tr><td colspan="3">Sin despachos en esas fechas.</td></tr>'}
+    </tbody></table></div>
+    <p class="qrc-nota">La app publicada todavía no pide el QR: hasta publicar, casi todo sale "sin lectura".</p>
+    <h4 class="qrc-h">Por despachador</h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Despachador</th><th>Despachos</th><th>Sin QR</th><th>QR de otro bus</th><th>Sin foto</th><th>Lejos del bus</th><th>Sin carnet</th></tr></thead><tbody>
+      ${(d.por_despachador || []).map((x) => `<tr><td>${esc(x.despachador)}</td><td>${n(x.total)}</td><td>${n(x.sin_qr)}</td><td>${n(x.no_coincide)}</td><td>${n(x.sin_foto)}</td><td>${x.lejos ? `<b class="qrc-mal">${n(x.lejos)}</b>` : '0'}</td><td>${n(x.sin_carnet)}</td></tr>`).join('') || '<tr><td colspan="7">Todavía no hay lecturas.</td></tr>'}
+    </tbody></table></div>
+    <h4 class="qrc-h">Para revisar <small>(sin QR, sin foto, lejos del bus o sin carnet)</small></h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Fecha</th><th>Hora</th><th>Tabla</th><th>Bus</th><th>Conductor</th><th>Qué pasó</th><th>Despachador</th><th>Foto</th></tr></thead><tbody>
+      ${(d.revisar || []).map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td>${esc(x.hora)}</td><td>${esc(x.tabla)}</td><td><b>${esc(x.movil || '')}</b></td>
+        <td>${esc(x.cond_nombre || '')}</td><td>${qrCtlProblemas(x)}</td><td>${esc(x.despachador || '')}</td>
+        <td>${x.foto_path ? `<button type="button" class="btn btn-sm" data-foto-path="${esc(x.foto_path)}">📷 Ver</button>` : '—'}</td></tr>`).join('') || '<tr><td colspan="8">Nada para revisar.</td></tr>'}
+    </tbody></table></div>
+    <h4 class="qrc-h">Muestra de fotos <small>(al azar, de despachos sin novedad: para revisarlas a ojo)</small></h4>
+    <div class="qrc-galeria" data-galeria>${(d.muestra || []).length ? '<div class="loading">Cargando fotos…</div>' : '<p class="qrc-nota">Todavía no hay fotos.</p>'}</div>`;
+  const mu = d.muestra || [];
+  if (mu.length) {
+    const gal = body.querySelector('[data-galeria]');
+    const { data: urls } = await sb.storage.from('despacho-fotos').createSignedUrls(mu.map((x) => x.foto_path), 600);
+    const porPath = Object.fromEntries((urls || []).map((u) => [u.path, u.signedUrl]));
+    gal.innerHTML = mu.map((x) => `<button type="button" class="qrc-foto" data-foto-path="${esc(x.foto_path)}">
+        ${porPath[x.foto_path] ? `<img src="${esc(porPath[x.foto_path])}" alt="Bus ${esc(x.movil)}" loading="lazy">` : ''}
+        <span>${esc(x.movil)} · ${esc(x.hora)}${x.distancia_m != null ? ` · a ${qrDist(x.distancia_m)}` : ''}</span></button>`).join('');
+  }
+}
 
 init();
