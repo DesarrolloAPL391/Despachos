@@ -27380,6 +27380,8 @@ function qrdPreparar(m) {
         qrdBloquear(m); qrdPintar(m);
       }
     });
+    // si cambian el móvil a mano (sin QR / reemplazo), el recuadro se pone al día (foto de otro bus, aviso de cambio)
+    sel.addEventListener('change', () => { if (_qrd[m] && !box.hidden) qrdPintar(m); });
   }
   qrdBloquear(m); qrdPintar(m);
   // la hora de arranque y el switch del carnet vienen de la base (cache de 5 min)
@@ -27402,8 +27404,9 @@ function qrdFotoNecesaria(m) {
 }
 // La foto sirve si es del bus que se va a despachar
 function qrdFotoOk(m) { const st = _qrd[m], sel = $(QRD_MODAL[m].sel); return !!(st?.foto && sel && String(st.foto.vehId) === String(sel.value)); }
-// El móvil: en una fila con bus queda fijo; en libre lo pone el QR. Solo con "sin QR" se escoge de la
-// lista. El conductor: lo pone el carnet; solo con "sin carnet" se escoge de la lista.
+// El móvil lo pone el QR del bus (en una fila, el QR de OTRO bus es un reemplazo = cambio de vehículo).
+// Solo con "sin QR" se escoge de la lista (también en una fila, para el reemplazo).
+// El conductor: lo pone el carnet; solo con "sin carnet" se escoge de la lista.
 function qrdBloquear(m) {
   const st = _qrd[m]; if (!st) return;
   const bloquear = (sel, on, titulo) => {
@@ -27412,8 +27415,8 @@ function qrdBloquear(m) {
     const inp = sel.parentNode?.classList?.contains('combo') ? sel.parentNode.querySelector('.combo-input') : null;
     if (inp) { inp.disabled = on; inp.title = on ? titulo : ''; }
   };
-  bloquear($(QRD_MODAL[m].sel), qrdAplica(m) && (!!st.fijo || st.estado !== 'SIN_QR'),
-    st.fijo ? 'El bus de esta fila (para otro, edita la fila)' : 'Lo pone el QR del bus');
+  bloquear($(QRD_MODAL[m].sel), qrdAplica(m) && st.estado !== 'SIN_QR',
+    st.fijo && st.estado !== 'LEIDO' ? 'Si sale otro bus, lee el QR del bus que lo reemplaza' : 'Lo pone el QR del bus');
   bloquear($(QRD_MODAL[m].drv), qrdAplica(m) && qrdCarnetAplica() && st.cond?.estado === 'LEIDO', 'Lo pone el carnet del conductor');
 }
 function qrdFila(cls, ico, texto, botones = '') {
@@ -27439,9 +27442,13 @@ function qrdPintar(m) {
     return;
   }
   // 1) QR del bus
-  if (st.estado === 'LEIDO') h.push(qrdFila('ok', '✅', `QR del bus <b>${esc(st.movil)}</b>${st.placa ? ` · ${esc(st.placa)}` : ''} · ${esc(hm5(st.leido_en))}`,
+  // en una fila: ¿sale otro bus (reemplazo)?
+  const sale = st.estado === 'LEIDO' ? st.vehId : Number(sel?.value) || null;
+  const cambio = st.fijo && st.estado && sale && Number(sale) !== st.fijo
+    ? `<div class="qrd-nota">🔁 Cambio de vehículo: la fila es del bus <b>${esc(st.fijoNum)}</b> y sale el <b>${esc(st.estado === 'LEIDO' ? st.movil : qrdNumeroDe(sel, sale))}</b>.</div>` : '';
+  if (st.estado === 'LEIDO') h.push(qrdFila('ok', '✅', `QR del bus <b>${esc(st.movil)}</b>${st.placa ? ` · ${esc(st.placa)}` : ''} · ${esc(hm5(st.leido_en))}${cambio}`,
     '<button type="button" class="btn btn-sm" data-qrd-leer>↺ Leer otra vez</button>'));
-  else if (st.estado === 'SIN_QR') h.push(qrdFila('sin', '⚠️', `Sin QR del bus: <b>${esc(st.motivo)}</b>.${st.fijo ? '' : ' Elige el bus en Móvil.'}`,
+  else if (st.estado === 'SIN_QR') h.push(qrdFila('sin', '⚠️', `Sin QR del bus: <b>${esc(st.motivo)}</b>.${st.fijo ? ' Si sale otro bus, cámbialo en Móvil.' : ' Elige el bus en Móvil.'}${cambio}`,
     '<button type="button" class="btn btn-sm" data-qrd-leer>📷 Leer el QR</button>'));
   else if (st.pidiendo) h.push(`<div class="qrd-paso pend"><label class="qrd-motivo"><span>¿Por qué no se puede leer el QR${de}?</span>
       <select data-qrd-motivo><option value="">Elige el motivo…</option>${QR_MOTIVOS.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
@@ -27513,15 +27520,15 @@ function qrdValidarBus(m, texto, vehs) {
   const st = _qrd[m], sel = $(QRD_MODAL[m].sel);
   const v = qrdBuscarBus(texto, vehs);
   if (!v) return { error: `Ese QR no es de un bus de la empresa (leyó: "${String(texto).slice(0, 40)}").` };
-  if (st.fijo && Number(v.id) !== st.fijo) return { error: `Este QR es del bus ${v.numero} y la fila es del bus ${st.fijoNum}. Busca el bus ${st.fijoNum}, o edita la fila para cambiar el móvil.` };
-  if (!st.fijo && ![...sel.options].some((o) => o.value === String(v.id))) return { error: `El bus ${v.numero} no está entre los móviles que puedes despachar aquí.` };
+  // en una fila, el QR de OTRO bus es un reemplazo: vale si ese bus se puede despachar aquí
+  if (Number(v.id) !== st.fijo && ![...sel.options].some((o) => o.value === String(v.id))) return { error: `El bus ${v.numero} no está entre los móviles que puedes despachar aquí.` };
   return { v };
 }
 function qrdAplicarBus(m, texto, v) {
   const st = _qrd[m], sel = $(QRD_MODAL[m].sel);
   Object.assign(st, { estado: 'LEIDO', texto: String(texto).trim(), motivo: null, vehId: Number(v.id), movil: v.numero, placa: v.placa || '',
     leido_en: new Date().toISOString(), pidiendo: false, error: null });
-  if (!st.fijo && sel.value !== String(v.id)) {
+  if (sel.value !== String(v.id)) {   // libre: el QR elige el bus; fila: reemplazo (cambio de vehículo)
     sel.disabled = false; sel.value = String(v.id); sel._comboSync && sel._comboSync();
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   }
@@ -27681,13 +27688,13 @@ function qrdEsperarQr(ses, video, leer, validar, msg) {
 }
 async function qrdPasoBus(m, ses, video, leer, msg) {
   const st = _qrd[m], vehs = await loadVehiculos();
-  msg(st.fijo ? `Apunta al QR del bus ${st.fijoNum}…` : 'Apunta al QR del bus que va a salir…');
+  msg(st.fijo ? `Apunta al QR del bus ${st.fijoNum} (o del bus que lo reemplaza)…` : 'Apunta al QR del bus que va a salir…');
   let bus = null;
   const t = await qrdEsperarQr(ses, video, leer, (texto) => { const r = qrdValidarBus(m, texto, vehs); if (r.error) return r.error; bus = r.v; return null; }, msg);
   if (!t) return false;
   st.recorte = qrdCuadro(video, 480);   // el cuadro exacto donde se leyó el QR
   qrdAplicarBus(m, t, bus);
-  msg(`✅ QR del bus ${bus.numero}`, 'ok');
+  msg(st.fijo && Number(bus.id) !== st.fijo ? `✅ QR del bus ${bus.numero} · cambio de vehículo (la fila es del ${st.fijoNum})` : `✅ QR del bus ${bus.numero}`, 'ok');
   return true;
 }
 async function qrdPasoFoto(m, ses, video, acc, msg, gpsP) {
