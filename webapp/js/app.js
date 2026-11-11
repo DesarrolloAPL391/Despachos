@@ -27394,7 +27394,12 @@ function qrdPasosPendientes(m) {
   if (!st.cond && qrdCarnetAplica()) p.push('carnet');
   return p;
 }
-function qrdFotoNecesaria(m) { const st = _qrd[m]; return !(st?.estado === 'SIN_QR' && st.motivo === QR_SIN_CAMARA); }
+// La foto es obligatoria, salvo: "la cámara no abre" (no aplica), o sin QR del bus Y sin carnet (opcional, 11/11)
+function qrdFotoNecesaria(m) {
+  const st = _qrd[m]; if (st?.estado !== 'SIN_QR') return true;
+  if (st.motivo === QR_SIN_CAMARA) return false;
+  return !(qrdCarnetAplica() && st.cond?.estado === 'SIN_QR');
+}
 // La foto sirve si es del bus que se va a despachar
 function qrdFotoOk(m) { const st = _qrd[m], sel = $(QRD_MODAL[m].sel); return !!(st?.foto && sel && String(st.foto.vehId) === String(sel.value)); }
 // El móvil: en una fila con bus queda fijo; en libre lo pone el QR. Solo con "sin QR" se escoge de la
@@ -27440,15 +27445,17 @@ function qrdPintar(m) {
     '<button type="button" class="btn btn-sm" data-qrd-leer>📷 Leer el QR</button>'));
   else if (st.pidiendo) h.push(`<div class="qrd-paso pend"><label class="qrd-motivo"><span>¿Por qué no se puede leer el QR${de}?</span>
       <select data-qrd-motivo><option value="">Elige el motivo…</option>${QR_MOTIVOS.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
-      <div class="qrd-nota">Se despacha igual, con la foto del bus, y queda marcado para que control lo revise.</div>
+      <div class="qrd-nota">Se despacha igual, con la foto del bus (si el conductor tampoco tiene carnet, la foto es opcional), y queda marcado para que control lo revise.</div>
       <div class="qrd-fila"><button type="button" class="btn btn-sm" data-qrd-leer>📷 Mejor intentar con el QR</button></div></div>`);
   else h.push(qrdFila('pend', '1', `QR${de}`, '<button type="button" class="btn btn-sm" data-qrd-leer>📷 Leer</button><button type="button" class="btn-link" data-qrd-sin>No se puede leer</button>'));
   // 2) foto del bus
   const busListo = st.estado === 'LEIDO' || (st.estado === 'SIN_QR' && sel?.value);
-  if (!qrdFotoNecesaria(m)) h.push(qrdFila('na', '—', 'Foto del bus: no aplica (la cámara no abre)'));
+  if (st.estado === 'SIN_QR' && st.motivo === QR_SIN_CAMARA) h.push(qrdFila('na', '—', 'Foto del bus: no aplica (la cámara no abre)'));
   else if (qrdFotoOk(m)) h.push(qrdFila('ok', `<img class="qrd-mini" src="${st.foto.url}" alt="Foto del bus">`,
     `Foto del bus <b>${esc(st.foto.movil)}</b> · ${esc(hm5(st.foto.capturada_en))}`,
     '<button type="button" class="btn btn-sm" data-qrd-verfoto>Ver</button><button type="button" class="btn btn-sm" data-qrd-foto>↺ Repetir</button>'));
+  else if (!qrdFotoNecesaria(m)) h.push(qrdFila('na', '—', 'Foto del bus: <b>opcional</b> (sin QR del bus y sin carnet)',
+    busListo ? '<button type="button" class="btn btn-sm" data-qrd-foto>📸 Tomar</button>' : ''));
   else if (busListo) h.push(qrdFila('pend', '2', st.foto ? 'Foto del bus: <b>el bus cambió</b>, tómala otra vez' : 'Foto del bus, con el número a la vista',
     '<button type="button" class="btn btn-sm" data-qrd-foto>📸 Tomar</button>'));
   else h.push(qrdFila('pend', '2', 'Foto del bus <small>(se toma seguida del QR)</small>'));
