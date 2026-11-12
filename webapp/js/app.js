@@ -660,8 +660,8 @@ function buildSidebar() {
     const avGps = GPS_ALERTAS ? ` <span class="nav-badge">${GPS_ALERTAS}</span>` : '';
     addNavAction(gOp, '🛰️', 'Salud del GPS' + avGps, openGpsSalud, 'nav-gpssalud');
   }
-  // 📷 QR obligatorio en cada despacho (sql/178): en local, el control solo para administración.
-  if (isAdmin()) addNavAction(gOp, '📷', 'QR, fotos y carnets', openQrControl, 'nav-qr-control');
+  // 📷 QR obligatorio en cada despacho (sql/178): administración ve todas las rutas; el auditor, las suyas (sql/181).
+  if (isAdmin() || isAuditor()) addNavAction(gOp, '📷', 'QR, fotos y carnets', openQrControl, 'nav-qr-control');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
 
   // 📈 Cumplimiento y análisis
@@ -27910,8 +27910,8 @@ function qrdRegistrar(m, tabla, filaId, vehId, resultado, regid = null) {
   return qrdListo(snap).then((qr) => qrdGuardar(qr, tabla, filaId, vehId, resultado, regid));
 }
 
-// ---- 📷 Control del QR en los despachos (administración, por ahora)
-const _qrCtl = { desde: null, hasta: null, d: null };
+// ---- 📷 Control del QR en los despachos: administración (todas las rutas) y auditores (SOLO SUS rutas), sql/181
+const _qrCtl = { desde: null, hasta: null, ruta: '', d: null };
 function qrCtlModal() {
   let m = $('qr-ctl-modal'); if (m) return m;
   m = document.createElement('div');
@@ -27922,7 +27922,9 @@ function qrCtlModal() {
     <div class="asp-toolbar vig-toolbar">
       <label class="vig-f">Desde <input type="date" data-desde></label>
       <label class="vig-f">Hasta <input type="date" data-hasta></label>
+      <label class="vig-f">Ruta <select data-ruta><option value="">Todas</option></select></label>
       <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
       <button type="button" class="btn btn-sm" data-recargar aria-label="Recargar">🔄</button>
     </div>
     <div class="vig-body" data-body><div class="loading">Cargando…</div></div>
@@ -27930,13 +27932,19 @@ function qrCtlModal() {
   m.addEventListener('click', (e) => {
     if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
     if (e.target.closest('[data-recargar]')) { qrCtlCargar(); return; }
-    const f = e.target.closest('[data-foto-path]'); if (f) qrCtlVerFoto(f.dataset.fotoPath);
+    const xb = e.target.closest('[data-excel]'); if (xb) { qrCtlExcel(xb); return; }
+    const f = e.target.closest('[data-foto-path]'); if (f) { qrCtlVerFoto(f.dataset.fotoPath); return; }
+    // tocar una ruta de la tabla = ver solo esa ruta (tocarla otra vez = todas)
+    const r = e.target.closest('[data-ruta-id]');
+    if (r) { _qrCtl.ruta = _qrCtl.ruta === r.dataset.rutaId ? '' : r.dataset.rutaId; m.querySelector('[data-ruta]').value = _qrCtl.ruta; qrCtlCargar(); }
   });
   m.querySelector('[data-desde]').addEventListener('change', (e) => { _qrCtl.desde = e.target.value; qrCtlCargar(); });
   m.querySelector('[data-hasta]').addEventListener('change', (e) => { _qrCtl.hasta = e.target.value; qrCtlCargar(); });
+  m.querySelector('[data-ruta]').addEventListener('change', (e) => { _qrCtl.ruta = e.target.value; qrCtlCargar(); });
   document.body.appendChild(m);
   return m;
 }
+// La foto: administración ve todas; el auditor, solo las de despachos de sus rutas (lo decide la base)
 async function qrCtlVerFoto(path) {
   const w = window.open('', '_blank');
   const { data, error } = await sb.storage.from('despacho-fotos').createSignedUrl(path, 600);
@@ -27944,57 +27952,101 @@ async function qrCtlVerFoto(path) {
   if (w) w.location = data.signedUrl; else window.open(data.signedUrl, '_blank');
 }
 async function openQrControl() {
-  if (!isAdmin()) return;
+  if (!(isAdmin() || isAuditor())) return;
   const m = qrCtlModal();
   _qrCtl.desde = _qrCtl.desde || hoyServidor(); _qrCtl.hasta = _qrCtl.hasta || hoyServidor();
   m.querySelector('[data-desde]').value = _qrCtl.desde; m.querySelector('[data-hasta]').value = _qrCtl.hasta;
   m.hidden = false; closeMenu();
   await qrCtlCargar();
 }
+// Administración en "Ver como auditor": las rutas de ese monitor. Si no, la base decide (auditor = las suyas).
+function qrCtlAlcance() { return isAdmin() && PREVIEW?.rol === 'auditor' ? (PREVIEW.ids || []) : null; }
 function qrDist(mts) { if (mts == null) return ''; return mts < 1000 ? `${mts} m` : `${(mts / 1000).toFixed(1).replace('.', ',')} km`; }
-// Qué pasó con un despacho para revisar, en palabras
-function qrCtlProblemas(x) {
+// Qué pasó con un despacho para revisar, en palabras (html: para la pantalla; si no, texto para el Excel)
+function qrCtlProblemas(x, html = true) {
+  const e = html ? esc : (s) => String(s ?? '');
+  const b = (t) => (html ? `<b class="qrc-mal">${t}</b>` : t);
   const p = [];
-  if (x.estado === 'SIN_QR') p.push(`Sin QR: ${esc(x.motivo || '')}`);
-  if (x.coincide === false) p.push(`El QR no era de ese bus <small>(${esc(String(x.qr_texto || '').slice(0, 30))})</small>`);
-  if (x.foto_estado === 'FALTA') p.push('<b class="qrc-mal">Sin foto</b>');
-  if (x.gps_estado === 'LEJOS') p.push(`<b class="qrc-mal">A ${qrDist(x.distancia_m)} del bus</b>`);
+  if (x.sin_lectura) p.push(b('Despachado sin pasar por el QR'));
+  if (x.estado === 'SIN_QR') p.push(`Sin QR del bus: ${e(x.motivo || '')}`);
+  if (x.bus_leido_en) p.push(b(`⚠️ El QR de este bus sí se leyó el ${e(x.bus_leido_en)}`));
+  if (x.coincide === false) p.push(html ? `El QR no era de ese bus <small>(${e(String(x.qr_texto || ''))})</small>` : `El QR no era de ese bus (${e(x.qr_texto || '')})`);
+  if (x.foto_estado === 'FALTA') p.push(b('Sin foto'));
+  if (x.gps_estado === 'LEJOS') p.push(b(`A ${qrDist(x.distancia_m)} del bus`));
   if (x.gps_estado === 'TARDE') p.push('Foto subida tarde (sin señal)');
-  if (x.cond_estado === 'SIN_QR') p.push(`Sin carnet: ${esc(x.cond_motivo || '')}`);
-  if (x.cond_coincide === false) p.push('<b class="qrc-mal">El carnet no era del conductor</b>');
+  if (x.cond_estado === 'SIN_QR') p.push(`Sin carnet: ${e(x.cond_motivo || '')}`);
+  if (x.carnet_leido_en) p.push(b(`⚠️ El carnet de este conductor sí se leyó el ${e(x.carnet_leido_en)}`));
+  if (x.cond_coincide === false) p.push(b('El carnet no era del conductor'));
   return p.join(' · ');
 }
+// Por qué no se leyó el QR del bus en una ruta: "20 sin sticker · 49 dañado · 1 cámara"
+function qrCtlMotivosRuta(x) {
+  return [[x.sin_sticker, 'sin sticker'], [x.sticker_danado, 'dañado'], [x.camara, 'cámara']]
+    .filter(([v]) => v).map(([v, t]) => `${Number(v).toLocaleString('es-CO')} ${t}`).join(' · ');
+}
+const QRC_META = 90;   // por debajo de este % la ruta o el despachador sale en rojo
 async function qrCtlCargar() {
   const m = qrCtlModal(), body = m.querySelector('[data-body]');
   body.innerHTML = '<div class="loading">Cargando…</div>';
   let d;
   try {
-    const r = await sb.rpc('despacho_qr_control', { p_desde: _qrCtl.desde, p_hasta: _qrCtl.hasta });
+    const r = await sb.rpc('despacho_qr_auditoria', {
+      p_desde: _qrCtl.desde, p_hasta: _qrCtl.hasta, p_rutas: qrCtlAlcance(), p_ruta: _qrCtl.ruta ? Number(_qrCtl.ruta) : null,
+    });
     if (r.error) throw r.error;
     d = r.data; if (!d?.ok) throw new Error(d?.error || 'no se pudo');
-  } catch (e) { body.innerHTML = `<div class="cump-empty">No se pudo cargar: ${esc(e.message || e)}</div>`; return; }
+  } catch (e) { _qrCtl.d = null; body.innerHTML = `<div class="cump-empty">No se pudo cargar: ${esc(e.message || e)}</div>`; return; }
+  _qrCtl.d = d;
+  if (d.sin_rutas) { body.innerHTML = '<div class="cump-empty">No tienes rutas asignadas. Pide a administración que te las asigne.</div>'; return; }
+  // el filtro de ruta: "Por ruta" siempre trae todas las rutas que esta cuenta puede ver
+  const rutas = (d.por_ruta || []).filter((x) => x.ruta_id != null)
+    .sort((a, b) => String(a.ruta).localeCompare(String(b.ruta), 'es', { numeric: true }));
+  if (_qrCtl.ruta && !rutas.some((x) => String(x.ruta_id) === _qrCtl.ruta)) { _qrCtl.ruta = ''; return qrCtlCargar(); }
+  const sel = m.querySelector('[data-ruta]');
+  sel.innerHTML = `<option value="">${d.mis_rutas ? (isAdmin() ? 'Todas las del monitor' : 'Todas mis rutas') : 'Todas'}</option>` + rutas.map((x) => `<option value="${x.ruta_id}">${esc(x.ruta)}</option>`).join('');
+  sel.value = _qrCtl.ruta;
+  const rutaSel = rutas.find((x) => String(x.ruta_id) === _qrCtl.ruta);
+
   const n = (x) => Number(x || 0).toLocaleString('es-CO');
-  const despTot = (d.tablas || []).reduce((a, t) => a + t.despachos, 0), sinTot = (d.tablas || []).reduce((a, t) => a + t.sin_lectura, 0);
   const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
-  const fo = d.fotos || {}, ca = d.carnet || {};
-  body.innerHTML = `<div class="qrc-tarjetas">
-      <div class="qrc-t"><div class="k">Despachos con lectura</div><div class="v">${n(despTot - sinTot)} <small>de ${n(despTot)}</small></div><div class="d">${pct(despTot - sinTot, despTot)}% de los viajes despachados en las tablas</div></div>
-      <div class="qrc-t"><div class="k">QR del bus</div><div class="v">${n(d.leidos)} <small>leídos</small></div><div class="d">${d.no_coincide ? `<b class="qrc-mal">${n(d.no_coincide)} no eran de ese bus</b> · ` : ''}${n(d.sin_qr)} sin QR${Object.keys(d.por_motivo || {}).length ? ': ' + Object.entries(d.por_motivo).map(([k, v]) => `${esc(k)} ${v}`).join(' · ') : ''}</div></div>
-      <div class="qrc-t ${fo.lejos || fo.falta ? 'alerta' : ''}"><div class="k">Fotos del bus</div><div class="v">${n(fo.con_foto)} <small>con foto</small></div><div class="d">${fo.lejos ? `<b class="qrc-mal">${n(fo.lejos)} lejos del bus</b> · ` : ''}${n(fo.falta)} sin foto · ${n(fo.bus_sin_gps)} bus sin GPS · ${n(fo.cel_sin_gps)} celular sin GPS${fo.tarde ? ` · ${n(fo.tarde)} subidas tarde` : ''}</div></div>
-      <div class="qrc-t ${ca.no_coincide ? 'alerta' : ''}"><div class="k">Carnet del conductor</div><div class="v">${n(ca.leidos)} <small>leídos</small></div><div class="d">${ca.no_coincide ? `<b class="qrc-mal">${n(ca.no_coincide)} no eran del conductor</b> · ` : ''}${n(ca.sin_carnet)} sin carnet${Object.keys(ca.por_motivo || {}).length ? ': ' + Object.entries(ca.por_motivo).map(([k, v]) => `${esc(k)} ${v}`).join(' · ') : ''}</div></div>
+  const motivos = (o) => Object.entries(o || {}).map(([k, v]) => `${esc(k)} ${n(v)}`).join(' · ');
+  // porcentaje con barrita: verde si llega a la meta, rojo si no (el número siempre va escrito)
+  const barra = (a, b) => {
+    if (!b) return '—';
+    const p = pct(a, b);
+    return `<span class="qrc-pct ${p < QRC_META ? 'qrc-mal' : ''}" title="${n(a)} de ${n(b)}"><span class="qrc-bar"><i style="width:${p}%"></i></span>${p}%</span>`;
+  };
+  const re = d.resumen || {}, D = re.despachos || 0;
+  const desm = (re.sticker_si_leido || 0) + (re.carnet_si_leido || 0);
+  body.innerHTML = `<p class="qrc-nota qrc-alcance">${rutaSel ? `Ruta <b>${esc(rutaSel.ruta)}</b> · ` : ''}Cuenta los despachos hechos${d.obligatorio_desde ? ` desde el ${esc(d.obligatorio_desde)}, cuando el QR se volvió obligatorio` : ''}.${d.solo_viaje ? ` Desde el ${esc(d.solo_viaje_desde || '')} el QR va solo en el ${esc(d.solo_viaje)}.º viaje del día de cada carro: cuentan esos viajes.` : ''}${d.mis_rutas ? `${isAdmin() ? ' Rutas del monitor: ' : ' Tus rutas: '}${esc(d.mis_rutas)}.` : ''}</p>
+    <div class="qrc-tarjetas">
+      <div class="qrc-t ${D && pct(re.qr_bus, D) < QRC_META ? 'alerta' : ''}"><div class="k">QR del bus</div><div class="v">${D ? pct(re.qr_bus, D) + '%' : '—'} <small>${n(re.qr_bus)} de ${n(D)} despachos</small></div>
+        <div class="d">${re.sin_lectura ? `<b class="qrc-mal">${n(re.sin_lectura)} ${re.sin_lectura === 1 ? 'despachado' : 'despachados'} sin pasar por el QR</b> · ` : ''}${re.qr_otro_bus ? `<b class="qrc-mal">${n(re.qr_otro_bus)} QR de otro bus</b> · ` : ''}${n(re.sin_qr)} sin QR${Object.keys(re.por_motivo || {}).length ? ': ' + motivos(re.por_motivo) : ''}</div></div>
+      <div class="qrc-t ${D && pct(re.carnet, D) < QRC_META ? 'alerta' : ''}"><div class="k">Carnet del conductor</div><div class="v">${D ? pct(re.carnet, D) + '%' : '—'} <small>${n(re.carnet)} leídos</small></div>
+        <div class="d">${re.carnet_otro ? `<b class="qrc-mal">${n(re.carnet_otro)} ${re.carnet_otro === 1 ? 'no era' : 'no eran'} del conductor</b> · ` : ''}${n(re.sin_carnet)} sin carnet${Object.keys(re.por_motivo_carnet || {}).length ? ': ' + motivos(re.por_motivo_carnet) : ''}</div></div>
+      <div class="qrc-t ${re.lejos || re.sin_foto ? 'alerta' : ''}"><div class="k">Foto del bus</div><div class="v">${D ? pct(re.con_foto, D) + '%' : '—'} <small>${n(re.con_foto)} con foto</small></div>
+        <div class="d">${re.lejos ? `<b class="qrc-mal">${n(re.lejos)} ${re.lejos === 1 ? 'tomada' : 'tomadas'} lejos del bus</b> · ` : ''}${n(re.sin_foto)} sin foto · ${n(re.bus_sin_gps)} bus sin GPS · ${n(re.cel_sin_gps)} celular sin GPS${re.tarde ? ` · ${n(re.tarde)} subidas tarde` : ''}</div></div>
+      <div class="qrc-t ${desm ? 'alerta' : ''}"><div class="k">Para revisar</div><div class="v">${n(d.revisar_total)} <small>despachos</small></div>
+        <div class="d">${desm ? `<b class="qrc-mal">${n(re.sticker_si_leido)} "sin sticker" y ${n(re.carnet_si_leido)} "sin carnet" que sí se leyeron en otro despacho</b>` : 'Sin QR, sin carnet, sin foto o lejos del bus.'}</div></div>
     </div>
-    <h4 class="qrc-h">Por tabla</h4>
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>Tabla</th><th>Despachos</th><th>Sin lectura de QR</th></tr></thead><tbody>
-      ${(d.tablas || []).map((t) => `<tr><td>${esc(t.label)}</td><td>${n(t.despachos)}</td><td>${n(t.sin_lectura)} <small>(${pct(t.sin_lectura, t.despachos)}%)</small></td></tr>`).join('') || '<tr><td colspan="3">Sin despachos en esas fechas.</td></tr>'}
+    <h4 class="qrc-h">Por ruta <small>(la más baja primero; toca una ruta para ver solo esa)</small></h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Ruta</th><th>Despachos</th><th>QR del bus</th><th>Carnet</th><th>Foto</th><th>Sin QR del bus</th><th title="Dijo &quot;sin sticker&quot; o &quot;sin carnet&quot;, pero el QR de ese bus o el carnet de ese conductor sí se leyó en otro despacho">⚠️ Sí se leyó <small>(sticker / carnet)</small></th></tr></thead><tbody>
+      ${(d.por_ruta || []).map((x) => `<tr class="${String(x.ruta_id) === _qrCtl.ruta ? 'qrc-sel' : ''}">
+        <td>${x.ruta_id != null ? `<button type="button" class="qrc-ruta" data-ruta-id="${x.ruta_id}">${esc(x.ruta)}</button>` : esc(x.ruta)}</td>
+        <td>${n(x.despachos)}${x.sin_lectura ? ` <small class="qrc-mal">(${n(x.sin_lectura)} sin pasar por el QR)</small>` : ''}</td>
+        <td>${barra(x.qr_bus, x.despachos)}</td><td>${barra(x.carnet, x.despachos)}</td><td>${barra(x.con_foto, x.despachos)}</td>
+        <td>${qrCtlMotivosRuta(x) || '—'}</td>
+        <td>${x.sticker_si_leido || x.carnet_si_leido ? `<b class="qrc-mal">${n(x.sticker_si_leido)} / ${n(x.carnet_si_leido)}</b>` : '0 / 0'}</td></tr>`).join('') || '<tr><td colspan="7">Sin despachos en esas fechas.</td></tr>'}
     </tbody></table></div>
-    <p class="qrc-nota">La app publicada todavía no pide el QR: hasta publicar, casi todo sale "sin lectura".</p>
-    <h4 class="qrc-h">Por despachador</h4>
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>Despachador</th><th>Despachos</th><th>Sin QR</th><th>QR de otro bus</th><th>Sin foto</th><th>Lejos del bus</th><th>Sin carnet</th></tr></thead><tbody>
-      ${(d.por_despachador || []).map((x) => `<tr><td>${esc(x.despachador)}</td><td>${n(x.total)}</td><td>${n(x.sin_qr)}</td><td>${n(x.no_coincide)}</td><td>${n(x.sin_foto)}</td><td>${x.lejos ? `<b class="qrc-mal">${n(x.lejos)}</b>` : '0'}</td><td>${n(x.sin_carnet)}</td></tr>`).join('') || '<tr><td colspan="7">Todavía no hay lecturas.</td></tr>'}
+    <h4 class="qrc-h">Por despachador <small>(el más bajo primero)</small></h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Despachador</th><th>Rutas</th><th>Despachos</th><th>QR del bus</th><th>Sin QR</th><th>Sin carnet</th><th>Sin foto</th><th>Lejos del bus</th><th title="Dijo &quot;sin sticker&quot; o &quot;sin carnet&quot;, pero sí se leyó en otro despacho">⚠️ Sí se leyó</th></tr></thead><tbody>
+      ${(d.por_despachador || []).map((x) => `<tr><td>${esc(x.despachador)}</td><td><small>${esc(x.rutas || '')}</small></td><td>${n(x.total)}</td>
+        <td>${barra(x.qr_bus, x.total)}</td><td>${n(x.sin_qr)}</td><td>${n(x.sin_carnet)}</td><td>${n(x.sin_foto)}</td>
+        <td>${x.lejos ? `<b class="qrc-mal">${n(x.lejos)}</b>` : '0'}</td><td>${x.desmentidos ? `<b class="qrc-mal">${n(x.desmentidos)}</b>` : '0'}</td></tr>`).join('') || '<tr><td colspan="9">Todavía no hay lecturas.</td></tr>'}
     </tbody></table></div>
-    <h4 class="qrc-h">Para revisar <small>(sin QR, sin foto, lejos del bus o sin carnet)</small></h4>
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>Fecha</th><th>Hora</th><th>Tabla</th><th>Bus</th><th>Conductor</th><th>Qué pasó</th><th>Despachador</th><th>Foto</th></tr></thead><tbody>
-      ${(d.revisar || []).map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td>${esc(x.hora)}</td><td>${esc(x.tabla)}</td><td><b>${esc(x.movil || '')}</b></td>
+    <h4 class="qrc-h">Para revisar <small>(sin QR, sin carnet, sin foto, lejos del bus o sin pasar por el QR${(d.revisar || []).length < (d.revisar_total || 0) ? `; los ${n((d.revisar || []).length)} más recientes de ${n(d.revisar_total)}: acota la ruta o las fechas` : ''})</small></h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Fecha</th><th>Hora</th><th>Ruta</th><th>Bus</th><th>Conductor</th><th>Qué pasó</th><th>Despachador</th><th>Foto</th></tr></thead><tbody>
+      ${(d.revisar || []).map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td>${esc(x.hora || '')}</td><td>${esc(x.ruta || '')}</td><td><b>${esc(x.movil || '')}</b></td>
         <td>${esc(x.cond_nombre || '')}</td><td>${qrCtlProblemas(x)}</td><td>${esc(x.despachador || '')}</td>
         <td>${x.foto_path ? `<button type="button" class="btn btn-sm" data-foto-path="${esc(x.foto_path)}">📷 Ver</button>` : '—'}</td></tr>`).join('') || '<tr><td colspan="8">Nada para revisar.</td></tr>'}
     </tbody></table></div>
@@ -28004,11 +28056,38 @@ async function qrCtlCargar() {
   if (mu.length) {
     const gal = body.querySelector('[data-galeria]');
     const { data: urls } = await sb.storage.from('despacho-fotos').createSignedUrls(mu.map((x) => x.foto_path), 600);
-    const porPath = Object.fromEntries((urls || []).map((u) => [u.path, u.signedUrl]));
+    const porPath = Object.fromEntries((urls || []).filter((u) => u.signedUrl).map((u) => [u.path, u.signedUrl]));
     gal.innerHTML = mu.map((x) => `<button type="button" class="qrc-foto" data-foto-path="${esc(x.foto_path)}">
         ${porPath[x.foto_path] ? `<img src="${esc(porPath[x.foto_path])}" alt="Bus ${esc(x.movil)}" loading="lazy">` : ''}
-        <span>${esc(x.movil)} · ${esc(x.hora)}${x.distancia_m != null ? ` · a ${qrDist(x.distancia_m)}` : ''}</span></button>`).join('');
+        <span>${esc(x.movil)} · ${esc(x.ruta || '')} · ${esc(x.hora)}${x.distancia_m != null ? ` · a ${qrDist(x.distancia_m)}` : ''}</span></button>`).join('');
   }
 }
+// ⬇️ Excel: por ruta, por despachador y la lista para revisar (lo mismo que está en pantalla)
+async function qrCtlExcel(btn) {
+  const d = _qrCtl.d;
+  if (!d?.ok || d.sin_rutas) { toast('Primero carga los datos.', 'err'); return; }
+  const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳';
+  const pc = (a, b) => (b ? Math.round((1000 * a) / b) / 10 : null);
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const wb = XLSX.utils.book_new();
+    const hoja = (nombre, aoa, anchos) => { const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = anchos.map((w) => ({ wch: w })); XLSX.utils.book_append_sheet(wb, ws, nombre); };
+    hoja('Por ruta', [['Ruta', 'Despachos', 'Sin pasar por el QR', 'QR del bus', '% QR del bus', 'Carnet', '% carnet', 'Con foto', '% foto',
+      'Sin sticker', 'Sticker dañado', 'Cámara', 'Sin carnet', 'Lejos del bus', 'Dijo "sin sticker" y sí se leyó', 'Dijo "sin carnet" y sí se leyó'],
+      ...(d.por_ruta || []).map((x) => [x.ruta, x.despachos, x.sin_lectura, x.qr_bus, pc(x.qr_bus, x.despachos), x.carnet, pc(x.carnet, x.despachos),
+        x.con_foto, pc(x.con_foto, x.despachos), x.sin_sticker, x.sticker_danado, x.camara, x.sin_carnet, x.lejos, x.sticker_si_leido, x.carnet_si_leido])],
+      [16, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 14, 14]);
+    hoja('Por despachador', [['Despachador', 'Rutas', 'Despachos', 'QR del bus', '% QR del bus', 'Sin QR', 'QR de otro bus', 'Sin carnet', 'Sin foto', 'Lejos del bus', 'Sticker o carnet que sí se leyó'],
+      ...(d.por_despachador || []).map((x) => [x.despachador, x.rutas || '', x.total, x.qr_bus, pc(x.qr_bus, x.total), x.sin_qr, x.qr_otro_bus, x.sin_carnet, x.sin_foto, x.lejos, x.desmentidos])],
+      [28, 30, 10, 10, 10, 10, 10, 10, 10, 10, 14]);
+    hoja('Para revisar', [['Fecha', 'Hora', 'Ruta', 'Tabla', 'Bus', 'Conductor', 'Qué pasó', 'Despachador', 'Distancia al bus (m)', 'Foto'],
+      ...(d.revisar || []).map((x) => [celdaFechaXlsx(x.fecha), x.hora || '', x.ruta || '', x.tabla || '', x.movil || '', x.cond_nombre || '',
+        qrCtlProblemas(x, false), x.despachador || '', x.distancia_m ?? '', x.foto_path ? 'Sí' : 'No'])],
+      [11, 7, 14, 12, 8, 28, 70, 28, 10, 6]);
+    XLSX.writeFile(wb, `qr_despachos_${d.desde}_${d.hasta}.xlsx`);
+  } catch (e) { toast('No se pudo exportar: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; btn.textContent = prev; }
+}
+
 
 init();

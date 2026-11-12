@@ -3636,6 +3636,15 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .qrc-h { margin: 14px 0 6px; font-size: 14px; }
 .qrc-h small { color: var(--muted); font-weight: 400; }
 .qrc-nota { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.qrc-alcance { margin: 0 0 10px; }
+/* porcentaje con barrita (sql/181): verde si llega a la meta, rojo si no; el número siempre escrito */
+.qrc-pct { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.qrc-bar { display: inline-block; width: 56px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.qrc-bar i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.qrc-pct.qrc-mal .qrc-bar i { background: #b42318; }
+.qrc-ruta { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--text); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.qrc-ruta:hover, .qrc-ruta:focus-visible { color: var(--primary-dark); }
+tr.qrc-sel td { background: #fff1f1; }
 /* 📸 foto del bus y 🪪 carnet en el despacho (sql/179) */
 .qrd-practica { font-size: 13px; color: #1e3a8a; background: #eef4ff; border: 1px solid #c7d7fe; border-radius: 8px; padding: 6px 10px; }
 .qrd-paso { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,.65); }
