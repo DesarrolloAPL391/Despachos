@@ -4063,10 +4063,16 @@ function enhanceSelect(sel) {
   sel._comboSync = sync;
   sync();
 
+  // Busca sin importar tildes, mayúsculas ni el orden de las palabras: "gomez juan" encuentra "JUAN GÓMEZ" (12/11/2026)
+  const normBusq = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   function render(filter = '') {
-    const f = filter.trim().toLowerCase();
+    const palabras = normBusq(filter).split(/\s+/).filter(Boolean);
     list.innerHTML = '';
-    const opts = [...sel.options].filter((o) => o.value !== '' && (o.textContent || '').toLowerCase().includes(f));
+    const opts = [...sel.options].filter((o) => {
+      if (o.value === '') return false;
+      const t = normBusq(o.textContent);
+      return palabras.every((p) => t.includes(p));
+    });
     for (const o of opts.slice(0, 80)) {
       const item = document.createElement('div');
       item.className = 'combo-item' + (o.value === sel.value ? ' sel' : '');
@@ -24317,11 +24323,21 @@ async function loadItinerarios() {
 }
 
 let drvList = null;
+// Conductores habilitados en SONAR. Son más de 1.000 y el API entrega máximo 1.000 por consulta: se piden
+// por páginas. Antes llegaban solo los primeros 1.000 por nombre y los del final del abecedario (desde "VEL…")
+// no salían en la lista ni se reconocía su carnet (12/11/2026).
 async function loadDrivers() {
   if (!drvList || !drvList.length) {
-    const { data } = await sb.from('conductores_sonar')
-      .select('dr_id,nombre,codigo').eq('status', 'ENABLED').order('nombre').limit(3000);
-    drvList = data || [];
+    const todos = [];
+    for (let desde = 0, vuelta = 0; vuelta < 30; vuelta++) {
+      const { data, error } = await sb.from('conductores_sonar')
+        .select('dr_id,nombre,codigo').eq('status', 'ENABLED').order('nombre').order('dr_id').range(desde, desde + 999);
+      if (error) return todos;   // una página falló (señal): se usa lo que llegó y la próxima vez se pide de nuevo
+      if (!data || !data.length) break;
+      todos.push(...data);
+      desde += data.length;
+    }
+    drvList = todos;
   }
   return drvList;
 }
