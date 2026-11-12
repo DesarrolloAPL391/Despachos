@@ -27308,9 +27308,11 @@ $('perfil-kick-btn').addEventListener('click', async () => {
 // ARRANQUE (sql/180): la hora en que se vuelve obligatorio vive en la BASE (despacho_qr_config) y se compara
 // con la hora del SERVIDOR. Sin hora → apagado; antes de la hora → PRÁCTICA (sale el recuadro, no bloquea);
 // desde la hora → obligatorio. Así se corre o se apaga sin volver a publicar. El carnet tiene su propio switch.
+// 2.º VIAJE (sql/182, 12/11): con despacho_qr_config.solo_viaje = 2, todo lo anterior se pide SOLO en el 2.º viaje del
+// día de cada carro (lo cuenta la base, en todas las tablas y rutas); los demás viajes se despachan como antes, sin QR.
 const QR_REGLAS_KEY = 'apl_qr_reglas';
 let _qrReglas = (() => {
-  const base = { desde: null, carnet: true, offset: 0, cargado: 0 };
+  const base = { desde: null, carnet: true, soloViaje: null, offset: 0, cargado: 0 };
   try { return Object.assign(base, JSON.parse(localStorage.getItem(QR_REGLAS_KEY) || '{}'), { cargado: 0 }); } catch { return base; }
 })();
 async function qrdCargarReglas(forzar = false) {
@@ -27319,8 +27321,9 @@ async function qrdCargarReglas(forzar = false) {
     const { data, error } = await sb.rpc('despacho_qr_reglas');
     if (!error && data?.ok) {
       _qrReglas = { desde: data.desde ? new Date(data.desde).getTime() : null, carnet: data.carnet !== false,
+        soloViaje: Number(data.solo_viaje) || null,
         offset: data.ahora ? new Date(data.ahora).getTime() - Date.now() : 0, cargado: Date.now() };
-      try { localStorage.setItem(QR_REGLAS_KEY, JSON.stringify({ desde: _qrReglas.desde, carnet: _qrReglas.carnet, offset: _qrReglas.offset })); } catch { /* */ }
+      try { localStorage.setItem(QR_REGLAS_KEY, JSON.stringify({ desde: _qrReglas.desde, carnet: _qrReglas.carnet, soloViaje: _qrReglas.soloViaje, offset: _qrReglas.offset })); } catch { /* */ }
     }
   } catch { /* sin conexión: se queda con lo último que supo */ }
   return _qrReglas;
@@ -27330,6 +27333,10 @@ function qrdModo() {
   return Date.now() + (_qrReglas.offset || 0) >= _qrReglas.desde ? 'obligatorio' : 'practica';
 }
 function qrdCarnetAplica() { return _qrReglas.carnet !== false; }
+// 🚌 La regla del viaje (sql/182): con solo_viaje = 2 el QR se pide SOLO en el 2.º viaje del día de cada carro; el 1.º y
+// del 3.º en adelante se despachan como antes (lista + conductor del Resumen). El número de viaje lo cuenta la BASE
+// (despacho_viajes_bus). Si no se puede saber (sin señal), no se pide el QR: no se frena la operación.
+function qrdSoloViaje() { return _qrReglas.soloViaje || null; }
 // "hoy a las 10:30 a. m." o "el jueves 12 a las 10:30 a. m."
 function qrdHoraInicio() {
   try {
@@ -27347,9 +27354,40 @@ const QRD_MODAL = {
   s: { sel: 's-mov', drv: 's-drv', fijo: () => { const r = sonarRow; const id = r ? (r.vehiculo_id || r.vehiculo_programado_id) : null; return id ? Number(id) : null; } },
   nd: { sel: 'nd-movil', drv: 'nd-cond', fijo: () => null },
 };
-function qrdAplica(m) {
+// ¿Esta ventana despacha un viaje? (sin la regla del viaje, todos piden QR)
+function qrdAplicaBase(m) {
   if (isAuditor() || qrdModo() === 'off') return false;
   return m === 'nd' || $('s-realizo')?.value === 'SI';
+}
+function qrdAplica(m) { return qrdAplicaBase(m) && qrdViajePide(m); }
+// Con la regla del viaje: ¿el bus elegido va en el viaje que pide QR? Mientras se averigua, todavía no.
+function qrdViajePide(m) {
+  const sv = qrdSoloViaje(); if (!sv) return true;
+  const v = qrdViajeActual(m);
+  return !!(v && !v.cargando && v.n === sv);
+}
+// El viaje de hoy del bus elegido. Si el bus cambió, se cuenta otra vez en la base y se repinta cuando llega.
+function qrdViajeActual(m) {
+  const st = _qrd[m], veh = Number($(QRD_MODAL[m]?.sel)?.value) || null;
+  if (!st || !veh || !qrdSoloViaje()) return null;
+  if (st.viaje?.veh !== veh) qrdContarViaje(m);
+  return st.viaje?.veh === veh ? st.viaje : null;
+}
+async function qrdContarViaje(m) {
+  const st = _qrd[m], veh = Number($(QRD_MODAL[m]?.sel)?.value) || null;
+  if (!st || !veh || !qrdSoloViaje() || st.viaje?.veh === veh) return;   // una vez por bus (si falló, al volver a abrir)
+  const v = st.viaje = { veh, n: null, cargando: true };
+  const fila = m === 's' && sonarRow?.id ? sonarRow : null;
+  const fecha = fila?.fecha ? String(fila.fecha).slice(0, 10) : (m === 'nd' && $('nd-fecha')?.value) || hoyServidor();
+  try {
+    const r = await Promise.race([
+      sb.rpc('despacho_viajes_bus', { p_vehiculo_id: veh, p_fecha: fecha, p_tabla: fila ? sonarTable : null, p_fila_id: fila ? String(fila.id) : null }),
+      new Promise((ok) => setTimeout(() => ok({ error: { message: 'sin respuesta' } }), 8000))]);
+    if (r.error || !r.data?.ok) throw new Error(r.error?.message || r.data?.error || 'no se pudo');
+    v.n = Number(r.data.viaje) || null;
+  } catch (e) { v.error = String(e?.message || e); }
+  v.cargando = false;
+  if (_qrd[m] === st && st.viaje === v) { qrdBloquear(m); qrdPintar(m); }
 }
 // Número del bus según la opción del selector ("5609 · ABC123")
 function qrdNumeroDe(sel, id) {
@@ -27396,8 +27434,9 @@ function qrdPreparar(m) {
         qrdBloquear(m); qrdPintar(m);
       }
     });
-    // si cambian el móvil a mano (sin QR / reemplazo), el recuadro se pone al día (foto de otro bus, aviso de cambio)
-    sel.addEventListener('change', () => { if (_qrd[m] && !box.hidden) qrdPintar(m); });
+    // si cambian el móvil (a mano, sin QR / reemplazo), el recuadro se pone al día (foto de otro bus, aviso de cambio)
+    // y, con la regla del viaje, se averigua qué viaje de hoy es ese bus
+    sel.addEventListener('change', () => { if (_qrd[m]) { qrdBloquear(m); qrdPintar(m); } });
   }
   qrdBloquear(m); qrdPintar(m);
   // la hora de arranque y el switch del carnet vienen de la base (cache de 5 min)
@@ -27431,7 +27470,7 @@ function qrdBloquear(m) {
     const inp = sel.parentNode?.classList?.contains('combo') ? sel.parentNode.querySelector('.combo-input') : null;
     if (inp) { inp.disabled = on; inp.title = on ? titulo : ''; }
   };
-  bloquear($(QRD_MODAL[m].sel), qrdAplica(m) && st.estado !== 'SIN_QR',
+  bloquear($(QRD_MODAL[m].sel), qrdAplica(m) && (qrdSoloViaje() ? st.estado === 'LEIDO' : st.estado !== 'SIN_QR'),
     st.fijo && st.estado !== 'LEIDO' ? 'Si sale otro bus, lee el QR del bus que lo reemplaza' : 'Lo pone el QR del bus');
   bloquear($(QRD_MODAL[m].drv), qrdAplica(m) && qrdCarnetAplica() && st.cond?.estado === 'LEIDO', 'Lo pone el carnet del conductor');
 }
@@ -27440,14 +27479,26 @@ function qrdFila(cls, ico, texto, botones = '') {
 }
 function qrdPintar(m) {
   const box = $(`${m}-qrbox`), st = _qrd[m]; if (!box || !st) return;
+  const sel = $(QRD_MODAL[m].sel);
+  // regla del viaje: este bus no va en el viaje del QR (o se está averiguando) → una nota y nada más
+  const sv = qrdSoloViaje();
+  if (sv && qrdAplicaBase(m) && !qrdViajePide(m)) {
+    const v = qrdViajeActual(m);
+    box.hidden = !v || (!v.cargando && !v.n);
+    if (box.hidden) return;
+    box.className = 'field full qrd';
+    box.innerHTML = v.cargando ? '<div class="qrd-nota">⏳ Revisando qué viaje de hoy es este bus…</div>'
+      : `<div class="qrd-nota">🚌 Viaje <b>${v.n}</b> de hoy del bus <b>${esc(qrdNumeroDe(sel, v.veh))}</b>: se despacha sin QR (el QR va en el ${sv}.º viaje).</div>`;
+    return;
+  }
   box.hidden = !qrdAplica(m);
   if (box.hidden) return;
-  const sel = $(QRD_MODAL[m].sel);
-  const de = st.fijo ? ` del bus <b>${esc(st.fijoNum)}</b>` : ' del bus';
+  const de = sv && sel?.value ? ` del bus <b>${esc(qrdNumeroDe(sel, sel.value))}</b>` : st.fijo ? ` del bus <b>${esc(st.fijoNum)}</b>` : ' del bus';
   const nada = !st.estado && !st.pidiendo && !st.foto && !st.cond && !st.condPidiendo;
   const carnet = qrdCarnetAplica();
   const h = [];
   if (qrdModo() === 'practica') h.push(`<div class="qrd-practica">🕥 <b>Práctica</b> · obligatorio desde ${esc(qrdHoraInicio())} · por ahora no te bloquea</div>`);
+  if (sv) h.push(`<div class="qrd-nota">🚌 Es el <b>${sv}.º viaje</b> de hoy de este bus: lleva QR del bus, foto${carnet ? ' y carnet' : ''}.</div>`);
   if (nada) {
     h.push(`<div class="qrd-tit">📷 Para despachar: QR${de} → foto del bus${carnet ? ' → carnet del conductor' : ''}</div>
       <div class="qrd-fila"><button type="button" class="btn btn-primary" data-qrd-todo>📷 Empezar</button>
@@ -27578,7 +27629,11 @@ async function qrdAvisoResumen(m, st) {
   }
 }
 // ¿Falta algo para despachar? null = listo. Solo bloquea desde la hora de arranque (antes es práctica).
-function qrdFalta(m) { return qrdModo() === 'obligatorio' ? qrdPendiente(m) : null; }
+function qrdFalta(m) {
+  if (qrdModo() !== 'obligatorio') return null;
+  if (qrdSoloViaje() && qrdAplicaBase(m) && qrdViajeActual(m)?.cargando) return 'Un momento: revisando qué viaje de hoy es este bus…';
+  return qrdPendiente(m);
+}
 function qrdPendiente(m) {
   if (!qrdAplica(m)) return null;
   const st = _qrd[m], sel = $(QRD_MODAL[m].sel), drv = $(QRD_MODAL[m].drv);
@@ -27704,7 +27759,9 @@ function qrdEsperarQr(ses, video, leer, validar, msg) {
 }
 async function qrdPasoBus(m, ses, video, leer, msg) {
   const st = _qrd[m], vehs = await loadVehiculos();
-  msg(st.fijo ? `Apunta al QR del bus ${st.fijoNum} (o del bus que lo reemplaza)…` : 'Apunta al QR del bus que va a salir…');
+  const elegido = qrdSoloViaje() && $(QRD_MODAL[m].sel)?.value ? qrdNumeroDe($(QRD_MODAL[m].sel), $(QRD_MODAL[m].sel).value) : null;
+  msg(elegido ? `Apunta al QR del bus ${elegido} (o del bus que lo reemplaza)…`
+    : st.fijo ? `Apunta al QR del bus ${st.fijoNum} (o del bus que lo reemplaza)…` : 'Apunta al QR del bus que va a salir…');
   let bus = null;
   const t = await qrdEsperarQr(ses, video, leer, (texto) => { const r = qrdValidarBus(m, texto, vehs); if (r.error) return r.error; bus = r.v; return null; }, msg);
   if (!t) return false;
@@ -27804,7 +27861,7 @@ function qrdLeer(m) { return qrdCamara(m, ['bus', 'foto', ...(_qrd[m]?.cond || !
 // ---- lo que viaja con el despacho
 // Instantánea (sin consumir): en Nuevo despacho se arma antes de las confirmaciones.
 function qrdInstantanea(m) {
-  const st = _qrd[m]; if (!st || !st.estado) return null;
+  const st = _qrd[m]; if (!st || !st.estado || !qrdAplica(m)) return null;   // un viaje que no pide QR no registra lectura
   const drv = $(QRD_MODAL[m].drv);
   return { estado: st.estado, texto: st.texto, motivo: st.motivo, leido_en: st.leido_en,
     cond: st.cond ? { estado: st.cond.estado, texto: st.cond.texto, motivo: st.cond.motivo, drId: st.cond.drId || drv?.value || null } : null,
