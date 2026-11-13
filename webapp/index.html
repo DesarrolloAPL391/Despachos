@@ -9,10 +9,14 @@
   <link rel="icon" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/styles.css" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <!-- Adelanta la conexión al servidor de mapas base y de tráfico → primeros tiles más rápidos -->
+  <!-- Leaflet 1.9.4 servido desde la app (vendor/leaflet, idéntico al oficial: mismo hash SRI). Antes venía de unpkg:
+       con la red lenta eso demoraba el arranque (el script detenía la carga de app.js) y no quedaba guardado por el SW. -->
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <!-- Adelanta las conexiones: la base de datos (fetch con CORS → crossorigin), el mapa base (imágenes sin CORS → SIN
+       crossorigin, si no la conexión no sirve para los cuadros) y el tráfico de TomTom -->
+  <link rel="preconnect" href="https://ggbyeftqatnahlpunqek.supabase.co" crossorigin />
+  <link rel="preconnect" href="https://tile.openstreetmap.org" />
   <link rel="preconnect" href="https://api.tomtom.com" crossorigin />
-  <link rel="preconnect" href="https://a.tile.openstreetmap.org" crossorigin />
   <!-- iOS: modo app a pantalla completa al instalar -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -1525,7 +1529,8 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="vendor/supabase/supabase.js"></script>
   <script type="module" src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

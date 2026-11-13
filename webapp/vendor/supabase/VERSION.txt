@@ -1,0 +1,3 @@
+supabase-js 2.119.0 (UMD oficial del paquete npm @supabase/supabase-js@2.119.0, dist/umd/supabase.js).
+Tarball verificado contra el registro npm: sha512-MKP49G6bJbPhvsZDegZ/IXS/ITApPgplDCF5+F65KZ5kIArS5Y90WFxwvWYALx2bsxdrSuHvkCiXHYr3dU8+sw==
+Antes se cargaba de esm.sh sin version fija (@2): 13 archivos encadenados en cada arranque.

@@ -1,4 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// supabase-js 2.119.0 servido desde la app (vendor/supabase/supabase.js, el UMD oficial de npm, cargado en index.html
+// antes de este módulo). Antes venía de esm.sh sin versión fija: 13 archivos encadenados (28 s con la red lenta) y
+// cualquier versión nueva de la librería entraba sola a la app.
+const { createClient } = window.supabase;
 import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, reemplazoOpciones, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, ANTECEDENTES_DESDE, ANTECEDENTES_ENT, antecedentesObligatoria, antecedentesEsConductor, antecedentesFaltan, ingresoRequisitos, tiempoEntre } from './config.js';
 import { listaEditor, leerLista } from './hoja-vida.js';
 
@@ -660,6 +663,8 @@ function buildSidebar() {
     const avGps = GPS_ALERTAS ? ` <span class="nav-badge">${GPS_ALERTAS}</span>` : '';
     addNavAction(gOp, '🛰️', 'Salud del GPS' + avGps, openGpsSalud, 'nav-gpssalud');
   }
+  // 🚨 Vigilante de ruta (sql/172). Solo administración (sql/173); para abrirlo a auditores ver sql/173.
+  if (isAdmin()) addNavAction(gOp, '🚨', 'Vigilante de ruta', openVigilante, 'nav-vigilante');
   // 📷 QR obligatorio en cada despacho (sql/178): administración ve todas las rutas; el auditor, las suyas (sql/181).
   if (isAdmin() || isAuditor()) addNavAction(gOp, '📷', 'QR, fotos y carnets', openQrControl, 'nav-qr-control');
   if (isAdmin() || isAuditor() || isDespachador()) addNavAction(gOp, '🚏', 'Despachos en vivo lineal', openDespachosLineal, 'nav-lineal');
@@ -2703,6 +2708,1014 @@ async function refrescarGpsAlertas(rebuild = true) {
   }
   _gpsAlertasVistas = ids;
   if (rebuild) buildSidebar();
+}
+
+// Mapa base de OpenStreetMap para TODOS los mapas de la app. Un solo servidor (tile.openstreetmap.org, con HTTP/2):
+// una conexión para todos los cuadros, en vez de tres con a/b/c (con la red lenta cada conexión nueva cuesta 1 a 4 s).
+// updateWhenZooming: false → no pide cuadros intermedios mientras se hace zoom.
+function capaMapaBase(map) {
+  return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap', updateWhenZooming: false, keepBuffer: 3,
+  }).addTo(map);
+}
+
+// =====================================================================
+// 🚨 VIGILANTE DE RUTA (sql/172): adelantamientos, apagados en ruta y salidas del trazo KMZ
+// =====================================================================
+// La base revisa cada 2 minutos los buses en viaje (moviles_operacion + ubicaciones + el trazo KMZ)
+// y abre un caso cuando algo dura: el de atrás va en un punto de control más adelante que el de
+// adelante (4 min), el motor apagado en mitad del recorrido (10 min) o a más de 300 m del trazo
+// (6 min). Aquí se INVESTIGA (el mapa con la evidencia, el trazo y el recorrido real de SONAR), se
+// AUDITA (confirmado, justificado o falsa alarma) y se GESTIONA (la medida). Al confirmar, la base
+// marca el despacho de ese viaje (abandono de ruta, pérdida deliberada de tiempo o novedad ADELANTADO).
+const VIG_TIPOS = { ADELANTAMIENTO: ['🔀', 'Adelantamiento'], APAGADO: ['🔌', 'Apagado en ruta'], FUERA_RUTA: ['🧭', 'Fuera de ruta'] };
+const VIG_CAUSAS = {
+  ATRAS_ADELANTO: 'El de adelante iba normal: el de atrás se lo adelantó',
+  ADELANTE_APAGADO: 'El de adelante estaba apagado: ¿se varó?',
+  ADELANTE_FUERA_RUTA: 'El de adelante se salió de la ruta',
+  ADELANTE_SIN_GPS: 'El de adelante no tenía señal de GPS',
+  ADELANTE_SIN_AVANCE: 'El de adelante seguía en la salida',
+};
+const VIG_DECISION = { CONFIRMADO: ['✅', 'Confirmado', 'chip-red'], JUSTIFICADO: ['🟦', 'Justificado', 'chip-gray'], FALSA_ALARMA: ['⚪', 'Falsa alarma', 'chip-gray'] };
+const VIG_MEDIDAS = ['Llamado de atención verbal', 'Llamado de atención por escrito', 'Citación a descargos', 'Capacitación', 'Ninguna', 'Otra'];
+const VIG_VISTAS = [['curso', '🔴 En curso'], ['auditar', '📝 Por auditar'], ['auditados', '✅ Auditados'], ['todo', 'Todos']];
+const _vig = { desde: null, hasta: null, casos: [], tipo: '', ruta: '', vista: 'auditar', caso: null, map: null, kmz: new Map(),
+  modo: 'lista', soloRevisar: false, mapS: null, mapK: null, mids: null };
+
+// SONAR cuenta los puntos desde 0 (la salida); a la gente se le dice desde 1.
+const vigPunto = (i, t) => (i == null ? '—' : `${Number(i) + 1}${t ? ' de ' + t : ''}`);
+const vigMin = (n) => (n == null ? '' : Number(n) < 60 ? `${n} min` : `${Math.floor(n / 60)} h ${n % 60} min`);
+function vigEstado(c) {
+  if (c.decision) { const d = VIG_DECISION[c.decision]; return `<span class="chip ${d[2]}">${d[0]} ${d[1]}</span>`; }
+  return c.estado === 'ABIERTO' ? '<span class="chip chip-amber">🔴 En curso</span>' : '<span class="chip chip-amber">📝 Por auditar</span>';
+}
+// Lo que pasó, dicho en una frase.
+function vigFrase(c) {
+  if (c.tipo === 'ADELANTAMIENTO') {
+    return `El <b>${esc(c.movil)}</b> (salió ${esc(c.sale || '—')}) pasó al <b>${esc(c.movil_rel)}</b> (salió ${esc(c.sale_rel || '—')})`
+      + ` en el punto ${esc(vigPunto(c.punto_desde, c.par_total))}.`;
+  }
+  if (c.tipo === 'APAGADO') {
+    return `El <b>${esc(c.movil)}</b> estuvo con el motor apagado ${esc(vigMin(c.minutos))} en el punto ${esc(vigPunto(c.punto_desde, c.par_total))}, con el viaje abierto.`;
+  }
+  return `El <b>${esc(c.movil)}</b> anduvo hasta <b>${esc(c.max_dist)} m</b> fuera del trazo autorizado durante ${esc(vigMin(c.minutos))}.`;
+}
+
+function vigModal() {
+  let m = $('vig-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'vig-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card vig-card">
+    <div class="modal-head"><h3>🚨 Vigilante de ruta</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="asp-toolbar vig-toolbar">
+      <label class="vig-f">Desde <input type="date" data-desde></label>
+      <label class="vig-f">Hasta <input type="date" data-hasta></label>
+      <label class="vig-f">Ruta <select data-ruta><option value="">Todas</option></select></label>
+      <label class="vig-f">Tipo <select data-tipo><option value="">Todos</option>${Object.entries(VIG_TIPOS)
+    .map(([k, v]) => `<option value="${k}">${v[0]} ${v[1]}</option>`).join('')}</select></label>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm" data-modo>📊 Tablero</button>
+      <button type="button" class="btn btn-sm" data-excel>⬇️ Excel</button>
+      <button type="button" class="btn btn-sm" data-recargar title="Recargar" aria-label="Recargar">🔄</button>
+    </div>
+    <div class="vig-body"><div class="loading">Cargando…</div></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const v = e.target.closest('[data-vista]');
+    if (v) { _vig.vista = v.dataset.vista; vigPintar(); return; }
+    if (e.target.closest('[data-modo]')) { vigCambiarModo(_vig.modo === 'lista' ? 'tablero' : 'lista'); return; }
+    const rg = e.target.closest('[data-rango]');
+    if (rg) { vigRango(Number(rg.dataset.rango)); return; }
+    const vr = e.target.closest('[data-ver-revisar]');
+    if (vr) { vigVerRevisar(vr.dataset.verRevisar); return; }
+    const rt = e.target.closest('[data-ruta-t]');
+    if (rt) { vigFiltrarRuta(rt.dataset.rutaT); return; }
+    const st = e.target.closest('[data-sitio]');
+    if (st) { vigVerSitio(st.dataset.sitio); return; }
+    if (e.target.closest('[data-kmz-ver]')) { vigVerificarKmz(); return; }
+    const c = e.target.closest('[data-caso]');
+    if (c) { openVigCaso(Number(c.dataset.caso)); return; }
+    if (e.target.closest('[data-recargar]')) { vigCargar(); return; }
+    const x = e.target.closest('[data-excel]'); if (x) vigExcel(x);
+  });
+  m.querySelector('[data-desde]').addEventListener('change', (e) => { _vig.desde = e.target.value; vigCargar(); });
+  m.querySelector('[data-hasta]').addEventListener('change', (e) => { _vig.hasta = e.target.value; vigCargar(); });
+  m.querySelector('[data-ruta]').addEventListener('change', (e) => { _vig.ruta = e.target.value; vigPintar(); });
+  m.querySelector('[data-tipo]').addEventListener('change', (e) => { _vig.tipo = e.target.value; vigPintar(); });
+  m.addEventListener('change', (e) => { if (e.target.matches('[data-solo-revisar]')) { _vig.soloRevisar = e.target.checked; vigPintar(); } });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openVigilante() {
+  if (!isAdmin()) return;   // por ahora solo administración (sql/173)
+  const m = vigModal();
+  _vig.desde = _vig.desde || hoyServidor();
+  _vig.hasta = _vig.hasta || hoyServidor();
+  m.querySelector('[data-desde]').value = _vig.desde;
+  m.querySelector('[data-hasta]').value = _vig.hasta;
+  m.hidden = false;
+  closeMenu();
+  await vigCargar();
+}
+
+async function vigCargar() {
+  const m = vigModal(), body = m.querySelector('.vig-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const { data, error } = await sb.rpc('vigilancia_listar', { p_desde: _vig.desde, p_hasta: _vig.hasta });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    _vig.casos = data.casos || [];
+    vigClasificar(_vig.casos);
+  } catch (e) { body.innerHTML = `<div class="cump-empty">No se pudo cargar: ${esc(e.message || e)}</div>`; return; }
+  const rutas = [...new Set(_vig.casos.map((c) => c.ruta).filter(Boolean))].sort();
+  const sel = m.querySelector('[data-ruta]');
+  sel.innerHTML = '<option value="">Todas</option>' + rutas.map((r) => `<option${r === _vig.ruta ? ' selected' : ''}>${esc(r)}</option>`).join('');
+  if (!rutas.includes(_vig.ruta)) _vig.ruta = '';
+  vigPintar();
+}
+
+// todo = sin el filtro "solo los que vale la pena revisar" (el tablero los cuenta a todos).
+function vigFiltrados(todo) {
+  return _vig.casos.filter((c) => (!_vig.ruta || c.ruta === _vig.ruta) && (!_vig.tipo || c.tipo === _vig.tipo)
+    && (todo || !_vig.soloRevisar || !c._ruido));
+}
+function vigEnVista(c, v) {
+  if (v === 'curso') return c.estado === 'ABIERTO';
+  if (v === 'auditar') return !c.decision;
+  if (v === 'auditados') return !!c.decision;
+  return true;
+}
+
+function vigPintar() {
+  const m = vigModal(), body = m.querySelector('.vig-body');
+  vigQuitarMapas();
+  m.querySelector('[data-modo]').textContent = _vig.modo === 'tablero' ? '📋 Lista de casos' : '📊 Tablero';
+  if (_vig.modo === 'tablero') { body.innerHTML = vigTableroHtml(vigFiltrados(true)); return; }
+  const base = vigFiltrados();
+  const lista = base.filter((c) => vigEnVista(c, _vig.vista));
+  const n = (f) => base.filter(f).length;
+  const porTipo = Object.keys(VIG_TIPOS).map((t) => [t, n((c) => c.tipo === t)]);
+  body.innerHTML = `
+    <div class="pp-tarjetas vig-tarjetas">
+      <div class="pp-card ${n((c) => c.estado === 'ABIERTO') ? 'mal' : ''}"><b>${n((c) => c.estado === 'ABIERTO')}</b><span>En curso ahora</span></div>
+      <div class="pp-card"><b>${n((c) => !c.decision)}</b><span>Por auditar</span></div>
+      <div class="pp-card mal"><b>${n((c) => c.decision === 'CONFIRMADO')}</b><span>Confirmados</span></div>
+      <div class="pp-card ok"><b>${n((c) => c.decision && c.decision !== 'CONFIRMADO')}</b><span>Justificados o falsa alarma</span></div>
+    </div>
+    <div class="vig-portipo">${porTipo.map(([t, k]) => `<span>${VIG_TIPOS[t][0]} ${VIG_TIPOS[t][1]}: <b>${k}</b></span>`).join('')}</div>
+    <div class="asp-vistas vig-vistas">${VIG_VISTAS.map(([k, l]) =>
+    `<button type="button" class="btn btn-sm${_vig.vista === k ? ' btn-primary' : ''}" data-vista="${k}">${l} <b>${n((c) => vigEnVista(c, k))}</b></button>`).join('')}
+      <label class="vig-solo" title="Quita los casos que casi seguro no son una falta: el bus ya había terminado, sitios de espera, salieron casi juntos…">
+        <input type="checkbox" data-solo-revisar${_vig.soloRevisar ? ' checked' : ''}> Solo los que vale la pena revisar</label></div>
+    ${lista.length ? `<div class="vig-lista">${lista.map((c) => `
+      <button type="button" class="vig-it vig-${c.tipo.toLowerCase()}" data-caso="${c.id}">
+        <span class="vig-ic">${VIG_TIPOS[c.tipo][0]}</span>
+        <span class="vig-tx">
+          <span class="vig-cab"><b>${esc(VIG_TIPOS[c.tipo][1])}</b> · Ruta ${esc(c.ruta || '—')} · ${esc(c.desde)}–${esc(c.hasta)}
+            <small>(${esc(vigMin(c.minutos))})</small></span>
+          <span class="vig-frase">${vigFrase(c)}</span>
+          ${c.causa ? `<span class="vig-causa">${esc(VIG_CAUSAS[c.causa] || c.causa)}</span>` : ''}
+          ${c._ruido ? `<span class="vig-ruido">Probable ruido: ${esc(VIG_RUIDO[c._ruido])}</span>` : ''}
+        </span>
+        <span class="vig-est">${vigEstado(c)}${c.medida ? `<small>${esc(c.medida)}</small>` : ''}</span>
+      </button>`).join('')}</div>`
+    : `<div class="cump-empty">${_vig.casos.length ? 'No hay casos en esta vista.' : 'No hay casos en estas fechas. El vigilante revisa cada 2 minutos los buses en viaje.'}</div>`}
+    <div class="vig-pie">Revisa cada 2 minutos los buses en viaje. Abre un caso cuando el de atrás va más adelante que el de adelante
+      4 minutos seguidos, cuando el motor está apagado 10 minutos en mitad del recorrido, o cuando el bus va a más de 300 m del trazo KMZ
+      6 minutos seguidos. Las rutas sin trazo cargado (hoy 133ii, 193i y 193ii) no se revisan por distancia.</div>`;
+}
+
+// ---- El caso: investigar (mapa y evidencia), auditar y gestionar ----
+function vigCasoModal() {
+  let m = $('vigc-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'vigc-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card vigc-card">
+    <div class="modal-head"><h3 data-tit>Caso</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="vigc-body"></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    if (e.target.closest('[data-sonar]')) { vigAnalizar(); return; }
+    if (e.target.closest('[data-guardar]')) vigGuardar();
+  });
+  m.addEventListener('change', (e) => { if (e.target.name === 'vig-dec') vigFormPintar(); });
+  document.body.appendChild(m);
+  return m;
+}
+
+async function openVigCaso(id) {
+  const m = vigCasoModal(), body = m.querySelector('.vigc-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  m.hidden = false;
+  // si abren otro caso mientras este carga, gana el último (no se pinta uno encima del otro)
+  const turno = (_vig.turnoCaso = (_vig.turnoCaso || 0) + 1);
+  let d;
+  try {
+    const r = await sb.rpc('vigilancia_caso', { p_id: id });
+    if (r.error) throw r.error;
+    d = r.data;
+    if (!d?.ok) throw new Error(d?.error || 'no se pudo');
+  } catch (e) { if (turno === _vig.turnoCaso) body.innerHTML = `<div class="cump-empty">No se pudo abrir: ${esc(e.message || e)}</div>`; return; }
+  if (turno !== _vig.turnoCaso) return;
+  const c = d.caso; _vig.caso = d;
+  const ev = c.evidencia || [];
+  const adel = c.tipo === 'ADELANTAMIENTO';
+  m.querySelector('[data-tit]').textContent = `${VIG_TIPOS[c.tipo][0]} ${VIG_TIPOS[c.tipo][1]} · bus ${c.movil} · ruta ${c.ruta || '—'}`;
+  const resumen = { ...c, sale: c.sale, sale_rel: c.sale_rel, minutos: Math.round((new Date(c.hasta || c.visto_en) - new Date(c.desde)) / 60000) };
+  const desp = (l, quien) => (l || []).length
+    ? `${quien}: está en <b>${(l || []).map((x) => esc(TABLES[x.tabla]?.label || x.tabla)).join(', ')}</b>.`
+    : `${quien}: <b>no tiene despacho en la app</b> (se despachó directo en SONAR); si se confirma, queda el caso pero no se marca nada.`;
+  body.innerHTML = `
+    <div class="vigc-explica">
+      <div>${vigFrase(resumen)}</div>
+      ${c.causa ? `<div class="vig-causa">Causa probable: ${esc(VIG_CAUSAS[c.causa] || c.causa)}${(c.causas || []).length > 1
+    ? ` <small>(mientras duró también se vio: ${esc(c.causas.filter((x) => x !== c.causa).map((x) => VIG_CAUSAS[x] || x).join('; '))})</small>` : ''}</div>` : ''}
+      <div class="vigc-meta">Del ${esc(c.desde_h)} al ${esc(c.hasta_h)} · ${esc(String(c.fecha).split('-').reverse().join('/'))}
+        · ${c.estado === 'ABIERTO' ? '🔴 sigue pasando' : 'terminó'} · ${ev.length} lectura(s) cada 2 min${c.kmz ? ` · trazo ${esc(c.kmz)}` : ' · <b>la ruta no tiene trazo KMZ</b>'}</div>
+    </div>
+    <div class="vigc-donde cargando" data-donde>📍 Buscando en el GPS de SONAR ${adel ? 'dónde lo pasó' : c.tipo === 'FUERA_RUTA' ? 'dónde se salió de la ruta' : 'dónde se quedó apagado'}…</div>
+    <div class="vigc-grid">
+      <div>
+        <div class="vigc-mapa" id="vigc-mapa"></div>
+        <div class="vigc-leyenda" data-leyenda><span><i style="background:#2563eb"></i>Trazo autorizado (KMZ)</span>
+          <span><i style="background:#dc2626"></i>Bus ${esc(c.movil)}${adel ? ' (el de atrás)' : ''}</span>
+          ${adel ? `<span><i style="background:#f59e0b"></i>${esc(c.movil_rel)} (el de adelante)</span>` : ''}</div>
+        <button type="button" class="btn btn-sm" data-sonar ${d.mid ? '' : 'disabled title="El bus no tiene GPS en la tabla de ubicaciones"'}>🔄 Consultar SONAR otra vez</button>
+        <span class="pst-nota" data-sonar-msg></span>
+      </div>
+      <div class="vigc-ev">
+        <table class="pp-tabla"><thead><tr><th>Hora</th><th>Punto</th><th>Vel.</th><th>Motor</th><th>Trazo</th>
+          ${adel ? '<th>El de adel.</th><th>Su motor</th>' : '<th>Atraso</th>'}</tr></thead>
+          <tbody>${ev.map((x) => `<tr><td>${esc(x.t)}</td><td>${esc(vigPunto(x.idx))}${x.parada ? `<small>${esc(x.parada)}</small>` : ''}</td>
+            <td>${x.vel ?? ''}</td><td>${x.motor === 'Apagado' ? '🔌 Apagado' : esc(x.motor || '')}</td><td>${x.dist == null ? '—' : esc(x.dist) + ' m'}</td>
+            ${adel ? `<td>${esc(vigPunto(x.r_idx))}</td><td>${x.r_motor === 'Apagado' ? '🔌 Apagado' : esc(x.r_motor || '')}</td>`
+    : `<td>${x.atraso == null ? '' : esc(x.atraso) + ' min'}</td>`}</tr>`).join('')}</tbody></table>
+      </div>
+    </div>
+    <div class="vigc-grafica" data-grafica hidden></div>
+    <div class="vigc-desp">🧾 ${desp(d.despachos, adel ? `Viaje del de atrás (${esc(c.movil)})` : 'Este viaje')}
+      ${adel ? `<br>🧾 ${desp(d.despachos_rel, `Viaje del de adelante (${esc(c.movil_rel)})`)}` : ''}</div>
+    <div class="vigc-form">
+      <h4>📝 Auditoría</h4>
+      ${c.decision ? `<div class="vigc-ya">${vigEstado(c)} por ${esc(c.auditado_por || '')} el ${esc(c.auditado_h || '')}
+        ${c.medida ? ` · Medida: <b>${esc(c.medida)}</b>` : ''}${c.nota ? `<br>${esc(c.nota)}` : ''}
+        ${(c.marcado || []).length ? `<br>Se marcó en ${(c.marcado || []).length} despacho(s).` : ''}<br><small>Puedes cambiar la decisión: lo que el vigilante marcó se deshace y se vuelve a marcar.</small></div>` : ''}
+      <div class="vig-opts">${Object.entries(VIG_DECISION).map(([k, v]) =>
+    `<label><input type="radio" name="vig-dec" value="${k}"${c.decision === k ? ' checked' : ''}> ${v[0]} ${v[1]}</label>`).join('')}</div>
+      <div class="vig-opts" data-resp hidden><span>¿Quién incumplió?</span>
+        <label><input type="radio" name="vig-resp" value="ADELANTE"${c.responsable === 'ADELANTE' ? ' checked' : ''}> El de adelante (${esc(c.movil_rel || '')}): pérdida deliberada de tiempo</label>
+        <label><input type="radio" name="vig-resp" value="ATRAS"${c.responsable === 'ATRAS' ? ' checked' : ''}> El de atrás (${esc(c.movil)}): se adelantó</label></div>
+      <div class="vigc-marca" data-marca></div>
+      <label class="vig-f">Medida <select data-medida><option value="">—</option>${VIG_MEDIDAS.map((x) =>
+    `<option${c.medida === x ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+      <label class="vig-f vig-nota">Nota <textarea data-nota rows="2" maxlength="600" placeholder="Qué se averiguó: llamada al conductor, novedad del despachador, taller…">${esc(c.nota || '')}</textarea></label>
+      <div class="vigc-pie"><span class="pst-nota" data-msg></span><span class="spacer"></span>
+        <button type="button" class="btn btn-primary" data-guardar>Guardar auditoría</button></div>
+    </div>`;
+  vigFormPintar();
+  await vigMapa(c);
+  if (turno === _vig.turnoCaso) vigAnalizar();   // 📍 dónde pasó: se busca solo al abrir el caso
+}
+
+// Qué va a marcar en el despacho, según la decisión (lo mismo que hace vigilancia_auditar).
+function vigFormPintar() {
+  const m = vigCasoModal(), c = _vig.caso?.caso; if (!c) return;
+  const dec = m.querySelector('input[name="vig-dec"]:checked')?.value || '';
+  const resp = m.querySelector('[data-resp]');
+  resp.hidden = !(dec === 'CONFIRMADO' && c.tipo === 'ADELANTAMIENTO');
+  const txt = dec !== 'CONFIRMADO' ? (dec ? 'No se marca nada en los despachos.' : '')
+    : c.tipo === 'FUERA_RUTA' ? 'Al confirmar se marca <b>¿Abandono de ruta? = Sí</b> en el despacho de este viaje.'
+      : c.tipo === 'APAGADO' ? 'Al confirmar se marca <b>¿Pérdida deliberada de tiempo? = Sí</b> en el despacho de este viaje.'
+        : 'Al confirmar: si fue el de adelante, <b>pérdida deliberada de tiempo</b> en su despacho; si fue el de atrás, la novedad <b>ADELANTADO</b> en el suyo (si no tenía otra).';
+  m.querySelector('[data-marca]').innerHTML = txt;
+}
+
+async function vigGuardar() {
+  const m = vigCasoModal(), c = _vig.caso?.caso; if (!c) return;
+  const msg = m.querySelector('[data-msg]'), b = m.querySelector('[data-guardar]');
+  const dec = m.querySelector('input[name="vig-dec"]:checked')?.value;
+  const resp = m.querySelector('input[name="vig-resp"]:checked')?.value || null;
+  const nota = m.querySelector('[data-nota]').value.trim();
+  if (!dec) { msg.textContent = 'Elige la decisión.'; return; }
+  if (dec === 'CONFIRMADO' && c.tipo === 'ADELANTAMIENTO' && !resp) { msg.textContent = 'Di quién incumplió: el de adelante o el de atrás.'; return; }
+  if (dec !== 'CONFIRMADO' && !nota) { msg.textContent = 'Escribe por qué se justifica o por qué es falsa alarma.'; return; }
+  b.disabled = true; msg.textContent = 'Guardando…';
+  try {
+    const { data, error } = await sb.rpc('vigilancia_auditar', {
+      p_id: c.id, p_decision: dec, p_responsable: resp,
+      p_medida: m.querySelector('[data-medida]').value || null, p_nota: nota || null });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    toast(dec === 'CONFIRMADO'
+      ? (data.marcados ? `Caso confirmado: se marcó en ${data.marcados} despacho(s).` : data.sin_despacho ? 'Caso confirmado. Ese viaje no tiene despacho en la app: no se marcó nada.' : 'Caso confirmado (el despacho ya estaba marcado).')
+      : 'Auditoría guardada.', 'ok');
+    m.hidden = true;
+    await vigCargar();
+  } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); }
+  finally { b.disabled = false; }
+}
+
+// El mapa: el trazo KMZ, las lecturas del bus (y del de adelante) y, a pedido, el recorrido real de SONAR.
+async function vigMapa(c) {
+  const el = $('vigc-mapa'); if (!el) return;
+  if (_vig.map) { try { _vig.map.remove(); } catch (_) { /* ya no existía */ } _vig.map = null; }
+  // El mapa base se pone AL FINAL, ya encuadrado en el caso: antes pedía primero los cuadros de todo Medellín
+  // (zoom 13) y luego los del caso, y con la red lenta los primeros se demoraban a los que sí se necesitaban.
+  const map = L.map(el, { scrollWheelZoom: true }).setView([6.244, -75.575], 13);
+  _vig.map = map;
+  let trazo = [];
+  if (c.kmz) {
+    let pts = _vig.kmz.get(c.kmz);
+    if (!pts) {
+      const { data } = await sb.from('rutas_recorrido').select('puntos').eq('codigo', c.kmz).maybeSingle();
+      pts = data?.puntos || [];
+      _vig.kmz.set(c.kmz, pts);
+    }
+    if (_vig.map !== map) return;   // mientras llegaba el trazo abrieron otro caso: este mapa ya no existe
+    if (pts.length) L.polyline(pts, { color: '#2563eb', weight: 4, opacity: 0.55, dashArray: '6 6' }).addTo(map);
+    trazo = pts;
+  }
+  const ev = (c.evidencia || []);
+  // las lecturas cada 2 min van en su propia capa: cuando llega el recorrido real de SONAR se quitan (lo dice mejor)
+  _vig.capaEv = L.layerGroup().addTo(map); _vig.capaAn = null;
+  const linea = (lista, color, quien) => {
+    const p = lista.filter((x) => x[0] != null && x[1] != null);
+    if (!p.length) return [];
+    L.polyline(p.map((x) => [x[0], x[1]]), { color, weight: 3 }).addTo(_vig.capaEv);
+    p.forEach((x, i) => L.circleMarker([x[0], x[1]], { radius: i === p.length - 1 ? 7 : 4, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 0.95 })
+      .bindTooltip(`${quien} · ${x[2]}`, { direction: 'top' }).addTo(_vig.capaEv));
+    return p.map((x) => [x[0], x[1]]);
+  };
+  const todos = [
+    ...linea(ev.map((x) => [x.lat, x.lon, `${x.t} · punto ${vigPunto(x.idx)} · ${x.motor || ''}${x.dist != null ? ` · ${x.dist} m del trazo` : ''}`]), '#dc2626', `Bus ${c.movil}`),
+    ...(c.tipo === 'ADELANTAMIENTO' ? linea(ev.map((x) => [x.r_lat, x.r_lon, `${x.t} · punto ${vigPunto(x.r_idx)} · ${x.r_motor || ''}`]), '#f59e0b', `Adelante ${c.movil_rel}`) : []),
+  ];
+  // Fuera de ruta: se encuadra también el trazo, para ver qué tan lejos iba el bus de su ruta.
+  if (c.tipo === 'FUERA_RUTA') todos.push(...trazo);
+  try {
+    if (todos.length > 1) map.fitBounds(L.latLngBounds(todos).pad(0.2), { animate: false });
+    else if (todos.length) map.setView(todos[0], 16, { animate: false });
+  } catch (_) { /* sin puntos */ }
+  if (_vig.map === map) capaMapaBase(map);
+  setTimeout(() => { try { map.invalidateSize(); } catch (_) { /* cerrado */ } }, 150);
+}
+
+// ---- 📍 Dónde pasó: el recorrido real de SONAR medido sobre el trazo KMZ ----
+// Cada reporte de GPS (SONAR manda uno cada pocos segundos) se proyecta sobre el trazo y se mide cuánto ha avanzado
+// el bus en la ruta, en metros desde la salida. Con eso:
+//  - adelantamiento: el momento en que el avance del de atrás supera al del de adelante es donde lo pasó (en la
+//    "gráfica de marcha" las dos líneas se cruzan), y se ve qué hacía el de adelante (¿iba quieto?);
+//  - fuera de ruta: el último reporte sobre el trazo es donde se salió, el más lejano y el primero de regreso;
+//  - apagado: dónde se detuvo y cuándo arrancó.
+const vigHM = (seg) => { const m = Math.max(0, Math.min(1439, Math.floor(seg / 60))); return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
+const vigKm = (s) => `km ${(s / 1000).toFixed(1).replace('.', ',')}`;
+
+function vigTrazoMedido(poly) {
+  const acum = [0];
+  for (let i = 1; i < poly.length; i++) acum.push(acum[i - 1] + vigMetros(poly[i - 1], poly[i]));
+  return { poly, acum, total: acum[acum.length - 1] || 0 };
+}
+// Candidatos de proyección de un punto sobre el trazo (uno por tramo), solo en los tramos entre sMin y sMax.
+function vigProyectar(T, lat, lon, sMin = -Infinity, sMax = Infinity) {
+  const ky = 111320, kx = 111320 * Math.cos((lat * Math.PI) / 180), out = [];
+  for (let i = 1; i < T.poly.length; i++) {
+    if (T.acum[i] < sMin || T.acum[i - 1] > sMax) continue;
+    const a = T.poly[i - 1], b = T.poly[i];
+    const ax = (a[1] - lon) * kx, ay = (a[0] - lat) * ky, bx = (b[1] - lon) * kx, by = (b[0] - lat) * ky;
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    out.push({ s: T.acum[i - 1] + t * (T.acum[i] - T.acum[i - 1]), d: Math.hypot(ax + t * dx, ay + t * dy) });
+  }
+  return out;
+}
+// El avance del bus reporte por reporte. Nunca retrocede (el GPS tiembla) y, donde la ruta pasa dos veces por la misma
+// calle (ida y vuelta), se queda con el tramo que sigue al anterior, no con el del otro sentido.
+function vigAvance(T, pts, sInicio) {
+  let s = null;
+  const elegir = (cand, ref) => {
+    const ok = cand.filter((x) => x.d <= 300); if (!ok.length) return null;
+    const mejor = Math.min(...ok.map((x) => x.d));
+    return ok.filter((x) => x.d <= mejor + 40).reduce((a, b) => (Math.abs(b.s - ref) < Math.abs(a.s - ref) ? b : a));
+  };
+  return pts.map((p) => {
+    const d = vigDistTrazo(p.lat, p.lon, T.poly);
+    let e = s == null ? elegir(vigProyectar(T, p.lat, p.lon), sInicio) : elegir(vigProyectar(T, p.lat, p.lon, s - 150, s + 5000), s);
+    if (!e && s != null && d <= 100) e = elegir(vigProyectar(T, p.lat, p.lon).filter((x) => x.s >= s - 150), s);   // hueco largo del GPS
+    if (e) s = s == null ? e.s : Math.max(s, e.s);
+    return { ...p, d, s };
+  });
+}
+// Segundos del día de cada reporte: SONAR da HH:MM, los reportes del mismo minuto se reparten en ese minuto.
+function vigTiempos(pts) {
+  const g = new Map();
+  pts.forEach((p) => { const k = vigMinDe(p.t); if (k == null) return; if (!g.has(k)) g.set(k, []); g.get(k).push(p); });
+  g.forEach((l, k) => l.forEach((p, i) => { p.seg = k * 60 + Math.round((60 * i) / l.length); }));
+  return pts.filter((p) => p.seg != null);
+}
+// Un valor (s, lat, lon, vel) interpolado en un segundo del día.
+function vigEn(serie, seg, campo) {
+  if (!serie.length || seg < serie[0].seg || seg > serie[serie.length - 1].seg) return null;
+  const i = serie.findIndex((p) => p.seg >= seg);
+  if (i <= 0) return serie[0][campo];
+  const a = serie[i - 1], b = serie[i];
+  if (a[campo] == null || b[campo] == null) return a[campo] ?? b[campo];
+  const f = b.seg === a.seg ? 0 : (seg - a.seg) / (b.seg - a.seg);
+  return a[campo] + (b[campo] - a[campo]) * f;
+}
+const vigCerca = (serie, seg) => serie.reduce((a, b) => (Math.abs(b.seg - seg) < Math.abs(a.seg - seg) ? b : a), serie[0]);
+const vigDir = (p) => (p?.dir ? String(p.dir).trim() : '');
+function vigPin(lat, lon, emoji, texto, cls = '') {
+  return L.marker([lat, lon], { icon: L.divIcon({ className: 'vig-pin-wrap', html: `<div class="vig-pin ${cls}">${emoji}<span>${esc(texto)}</span></div>`, iconSize: null }), zIndexOffset: 1000 });
+}
+
+// Gráfica de líneas en SVG (eje de tiempo). series: [{ nombre, color, pts: [{ x: seg, y }] }]; marcas: [{ x, y, texto, color }].
+function vigGrafica({ series, x0, x1, yMax, yFmt, yTit, umbral, marcas = [], franja }) {
+  const W = 680, H = 210, l = 52, r = 14, t = 14, b = 30;
+  const X = (x) => l + ((x - x0) / Math.max(1, x1 - x0)) * (W - l - r), Y = (y) => H - b - (Math.max(0, y) / Math.max(1, yMax)) * (H - t - b);
+  const paso = (x1 - x0) > 3600 ? 900 : (x1 - x0) > 1500 ? 300 : 120;
+  let h = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(yTit)}">`;
+  if (franja) h += `<rect x="${X(franja[0])}" y="${t}" width="${Math.max(2, X(franja[1]) - X(franja[0]))}" height="${H - t - b}" fill="#fde68a" opacity=".45"><title>${esc(franja[2] || '')}</title></rect>`;
+  for (let i = 0; i <= 4; i++) { const v = (yMax * i) / 4; h += `<line class="vg-eje" x1="${l}" x2="${W - r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${l - 6}" y="${Y(v) + 4}" text-anchor="end">${esc(yFmt(v))}</text>`; }
+  for (let x = Math.ceil(x0 / paso) * paso; x <= x1; x += paso) h += `<text x="${X(x)}" y="${H - 10}" text-anchor="middle">${vigHM(x)}</text>`;
+  h += `<text x="${l}" y="${t - 3}">${esc(yTit)}</text>`;
+  if (umbral != null) h += `<line x1="${l}" x2="${W - r}" y1="${Y(umbral[0])}" y2="${Y(umbral[0])}" stroke="#dc2626" stroke-dasharray="5 4"/><text x="${W - r}" y="${Y(umbral[0]) - 4}" text-anchor="end" fill="#dc2626">${esc(umbral[1])}</text>`;
+  for (const s of series) {
+    const p = s.pts.filter((q) => q.y != null && q.x >= x0 && q.x <= x1);
+    if (!p.length) continue;
+    h += `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" points="${p.map((q) => `${X(q.x).toFixed(1)},${Y(q.y).toFixed(1)}`).join(' ')}"/>`;
+    let ult = -1e9;   // para pasar el mouse: un punto por minuto
+    p.forEach((q) => { if (q.x - ult < 60) return; ult = q.x; h += `<circle cx="${X(q.x).toFixed(1)}" cy="${Y(q.y).toFixed(1)}" r="6" fill="transparent"><title>${esc(s.nombre)} · ${vigHM(q.x)} · ${esc(yFmt(q.y))}</title></circle>`; });
+  }
+  for (const m of marcas) {
+    const izq = X(m.x) > W * 0.65;
+    h += `<g class="vg-marca"><circle cx="${X(m.x)}" cy="${Y(m.y)}" r="6" fill="${m.color || '#1d4ed8'}" stroke="#fff" stroke-width="2"/>
+      <text x="${X(m.x) + (izq ? -10 : 10)}" y="${Math.max(t + 10, Y(m.y) - 8)}" text-anchor="${izq ? 'end' : 'start'}">${esc(m.texto)}</text></g>`;
+  }
+  return h + '</svg>';
+}
+
+async function vigAnalizar() {
+  const d = _vig.caso, c = d?.caso; if (!c || !_vig.map) return;
+  const m = vigCasoModal(), box = m.querySelector('[data-donde]'), msg = m.querySelector('[data-sonar-msg]'), b = m.querySelector('[data-sonar]');
+  const graf = m.querySelector('[data-grafica]'), leyenda = m.querySelector('[data-leyenda]');
+  const adel = c.tipo === 'ADELANTAMIENTO', fuera = c.tipo === 'FUERA_RUTA';
+  const poner = (cls, html) => { if (_vig.caso !== d) return; box.className = 'vigc-donde' + (cls ? ' ' + cls : ''); box.innerHTML = html; };
+  const ev = c.evidencia || [];
+  if (!d.mid) { poner('sin', 'El bus no tiene GPS en la tabla de ubicaciones: no se puede traer su recorrido de SONAR. Usa las lecturas de la tabla.'); return; }
+  const trazo = c.kmz ? (_vig.kmz.get(c.kmz) || await vigKmzPuntos(c.kmz)) : [];
+  if (trazo.length < 2 && c.tipo !== 'APAGADO') { poner('sin', 'Esta ruta no tiene trazo KMZ cargado: no se puede medir dónde pasó sobre la ruta. Usa las lecturas de la tabla.'); return; }
+  const T = trazo.length >= 2 ? vigTrazoMedido(trazo) : null;
+  // ventana de consulta: desde antes de que empezara (para ver el momento) hasta un poco después
+  const dMin = vigMinDe(c.desde_h), hMin0 = vigMinDe(c.hasta_h), hMin = hMin0 < dMin ? 1439 : hMin0;
+  const salA = vigMinDe(c.sale), salB = vigMinDe(c.sale_rel);
+  const ini = adel ? Math.max(dMin - 30, salA != null && salA <= dMin ? salA - 1 : dMin - 30) : dMin - (fuera ? 15 : 12);
+  const fin = hMin + (adel ? 3 : fuera ? 12 : 5);
+  const desde = `${c.fecha} ${vigHM(ini * 60)}`, hasta = `${c.fecha} ${vigHM(fin * 60)}`;
+  b.disabled = true; msg.textContent = '';
+  poner('cargando', `📍 Consultando el GPS de SONAR de ${vigHM(ini * 60)} a ${vigHM(fin * 60)}…`);
+  const pedir = async (mid) => {
+    const { data, error } = await sb.rpc('sonar_recorrido', { p_mid: mid, p_desde: desde, p_hasta: hasta });
+    if (error || !data?.ok) throw new Error(error?.message || data?.error || 'SONAR no respondió');
+    return vigTiempos((data.puntos || []).filter((p) => p.lat != null && p.lon != null));
+  };
+  let A, B = [];
+  try {
+    [A, B] = await Promise.all([pedir(d.mid), adel && d.mid_rel ? pedir(d.mid_rel) : Promise.resolve([])]);
+  } catch (e) { b.disabled = false; poner('sin', `No se pudo traer el recorrido de SONAR (${esc(e.message || e)}). Intenta con 🔄 en un momento; mientras, el mapa muestra las lecturas cada 2 min.`); return; }
+  b.disabled = false;
+  if (_vig.caso !== d || !_vig.map) return;
+  if (!A.length) { poner('sin', `SONAR no tiene reportes del bus ${esc(c.movil)} entre las ${vigHM(ini * 60)} y las ${vigHM(fin * 60)}: el GPS no transmitió.`); return; }
+  const hint = (idx, sal) => (sal != null && sal >= ini - 1) || !T ? 0 : Math.max(0, (Number(idx) || 0) - 1) / Math.max(1, (c.par_total || 2) - 1) * T.total;
+  if (T) { A = vigAvance(T, A, hint(ev[0]?.idx, salA)); if (B.length) B = vigAvance(T, B, hint(ev[0]?.r_idx, salB)); }
+  // el mapa: se quitan las lecturas cada 2 min y se dibuja el recorrido real
+  const map = _vig.map;
+  if (_vig.capaEv) { map.removeLayer(_vig.capaEv); }
+  if (_vig.capaAn) map.removeLayer(_vig.capaAn);
+  const capa = _vig.capaAn = L.layerGroup().addTo(map);
+  const tip = (p, quien) => `${quien} · ${vigHM(p.seg)} · ${p.vel ?? '?'} km/h${p.d != null ? ` · ${Math.round(p.d)} m del trazo` : ''}${vigDir(p) ? ' · ' + esc(vigDir(p)) : ''}`;
+  // opacidad y grosor: el de adelante va como una franja ancha y clara DEBAJO del de atrás, para que se vean los dos
+  // cuando van por la misma calle (casi siempre)
+  const dibujar = (serie, color, quien, peso = 4, opacidad = 0.85) => {
+    L.polyline(serie.map((p) => [p.lat, p.lon]), { color, weight: peso, opacity: opacidad }).addTo(capa);
+    serie.forEach((p, i) => { if (i % 3 === 0) L.circleMarker([p.lat, p.lon], { radius: 3, color, weight: 1, fillOpacity: 0.9 }).bindTooltip(tip(p, quien), { direction: 'top' }).addTo(capa); });
+  };
+  // sin animación: el mapa salta de una al sitio (con la red lenta la animación se veía a medias)
+  const encuadrar = (pts) => { try { if (pts.length > 1) map.fitBounds(L.latLngBounds(pts).pad(0.35), { maxZoom: 17, animate: false }); else if (pts.length) map.setView(pts[0], 16, { animate: false }); } catch (_) { /* sin puntos */ } };
+  const consultado = `<small>Recorrido real de SONAR de ${vigHM(ini * 60)} a ${vigHM(fin * 60)} (${A.length + B.length} reportes), medido sobre el trazo ${esc(c.kmz || '')}.</small>`;
+
+  if (adel) {
+    if (!B.length || !T) {
+      dibujar(A, '#dc2626', `Bus ${c.movil}`); encuadrar(A.map((p) => [p.lat, p.lon]));
+      poner('sin', `Solo llegó el recorrido del ${esc(c.movil)}; ${d.mid_rel ? 'SONAR no devolvió reportes' : 'no hay GPS'} del ${esc(c.movil_rel)}, así que no se puede calcular dónde lo pasó.`);
+      return;
+    }
+    dibujar(B, '#f59e0b', `${c.movil_rel} (adelante)`, 11, 0.55); dibujar(A, '#dc2626', `${c.movil} (atrás)`, 4, 0.95);
+    const t0 = Math.max(A[0].seg, B[0].seg), t1 = Math.min(A[A.length - 1].seg, B[B.length - 1].seg), dSeg = dMin * 60;
+    let cruce = null, prev = null, yaAdelante = false;
+    for (let t = t0; t <= t1; t += 10) {
+      const sa = vigEn(A, t, 's'), sb2 = vigEn(B, t, 's');
+      if (sa == null || sb2 == null) { prev = null; continue; }
+      const g = sa - sb2;
+      if (prev == null && g > 0 && t === t0) yaAdelante = true;
+      if (prev != null && prev <= 0 && g > 0 && t <= dSeg + 120) { cruce = { t, s: sa }; yaAdelante = false; }
+      prev = g;
+    }
+    const velMedia = (serie, t) => { const s1 = vigEn(serie, t, 's'), s0 = vigEn(serie, t - 120, 's'); return s1 == null || s0 == null ? null : Math.round(((s1 - s0) / 120) * 3.6); };
+    if (cruce) {
+      const lat = vigEn(A, cruce.t, 'lat'), lon = vigEn(A, cruce.t, 'lon'), pa = vigCerca(A, cruce.t), pb = vigCerca(B, cruce.t);
+      const vA = velMedia(A, cruce.t), vB = velMedia(B, cruce.t);
+      const quieto = vB != null && vB <= 3;
+      vigPin(lat, lon, '🔀', `Aquí lo pasó · ${vigHM(cruce.t)}`).addTo(capa);
+      encuadrar([...A, ...B].filter((p) => Math.abs(p.seg - cruce.t) <= 240).map((p) => [p.lat, p.lon]));
+      poner('', `<div class="vd-tit">🔀 El ${esc(c.movil)} pasó al ${esc(c.movil_rel)} a las ${vigHM(cruce.t)}</div>
+        <div>📍 <span class="vd-dir">${esc(vigDir(pa) || vigDir(pb) || 'sin dirección en SONAR')}</span> · ${vigKm(cruce.s)} del recorrido (de ${vigKm(T.total).replace('km ', '')} km).</div>
+        <div>En los 2 minutos anteriores el ${esc(c.movil_rel)} ${vB == null ? 'no tenía reportes' : quieto ? `<b>iba quieto (${vB} km/h)</b>` : `iba a ${vB} km/h`} y el ${esc(c.movil)} a ${vA ?? '?'} km/h.
+          ${quieto ? 'El que se demoró fue <b>el de adelante</b>.' : vA != null && vB != null && vA > vB + 10 ? 'El de atrás venía <b>mucho más rápido</b>.' : ''}</div>
+        ${consultado}`);
+    } else {
+      encuadrar([...A, ...B].map((p) => [p.lat, p.lon]));
+      poner('sin', yaAdelante
+        ? `El ${esc(c.movil)} ya iba adelante del ${esc(c.movil_rel)} desde las ${vigHM(t0)} (lo primero que SONAR tiene de los dos): lo pasó antes. ${consultado}`
+        : `Con el GPS de SONAR no se ve un momento en que el ${esc(c.movil)} pase al ${esc(c.movil_rel)} sobre el trazo: puede ser una diferencia de puntos de control de SONAR, no un adelantamiento real. Revísalo en el mapa. ${consultado}`);
+    }
+    // gráfica de marcha: dónde iba cada uno en la ruta, minuto a minuto; donde se cruzan, lo pasó
+    const yMax = Math.max(1000, ...A.map((p) => p.s || 0), ...B.map((p) => p.s || 0)) * 1.05;
+    graf.hidden = false;
+    graf.innerHTML = `<h4>Gráfica de marcha: dónde iba cada bus en la ruta</h4>
+      <div class="vigc-leyenda"><span><i style="background:#dc2626"></i>${esc(c.movil)} (el de atrás)</span><span><i style="background:#f59e0b"></i>${esc(c.movil_rel)} (el de adelante)</span>
+        <span>Donde la roja pasa por encima de la naranja, lo adelantó. Línea plana = bus quieto.</span></div>
+      ${vigGrafica({ series: [{ nombre: c.movil_rel, color: '#f59e0b', pts: B.map((p) => ({ x: p.seg, y: p.s })) }, { nombre: c.movil, color: '#dc2626', pts: A.map((p) => ({ x: p.seg, y: p.s })) }],
+    x0: t0, x1: t1, yMax, yTit: 'Avance en la ruta', yFmt: (v) => `${(v / 1000).toFixed(1).replace('.', ',')} km`,
+    marcas: cruce ? [{ x: cruce.t, y: cruce.s, texto: `Lo pasó ${vigHM(cruce.t)}` }] : [] })}`;
+    leyenda.innerHTML = `<span><i style="background:#2563eb"></i>Trazo autorizado (KMZ)</span><span><i style="background:#dc2626"></i>${esc(c.movil)} (atrás)</span>
+      <span><i style="background:#f59e0b"></i>${esc(c.movil_rel)} (adelante)</span><span>🔀 Donde lo pasó</span>`;
+    return;
+  }
+
+  if (fuera) {
+    const dSeg = dMin * 60;
+    let k = A.findIndex((p) => p.seg >= dSeg - 60 && p.d > 300);
+    if (k < 0) k = A.findIndex((p) => p.d > 300);
+    // el recorrido con colores: sobre el trazo gris, fuera rojo
+    let tramo = [A[0]], fueraT = A[0].d > 300;
+    const cerrar = () => { if (tramo.length > 1) L.polyline(tramo.map((p) => [p.lat, p.lon]), { color: fueraT ? '#dc2626' : '#475569', weight: fueraT ? 5 : 4, opacity: 0.9 }).addTo(capa); };
+    for (let i = 1; i < A.length; i++) { const f = A[i].d > 300; tramo.push(A[i]); if (f !== fueraT) { cerrar(); tramo = [A[i]]; fueraT = f; } }
+    cerrar();
+    A.forEach((p, i) => { if (i % 3 === 0) L.circleMarker([p.lat, p.lon], { radius: 3, color: p.d > 300 ? '#dc2626' : '#475569', weight: 1, fillOpacity: 0.9 }).bindTooltip(tip(p, `Bus ${c.movil}`), { direction: 'top' }).addTo(capa); });
+    if (k < 0) {
+      encuadrar(A.map((p) => [p.lat, p.lon]));
+      poner('sin', `En el GPS de SONAR el ${esc(c.movil)} no pasó de 300 m del trazo en esa hora: la lectura cada 2 min pudo ser un salto del GPS. ${consultado}`);
+    } else {
+      let i = k; while (i > 0 && A[i - 1].d > 300) i--;
+      let j = k; while (j < A.length - 1 && A[j + 1].d > 300) j++;
+      let lejos = A[i]; for (let q = i; q <= j; q++) if (A[q].d > lejos.d) lejos = A[q];
+      // dónde se apartó de verdad (no donde cruzó los 300 m): hacia atrás mientras siga a más de 80 m del trazo;
+      // y dónde volvió: hacia adelante hasta que esté otra vez a menos de 80 m
+      while (i > 0 && A[i - 1].d > 80) i--;
+      let v = j + 1; while (v < A.length && A[v].d > 80) v++;
+      const antes = i > 0 ? A[i - 1] : null, vuelta = v < A.length ? A[v] : null;
+      const salioP = antes || A[i];
+      const minFuera = Math.round(((vuelta ? vuelta.seg : A[j].seg) - A[i].seg) / 60);
+      // si se salió y volvió por el mismo sitio, una sola etiqueta (si no, una tapa a la otra)
+      const mismoSitio = vuelta && vigMetros([salioP.lat, salioP.lon], [vuelta.lat, vuelta.lon]) < 120;
+      vigPin(salioP.lat, salioP.lon, '🚩', mismoSitio ? `Se salió ${vigHM(A[i].seg)} y volvió ${vigHM(vuelta.seg)} por aquí` : `Se salió · ${vigHM(A[i].seg)}`, 'rojo').addTo(capa);
+      vigPin(lejos.lat, lejos.lon, '📍', `${Math.round(lejos.d)} m · ${vigHM(lejos.seg)}`, 'gris').addTo(capa);
+      if (vuelta && !mismoSitio) vigPin(vuelta.lat, vuelta.lon, '↩️', `Volvió · ${vigHM(vuelta.seg)}`, 'verde').addTo(capa);
+      encuadrar(A.slice(Math.max(0, i - 4), Math.min(A.length, j + 5)).map((p) => [p.lat, p.lon]).concat(antes ? [[antes.lat, antes.lon]] : []));
+      const pr = ev[0]?.parada ? ` (venía del punto ${esc(vigPunto(ev[0].idx))} · ${esc(ev[0].parada)})` : '';
+      poner('', `<div class="vd-tit">🚩 ${i === 0 ? `Ya estaba fuera del trazo a las ${vigHM(A[0].seg)} (lo primero que se consultó)` : `Se salió del trazo a las ${vigHM(A[i].seg)}`}</div>
+        <div>📍 ${i === 0 ? 'Iba por' : 'Se salió en'} <span class="vd-dir">${esc(vigDir(salioP) || 'sin dirección en SONAR')}</span>${antes?.s != null ? `, ${vigKm(antes.s)} del recorrido` : ''}${pr}.</div>
+        <div>Llegó hasta <b>${Math.round(lejos.d)} m</b> del trazo a las ${vigHM(lejos.seg)}${vigDir(lejos) ? ` (${esc(vigDir(lejos))})` : ''}.</div>
+        <div>${vuelta ? `↩️ <b>Volvió a la ruta a las ${vigHM(vuelta.seg)}</b> en ${esc(vigDir(vuelta) || 'sin dirección')}: estuvo <b>${minFuera} min</b> fuera.`
+    : `<b>No volvió a la ruta</b> antes de las ${vigHM(A[A.length - 1].seg)} (fin de la consulta): lo último, ${esc(vigDir(A[A.length - 1]) || 'sin dirección')}. ${minFuera} min fuera hasta ahí.`}</div>
+        ${consultado}`);
+      graf.hidden = false;
+      const yMax = Math.max(600, ...A.map((p) => p.d)) * 1.1;
+      graf.innerHTML = `<h4>Qué tan lejos del trazo iba, minuto a minuto</h4>
+        ${vigGrafica({ series: [{ nombre: c.movil, color: '#dc2626', pts: A.map((p) => ({ x: p.seg, y: p.d })) }], x0: A[0].seg, x1: A[A.length - 1].seg, yMax,
+    yTit: 'Distancia al trazo', yFmt: (v) => `${Math.round(v)} m`, umbral: [300, 'límite 300 m'],
+    marcas: [{ x: A[i].seg, y: A[i].d, texto: `Se salió ${vigHM(A[i].seg)}`, color: '#dc2626' }, ...(vuelta ? [{ x: vuelta.seg, y: vuelta.d, texto: `Volvió ${vigHM(vuelta.seg)}`, color: '#16a34a' }] : [])] })}`;
+    }
+    leyenda.innerHTML = `<span><i style="background:#2563eb"></i>Trazo autorizado (KMZ)</span><span><i style="background:#475569"></i>Bus ${esc(c.movil)} sobre el trazo</span>
+      <span><i style="background:#dc2626"></i>Fuera del trazo (más de 300 m)</span><span>🚩 se salió · 📍 lo más lejos · ↩️ volvió</span>`;
+    return;
+  }
+
+  // apagado: dónde se detuvo y cuándo arrancó (velocidad de SONAR)
+  dibujar(A, '#dc2626', `Bus ${c.movil}`, 3);
+  const dSeg = dMin * 60;
+  let k = A.findIndex((p) => p.seg >= dSeg - 60 && Number(p.vel) === 0);
+  if (k < 0) k = A.reduce((a, p, i) => (Number(p.vel) === 0 && (a < 0 || Math.abs(p.seg - dSeg) < Math.abs(A[a].seg - dSeg)) ? i : a), -1);
+  if (k < 0) {
+    encuadrar(A.map((p) => [p.lat, p.lon]));
+    poner('sin', `En el GPS de SONAR el ${esc(c.movil)} no aparece detenido en esa hora. ${consultado}`);
+  } else {
+    let i = k; while (i > 0 && Number(A[i - 1].vel) <= 2) i--;
+    let j = k; while (j < A.length - 1 && Number(A[j + 1].vel) <= 2) j++;
+    const arranca = j + 1 < A.length ? A[j + 1] : null, p = A[i];
+    const minQ = Math.round(((arranca ? arranca.seg : A[j].seg) - p.seg) / 60);
+    vigPin(p.lat, p.lon, '🔌', `Quieto ${minQ} min · desde ${vigHM(p.seg)}`, 'rojo').addTo(capa);
+    encuadrar(A.slice(Math.max(0, i - 6), Math.min(A.length, j + 7)).map((q) => [q.lat, q.lon]));
+    const pr = ev[0]?.parada ? ` · punto ${esc(vigPunto(ev[0].idx))} (${esc(ev[0].parada)})` : '';
+    poner('', `<div class="vd-tit">🔌 Se detuvo a las ${vigHM(p.seg)} y ${arranca ? `arrancó a las ${vigHM(arranca.seg)}` : `seguía quieto a las ${vigHM(A[j].seg)}`}: <b>${minQ} min</b> quieto</div>
+      <div>📍 <span class="vd-dir">${esc(vigDir(p) || 'sin dirección en SONAR')}</span>${p.s != null ? `, ${vigKm(p.s)} del recorrido` : ''}${p.d != null && p.d > 300 ? ` · <b>a ${Math.round(p.d)} m del trazo</b>` : ''}${pr}.</div>
+      ${consultado}`);
+    graf.hidden = false;
+    graf.innerHTML = `<h4>Velocidad del bus, minuto a minuto</h4>
+      ${vigGrafica({ series: [{ nombre: c.movil, color: '#0d9488', pts: A.map((q) => ({ x: q.seg, y: Number(q.vel) || 0 })) }], x0: A[0].seg, x1: A[A.length - 1].seg,
+    yMax: Math.max(30, ...A.map((q) => Number(q.vel) || 0)) * 1.1, yTit: 'Velocidad', yFmt: (v) => `${Math.round(v)} km/h`,
+    franja: [p.seg, arranca ? arranca.seg : A[j].seg, `Quieto ${minQ} min`], marcas: [{ x: p.seg, y: 0, texto: `Se detuvo ${vigHM(p.seg)}`, color: '#0d9488' }] })}`;
+  }
+  leyenda.innerHTML = `<span><i style="background:#2563eb"></i>Trazo autorizado (KMZ)</span><span><i style="background:#dc2626"></i>Bus ${esc(c.movil)}</span><span>🔌 Donde se quedó quieto</span>`;
+}
+
+async function vigExcel(btn) {
+  const lista = vigFiltrados().filter((c) => vigEnVista(c, _vig.vista));
+  if (!lista.length) { toast('No hay casos para exportar.', 'err'); return; }
+  const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+    const cab = ['Fecha', 'Desde', 'Hasta', 'Minutos', 'Tipo', 'Ruta', 'Bus', 'Salió', 'Bus de adelante', 'Salió (adelante)',
+      'Causa probable', 'Punto', 'De', 'Máx. distancia al trazo (m)', 'Estado', 'Decisión', 'Responsable', 'Medida', 'Auditó', 'Despachos marcados',
+      '¿Vale la pena revisar?'];
+    const filas = lista.map((c) => [celdaFechaXlsx(c.fecha), c.desde, c.hasta, c.minutos, VIG_TIPOS[c.tipo][1], c.ruta, c.movil, c.sale,
+      c.movil_rel || '', c.sale_rel || '', c.causa ? (VIG_CAUSAS[c.causa] || c.causa) : '', c.punto_desde == null ? '' : c.punto_desde + 1, c.par_total,
+      c.max_dist, c.estado === 'ABIERTO' ? 'En curso' : 'Terminado', c.decision ? VIG_DECISION[c.decision][1] : 'Por auditar',
+      c.responsable === 'ADELANTE' ? 'El de adelante' : c.responsable === 'ATRAS' ? 'El de atrás' : '', c.medida || '', c.auditado_por || '', c.marcado || 0,
+      c._ruido ? 'No: ' + VIG_RUIDO[c._ruido] : 'Sí']);
+    const ws = XLSX.utils.aoa_to_sheet([cab, ...filas]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Vigilante');
+    XLSX.writeFile(wb, `vigilante_ruta_${_vig.desde}_${_vig.hasta}.xlsx`);
+  } catch (e) { toast('No se pudo exportar: ' + (e.message || e), 'err'); }
+  finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// ---- 📊 Tablero del vigilante: qué casos son, cuáles vale la pena revisar y dónde se repiten ----
+// Se calcula aquí con lo que ya trae vigilancia_listar (sin consultas nuevas a la base). Un caso es "probable
+// ruido" cuando casi seguro no es una falta (medido con los casos del 05 al 12/11): el bus ya había terminado
+// el recorrido o todavía no lo empezaba, un sitio donde se apagan muchos buses muchos días (espera), dos buses
+// que salieron casi juntos… El KMZ se comprueba con el GPS real de SONAR de viajes completos (el 12/11, 55 viajes
+// de 12 rutas: 98,9 % de los reportes a menos de 300 m del trazo; las salidas eran del bus yendo al patio).
+const VIG_COLOR = { ADELANTAMIENTO: '#d97706', APAGADO: '#0d9488', FUERA_RUTA: '#7c3aed' };
+const VIG_RUIDO = {
+  SIN_PUNTO: 'Sin punto del itinerario: el bus no iba haciendo la ruta (patio o antes de empezar)',
+  SALIDA: 'En la salida, antes de arrancar el recorrido',
+  TERMINO: 'Ya había terminado el recorrido (va para el patio o a otra ruta)',
+  ESPERA: 'Sitio de espera: ahí se apagan muchos buses, muchos días',
+  JUNTOS: 'Salieron con menos de 5 min de diferencia',
+  CORTO: 'Duró menos de 10 min',
+  FINAL: 'Llegando al final del recorrido',
+  SIN_GPS: 'El de adelante no tenía GPS',
+};
+const vigMinDe = (hhmm) => { const x = /^(\d{1,2}):(\d{2})/.exec(hhmm || ''); return x ? Number(x[1]) * 60 + Number(x[2]) : null; };
+const vigDia = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const vigMediana = (a) => { const v = a.filter((x) => x != null && !Number.isNaN(Number(x))).map(Number).sort((x, y) => x - y);
+  return v.length ? v[Math.floor((v.length - 1) / 2)] : null; };
+
+function vigClasificar(casos) {
+  const dias = new Set(casos.map((c) => c.fecha)).size || 1;
+  const sit = new Map();
+  for (const c of casos) {
+    if (c.tipo !== 'APAGADO' || c.punto_desde == null) continue;
+    const k = `${c.ruta}|${c.punto_desde}`;
+    const s = sit.get(k) || { buses: new Set(), dias: new Set() };
+    s.buses.add(c.movil); s.dias.add(c.fecha); sit.set(k, s);
+  }
+  const espera = (c) => { const s = sit.get(`${c.ruta}|${c.punto_desde}`); return !!s && s.buses.size >= 4 && s.dias.size >= Math.min(3, dias); };
+  for (const c of casos) {
+    const fin = !!c.par_total && c.punto_desde != null && Number(c.punto_desde) >= Number(c.par_total) - 3;
+    let r = null;
+    if (c.tipo === 'FUERA_RUTA') r = c.punto_desde == null ? 'SIN_PUNTO' : Number(c.punto_desde) === 0 ? 'SALIDA' : fin ? 'TERMINO' : null;
+    else if (c.tipo === 'APAGADO') r = espera(c) ? 'ESPERA' : null;
+    else {
+      const a = vigMinDe(c.sale), b = vigMinDe(c.sale_rel);
+      r = c.causa === 'ADELANTE_SIN_GPS' ? 'SIN_GPS' : (a != null && b != null && a - b < 5) ? 'JUNTOS'
+        : Number(c.minutos) < 10 ? 'CORTO' : fin ? 'FINAL' : null;
+    }
+    c._ruido = r;
+    c._hora = vigMinDe(c.desde) == null ? null : Math.floor(vigMinDe(c.desde) / 60);
+  }
+}
+
+function vigQuitarMapas() {
+  for (const k of ['mapS', 'mapK']) { if (_vig[k]) { try { _vig[k].remove(); } catch (_) { /* ya no existía */ } _vig[k] = null; } }
+}
+function vigCambiarModo(modo) {
+  _vig.modo = modo;
+  // el tablero es para ver patrones: si está en un solo día, se abre en los últimos 7
+  if (modo === 'tablero' && _vig.desde === _vig.hasta && !_vig.rangoTocado) { _vig.rangoTocado = true; vigRango(7); return; }
+  vigPintar();
+}
+function vigRango(dias) {
+  const m = vigModal();
+  _vig.rangoTocado = true;
+  _vig.hasta = hoyServidor(); _vig.desde = vigDia(_vig.hasta, -(dias - 1));
+  m.querySelector('[data-desde]').value = _vig.desde; m.querySelector('[data-hasta]').value = _vig.hasta;
+  vigCargar();
+}
+function vigVerRevisar(tipo) {
+  const m = vigModal();
+  _vig.modo = 'lista'; _vig.soloRevisar = true; _vig.vista = 'todo'; _vig.tipo = tipo || '';
+  m.querySelector('[data-tipo]').value = _vig.tipo;
+  vigPintar();
+}
+function vigFiltrarRuta(ruta) {
+  const m = vigModal(), sel = m.querySelector('[data-ruta]');
+  _vig.ruta = _vig.ruta === ruta ? '' : ruta;
+  sel.value = _vig.ruta;
+  vigPintar();
+}
+
+// Columnas apiladas por tipo (mismo color por tipo en todo el tablero); el total arriba y el detalle al pasar el mouse.
+function vigColumnas(grupos) {
+  const T = Object.keys(VIG_TIPOS);
+  const tot = (g) => T.reduce((s, t) => s + (g.n[t] || 0), 0);
+  const max = Math.max(1, ...grupos.map(tot));
+  return `<div class="vigt-cols">${grupos.map((g) => `<div class="vigt-col" title="${esc(g.titulo)}: ${T.map((t) => `${VIG_TIPOS[t][1]} ${g.n[t] || 0}`).join(' · ')}">
+      <span class="vigt-tot">${tot(g) || ''}</span>
+      <div class="vigt-area"><div class="vigt-pila" style="height:${Math.round(100 * tot(g) / max)}%">${T.filter((t) => g.n[t])
+    .map((t) => `<i style="flex:${g.n[t]};background:${VIG_COLOR[t]}"></i>`).join('')}</div></div>
+      <span class="vigt-x">${esc(g.label)}</span></div>`).join('')}</div>`;
+}
+
+function vigTableroHtml(base) {
+  const T = Object.keys(VIG_TIPOS);
+  const nDias = Math.max(1, Math.round((new Date(_vig.hasta) - new Date(_vig.desde)) / 864e5) + 1);
+  const rango = `<div class="vigt-rango">Ver: ${[[1, 'Hoy'], [7, '7 días'], [30, '30 días']].map(([d, l]) =>
+    `<button type="button" class="btn btn-sm${nDias === d && _vig.hasta === hoyServidor() ? ' btn-primary' : ''}" data-rango="${d}">${l}</button>`).join('')}
+    <span>· ${nDias} día(s)${_vig.ruta ? ` · ruta <b>${esc(_vig.ruta)}</b>` : ''}${_vig.tipo ? ` · ${esc(VIG_TIPOS[_vig.tipo][1])}` : ''}</span></div>`;
+  if (!base.length) return `<div class="vigt">${rango}<div class="cump-empty">No hay casos en estas fechas.</div></div>`;
+  const rev = base.filter((c) => !c._ruido);
+  const tile = (v, l, cls = '') => `<div class="pp-card ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  const ley = `<div class="vigt-ley">${T.map((t) => `<span><i style="background:${VIG_COLOR[t]}"></i>${VIG_TIPOS[t][0]} ${VIG_TIPOS[t][1]}</span>`).join('')}</div>`;
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+
+  // 1) cuáles vale la pena revisar, por tipo
+  const valen = T.map((t) => {
+    const del = base.filter((c) => c.tipo === t); if (!del.length) return '';
+    const r = del.filter((c) => !c._ruido).length;
+    const mot = {}; del.forEach((c) => { if (c._ruido) mot[c._ruido] = (mot[c._ruido] || 0) + 1; });
+    const seg = Object.entries(mot).sort((a, b) => b[1] - a[1]);
+    return `<div class="vigt-valen">
+      <div class="vigt-valen-cab"><b>${VIG_TIPOS[t][0]} ${VIG_TIPOS[t][1]}</b> · ${del.length} casos ·
+        <b>${r} para revisar (${pct(r, del.length)} %)</b>
+        ${r ? ` <button type="button" class="btn-link" data-ver-revisar="${t}">Ver cuáles →</button>` : ''}</div>
+      <div class="vigt-barra">${r ? `<i style="flex:${r};background:${VIG_COLOR[t]}" title="Para revisar: ${r}"></i>` : ''}${seg.map(([k, n], i) =>
+    `<i class="ruido r${i % 3}" style="flex:${n}" title="${esc(VIG_RUIDO[k])}: ${n}"></i>`).join('')}</div>
+      <ul class="vigt-motivos"><li><i style="background:${VIG_COLOR[t]}"></i>Para revisar: <b>${r}</b></li>${seg.map(([k, n], i) =>
+    `<li><i class="ruido r${i % 3}"></i>${esc(VIG_RUIDO[k])}: <b>${n}</b></li>`).join('')}</ul>
+    </div>`;
+  }).join('');
+
+  // 2) por día y 3) por hora
+  const dias = []; for (let d = _vig.desde; d <= _vig.hasta && dias.length < 62; d = vigDia(d, 1)) dias.push(d);
+  const SEM = ['do', 'lu', 'ma', 'mi', 'ju', 'vi', 'sá'];
+  const porDia = dias.map((d) => { const n = {}; base.forEach((c) => { if (c.fecha === d) n[c.tipo] = (n[c.tipo] || 0) + 1; });
+    const f = new Date(d + 'T12:00:00Z'); return { titulo: `${SEM[f.getUTCDay()]} ${d.slice(8)}/${d.slice(5, 7)}`, label: dias.length > 16 ? d.slice(8) : `${SEM[f.getUTCDay()]} ${d.slice(8)}`, n }; });
+  const hs = base.map((c) => c._hora).filter((h) => h != null);
+  const hMin = Math.min(...hs, 5), hMax = Math.max(...hs, 22);
+  const porHora = []; for (let h = hMin; h <= hMax; h++) { const n = {}; base.forEach((c) => { if (c._hora === h) n[c.tipo] = (n[c.tipo] || 0) + 1; });
+    porHora.push({ titulo: `${h}:00 a ${h}:59`, label: String(h), n }); }
+
+  // 4) por ruta
+  const rutas = new Map();
+  base.forEach((c) => { const k = c.ruta || '—'; const r = rutas.get(k) || { n: 0, rev: 0, t: {}, buses: new Set(), kmz: c.kmz };
+    r.n++; if (!c._ruido) r.rev++; r.t[c.tipo] = (r.t[c.tipo] || 0) + 1; r.buses.add(c.movil); r.kmz = r.kmz || c.kmz; rutas.set(k, r); });
+  const filasRuta = [...rutas.entries()].sort((a, b) => b[1].rev - a[1].rev || b[1].n - a[1].n);
+
+  // 5) sitios que se repiten (apagados y salidas de ruta en el mismo punto del recorrido, varios buses)
+  const sitios = new Map();
+  base.forEach((c) => { if (c.tipo === 'ADELANTAMIENTO' || c.punto_desde == null) return;
+    const k = `${c.tipo}|${c.ruta}|${c.punto_desde}`; const s = sitios.get(k) || { tipo: c.tipo, ruta: c.ruta, punto: c.punto_desde, de: c.par_total, casos: [], buses: new Set(), dias: new Set() };
+    s.casos.push(c); s.buses.add(c.movil); s.dias.add(c.fecha); sitios.set(k, s); });
+  const filasSitio = [...sitios.entries()].filter(([, s]) => s.buses.size >= 3).sort((a, b) => b[1].casos.length - a[1].casos.length).slice(0, 15);
+  const pareceSitio = (s) => { const r = s.casos[0]._ruido; return s.tipo === 'APAGADO' ? (r === 'ESPERA' ? 'Sitio de espera' : 'Se apagan ahí (revisar)')
+    : r === 'TERMINO' ? 'Ya terminó: van para el patio u otra ruta' : r === 'SALIDA' ? 'Antes de arrancar' : 'Desvío que se repite (revisar)'; };
+
+  // 6) buses que más repiten (solo los casos para revisar)
+  const buses = new Map();
+  rev.forEach((c) => { const b = buses.get(c.movil) || { n: 0, t: {}, rutas: new Set(), dias: new Set() };
+    b.n++; b.t[c.tipo] = (b.t[c.tipo] || 0) + 1; b.rutas.add(c.ruta); b.dias.add(c.fecha); buses.set(c.movil, b); });
+  const filasBus = [...buses.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 15);
+
+  // 7) adelantamientos: por qué
+  const adel = base.filter((c) => c.tipo === 'ADELANTAMIENTO');
+  const causas = {}; adel.forEach((c) => { const k = c.causa || 'SIN'; causas[k] = causas[k] || { n: 0, rev: 0 }; causas[k].n++; if (!c._ruido) causas[k].rev++; });
+  const filasCausa = Object.entries(causas).sort((a, b) => b[1].n - a[1].n);
+  const maxCausa = Math.max(1, ...filasCausa.map(([, v]) => v.n));
+
+  // 8) rutas con trazo para verificar el KMZ (primero las que más se salen)
+  const conKmz = [...rutas.entries()].filter(([, r]) => r.kmz).sort((a, b) => (b[1].t.FUERA_RUTA || 0) - (a[1].t.FUERA_RUTA || 0));
+  const th = (l, num) => `<th${num ? ' class="num"' : ''}>${l}</th>`;
+  const td = (v, num) => `<td${num ? ' class="num"' : ''}>${v}</td>`;
+  return `<div class="vigt">
+    ${rango}
+    <div class="pp-tarjetas vigt-tiles">
+      ${tile(base.length, 'Casos')}${tile(rev.length, 'Vale la pena revisar', rev.length ? 'mal' : 'ok')}${tile(base.length - rev.length, 'Probable ruido')}
+      ${tile(new Set(base.map((c) => c.movil)).size, 'Buses')}${tile(rutas.size, 'Rutas')}${tile(base.length / nDias >= 10 ? Math.round(base.length / nDias) : (base.length / nDias).toFixed(1).replace('.', ','), 'Casos por día')}
+    </div>
+    <div class="vigt-sec"><h4>¿Cuáles vale la pena revisar?</h4>${valen}
+      <p class="vigt-nota">"Probable ruido" = casi seguro no es una falta del conductor. Siguen en la lista, marcados, por si quieres mirarlos.
+        En la lista de casos puedes dejar <b>solo los que vale la pena revisar</b>.</p></div>
+    <div class="vigt-2">
+      <div class="vigt-sec"><h4>Casos por día</h4>${ley}${vigColumnas(porDia)}</div>
+      <div class="vigt-sec"><h4>A qué hora empiezan</h4>${ley}${vigColumnas(porHora)}
+        <p class="vigt-nota">Desde las 6 p. m. suben los apagados y las salidas de ruta: muchos son buses que ya acabaron y van para el patio con el viaje todavía abierto en SONAR.</p></div>
+    </div>
+    <div class="vigt-sec"><h4>Por ruta <small class="vigt-nota">(toca una ruta para filtrar todo el tablero)</small></h4>
+      <div class="table-wrap vigt-scroll"><table class="pp-tabla vigt-tabla"><thead><tr>${th('Ruta')}${th('Para revisar', 1)}${th('Casos', 1)}
+        ${T.map((t) => th(VIG_TIPOS[t][0] + ' ' + VIG_TIPOS[t][1], 1)).join('')}${th('Buses', 1)}${th('Trazo KMZ')}</tr></thead><tbody>
+        ${filasRuta.map(([k, r]) => `<tr data-ruta-t="${esc(k)}"${_vig.ruta === k ? ' class="qrc-sel"' : ''}>${td(`<b>${esc(k)}</b>`)}${td(`<b>${r.rev}</b>`, 1)}${td(r.n, 1)}
+          ${T.map((t) => td(r.t[t] || '', 1)).join('')}${td(r.buses.size, 1)}${td(r.kmz ? esc(r.kmz) : '<span class="chip chip-amber">sin trazo</span>')}</tr>`).join('')}
+      </tbody></table></div></div>
+    <div class="vigt-sec"><h4>Sitios que se repiten <small class="vigt-nota">(mismo punto del recorrido, 3 o más buses)</small></h4>
+      ${filasSitio.length ? `<div class="table-wrap vigt-scroll"><table class="pp-tabla vigt-tabla"><thead><tr>${th('Tipo')}${th('Ruta')}${th('Punto')}${th('Casos', 1)}
+        ${th('Buses', 1)}${th('Días', 1)}${th('Duran (típico)', 1)}${th('Lejos del trazo (típico)', 1)}${th('Qué parece')}${th('')}</tr></thead><tbody>
+        ${filasSitio.map(([k, s]) => `<tr>${td(`${VIG_TIPOS[s.tipo][0]} ${esc(VIG_TIPOS[s.tipo][1])}`)}${td(esc(s.ruta || '—'))}${td(esc(vigPunto(s.punto, s.de)))}
+          ${td(s.casos.length, 1)}${td(s.buses.size, 1)}${td(s.dias.size, 1)}${td(esc(vigMin(vigMediana(s.casos.map((c) => c.minutos)))), 1)}
+          ${td(s.tipo === 'FUERA_RUTA' ? `${vigMediana(s.casos.map((c) => c.max_dist)) ?? ''} m` : '', 1)}${td(esc(pareceSitio(s)))}
+          ${td(`<button type="button" class="btn btn-sm" data-sitio="${esc(k)}">🗺️ Ver</button>`)}</tr>`).join('')}
+      </tbody></table></div>
+      <div class="vigt-mapa" id="vigt-sitio-mapa" hidden></div><div class="vigt-nota" data-sitio-msg></div>`
+    : '<div class="vigt-nota">Ningún sitio se repite con 3 o más buses en estas fechas.</div>'}</div>
+    <div class="vigt-2">
+      <div class="vigt-sec"><h4>Buses que más se repiten <small class="vigt-nota">(solo casos para revisar)</small></h4>
+        ${filasBus.length ? `<div class="table-wrap vigt-scroll"><table class="pp-tabla vigt-tabla"><thead><tr>${th('Bus')}${th('Casos', 1)}
+          ${T.map((t) => th(VIG_TIPOS[t][0], 1)).join('')}${th('Rutas')}${th('Días', 1)}</tr></thead><tbody>
+          ${filasBus.map(([k, b]) => `<tr>${td(`<b>${esc(k)}</b>`)}${td(`<b>${b.n}</b>`, 1)}${T.map((t) => td(b.t[t] || '', 1)).join('')}
+            ${td(esc([...b.rutas].join(', ')))}${td(b.dias.size, 1)}</tr>`).join('')}</tbody></table></div>` : '<div class="vigt-nota">Ninguno.</div>'}</div>
+      <div class="vigt-sec"><h4>${VIG_TIPOS.ADELANTAMIENTO[0]} Adelantamientos: por qué</h4>
+        ${filasCausa.length ? filasCausa.map(([k, v]) => `<div class="vigt-hb"><span>${esc(VIG_CAUSAS[k] || 'Sin causa')}</span>
+          <span class="b" style="width:${Math.max(2, Math.round((100 * v.n) / maxCausa))}%"></span><span><b>${v.n}</b> <small>(${v.rev} para revisar)</small></span></div>`).join('')
+    : '<div class="vigt-nota">No hubo adelantamientos.</div>'}
+        <p class="vigt-nota">Cuando el de adelante iba apagado, quieto o fuera de ruta, el que se demoró fue el de adelante, no el de atrás.</p></div>
+    </div>
+    <div class="vigt-sec"><h4>🗺️ ¿El trazo KMZ está bien? Comprobación con el GPS real de los buses</h4>
+      ${conKmz.length ? `<div class="vigt-kmz"><label class="vig-f">Ruta <select data-kmz-ruta>${conKmz.map(([k, r]) =>
+    `<option value="${esc(k)}"${k === _vig.ruta ? ' selected' : ''}>${esc(k)} · ${r.t.FUERA_RUTA || 0} salidas de ruta</option>`).join('')}</select></label>
+        <button type="button" class="btn btn-sm btn-primary" data-kmz-ver>🛰️ Comprobar con 4 viajes reales</button></div>
+      <p class="vigt-nota">Toma hasta 4 viajes de día de buses distintos que el vigilante <b>no</b> marcó fuera de ruta, trae su recorrido de SONAR y mide qué tan lejos
+        pasó cada reporte del trazo. Si todos se salen en el mismo sitio, el KMZ está mal ahí; si casi todo queda a menos de 300 m, el trazo está bien.</p>
+      <div data-kmz-out></div><div class="vigt-mapa" id="vigt-kmz-mapa" hidden></div>` : '<div class="vigt-nota">Ninguna ruta de estas fechas tiene trazo.</div>'}
+    </div>
+  </div>`;
+}
+
+function vigtMapa(id, prop) {
+  const el = $(id); if (!el) return null;
+  if (_vig[prop]) { try { _vig[prop].remove(); } catch (_) { /* ya no existía */ } _vig[prop] = null; }
+  el.hidden = false;
+  // sin mapa base todavía: quien lo llama lo pone con capaMapaBase() cuando ya encuadró lo que va a mostrar
+  const map = L.map(el, { scrollWheelZoom: true }).setView([6.244, -75.575], 13);
+  _vig[prop] = map;
+  setTimeout(() => { try { map.invalidateSize(); } catch (_) { /* cerrado */ } }, 150);
+  return map;
+}
+async function vigKmzPuntos(kmz) {
+  if (!kmz) return [];
+  let pts = _vig.kmz.get(kmz);
+  if (!pts) {
+    const { data } = await sb.from('rutas_recorrido').select('puntos').eq('codigo', kmz).maybeSingle();
+    pts = data?.puntos || [];
+    _vig.kmz.set(kmz, pts);
+  }
+  return pts;
+}
+
+// Un sitio que se repite: el trazo y las lecturas de hasta 6 casos de buses distintos.
+async function vigVerSitio(key) {
+  const [tipo, ruta, punto] = key.split('|');
+  const m = vigModal(), msg = m.querySelector('[data-sitio-msg]');
+  const todos = _vig.casos.filter((c) => c.tipo === tipo && c.ruta === ruta && String(c.punto_desde) === punto);
+  const vistos = new Set(), casos = [];
+  for (const c of todos) { if (!vistos.has(c.movil)) { vistos.add(c.movil); casos.push(c); } if (casos.length >= 6) break; }
+  if (msg) msg.textContent = 'Cargando las lecturas…';
+  const map = vigtMapa('vigt-sitio-mapa', 'mapS'); if (!map) return;
+  const trazo = await vigKmzPuntos(casos[0]?.kmz);
+  if (trazo.length) L.polyline(trazo, { color: '#2563eb', weight: 4, opacity: 0.55, dashArray: '6 6' }).addTo(map);
+  const res = await Promise.all(casos.map((c) => sb.rpc('vigilancia_caso', { p_id: c.id }).then((r) => r.data).catch(() => null)));
+  const marco = [];
+  res.forEach((d) => {
+    const c = d?.caso; if (!c) return;
+    const p = (c.evidencia || []).filter((x) => x.lat != null && x.lon != null);
+    if (!p.length) return;
+    L.polyline(p.map((x) => [x.lat, x.lon]), { color: VIG_COLOR[c.tipo], weight: 3, opacity: 0.8 }).addTo(map);
+    p.forEach((x) => { marco.push([x.lat, x.lon]); L.circleMarker([x.lat, x.lon], { radius: 4, color: '#fff', weight: 1, fillColor: VIG_COLOR[c.tipo], fillOpacity: 0.95 })
+      .bindTooltip(`Bus ${esc(c.movil)} · ${esc(c.fecha)} ${esc(x.t)} · punto ${esc(vigPunto(x.idx))}${x.dist != null ? ` · ${x.dist} m del trazo` : ''}${x.motor === 'Apagado' ? ' · apagado' : ''}`, { direction: 'top' }).addTo(map); });
+  });
+  try { if (marco.length > 1) map.fitBounds(L.latLngBounds(marco).pad(0.4), { animate: false }); else if (marco.length) map.setView(marco[0], 16, { animate: false }); } catch (_) { /* sin puntos */ }
+  if (_vig.mapS === map) capaMapaBase(map);
+  if (msg) {
+    msg.innerHTML = `${VIG_TIPOS[tipo][0]} Ruta <b>${esc(ruta)}</b>, punto ${esc(vigPunto(Number(punto)))}: ${todos.length} casos de ${new Set(todos.map((c) => c.movil)).size} buses.
+      En el mapa, ${casos.length} de ellos (uno por bus); el trazo autorizado va en azul punteado. Abrir un caso:
+      ${casos.map((c) => `<button type="button" class="btn-link" data-caso="${c.id}">${esc(c.movil)} (${esc(String(c.fecha).slice(8))}/${esc(String(c.fecha).slice(5, 7))} ${esc(c.desde)})</button>`).join(' · ')}`;
+  }
+}
+
+// Distancia en metros de un punto al trazo (fórmula plana, igual que la base).
+function vigDistTrazo(lat, lon, poly) {
+  const ky = 111320, kx = 111320 * Math.cos((lat * Math.PI) / 180);
+  let best = Infinity;
+  for (let i = 1; i < poly.length; i++) {
+    const ax = (poly[i - 1][1] - lon) * kx, ay = (poly[i - 1][0] - lat) * ky, bx = (poly[i][1] - lon) * kx, by = (poly[i][0] - lat) * ky;
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    const px = ax + t * dx, py = ay + t * dy, d = px * px + py * py;
+    if (d < best) best = d;
+  }
+  return Math.sqrt(best);
+}
+const vigMetros = (a, b) => Math.hypot((a[0] - b[0]) * 111320, (a[1] - b[1]) * 111320 * Math.cos((a[0] * Math.PI) / 180));
+
+// El KMZ contra el GPS real: hasta 4 viajes de día, de buses distintos, que el vigilante NO marcó fuera de ruta.
+async function vigVerificarKmz() {
+  const m = vigModal(), sel = m.querySelector('[data-kmz-ruta]'), out = m.querySelector('[data-kmz-out]'), b = m.querySelector('[data-kmz-ver]');
+  const ruta = sel?.value; if (!ruta || !out) return;
+  const casos = _vig.casos.filter((c) => c.ruta === ruta);
+  const kmz = casos.find((c) => c.kmz)?.kmz;
+  const clave = (v) => `${v.movil}|${v.fecha}|${v.sale}`;
+  const conFuera = new Set(casos.filter((c) => c.tipo === 'FUERA_RUTA').map((c) => clave({ movil: c.movil, fecha: c.fecha, sale: c.sale })));
+  const cand = [];
+  casos.forEach((c) => {
+    if (c.tipo === 'ADELANTAMIENTO' && c.movil_rel && c.sale_rel) cand.push({ movil: c.movil_rel, fecha: c.fecha, sale: c.sale_rel });
+    if (c.movil && c.sale) cand.push({ movil: c.movil, fecha: c.fecha, sale: c.sale });
+  });
+  const vistos = new Set(), viajes = [];
+  cand.filter((v) => !conFuera.has(clave(v)) && v.sale >= '06:00' && v.sale <= '16:30')
+    .sort((x, y) => (x.fecha + x.sale).localeCompare(y.fecha + y.sale))
+    .forEach((v) => { if (!vistos.has(v.movil)) { vistos.add(v.movil); viajes.push(v); } });
+  const elegidos = viajes.length <= 4 ? viajes : [0, 1, 2, 3].map((i) => viajes[Math.floor((i * (viajes.length - 1)) / 3)]);
+  if (!kmz || !elegidos.length) { out.innerHTML = `<div class="vigt-mal">No hay viajes de día de la ruta ${esc(ruta)} en estas fechas para comparar. Prueba con 7 o 30 días.</div>`; return; }
+  b.disabled = true;
+  try {
+    if (!_vig.mids) {
+      const { data } = await sb.from('ubicaciones').select('movil, mid');
+      _vig.mids = new Map((data || []).map((u) => [String(u.movil || '').trim(), u.mid]));
+    }
+    const trazo = await vigKmzPuntos(kmz);
+    if (trazo.length < 2) { out.innerHTML = '<div class="vigt-mal">El trazo de esta ruta está vacío.</div>'; return; }
+    const map = vigtMapa('vigt-kmz-mapa', 'mapK');
+    L.polyline(trazo, { color: '#2563eb', weight: 4, opacity: 0.6, dashArray: '6 6' }).addTo(map);
+    try { map.fitBounds(L.latLngBounds(trazo).pad(0.15), { animate: false }); } catch (_) { /* sin trazo */ }
+    capaMapaBase(map);
+    const fin = trazo[trazo.length - 1], filas = [], celdas = new Map(), marco = [...trazo];
+    let totPts = 0, totFuera = 0, hechos = 0;
+    for (const v of elegidos) {
+      out.innerHTML = `<div class="vigt-nota">Consultando SONAR: viaje ${hechos + 1} de ${elegidos.length}…</div>`;
+      const mid = _vig.mids.get(String(v.movil).trim());
+      if (!mid) { filas.push({ v, error: 'el bus no tiene GPS en la tabla de ubicaciones' }); continue; }
+      const ini = vigMinDe(v.sale), finMin = Math.min(1439, ini + 150);
+      const hasta = `${String(Math.floor(finMin / 60)).padStart(2, '0')}:${String(finMin % 60).padStart(2, '0')}`;
+      try {
+        const { data, error } = await sb.rpc('sonar_recorrido', { p_mid: mid, p_desde: `${v.fecha} ${v.sale}`, p_hasta: `${v.fecha} ${hasta}` });
+        if (error || !data?.ok) throw new Error(error?.message || data?.error || 'SONAR no respondió');
+        let pts = (data.puntos || []).filter((p) => p.lat != null && p.lon != null);
+        // el viaje termina cuando el bus vuelve al final del trazo después de haberse alejado (lo de después es ir al patio u otra ruta)
+        let lejos = false;
+        for (let i = 0; i < pts.length; i++) {
+          const dFin = vigMetros([pts[i].lat, pts[i].lon], fin);
+          if (dFin > 1500) lejos = true;
+          if (lejos && i > pts.length * 0.3 && dFin < 300) { pts = pts.slice(0, i + 1); break; }
+        }
+        const ds = pts.map((p) => vigDistTrazo(p.lat, p.lon, trazo));
+        const fuera = pts.filter((_, i) => ds[i] > 300);
+        totPts += pts.length; totFuera += fuera.length; hechos++;
+        const vistasC = new Set();
+        fuera.forEach((p) => { const k = `${Math.round(p.lat / 0.002)}|${Math.round(p.lon / 0.002)}`; if (!vistasC.has(k)) { vistasC.add(k); celdas.set(k, (celdas.get(k) || 0) + 1); } });
+        L.polyline(pts.map((p) => [p.lat, p.lon]), { color: '#475569', weight: 3, opacity: 0.55 }).addTo(map);
+        fuera.forEach((p) => { marco.push([p.lat, p.lon]); L.circleMarker([p.lat, p.lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#dc2626', fillOpacity: 0.95 })
+          .bindTooltip(`Bus ${esc(v.movil)} · ${esc(p.t)} · ${Math.round(ds[pts.indexOf(p)])} m del trazo${p.desc ? ' · ' + esc(p.desc) : ''}`, { direction: 'top' }).addTo(map); });
+        filas.push({ v, n: pts.length, fuera: fuera.length, max: Math.round(Math.max(0, ...ds)) });
+      } catch (e) { filas.push({ v, error: String(e?.message || e) }); }
+    }
+    // tramos donde casi todos los viajes pasan lejos del trazo = el KMZ no coincide con lo que hacen los buses
+    const necesarios = Math.max(2, Math.ceil(hechos * 0.6));
+    const malos = hechos >= 3 ? [...celdas.entries()].filter(([, n]) => n >= necesarios) : [];
+    malos.forEach(([k]) => { const [la, lo] = k.split('|').map(Number); L.circle([la * 0.002, lo * 0.002], { radius: 160, color: '#d97706', weight: 2, dashArray: '4 4', fill: false }).addTo(map); });
+    try { map.fitBounds(L.latLngBounds(marco).pad(0.1), { animate: false }); } catch (_) { /* sin puntos */ }
+    const p = totPts ? Math.round((1000 * (totPts - totFuera)) / totPts) / 10 : 0;
+    const veredicto = !hechos ? '<div class="vigt-mal">SONAR no devolvió ningún recorrido. Intenta de nuevo en un momento.</div>'
+      : malos.length ? `<div class="vigt-mal">⚠️ En <b>${malos.length} tramo(s)</b> casi todos los viajes pasan a más de 300 m del trazo (círculos naranja en el mapa):
+          ahí el KMZ puede estar <b>desactualizado</b>. Las salidas de ruta en ese sitio no son culpa del conductor hasta corregir el trazo.</div>`
+        : `<div class="vigt-ok">✅ <b>El trazo coincide</b> con lo que hacen los buses: ${p} % de los ${totPts} reportes de GPS quedaron a menos de 300 m del KMZ
+          (${hechos} viaje(s)). Las salidas de ruta de esta ruta son de verdad, o del bus yendo al patio, no un error del trazo.</div>`;
+    out.innerHTML = `${veredicto}
+      <div class="table-wrap"><table class="pp-tabla vigt-tabla"><thead><tr><th>Bus</th><th>Día</th><th>Salió</th><th class="num">Reportes GPS</th>
+        <th class="num">A más de 300 m</th><th class="num">Lo más lejos</th></tr></thead><tbody>
+        ${filas.map((f) => `<tr><td><b>${esc(f.v.movil)}</b></td><td>${esc(String(f.v.fecha).slice(8))}/${esc(String(f.v.fecha).slice(5, 7))}</td><td>${esc(f.v.sale)}</td>
+          ${f.error ? `<td colspan="3">No se pudo: ${esc(f.error)}</td>` : `<td class="num">${f.n}</td><td class="num">${f.fuera} (${f.n ? Math.round((100 * f.fuera) / f.n) : 0} %)</td><td class="num">${f.max} m</td>`}</tr>`).join('')}
+      </tbody></table></div>
+      <div class="vigc-leyenda"><span><i style="background:#2563eb"></i>Trazo autorizado (KMZ)</span><span><i style="background:#475569"></i>Recorrido real (SONAR)</span>
+        <span><i style="background:#dc2626"></i>Reporte a más de 300 m del trazo</span>${malos.length ? '<span><i style="background:#d97706"></i>Tramo donde casi todos se salen</span>' : ''}</div>`;
+  } finally { b.disabled = false; }
 }
 
 // ---------- Salud del GPS (sql/135 + sql/136 + sql/137) ----------
@@ -22546,8 +23559,7 @@ function sstMapaPintar(zona, pts, ctx) {
   zona.appendChild(sstMapaLeyenda(pts));
   if (_sstMapa.map) { try { _sstMapa.map.remove(); } catch (_) { /* ya no existía */ } _sstMapa.map = null; }
   const map = L.map(el, { scrollWheelZoom: true }).setView([6.244, -75.575], 12); // Medellín
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  capaMapaBase(map);
   _sstMapa.map = map; _sstMapa.marcas = [];
   const maxV = Math.max(...pts.map((p) => Number(p.veces || 1)), 1);
   pts.forEach((p) => {
@@ -23432,7 +24444,7 @@ async function pintarPaxMapa(paradas) {
   const el = document.getElementById('pax-map'); if (!el || typeof L === 'undefined') return;
   if (paxMap) { paxMap.remove(); paxMap = null; }
   paxMap = L.map(el, { scrollWheelZoom: true, attributionControl: true }).setView([6.244, -75.575], 12); // Medellín
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(paxMap);
+  capaMapaBase(paxMap);
   paxMarkers = L.layerGroup().addTo(paxMap);
   _paxMarkerByI = new Map();
   setTimeout(() => paxMap && paxMap.invalidateSize(), 150); // el div acaba de insertarse
@@ -26661,9 +27673,7 @@ async function refreshMapa(fit) {
 function ensureFlotaMap() {
   if (flotaMap) return;
   flotaMap = L.map('map').setView([6.244, -75.58], 12); // Medellín
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '© OpenStreetMap',
-  }).addTo(flotaMap);
+  capaMapaBase(flotaMap);
   flotaLayer = L.layerGroup().addTo(flotaMap);
   flotaMap.on('click', closeVehSheet); // tocar el mapa cierra el panel
   flotaMap.on('click', onMapClickGeo); // en modo "agregar geocerca", el clic la coloca

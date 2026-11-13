@@ -3612,6 +3612,124 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .ap-chk:disabled { cursor: wait; }
 .ap-ayuda { font-size: 12.5px; color: #475569; margin: 8px 12px; }
 
+/* 🚨 Vigilante de ruta (sql/172): adelantamientos, apagados en ruta y salidas del trazo KMZ */
+.vig-card { max-width: 1100px; }
+.vig-toolbar .vig-f, .vigc-form .vig-f { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.vig-toolbar input, .vig-toolbar select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13px; }
+.vig-body { padding: 12px 16px 16px; overflow: auto; max-height: 72vh; }
+.vig-portipo { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin: -2px 0 10px; }
+.vig-vistas { margin-bottom: 10px; }
+.vig-lista { display: grid; gap: 8px; }
+.vig-it { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: start; text-align: left; width: 100%;
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid #d97706; border-radius: 12px;
+  padding: 10px 12px; cursor: pointer; font: inherit; color: var(--text); }
+.vig-it:hover { background: #fafbfd; }
+.vig-it.vig-apagado { border-left-color: #0d9488; }
+.vig-it.vig-fuera_ruta { border-left-color: #7c3aed; }
+.vig-ruido { font-size: 12px; color: var(--muted); }
+.vig-solo { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); margin-left: 6px; cursor: pointer; }
+
+/* 📊 Tablero del vigilante: los mismos colores por tipo en las gráficas y en la lista */
+.vigt { display: grid; gap: 14px; }
+.vigt-rango { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.vigt-tiles { grid-template-columns: repeat(6, 1fr); margin-bottom: 0; }
+.vigt-sec { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface); min-width: 0; }
+.vigt-sec h4 { margin: 0 0 8px; font-size: 14.5px; }
+.vigt-nota { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; line-height: 1.45; }
+.vigt-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.vigt-ley { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.vigt-ley i, .vigt-motivos i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.vigt-valen { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
+.vigt-valen:first-of-type { border-top: 0; padding-top: 0; }
+.vigt-valen-cab { font-size: 13.5px; }
+.vigt-barra { display: flex; gap: 2px; height: 14px; border-radius: 4px; overflow: hidden; }
+.vigt-barra i { display: block; min-width: 3px; }
+.ruido.r0 { background: #94a3b8; } .ruido.r1 { background: #cbd5e1; } .ruido.r2 { background: #e2e8f0; }
+.vigt-motivos { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--muted); }
+.vigt-cols { display: flex; gap: 3px; align-items: stretch; }
+.vigt-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.vigt-col:hover .vigt-pila { filter: brightness(1.1); }
+.vigt-tot { font-size: 11px; color: var(--muted); text-align: center; height: 14px; }
+.vigt-area { height: 140px; display: flex; flex-direction: column; justify-content: flex-end; border-bottom: 1px solid var(--border); }
+.vigt-pila { display: flex; flex-direction: column-reverse; gap: 2px; border-radius: 4px 4px 0 0; overflow: hidden; }
+.vigt-pila i { display: block; min-height: 2px; }
+.vigt-x { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 4px; white-space: nowrap; overflow: hidden; }
+.vigt-tabla { font-size: 13px; }
+.vigt-tabla td, .vigt-tabla th { padding: 6px 7px; }
+.vigt-tabla .num { text-align: right; white-space: nowrap; }
+.vigt-tabla tr[data-ruta-t] { cursor: pointer; }
+.vigt-tabla tr[data-ruta-t]:hover td { background: #fafbfd; }
+.vigt-scroll { max-height: 360px; overflow: auto; }
+.vigt-hb { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 13px; padding: 3px 0; }
+.vigt-hb .b { height: 10px; border-radius: 0 4px 4px 0; background: #d97706; }
+.vigt-mapa { height: 380px; border-radius: 12px; border: 1px solid var(--border); margin-top: 8px; }
+.vigt-kmz { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.vigt-kmz select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13px; }
+.vigt-ok, .vigt-mal { border-radius: 10px; padding: 8px 12px; font-size: 13.5px; line-height: 1.45; margin-top: 8px; }
+.vigt-ok { background: #e9f8ee; border: 1px solid #bfe6cb; }
+.vigt-mal { background: #fff7ed; border: 1px solid #fed7aa; }
+@media (max-width: 760px) {
+  .vigt-tiles { grid-template-columns: repeat(3, 1fr); }
+  .vigt-2 { grid-template-columns: 1fr; }
+}
+.vig-ic { font-size: 22px; line-height: 1.2; text-align: center; }
+.vig-tx { display: grid; gap: 3px; min-width: 0; }
+.vig-cab { font-size: 13px; color: var(--muted); }
+.vig-cab b { color: var(--text); }
+.vig-frase { font-size: 14px; line-height: 1.4; }
+.vig-causa { font-size: 13px; color: #9a3412; }
+.vig-est { display: grid; gap: 4px; justify-items: end; text-align: right; }
+.vig-est small { font-size: 11.5px; color: var(--muted); max-width: 160px; }
+.vig-pie { margin-top: 14px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.vigc-card { max-width: 1040px; }
+.vigc-body { padding: 14px 18px 18px; overflow: auto; max-height: 82vh; display: grid; gap: 12px; }
+.vigc-explica { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 12px; padding: 10px 12px; display: grid; gap: 4px; font-size: 14px; line-height: 1.45; }
+.vigc-meta { font-size: 12.5px; color: var(--muted); }
+/* 📍 Dónde pasó (recorrido real de SONAR medido sobre el trazo) */
+.vigc-donde { border: 2px solid #1d4ed8; background: #eff6ff; border-radius: 12px; padding: 10px 12px; font-size: 14.5px; line-height: 1.5; display: grid; gap: 4px; }
+.vigc-donde.cargando { border-style: dashed; border-color: #93c5fd; color: var(--muted); font-size: 13.5px; }
+.vigc-donde.sin { border-color: #e2e8f0; background: #f8fafc; color: var(--muted); font-size: 13.5px; }
+.vigc-donde .vd-tit { font-weight: 700; font-size: 15.5px; color: #1e3a8a; }
+.vigc-donde .vd-dir { font-weight: 700; }
+.vigc-donde small { color: var(--muted); font-size: 12.5px; }
+.vig-pin-wrap { background: none; border: 0; }
+.vig-pin { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; transform: translate(-12px, -12px);
+  background: #fff; border: 2px solid #1d4ed8; border-radius: 14px; padding: 1px 8px 1px 4px; font: 600 12px/1.6 system-ui, sans-serif;
+  color: #1e293b; box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+.vig-pin.rojo { border-color: #dc2626; } .vig-pin.verde { border-color: #16a34a; } .vig-pin.gris { border-color: #64748b; }
+.vigc-grafica { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: var(--surface); }
+.vigc-grafica h4 { margin: 0 0 2px; font-size: 14px; }
+.vigc-grafica svg { width: 100%; height: auto; display: block; }
+.vigc-grafica svg text { fill: var(--muted); font: 11px system-ui, sans-serif; }
+.vigc-grafica svg .vg-eje { stroke: var(--border); }
+.vigc-grafica svg .vg-marca text { fill: var(--text); font-weight: 700; }
+.vigc-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.vigc-mapa { height: 340px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 6px; }
+.vigc-leyenda { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.vigc-leyenda i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.vigc-ev { max-height: 380px; overflow: auto; }
+.vigc-ev .pp-tabla { font-size: 12.5px; }
+.vigc-ev .pp-tabla td small { display: block; font-size: 11px; color: var(--muted); }
+.vigc-desp { font-size: 13px; line-height: 1.6; background: #f7f9fc; border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; }
+.vigc-form { border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
+.vigc-form h4 { margin: 0; font-size: 15px; }
+.vigc-ya { font-size: 13px; line-height: 1.5; background: #f7f9fc; border-radius: 10px; padding: 8px 10px; }
+.vig-opts { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 14px; }
+.vig-opts > span { font-weight: 600; font-size: 13px; color: var(--muted); }
+.vig-opts label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.vigc-marca { font-size: 13px; color: #1e3a8a; }
+.vigc-form select, .vigc-form textarea { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13.5px; }
+.vigc-form .vig-nota { display: grid; gap: 4px; }
+.vigc-form textarea { width: 100%; resize: vertical; }
+.vigc-pie { display: flex; align-items: center; gap: 10px; }
+@media (max-width: 760px) {
+  .vigc-grid { grid-template-columns: 1fr; }
+  .vigc-mapa { height: 260px; }
+  .vig-it { grid-template-columns: 28px 1fr; }
+  .vig-est { grid-column: 2; justify-items: start; text-align: left; }
+  .vig-body, .vigc-body { padding: 10px; }
+}
+
 /* ---------- 📷 QR obligatorio en cada despacho (sql/178) ---------- */
 .qrd { border-radius: 12px; padding: 10px 12px; border: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
 .qrd.pend { border: 2px dashed var(--primary); background: var(--grad-soft); }
@@ -3667,10 +3785,3 @@ tr.qrc-sel td { background: #fff1f1; }
 .qrc-foto { border: 1px solid var(--border); border-radius: 10px; padding: 0; overflow: hidden; background: var(--surface); cursor: pointer; display: flex; flex-direction: column; text-align: left; font: inherit; }
 .qrc-foto img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: #eee; }
 .qrc-foto span { font-size: 12px; padding: 4px 6px; color: var(--muted); }
-/* clases del modal de control (vienen de vigilante de ruta) */
-.vig-card { max-width: 1100px; }
-.vig-toolbar .vig-f, .vigc-form .vig-f { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
-.vig-toolbar input, .vig-toolbar select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13px; }
-.vig-toolbar .vig-f, .vigc-form .vig-f { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
-.vig-body { padding: 12px 16px 16px; overflow: auto; max-height: 72vh; }
-  .vig-body, .vigc-body { padding: 10px; }
