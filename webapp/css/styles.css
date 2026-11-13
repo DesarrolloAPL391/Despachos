@@ -1490,7 +1490,16 @@ tr.tr-flash > td { animation: trflash 1.1s ease; }
 .qr-body { padding: 8px 16px 4px; }
 .qr-stage { position: relative; width: 100%; aspect-ratio: 1 / 1; background: #000; border-radius: 14px;
   overflow: hidden; }
-#qr-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+#qr-video { width: 100%; height: 100%; object-fit: cover; display: block; transform-origin: 50% 50%; transition: transform .15s ease-out; }
+/* 🔍 Zoom del lector de QR (solo Control Laureles): 1× 2× 3×… sobre la imagen; el pellizco con dos dedos lo maneja
+   la app, no la página (qrZoomIniciar pone touch-action en .qr-stage y qrZoomQuitar lo quita) */
+.qr-zoom { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); z-index: 2; display: flex; gap: 4px;
+  padding: 3px; background: rgba(0,0,0,.6); border-radius: 999px; }
+.qr-zoom[hidden] { display: none; }
+.qr-zoom button { min-width: 44px; height: 34px; border: 0; border-radius: 999px; background: transparent; color: #fff;
+  font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; }
+.qr-zoom button.on { background: #fff; color: #111; }
+.qr-zoom button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 #foto-video, #foto-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
 .qr-frame { position: absolute; inset: 16%; border: 3px solid rgba(255,255,255,.9); border-radius: 16px;
   box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }

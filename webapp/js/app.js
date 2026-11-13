@@ -5249,8 +5249,136 @@ function ensureJsQR() {
   });
 }
 
+// ---- 🔍 ZOOM DEL LECTOR DE QR (13/11/2026): para leer un QR lejano, p. ej. el sticker del bus desde el andén.
+// SOLO en 🛂 Control Laureles (pedido del usuario): openQrScanner(pista, { zoom: true }) desde escanearViaje.
+// Los demás lectores (carnet, despacho, Oriental…) quedan como antes: sin barra, sin centro ampliado.
+// • Zoom de la CÁMARA si el celular lo da (Android/Chrome: track.getCapabilities().zoom): acerca con el sensor
+//   completo, es zoom de verdad (más detalle, no solo más grande).
+// • Si no lo da (iPhone y algunos equipos): se amplía el video en pantalla y el lector mira solo el centro, ampliado.
+// • Botones 1× 2× 3×… sobre la imagen y pellizco con dos dedos.
+// • Sin tocar nada: si en 1,5 s no ha leído, cada dos cuadros prueba también el centro ×2. Con el QR de lejos, algo
+//   desenfocado, el centro ampliado lee donde el cuadro entero no; con el QR nítido es al revés: por eso se alternan.
+const _qrZoom = { track: null, hw: null, nivel: 1, digital: 1, desde: 0, turno: false, lienzo: null, barra: null, video: null,
+  pendiente: null, aplicando: null, pellizco: null };
+const QR_ZOOM_NIVELES = [1, 2, 3, 5], QR_ZOOM_DIGITAL_MAX = 3;
+
+function qrZoomIniciar(stream, video) {
+  qrZoomQuitar();
+  const track = stream && stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+  if (!track || !video) return;
+  let caps = {}; try { caps = track.getCapabilities ? track.getCapabilities() || {} : {}; } catch { /* sin capacidades */ }
+  const z = caps.zoom, hw = z && Number(z.max) >= 1.5 ? { min: Math.max(1, Number(z.min) || 1), max: Number(z.max), step: Number(z.step) || 0.1 } : null;
+  Object.assign(_qrZoom, { track, video, hw, nivel: 1, digital: 1, desde: Date.now(), turno: false });
+  if (hw) {   // arranca en 1× aunque el celular hubiera quedado con otro zoom
+    try { const s = track.getSettings ? track.getSettings() : {}; if (s.zoom && Math.abs(s.zoom - 1) > 0.05) qrZoomPoner(1); } catch { /* */ }
+  }
+  // enfoque continuo si la cámara lo permite (de lejos el QR suele quedar desenfocado)
+  if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  const max = hw ? hw.max : QR_ZOOM_DIGITAL_MAX;
+  const niveles = QR_ZOOM_NIVELES.filter((l) => l <= max + 0.01);
+  const stage = video.parentElement;
+  const barra = document.createElement('div');
+  barra.className = 'qr-zoom'; barra.setAttribute('role', 'group');
+  barra.setAttribute('aria-label', 'Zoom de la cámara: toca un número o pellizca la imagen');
+  barra.innerHTML = niveles.map((l) => `<button type="button" data-z="${l}" aria-label="Zoom ${l} por">${l}×</button>`).join('');
+  barra.addEventListener('click', (e) => { const b = e.target.closest('[data-z]'); if (b) qrZoomPoner(Number(b.dataset.z)); });
+  stage.appendChild(barra); _qrZoom.barra = barra;
+  stage.style.touchAction = 'pan-x pan-y';   // el pellizco lo maneja la app, no amplía la página
+  stage.addEventListener('touchstart', qrZoomTocar, { passive: false });
+  stage.addEventListener('touchmove', qrZoomTocar, { passive: false });
+  stage.addEventListener('touchend', qrZoomSoltar);
+  stage.addEventListener('touchcancel', qrZoomSoltar);
+  qrZoomPintar();
+}
+function qrZoomActual() { return _qrZoom.hw ? _qrZoom.nivel : _qrZoom.digital; }
+function qrZoomPoner(z, continuo = false) {
+  if (!_qrZoom.track) return;
+  const hw = _qrZoom.hw, max = hw ? hw.max : QR_ZOOM_DIGITAL_MAX, min = hw ? hw.min : 1;
+  z = Math.min(max, Math.max(min, Number(z) || 1));
+  if (hw) z = Math.min(max, Math.max(min, Math.round(z / hw.step) * hw.step));
+  if (!continuo) _qrZoom.pellizco = null;
+  _qrZoom.desde = Date.now();   // con zoom nuevo, primero el cuadro tal cual
+  if (hw) {
+    _qrZoom.nivel = z; _qrZoom.pendiente = z;
+    if (!_qrZoom.aplicando) {   // en el pellizco llegan muchos: se aplica solo el último
+      const tr = _qrZoom.track;
+      _qrZoom.aplicando = (async () => {
+        while (_qrZoom.pendiente != null && _qrZoom.track === tr) {
+          const v = _qrZoom.pendiente; _qrZoom.pendiente = null;
+          try { await tr.applyConstraints({ advanced: [{ zoom: v }] }); } catch {
+            // la cámara dijo que tenía zoom pero no lo aplica: se pasa al zoom en pantalla
+            if (_qrZoom.track === tr) {
+              _qrZoom.hw = null; _qrZoom.aplicando = null; _qrZoom.pendiente = null;
+              _qrZoom.barra?.querySelectorAll('[data-z]').forEach((x) => { if (Number(x.dataset.z) > QR_ZOOM_DIGITAL_MAX) x.remove(); });
+              qrZoomPoner(Math.min(v, QR_ZOOM_DIGITAL_MAX)); return;
+            }
+          }
+        }
+        _qrZoom.aplicando = null;
+      })();
+    }
+  } else {
+    _qrZoom.digital = z;
+    if (_qrZoom.video) _qrZoom.video.style.transform = z > 1.01 ? `scale(${z.toFixed(2)})` : '';
+  }
+  qrZoomPintar();
+}
+function qrZoomPintar() {
+  const b = _qrZoom.barra; if (!b) return;
+  const z = qrZoomActual();
+  b.querySelectorAll('[data-z]').forEach((x) => x.classList.toggle('on', Math.abs(Number(x.dataset.z) - z) < 0.25));
+}
+function qrZoomTocar(e) {
+  if (!_qrZoom.track || !_qrZoom.barra || _qrZoom.barra.hidden) return;
+  if (e.touches.length !== 2) { _qrZoom.pellizco = null; return; }
+  e.preventDefault();   // que el navegador no amplíe la página entera
+  const [a, b] = e.touches, d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+  if (!_qrZoom.pellizco) { _qrZoom.pellizco = { d0: d, z0: qrZoomActual() }; return; }
+  qrZoomPoner(_qrZoom.pellizco.z0 * (d / _qrZoom.pellizco.d0), true);
+}
+function qrZoomSoltar(e) { if (!e.touches || e.touches.length < 2) _qrZoom.pellizco = null; }
+function qrZoomQuitar() {
+  if (_qrZoom.barra) _qrZoom.barra.remove();
+  const stage = _qrZoom.video && _qrZoom.video.parentElement;
+  if (stage) {
+    stage.removeEventListener('touchstart', qrZoomTocar); stage.removeEventListener('touchmove', qrZoomTocar);
+    stage.removeEventListener('touchend', qrZoomSoltar); stage.removeEventListener('touchcancel', qrZoomSoltar);
+    stage.style.touchAction = '';
+  }
+  if (_qrZoom.video) _qrZoom.video.style.transform = '';
+  Object.assign(_qrZoom, { track: null, hw: null, nivel: 1, digital: 1, barra: null, video: null, pendiente: null, pellizco: null });
+}
+// El cuadro que mira el lector: el video entero, o su centro ampliado (zoom en pantalla, o el intento automático
+// para QR lejanos: pasados 1,5 s sin leer, un cuadro sí y uno no se prueba el centro ×2).
+function qrFuente(video) {
+  if (!_qrZoom.track) return video;   // lector sin zoom (todos menos Control Laureles): el cuadro entero, como siempre
+  const auto = Date.now() - _qrZoom.desde > 1500 && (_qrZoom.turno = !_qrZoom.turno);
+  const z = Math.min(4, (_qrZoom.digital || 1) * (auto ? 2 : 1));
+  if (z <= 1.01) return video;
+  const vw = video.videoWidth, vh = video.videoHeight, cw = Math.max(1, Math.round(vw / z)), ch = Math.max(1, Math.round(vh / z));
+  const k = Math.min(2, 1280 / Math.max(cw, ch));   // se agranda: el lector ve los cuadritos del QR más grandes
+  const c = _qrZoom.lienzo || (_qrZoom.lienzo = document.createElement('canvas'));
+  c.width = Math.max(1, Math.round(cw * k)); c.height = Math.max(1, Math.round(ch * k));
+  c.getContext('2d', { willReadFrequently: true }).drawImage(video, Math.round((vw - cw) / 2), Math.round((vh - ch) / 2), cw, ch, 0, 0, c.width, c.height);
+  return c;
+}
+// Lee un QR de la cámara con el detector nativo (Android) o con jsQR. Devuelve el texto o null.
+async function qrLeerCuadro(video, det, cv, ctx) {
+  const s = qrFuente(video);
+  if (det) { const c = await det.detect(s); return c && c.length ? c[0].rawValue : null; }
+  if (!window.jsQR) return null;
+  let img;
+  if (s === video) {
+    cv.width = video.videoWidth; cv.height = video.videoHeight; ctx.drawImage(video, 0, 0, cv.width, cv.height);
+    img = ctx.getImageData(0, 0, cv.width, cv.height);
+  } else img = s.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, s.width, s.height);
+  const r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+  return r ? r.data : null;
+}
+
 function stopQr() {
   if (qrRAF) { cancelAnimationFrame(qrRAF); qrRAF = null; }
+  qrZoomQuitar();
   if (qrStream) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; }
   const v = $('qr-video'); if (v) v.srcObject = null;
 }
@@ -5263,7 +5391,8 @@ function finishQr(text) {
 }
 
 // Abre la cámara, lee un QR y resuelve con su texto (o null si se cancela).
-function openQrScanner(pista = 'Apunta la cámara al QR del carnet…') {
+// { zoom: true } → 🔍 zoom para QR lejanos (solo Control Laureles).
+function openQrScanner(pista = 'Apunta la cámara al QR del carnet…', { zoom = false } = {}) {
   const modal = $('qr-modal'), video = $('qr-video'), status = $('qr-status');
   stopQr(); // sana cualquier cámara que hubiera quedado abierta de una apertura anterior
   status.className = 'qr-status'; status.textContent = 'Iniciando cámara…';
@@ -5272,7 +5401,10 @@ function openQrScanner(pista = 'Apunta la cámara al QR del carnet…') {
     qrResolve = resolve;
     (async () => {
       try {
-        qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+        // Con zoom, 1280×960 como la cámara del despacho: sin pedirlo, muchos celulares la abren en 640×480 y un QR
+        // lejano no se lee
+        const cam = zoom ? { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } } : { facingMode: { ideal: 'environment' } };
+        qrStream = await navigator.mediaDevices.getUserMedia({ video: cam });
       } catch (e) {
         status.className = 'qr-status err';
         status.textContent = 'No se pudo abrir la cámara. Concede el permiso e inténtalo de nuevo.';
@@ -5283,6 +5415,10 @@ function openQrScanner(pista = 'Apunta la cámara al QR del carnet…') {
       if (modal.hidden) { qrStream.getTracks().forEach((t) => t.stop()); qrStream = null; return; }
       video.srcObject = qrStream;
       try { await video.play(); } catch {}
+      if (zoom) {
+        if (modal.hidden || !qrStream) return;
+        qrZoomIniciar(qrStream, video);   // 🔍 1× 2× 3× y pellizco, para QR lejanos
+      }
       status.className = 'qr-status'; status.textContent = pista;
 
       // Decodificador: BarcodeDetector nativo (Android) o jsQR como respaldo.
@@ -5306,16 +5442,7 @@ function openQrScanner(pista = 'Apunta la cámara al QR del carnet…') {
         if (video.readyState >= 2 && video.videoWidth) {
           let text = null;
           try {
-            if (useNative) {
-              const codes = await qrDetector.detect(video);
-              if (codes && codes.length) text = codes[0].rawValue;
-            } else if (window.jsQR) {
-              canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-              const r = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-              if (r) text = r.data;
-            }
+            text = await qrLeerCuadro(video, useNative ? qrDetector : null, canvas, ctx);   // con el zoom y el centro ampliado
           } catch {}
           if (text && text.trim()) { finishQr(text.trim()); return; }
         }
@@ -7918,7 +8045,8 @@ async function escanearViaje(v) {
   const cap = $('qr-caption');
   if (cap) { cap.hidden = false; cap.innerHTML = `Escaneando · <b>Móvil ${esc(String(v.movil || '').trim())}</b> · placa esperada <b>${esc(v.placa || '—')}</b> · Ruta ${esc(v.ruta || '')}`; }
   const th = document.querySelector('#qr-modal h3'); if (th) th.textContent = '📷 Escanear QR del bus';
-  const text = await openQrScanner('Apunta la cámara al QR del bus…');
+  // 🔍 Solo aquí el lector trae zoom: el bus pasa por San José y el QR suele quedar lejos
+  const text = await openQrScanner('Apunta la cámara al QR del bus…', { zoom: true });
   if (cap) cap.hidden = true;
   if (!text) return; // cancelado o sin lectura
   _mostrarResultadoLaur(v, text);

@@ -1,5 +1,5 @@
 // Service worker: cachea el app shell (para sin conexión). Los datos siempre van por red.
-const CACHE = 'despachos-apl-v369';
+const CACHE = 'despachos-apl-v370';
 const SHELL = [
   '.', 'index.html',
   'css/styles.css',
