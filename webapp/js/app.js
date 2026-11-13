@@ -7746,9 +7746,10 @@ async function avisoRestriccionND() {
 async function traerConductorND() {
   const vehId = $('nd-movil').value;
   if (!vehId) return;
-  if (!$('nd-modal').hidden && _qrd.nd?.cond?.estado === 'LEIDO') return; // 🪪 manda el carnet
+  if (!$('nd-modal').hidden && qrdManda('nd')) return; // 🪪 manda el carnet (o ⚡ el conductor del 2.º viaje)
   const nombre = await nombreConductorDeVehiculo(vehId, $('nd-fecha').value || null);
   if (!nombre) return;
+  if (!$('nd-modal').hidden && qrdManda('nd')) return; // llegó el del QR mientras se buscaba el del Resumen
   const sel = $('nd-cond');
   const drs = await loadDrivers();
   const dm = drs.find((d) => (d.nombre || '').trim().toLowerCase() === nombre.trim().toLowerCase());
@@ -24114,6 +24115,7 @@ async function doDispatch(intent) {
   const ins = await sb.from('despachos').upsert(payload, { onConflict: 'id' });
   if (ins.error) throw ins.error;
   if (intent.qr && !intent.qrGuardado) { await qrdGuardar(intent.qr, 'despachos', intent.id, intent.vehId, 'CREADO'); intent.qrGuardado = true; }
+  if (intent.qrRapido && !intent.qrRapidoGuardado) { await qrdRapidoGuardar(intent.qrRapido, 'despachos', intent.id, intent.vehId, 'CREADO'); intent.qrRapidoGuardado = true; }
   const { data: sd, error: se } = await sb.rpc('despachar_sonar', {
     p_mid: intent.mId || '', p_itinerary: intent.itid, p_drvid: intent.drvId,
     p_utc: sonarFechaHora(intent.fecha, intent.hora), // hora seleccionada (Colombia); '' = ahora
@@ -24178,6 +24180,7 @@ $('nd-save').addEventListener('click', async () => {
     drvId, drvNombre: drow?.nombre || null, drvCodigo: drow?.codigo || null,
     despId: Number($('nd-desp').value) || null, com: $('nd-com').value.trim(),
     qr: qrdInstantanea('nd'),   // QR del bus + foto + carnet: viajan con el despacho (también en la cola sin conexión)
+    qrRapido: qrdRapidoInstantanea('nd'),   // ⚡ despacho rápido (sql/185): el QR del bus y con qué conductor salió
   };
 
   // Bloqueo por preventiva RECHAZADA: suspendido hasta que operaciones apruebe la nueva revisión
@@ -24484,10 +24487,12 @@ async function traerConductorSonar() {
   const vehId = $('s-mov').value;
   if (!vehId) { if (note) note.hidden = true; return; }
   // 🪪 si ya se leyó el carnet, el conductor es el del carnet (no se pisa con el del Resumen)
-  if (!$('sonar-modal').hidden && _qrd.s?.cond?.estado === 'LEIDO') return;
+  // (⚡ en el despacho rápido manda el conductor del 2.º viaje, sql/185)
+  if (!$('sonar-modal').hidden && qrdManda('s')) return;
   // Conductor de Resumen para la fecha del despacho (la del viaje, no la del celular)
   const fechaDesp = sonarRow?.fecha ? String(sonarRow.fecha).slice(0, 10) : hoyServidor();
   const nombre = await nombreConductorDeVehiculo(vehId, fechaDesp);
+  if (!$('sonar-modal').hidden && qrdManda('s')) return;   // llegó el del QR mientras se buscaba el del Resumen
   const sel = $('s-drv');
   if (!nombre) { // no hay resumen para ese móvil/fecha
     setNote('sonar-info warn', '⚠️ No hay conductor en el Resumen para este móvil/fecha. Selecciónalo (obligatorio).');
@@ -27310,9 +27315,13 @@ $('perfil-kick-btn').addEventListener('click', async () => {
 // desde la hora → obligatorio. Así se corre o se apaga sin volver a publicar. El carnet tiene su propio switch.
 // 2.º VIAJE (sql/182, 12/11): con despacho_qr_config.solo_viaje = 2, todo lo anterior se pide SOLO en el 2.º viaje del
 // día de cada carro (lo cuenta la base, en todas las tablas y rutas); los demás viajes se despachan como antes, sin QR.
+// ⚡ DESPACHO RÁPIDO (sql/185, 12/11): del viaje siguiente en adelante se lee solo el QR del bus y el conductor sale de la
+// lectura del 2.º viaje (carnet o lista); si lo cambian en la lista, queda marcado como cambio de conductor para control.
+// OBLIGATORIO desde despacho_qr_config.rapido_desde (sql/187; sin hora = opcional): si no se puede leer, motivo + lista.
+// La base compara TODOS esos viajes contra el conductor del 2.º viaje, con QR o sin él (sql/186).
 const QR_REGLAS_KEY = 'apl_qr_reglas';
 let _qrReglas = (() => {
-  const base = { desde: null, carnet: true, soloViaje: null, offset: 0, cargado: 0 };
+  const base = { desde: null, carnet: true, soloViaje: null, rapidoDesde: null, offset: 0, cargado: 0 };
   try { return Object.assign(base, JSON.parse(localStorage.getItem(QR_REGLAS_KEY) || '{}'), { cargado: 0 }); } catch { return base; }
 })();
 async function qrdCargarReglas(forzar = false) {
@@ -27321,9 +27330,9 @@ async function qrdCargarReglas(forzar = false) {
     const { data, error } = await sb.rpc('despacho_qr_reglas');
     if (!error && data?.ok) {
       _qrReglas = { desde: data.desde ? new Date(data.desde).getTime() : null, carnet: data.carnet !== false,
-        soloViaje: Number(data.solo_viaje) || null,
+        soloViaje: Number(data.solo_viaje) || null, rapidoDesde: data.rapido_desde ? new Date(data.rapido_desde).getTime() : null,
         offset: data.ahora ? new Date(data.ahora).getTime() - Date.now() : 0, cargado: Date.now() };
-      try { localStorage.setItem(QR_REGLAS_KEY, JSON.stringify({ desde: _qrReglas.desde, carnet: _qrReglas.carnet, soloViaje: _qrReglas.soloViaje, offset: _qrReglas.offset })); } catch { /* */ }
+      try { localStorage.setItem(QR_REGLAS_KEY, JSON.stringify({ desde: _qrReglas.desde, carnet: _qrReglas.carnet, soloViaje: _qrReglas.soloViaje, rapidoDesde: _qrReglas.rapidoDesde, offset: _qrReglas.offset })); } catch { /* */ }
     }
   } catch { /* sin conexión: se queda con lo último que supo */ }
   return _qrReglas;
@@ -27337,10 +27346,28 @@ function qrdCarnetAplica() { return _qrReglas.carnet !== false; }
 // del 3.º en adelante se despachan como antes (lista + conductor del Resumen). El número de viaje lo cuenta la BASE
 // (despacho_viajes_bus). Si no se puede saber (sin señal), no se pide el QR: no se frena la operación.
 function qrdSoloViaje() { return _qrReglas.soloViaje || null; }
+// ⚡ Del viaje siguiente al del QR en adelante, ¿leer el QR del bus ya es OBLIGATORIO? (despacho_qr_config.rapido_desde, sql/187;
+// sin hora = opcional). Si no se puede leer: motivo y lista. Solo con la regla del viaje y con el QR ya obligatorio.
+function qrdRapidoObligatorio() {
+  return !!(qrdSoloViaje() && _qrReglas.rapidoDesde && qrdModo() === 'obligatorio' && Date.now() + (_qrReglas.offset || 0) >= _qrReglas.rapidoDesde);
+}
+// ¿El bus elegido va en un viaje después del del QR? (ahí aplica el QR rápido)
+function qrdRapidoPide(m) {
+  const sv = qrdSoloViaje(); if (!sv || !qrdAplicaBase(m)) return false;
+  const v = qrdViajeActual(m); return !!(v && !v.cargando && v.n > sv);
+}
+// Lo hecho para el bus elegido en un viaje después del del QR: el QR leído (LEIDO) o el motivo (SIN_QR). Si no, null.
+function qrdRapidoDe(m) {
+  const st = _qrd[m], r = st?.rapido, sel = $(QRD_MODAL[m]?.sel);
+  if (!r || r.veh == null || String(r.veh) !== String(sel?.value)) return null;
+  if (r.estado === 'SIN_QR') return r;
+  return st.estado === 'LEIDO' && String(st.vehId) === String(sel.value) ? r : null;
+}
 // "hoy a las 10:30 a. m." o "el jueves 12 a las 10:30 a. m."
-function qrdHoraInicio() {
+function qrdHoraInicio() { return qrdHoraDe(_qrReglas.desde); }
+function qrdHoraDe(ms) {
   try {
-    const d = new Date(_qrReglas.desde), o = { timeZone: 'America/Bogota' };
+    const d = new Date(ms), o = { timeZone: 'America/Bogota' };
     const hora = d.toLocaleTimeString('es-CO', { ...o, hour: 'numeric', minute: '2-digit', hour12: true });
     const hoy = new Date(Date.now() + (_qrReglas.offset || 0)).toLocaleDateString('en-CA', o);
     return d.toLocaleDateString('en-CA', o) === hoy ? `hoy a las ${hora}` : `el ${d.toLocaleDateString('es-CO', { ...o, weekday: 'long', day: 'numeric' })} a las ${hora}`;
@@ -27373,21 +27400,31 @@ function qrdViajeActual(m) {
   if (st.viaje?.veh !== veh) qrdContarViaje(m);
   return st.viaje?.veh === veh ? st.viaje : null;
 }
-async function qrdContarViaje(m) {
+// La fecha del viaje: la de la fila; en Nuevo despacho, la del formulario (siempre hoy del servidor)
+function qrdFechaViaje(m) {
+  const fila = m === 's' && sonarRow?.id ? sonarRow : null;
+  return fila?.fecha ? String(fila.fecha).slice(0, 10) : (m === 'nd' && $('nd-fecha')?.value) || hoyServidor();
+}
+// Devuelve la promesa de la cuenta (el despacho rápido la espera); una vez por bus (si falló, al volver a abrir)
+function qrdContarViaje(m) {
   const st = _qrd[m], veh = Number($(QRD_MODAL[m]?.sel)?.value) || null;
-  if (!st || !veh || !qrdSoloViaje() || st.viaje?.veh === veh) return;   // una vez por bus (si falló, al volver a abrir)
+  if (!st || !veh || !qrdSoloViaje()) return Promise.resolve();
+  if (st.viaje?.veh === veh) return st.viaje.promesa || Promise.resolve();
   const v = st.viaje = { veh, n: null, cargando: true };
   const fila = m === 's' && sonarRow?.id ? sonarRow : null;
-  const fecha = fila?.fecha ? String(fila.fecha).slice(0, 10) : (m === 'nd' && $('nd-fecha')?.value) || hoyServidor();
-  try {
-    const r = await Promise.race([
-      sb.rpc('despacho_viajes_bus', { p_vehiculo_id: veh, p_fecha: fecha, p_tabla: fila ? sonarTable : null, p_fila_id: fila ? String(fila.id) : null }),
-      new Promise((ok) => setTimeout(() => ok({ error: { message: 'sin respuesta' } }), 8000))]);
-    if (r.error || !r.data?.ok) throw new Error(r.error?.message || r.data?.error || 'no se pudo');
-    v.n = Number(r.data.viaje) || null;
-  } catch (e) { v.error = String(e?.message || e); }
-  v.cargando = false;
-  if (_qrd[m] === st && st.viaje === v) { qrdBloquear(m); qrdPintar(m); }
+  const fecha = qrdFechaViaje(m);
+  v.promesa = (async () => {
+    try {
+      const r = await Promise.race([
+        sb.rpc('despacho_viajes_bus', { p_vehiculo_id: veh, p_fecha: fecha, p_tabla: fila ? sonarTable : null, p_fila_id: fila ? String(fila.id) : null }),
+        new Promise((ok) => setTimeout(() => ok({ error: { message: 'sin respuesta' } }), 8000))]);
+      if (r.error || !r.data?.ok) throw new Error(r.error?.message || r.data?.error || 'no se pudo');
+      v.n = Number(r.data.viaje) || null;
+    } catch (e) { v.error = String(e?.message || e); }
+    v.cargando = false;
+    if (_qrd[m] === st && st.viaje === v) { qrdBloquear(m); qrdPintar(m); }
+  })();
+  return v.promesa;
 }
 // Número del bus según la opción del selector ("5609 · ABC123")
 function qrdNumeroDe(sel, id) {
@@ -27396,7 +27433,7 @@ function qrdNumeroDe(sel, id) {
 }
 function qrdNuevo(fijo, fijoNum) {
   return { estado: null, texto: null, motivo: null, vehId: null, movil: null, placa: '', leido_en: null, pidiendo: false, error: null,
-    recorte: null, foto: null, cond: null, condPidiendo: false, condAviso: null, fijo, fijoNum };
+    recorte: null, foto: null, cond: null, condPidiendo: false, condAviso: null, fijo, fijoNum, rapido: null, rapidoPidiendo: false };
 }
 function qrdPreparar(m) {
   const cfg = QRD_MODAL[m], sel = $(cfg.sel); if (!sel) return;
@@ -27417,6 +27454,8 @@ function qrdPreparar(m) {
       else if (b.matches('[data-qrd-sin]')) { Object.assign(st, { pidiendo: true, error: null }); qrdPintar(m); }
       else if (b.matches('[data-qrd-foto]')) qrdCamara(m, ['foto', ...(st.cond || !qrdCarnetAplica() ? [] : ['carnet'])]);
       else if (b.matches('[data-qrd-carnet]')) qrdCamara(m, ['carnet']);
+      else if (b.matches('[data-qrd-rapido]')) qrdCamara(m, ['rapido']);   // ⚡ despacho rápido (sql/185)
+      else if (b.matches('[data-qrd-rsin]')) { st.rapidoPidiendo = true; qrdPintar(m); }   // ⚡ sin QR del bus: el motivo (sql/187)
       else if (b.matches('[data-qrd-sincarnet]')) { st.condPidiendo = true; qrdPintar(m); }
       else if (b.matches('[data-qrd-verfoto]') && st.foto?.url) window.open(st.foto.url, '_blank');
     });
@@ -27427,6 +27466,8 @@ function qrdPreparar(m) {
         Object.assign(st, { estado: 'SIN_QR', motivo: s.value, texto: null, vehId: null, leido_en: new Date().toISOString(), pidiendo: false, error: null, recorte: null });
         qrdBloquear(m); qrdPintar(m); return;
       }
+      const rm = e.target.closest('[data-qrd-rmotivo]');
+      if (rm && rm.value) { qrdRapidoSinQr(m, rm.value); return; }
       const c = e.target.closest('[data-qrd-motivo-carnet]');
       if (c && c.value) {
         st.cond = { estado: 'SIN_QR', motivo: c.value, texto: null, drId: null, nombre: null, leido_en: new Date().toISOString() };
@@ -27437,6 +27478,8 @@ function qrdPreparar(m) {
     // si cambian el móvil (a mano, sin QR / reemplazo), el recuadro se pone al día (foto de otro bus, aviso de cambio)
     // y, con la regla del viaje, se averigua qué viaje de hoy es ese bus
     sel.addEventListener('change', () => { if (_qrd[m]) { qrdBloquear(m); qrdPintar(m); } });
+    // ⚡ despacho rápido: si cambian el conductor a mano, el recuadro avisa el cambio de conductor
+    $(cfg.drv)?.addEventListener('change', () => { if (_qrd[m]?.rapido) qrdPintar(m); });
   }
   qrdBloquear(m); qrdPintar(m);
   // la hora de arranque y el switch del carnet vienen de la base (cache de 5 min)
@@ -27480,15 +27523,45 @@ function qrdFila(cls, ico, texto, botones = '') {
 function qrdPintar(m) {
   const box = $(`${m}-qrbox`), st = _qrd[m]; if (!box || !st) return;
   const sel = $(QRD_MODAL[m].sel);
-  // regla del viaje: este bus no va en el viaje del QR (o se está averiguando) → una nota y nada más
+  // regla del viaje: este bus no va en el viaje del QR (o se está averiguando) → una nota y, del viaje siguiente en
+  // adelante (o sin bus todavía), el ⚡ despacho rápido OPCIONAL: solo el QR del bus y el conductor sale del 2.º viaje
   const sv = qrdSoloViaje();
   if (sv && qrdAplicaBase(m) && !qrdViajePide(m)) {
     const v = qrdViajeActual(m);
-    box.hidden = !v || (!v.cargando && !v.n);
+    const rapido = (txt) => `<div class="qrd-fila"><button type="button" class="btn btn-primary" data-qrd-rapido>📷 ${txt}</button></div>`;
+    box.hidden = !!(v && !v.cargando && !v.n);   // no se pudo saber el viaje (sin señal): se despacha como antes
     if (box.hidden) return;
     box.className = 'field full qrd';
-    box.innerHTML = v.cargando ? '<div class="qrd-nota">⏳ Revisando qué viaje de hoy es este bus…</div>'
-      : `<div class="qrd-nota">🚌 Viaje <b>${v.n}</b> de hoy del bus <b>${esc(qrdNumeroDe(sel, v.veh))}</b>: se despacha sin QR (el QR va en el ${sv}.º viaje).</div>`;
+    if (!v) {   // todavía no hay bus: se puede elegir leyendo su QR
+      box.innerHTML = `<div class="qrd-nota">⚡ <b>Despacho rápido:</b> lee el QR del bus. Si ya hizo el ${sv}.º viaje hoy, el conductor sale de ese viaje (sin volver a leer el carnet). También puedes elegirlo de la lista.</div>${rapido('Leer el QR del bus')}`;
+      return;
+    }
+    if (v.cargando) { box.innerHTML = '<div class="qrd-nota">⏳ Revisando qué viaje de hoy es este bus…</div>'; return; }
+    const bus = esc(qrdNumeroDe(sel, v.veh)), obl = v.n > sv && qrdRapidoObligatorio();
+    const h = [obl ? `<div class="qrd-nota">🚌 Viaje <b>${v.n}</b> de hoy del bus <b>${bus}</b>: lee el QR del bus; el conductor sale del ${sv}.º viaje.</div>`
+      : `<div class="qrd-nota">🚌 Viaje <b>${v.n}</b> de hoy del bus <b>${bus}</b>: se despacha sin QR (el QR va en el ${sv}.º viaje).</div>`];
+    if (v.n > sv) {
+      const r = qrdRapidoDe(m);
+      if (r) {
+        h.push(...qrdRapidoFilas(m, r, sv));
+        if (r.estado === 'SIN_QR' || qrdRapidoCambio(m, r)) box.className = 'field full qrd sin';
+      } else if (st.rapidoPidiendo) {   // sin QR del bus: el motivo, y se despacha con la lista
+        h.push(`<div class="qrd-paso pend"><label class="qrd-motivo"><span>¿Por qué no se puede leer el QR del bus <b>${bus}</b>?</span>
+          <select data-qrd-rmotivo><option value="">Elige el motivo…</option>${QR_MOTIVOS.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
+          <div class="qrd-nota">Se despacha igual con la lista: el conductor sale del ${sv}.º viaje y queda marcado para que control lo revise.</div>
+          <div class="qrd-fila"><button type="button" class="btn btn-sm" data-qrd-rapido>📷 Mejor intentar con el QR</button></div></div>`);
+        if (obl) box.className = 'field full qrd pend';
+      } else if (obl) {   // obligatorio: el QR del bus, o el motivo
+        box.className = 'field full qrd pend';
+        h.push(`<div class="qrd-tit">📷 Para despachar: QR del bus <b>${bus}</b></div>
+          <div class="qrd-fila"><button type="button" class="btn btn-primary" data-qrd-rapido>📷 Leer el QR del bus</button>
+            <button type="button" class="btn-link" data-qrd-rsin>No se puede leer el QR del bus</button></div>`);
+      } else {
+        h.push(rapido(`Leer el QR del bus <small>(trae el conductor del ${sv}.º viaje)</small>`));
+        if (_qrReglas.rapidoDesde && qrdModo() === 'obligatorio') h.push(`<div class="qrd-practica">🕥 Desde ${esc(qrdHoraDe(_qrReglas.rapidoDesde))} el QR del bus será obligatorio del ${sv + 1 === 3 ? '3.er' : `${sv + 1}.º`} viaje en adelante</div>`);
+      }
+    }
+    box.innerHTML = h.join('');
     return;
   }
   box.hidden = !qrdAplica(m);
@@ -27552,6 +27625,43 @@ function qrdPintar(m) {
   if (falta && st.estado && qrdPasosPendientes(m).length > 1) h.push('<div class="qrd-fila"><button type="button" class="btn btn-primary" data-qrd-todo>📷 Seguir con lo que falta</button></div>');
   box.innerHTML = h.join('');
 }
+// ⚡ Lo que muestra el recuadro después de leer el QR del bus en un viaje que no pide QR (sql/185)
+const QRD_V2_ORIGEN = { CARNET: 'carnet leído', LISTA: 'elegido de la lista, sin carnet', DESPACHO: 'el que quedó en el despacho' };
+function qrdRapidoFilas(m, r, sv) {
+  const st = _qrd[m];
+  const f = [r.estado === 'SIN_QR'
+    ? qrdFila('sin', '⚠️', `Sin QR del bus: <b>${esc(r.motivo)}</b>. Queda marcado para control.`, '<button type="button" class="btn btn-sm" data-qrd-rapido>📷 Leer el QR</button>')
+    : qrdFila('ok', '✅', `QR del bus <b>${esc(st.movil)}</b>${st.placa ? ` · ${esc(st.placa)}` : ''} · ${esc(hm5(st.leido_en))}`,
+      '<button type="button" class="btn btn-sm" data-qrd-rapido>↺ Leer otra vez</button>')];
+  if (r.cargando) f.push(qrdFila('pend', '⏳', `Buscando el conductor del ${sv}.º viaje…`));
+  else if (r.drId) {
+    const de = `${QRD_V2_ORIGEN[r.origen] || ''}${r.hora ? ` a las ${r.hora}` : ''}`;
+    const sale = qrdRapidoCambio(m, r);
+    if (sale) {
+      f.push(qrdFila('sin', '🔁', `<b>Cambio de conductor:</b> en el ${sv}.º viaje iba <b>${esc(r.nombre)}</b> y sale <b>${esc(sale)}</b>. Queda marcado para control.`));
+    } else f.push(qrdFila('ok', '🪪', `Conductor del ${sv}.º viaje: <b>${esc(r.nombre)}</b> <small>(${esc(de)})</small>. Si cambió, elígelo en la lista.`));
+  } else if (r.nombre) f.push(qrdFila('sin', '⚠️', `El conductor del ${sv}.º viaje (${esc(r.nombre)}) no está en la lista de SONAR: elige el conductor.`));
+  else if (r.error) f.push(qrdFila('sin', '⚠️', `No se pudo traer el conductor del ${sv}.º viaje (sin señal): elige el conductor en la lista.`));
+  else f.push(qrdFila('sin', '⚠️', `No encontré el conductor del ${sv}.º viaje de este bus: elige el conductor en la lista.`));
+  return f;
+}
+// ¿Salió otro conductor que el del 2.º viaje? Devuelve su nombre, o null. Como la base (sql/186): otro código Y otro nombre
+// (la misma persona repetida en SONAR con el mismo nombre no es cambio).
+function qrdRapidoCambio(m, r) {
+  const drv = $(QRD_MODAL[m].drv);
+  if (!r?.drId || !drv?.value || drv.value === r.drId) return null;
+  const sale = String(drv.selectedOptions?.[0]?.textContent || '').split('·')[0].trim();
+  return qrdAlnum(sale) === qrdAlnum(r.nombre) ? null : sale;
+}
+// ¿El conductor lo decide el QR? El carnet leído, o el del 2.º viaje en el despacho rápido (también mientras se busca):
+// entonces el conductor del Resumen no lo pisa.
+function qrdManda(m) {
+  const st = _qrd[m]; if (!st) return false;
+  if (st.cond?.estado === 'LEIDO') return true;
+  const r = st.rapido; if (!r) return false;
+  return !!(r.cargando || (r.drId && String(r.veh) === String($(QRD_MODAL[m].sel)?.value)));
+}
+function qrdTraerConductor(m) { if (m === 's') traerConductorSonar(); else traerConductorND(); }
 function hm5(iso) { try { return new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' }); } catch { return ''; } }
 function qrdFechaHora(iso) { try { return new Date(iso).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'America/Bogota' }); } catch { return ''; } }
 // El bus del QR: placa exacta, número exacto o la placa dentro del texto (URL o JSON). Igual que la base.
@@ -27632,6 +27742,12 @@ async function qrdAvisoResumen(m, st) {
 function qrdFalta(m) {
   if (qrdModo() !== 'obligatorio') return null;
   if (qrdSoloViaje() && qrdAplicaBase(m) && qrdViajeActual(m)?.cargando) return 'Un momento: revisando qué viaje de hoy es este bus…';
+  // ⚡ del viaje siguiente al del QR en adelante (sql/187): el QR del bus o el motivo; y esperar al conductor del 2.º viaje
+  if (qrdRapidoPide(m)) {
+    const r = qrdRapidoDe(m);
+    if (r?.cargando) return 'Un momento: buscando el conductor del 2.º viaje…';
+    if (!r && qrdRapidoObligatorio()) return 'Falta leer el QR del bus. Si no se puede leer, toca "No se puede leer el QR del bus" y elige el motivo.';
+  }
   return qrdPendiente(m);
 }
 function qrdPendiente(m) {
@@ -27812,6 +27928,80 @@ async function qrdPasoCarnet(m, ses, video, leer, acc, msg) {
   msg(`✅ Carnet de ${d.nombre}`, 'ok');
   return true;
 }
+// ⚡ DESPACHO RÁPIDO (sql/185, 12/11): con la regla del viaje, del viaje siguiente al del QR en adelante basta leer el QR
+// del bus: el conductor sale de la lectura del viaje del QR (el carnet, o el que eligieron de la lista porque no tenía) y no
+// se vuelve a leer el carnet. Es OPCIONAL: la lista sigue disponible y, si cambian el conductor, queda marcado para control.
+// Si el bus resulta estar en el viaje del QR, sigue con la foto y el carnet como siempre; en el 1.er viaje (o sin señal), el
+// conductor sale del Resumen o de la lista, como antes.
+async function qrdPasoRapido(m, ses, video, leer, msg, pasos) {
+  const st = _qrd[m];
+  st.rapido = { cargando: true, veh: null };   // mientras tanto, el conductor del Resumen no pisa nada
+  if (!(await qrdPasoBus(m, ses, video, leer, msg))) { st.rapido = null; return false; }
+  const veh = st.vehId, r = st.rapido = { cargando: true, veh, estado: 'LEIDO' };
+  st.rapidoPidiendo = false;
+  msg(`✅ QR del bus ${st.movil} · revisando qué viaje de hoy es…`, 'ok');
+  await qrdContarViaje(m);
+  if (_qrd[m] !== st || st.rapido !== r) return true;   // cambió el despacho mientras tanto: se cierra la cámara y ya
+  const v = st.viaje?.veh === veh ? st.viaje : null, sv = qrdSoloViaje();
+  if (sv && v?.n === sv) {   // es el viaje del QR: el QR del bus ya quedó leído; siguen la foto y el carnet
+    st.rapido = null;
+    if (qrdFotoNecesaria(m) && !qrdFotoOk(m)) { ses.gps(); pasos.push('foto'); }
+    if (!st.cond && qrdCarnetAplica()) pasos.push('carnet');
+    msg(`✅ QR del bus ${st.movil} · es el ${sv}.º viaje de hoy: sigue la foto${qrdCarnetAplica() ? ' y el carnet' : ''}`, 'ok');
+    qrdBloquear(m); qrdPintar(m);
+    return true;
+  }
+  r.viaje = v?.n || null;
+  if (!sv || !v?.n || v.n < sv) {   // 1.er viaje, o no se pudo saber: el conductor como siempre (Resumen o lista)
+    r.cargando = false;
+    qrdTraerConductor(m); qrdPintar(m);
+    msg(`✅ QR del bus ${st.movil}${v?.n ? ` · viaje ${v.n} de hoy` : ''}`, 'ok');
+    await new Promise((ok) => setTimeout(ok, 700));
+    return true;
+  }
+  msg(`✅ QR del bus ${st.movil} · viaje ${v.n} de hoy · buscando el conductor del ${sv}.º viaje…`, 'ok');
+  qrdPintar(m);
+  await qrdRapidoBuscarV2(m, r);
+  if (_qrd[m] !== st || st.rapido !== r) return true;
+  msg(r.drId ? `✅ Bus ${st.movil} · conductor del ${sv}.º viaje: ${r.nombre}` : `✅ QR del bus ${st.movil} · elige el conductor en la lista`, 'ok');
+  await new Promise((ok) => setTimeout(ok, 900));   // que alcance a ver el ✅ antes de que se cierre la cámara
+  return true;
+}
+// ⚡ Trae el conductor del 2.º viaje del bus (sql/185) y lo pone; si no lo hay (o sin señal), el del Resumen o la lista.
+async function qrdRapidoBuscarV2(m, r) {
+  const st = _qrd[m];
+  try {
+    const x = await Promise.race([
+      sb.rpc('despacho_conductor_viaje2', { p_vehiculo_id: r.veh, p_fecha: qrdFechaViaje(m) }),
+      new Promise((ok) => setTimeout(() => ok({ error: { message: 'sin respuesta' } }), 8000))]);
+    if (x.error || !x.data?.ok) throw new Error(x.error?.message || x.data?.error || 'no se pudo');
+    if (x.data.encontrado) {
+      Object.assign(r, { nombre: x.data.nombre || '', origen: x.data.origen || null, hora: x.data.hora || '' });
+      const drv = $(QRD_MODAL[m].drv);
+      if (x.data.dr_id && drv && [...drv.options].some((o) => o.value === String(x.data.dr_id))) r.drId = String(x.data.dr_id);
+    }
+  } catch (e) { r.error = String(e?.message || e); }
+  r.cargando = false;
+  if (_qrd[m] !== st || st.rapido !== r) return;
+  const drv = $(QRD_MODAL[m].drv);
+  if (r.drId && drv) {
+    if (drv.value !== r.drId) {
+      drv.disabled = false; drv.value = r.drId; drv._comboSync && drv._comboSync();
+      drv.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  } else qrdTraerConductor(m);
+  qrdBloquear(m); qrdPintar(m);
+}
+// ⚡ Sin QR del bus (sql/187): el motivo; el bus queda el de la lista y el conductor igual sale del 2.º viaje
+function qrdRapidoSinQr(m, motivo) {
+  const st = _qrd[m], veh = Number($(QRD_MODAL[m].sel)?.value) || null;
+  if (!st || !veh) return;
+  const v = qrdViajeActual(m);
+  const r = st.rapido = { cargando: true, veh, viaje: v?.n || null, estado: 'SIN_QR', motivo, leido_en: new Date().toISOString() };
+  st.rapidoPidiendo = false;
+  qrdPintar(m);
+  return qrdRapidoBuscarV2(m, r);
+}
 // Abre la cámara y hace los pasos en orden ('bus', 'foto', 'carnet'). Cancelar cierra y deja lo ya hecho.
 async function qrdCamara(m, pasos) {
   const st = _qrd[m]; if (!st || !pasos.length) return;
@@ -27831,7 +28021,9 @@ async function qrdCamara(m, pasos) {
     qrdBloquear(m); qrdPintar(m); resolver();
   };
   qrResolve = ses.terminar;   // ✕ y Cancelar del lector cierran la sesión
-  const gpsP = pasos.includes('foto') ? qrdGps() : Promise.resolve(null);
+  // el GPS se pide desde el principio si va a haber foto (o cuando el despacho rápido resulta ser el viaje del QR)
+  let gpsP = null; ses.gps = () => gpsP || (gpsP = qrdGps());
+  if (pasos.includes('foto')) ses.gps();
   try {
     qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
   } catch {
@@ -27848,7 +28040,8 @@ async function qrdCamara(m, pasos) {
     if (marco) marco.hidden = paso === 'foto';
     let ok = false;
     if (paso === 'bus') { titulo.textContent = `📷 ${n}QR del bus`; ok = await qrdPasoBus(m, ses, video, leer, msg); }
-    else if (paso === 'foto') { titulo.textContent = `📸 ${n}Foto del bus`; ok = await qrdPasoFoto(m, ses, video, acc, msg, gpsP); }
+    else if (paso === 'rapido') { titulo.textContent = '⚡ QR del bus'; ok = await qrdPasoRapido(m, ses, video, leer, msg, pasos); }
+    else if (paso === 'foto') { titulo.textContent = `📸 ${n}Foto del bus`; ok = await qrdPasoFoto(m, ses, video, acc, msg, ses.gps()); }
     else if (paso === 'carnet') { titulo.textContent = `🪪 ${n}Carnet del conductor`; ok = await qrdPasoCarnet(m, ses, video, leer, acc, msg); }
     if (!ok) { if (!ses.fin && paso === 'foto') continue; return hecho; }   // sin bus para la foto: sigue con el carnet
     if (i < pasos.length - 1) await new Promise((r) => setTimeout(r, 700));    // que alcance a ver el ✅
@@ -27900,9 +28093,36 @@ async function qrdGuardar(qr, tabla, filaId, vehId, resultado, regid = null) {
     if (error || !data?.ok) console.warn('El QR del despacho no quedó registrado:', error?.message || data?.error);
   } catch (e) { console.warn('El QR del despacho no quedó registrado:', e); }
 }
+// ⚡ Lo que viaja con un despacho rápido (sql/185): el QR del bus y con qué conductor salió. La base busca otra vez el del
+// 2.º viaje y decide si hubo cambio de conductor. Solo del viaje siguiente al del QR en adelante y si el QR es del bus que sale.
+function qrdRapidoInstantanea(m) {
+  const st = _qrd[m], r = qrdRapidoDe(m), sv = qrdSoloViaje();
+  if (!r || r.cargando || !sv || !(r.viaje > sv) || !qrdAplicaBase(m) || qrdAplica(m)) return null;
+  const drId = $(QRD_MODAL[m].drv)?.value || null;
+  return r.estado === 'SIN_QR'
+    ? { estado: 'SIN_QR', texto: null, motivo: r.motivo, leido_en: r.leido_en, viaje: r.viaje, drId }
+    : { estado: 'LEIDO', texto: st.texto, motivo: null, leido_en: st.leido_en, viaje: r.viaje, drId };
+}
+async function qrdRapidoGuardar(rq, tabla, filaId, vehId, resultado, regid = null) {
+  if (!rq || !vehId) return;
+  try {
+    const { data, error } = await sb.rpc('despacho_qr_rapido_registrar', {
+      p_tabla: tabla, p_fila_id: filaId == null ? null : String(filaId), p_vehiculo_id: Number(vehId),
+      p_estado: rq.estado || 'LEIDO', p_qr_texto: rq.texto, p_motivo: rq.motivo || null,
+      p_leido_en: rq.leido_en, p_viaje: rq.viaje, p_cond_dr_id: rq.drId, p_resultado: resultado, p_regid: regid == null ? null : String(regid),
+    });
+    if (error || !data?.ok) console.warn('El despacho rápido no quedó registrado:', error?.message || data?.error);
+  } catch (e) { console.warn('El despacho rápido no quedó registrado:', e); }
+}
 // ✈️: se consume al despachar (una lectura = un despacho) y se guarda en segundo plano
 function qrdRegistrar(m, tabla, filaId, vehId, resultado, regid = null) {
-  const snap = qrdInstantanea(m); if (!snap) return Promise.resolve();
+  const snap = qrdInstantanea(m);
+  if (!snap) {   // ⚡ despacho rápido (sql/185)
+    const rq = qrdRapidoInstantanea(m); if (!rq) return Promise.resolve();
+    Object.assign(_qrd[m], { estado: null, rapido: null, rapidoPidiendo: false });
+    const box = $(`${m}-qrbox`); if (box) box.hidden = true;
+    return qrdRapidoGuardar(rq, tabla, filaId, vehId, resultado, regid);
+  }
   const st = _qrd[m], url = st.foto?.url;
   if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
   Object.assign(st, { estado: null, foto: null, cond: null, recorte: null, condAviso: null });
@@ -27989,14 +28209,16 @@ async function qrCtlCargar() {
   const m = qrCtlModal(), body = m.querySelector('[data-body]');
   body.innerHTML = '<div class="loading">Cargando…</div>';
   let d;
+  const args = { p_desde: _qrCtl.desde, p_hasta: _qrCtl.hasta, p_rutas: qrCtlAlcance(), p_ruta: _qrCtl.ruta ? Number(_qrCtl.ruta) : null };
+  // ⚡ despacho rápido y cambios de conductor (sql/185): aparte; si falla, la pantalla sale igual sin esa parte
+  const rapidoP = sb.rpc('despacho_qr_rapido_resumen', args).then((r) => (r.error || !r.data?.ok || r.data.sin_rutas ? null : r.data), () => null);
   try {
-    const r = await sb.rpc('despacho_qr_auditoria', {
-      p_desde: _qrCtl.desde, p_hasta: _qrCtl.hasta, p_rutas: qrCtlAlcance(), p_ruta: _qrCtl.ruta ? Number(_qrCtl.ruta) : null,
-    });
+    const r = await sb.rpc('despacho_qr_auditoria', args);
     if (r.error) throw r.error;
     d = r.data; if (!d?.ok) throw new Error(d?.error || 'no se pudo');
   } catch (e) { _qrCtl.d = null; body.innerHTML = `<div class="cump-empty">No se pudo cargar: ${esc(e.message || e)}</div>`; return; }
   _qrCtl.d = d;
+  const rp = _qrCtl.rapido = await rapidoP;
   if (d.sin_rutas) { body.innerHTML = '<div class="cump-empty">No tienes rutas asignadas. Pide a administración que te las asigne.</div>'; return; }
   // el filtro de ruta: "Por ruta" siempre trae todas las rutas que esta cuenta puede ver
   const rutas = (d.por_ruta || []).filter((x) => x.ruta_id != null)
@@ -28050,6 +28272,7 @@ async function qrCtlCargar() {
         <td>${esc(x.cond_nombre || '')}</td><td>${qrCtlProblemas(x)}</td><td>${esc(x.despachador || '')}</td>
         <td>${x.foto_path ? `<button type="button" class="btn btn-sm" data-foto-path="${esc(x.foto_path)}">📷 Ver</button>` : '—'}</td></tr>`).join('') || '<tr><td colspan="8">Nada para revisar.</td></tr>'}
     </tbody></table></div>
+    ${rp && !rp.sin_regla ? qrCtlRapidoHtml(rp, rp.solo_viaje || d.solo_viaje || 2) : ''}
     <h4 class="qrc-h">Muestra de fotos <small>(al azar, de despachos sin novedad: para revisarlas a ojo)</small></h4>
     <div class="qrc-galeria" data-galeria>${(d.muestra || []).length ? '<div class="loading">Cargando fotos…</div>' : '<p class="qrc-nota">Todavía no hay fotos.</p>'}</div>`;
   const mu = d.muestra || [];
@@ -28061,6 +28284,42 @@ async function qrCtlCargar() {
         ${porPath[x.foto_path] ? `<img src="${esc(porPath[x.foto_path])}" alt="Bus ${esc(x.movil)}" loading="lazy">` : ''}
         <span>${esc(x.movil)} · ${esc(x.ruta || '')} · ${esc(x.hora)}${x.distancia_m != null ? ` · a ${qrDist(x.distancia_m)}` : ''}</span></button>`).join('');
   }
+}
+// 🔁 Del 3.er viaje en adelante (sql/185 + sql/186): la base compara TODOS esos viajes (con el QR del bus o con la lista)
+// contra el conductor del 2.º viaje, y cuenta cuántos se despacharon leyendo el QR del bus
+const QRC_V2_ORIGEN = { CARNET: 'carnet leído', LISTA: 'de la lista, sin carnet', DESPACHO: 'del despacho' };
+function qrCtlRapidoHtml(rp, sv) {
+  const n = (x) => Number(x || 0).toLocaleString('es-CO');
+  const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+  const barra = (a, b) => (b ? `<span class="qrc-pct" title="${n(a)} de ${n(b)}"><span class="qrc-bar"><i style="width:${pct(a, b)}%"></i></span>${pct(a, b)}%</span>` : '—');
+  const ord = (k) => (k === 1 || k === 3 ? `${k}.er` : `${k}.º`);
+  const lista = rp.revisar || [], desp = rp.por_despachador || [];
+  const motivos = Object.entries(rp.por_motivo || {}).map(([k, v]) => `${esc(k)} ${n(v)}`).join(' · ');
+  const obl = rp.obligatorio_desde ? ` El QR del bus es obligatorio desde el ${esc(rp.obligatorio_desde)}; antes era opcional (con la lista).` : ' Por ahora el QR del bus es opcional.';
+  return `<h4 class="qrc-h">🔁 Del ${ord(sv + 1)} viaje en adelante <small>(se despacha leyendo SOLO el QR del bus; el conductor tiene que ser el del ${sv}.º viaje)</small></h4>
+    <p class="qrc-nota"><b>${n(rp.total)}</b> ${rp.total === 1 ? 'viaje' : 'viajes'} · <b>${n(rp.con_qr)}</b> con el QR del bus (${pct(rp.con_qr, rp.total)}%)${rp.sin_qr ? ` · ${n(rp.sin_qr)} sin QR${motivos ? ': ' + motivos : ''}` : ''}${rp.sin_lectura ? ` · <b class="qrc-mal">${n(rp.sin_lectura)} sin pasar por el QR</b>` : ''}${rp.con_lista ? ` · ${n(rp.con_lista)} con la lista` : ''} ·
+      ${rp.cambios ? `<b class="qrc-mal">🔁 ${n(rp.cambios)} ${rp.cambios === 1 ? 'salió' : 'salieron'} con otro conductor</b> (${n(rp.cambios_con_qr)} con el QR, ${n(rp.cambios_sin_qr)} sin el QR)` : 'ninguno salió con otro conductor'}${rp.sin_v2 ? ` · ${n(rp.sin_v2)} sin conductor del ${sv}.º viaje para comparar` : ''}${rp.sin_conductor ? ` · ${n(rp.sin_conductor)} sin conductor en el despacho` : ''}${rp.qr_otro_bus ? ` · <b class="qrc-mal">${n(rp.qr_otro_bus)} QR de otro bus</b>` : ''}.${rp.desde_regla ? ` Cuenta desde el ${esc(rp.desde_regla)}.` : ''}${obl}</p>
+    ${desp.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Despachador</th><th>Viajes del ${ord(sv + 1)} en adelante</th><th>Con el QR del bus</th><th>Sin QR (motivo)</th><th>Sin pasar por el QR</th><th>Salieron con otro conductor</th></tr></thead><tbody>
+      ${desp.map((x) => `<tr><td>${esc(x.despachador)}</td><td>${n(x.viajes)}</td><td>${barra(x.con_qr, x.viajes)}</td><td>${n(x.sin_qr)}</td>
+        <td>${x.sin_lectura ? `<b class="qrc-mal">${n(x.sin_lectura)}</b>` : '0'}</td><td>${x.cambios ? `<b class="qrc-mal">${n(x.cambios)}</b>` : '0'}</td></tr>`).join('')}
+    </tbody></table></div>` : ''}
+    ${lista.length ? `<h4 class="qrc-h">Para revisar del ${ord(sv + 1)} viaje en adelante <small>(otro conductor, sin QR del bus o sin pasar por el QR${lista.length < (rp.revisar_total || 0) ? `; los ${n(lista.length)} más recientes de ${n(rp.revisar_total)}` : ''})</small></h4>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Fecha</th><th>Hora</th><th>Ruta</th><th>Bus</th><th>Viaje</th><th>Salió con</th><th>Qué pasó</th><th>Despachador</th></tr></thead><tbody>
+      ${lista.map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td>${esc(x.hora || '')}</td><td>${esc(x.ruta || '')}</td><td><b>${esc(x.movil || '')}</b></td><td>${esc(x.viaje ?? '')}</td>
+        <td>${esc(x.cond_nombre || '')}</td><td>${qrCtlRapidoProblemas(x, sv)}</td><td>${esc(x.despachador || '')}</td></tr>`).join('')}
+    </tbody></table></div>` : ''}`;
+}
+// Qué pasó en un viaje del 3.º en adelante (html: para la pantalla; si no, texto para el Excel)
+function qrCtlRapidoProblemas(x, sv, html = true) {
+  const e = html ? esc : (s) => String(s ?? '');
+  const b = (t) => (html ? `<b class="qrc-mal">${t}</b>` : t);
+  const p = [];
+  if (x.metodo === 'SIN_LECTURA') p.push(b('Despachado sin pasar por el QR del bus'));
+  if (x.metodo === 'SIN_QR') p.push(`Sin QR del bus: ${e(x.motivo || '')}`);
+  if (x.metodo === 'LISTA' && !x.cambio) p.push('Con la lista (el QR era opcional)');
+  if (x.qr_otro_bus) p.push(b('El QR no era de ese bus'));
+  if (x.cambio) p.push(b(`🔁 Otro conductor: en el ${sv}.º viaje iba ${e(x.v2_nombre || '')}`) + (html ? ` <small>(${e(QRC_V2_ORIGEN[x.v2_origen] || '')}${x.v2_hora ? ` · ${e(x.v2_hora)}` : ''})</small>` : ` (${QRC_V2_ORIGEN[x.v2_origen] || ''}${x.v2_hora ? ' · ' + x.v2_hora : ''})`));
+  return p.join(' · ');
 }
 // ⬇️ Excel: por ruta, por despachador y la lista para revisar (lo mismo que está en pantalla)
 async function qrCtlExcel(btn) {
@@ -28084,6 +28343,17 @@ async function qrCtlExcel(btn) {
       ...(d.revisar || []).map((x) => [celdaFechaXlsx(x.fecha), x.hora || '', x.ruta || '', x.tabla || '', x.movil || '', x.cond_nombre || '',
         qrCtlProblemas(x, false), x.despachador || '', x.distancia_m ?? '', x.foto_path ? 'Sí' : 'No'])],
       [11, 7, 14, 12, 8, 28, 70, 28, 10, 6]);
+    const rp = _qrCtl.rapido;
+    if (rp && !rp.sin_regla) {
+      const sv = rp.solo_viaje || 2;
+      hoja('3.er viaje por despachador', [['Despachador', 'Viajes del 3.er en adelante', 'Con el QR del bus', '% con el QR del bus', 'Sin QR (motivo)', 'Sin pasar por el QR', 'Salieron con otro conductor'],
+        ...(rp.por_despachador || []).map((x) => [x.despachador, x.viajes, x.con_qr, pc(x.con_qr, x.viajes), x.sin_qr, x.sin_lectura, x.cambios])], [28, 12, 12, 12, 12, 12, 14]);
+      const como = { QR: 'QR del bus', SIN_QR: 'Sin QR (motivo)', SIN_LECTURA: 'Sin pasar por el QR', LISTA: 'Lista (opcional)' };
+      hoja('3.er viaje para revisar', [['Fecha', 'Hora', 'Ruta', 'Tabla', 'Bus', 'Viaje', 'Despachado con', 'Motivo sin QR', 'Salió con', 'Otro conductor', 'En el 2.º viaje iba', 'Cómo quedó en el 2.º viaje', 'Hora del 2.º viaje', 'Qué pasó', 'Despachador'],
+        ...(rp.revisar || []).map((x) => [celdaFechaXlsx(x.fecha), x.hora || '', x.ruta || '', x.tabla || '', x.movil || '', x.viaje ?? '', como[x.metodo] || '', x.motivo || '',
+          x.cond_nombre || '', x.cambio ? 'Sí' : 'No', x.v2_nombre || '', QRC_V2_ORIGEN[x.v2_origen] || '', x.v2_hora || '', qrCtlRapidoProblemas(x, sv, false), x.despachador || ''])],
+        [11, 7, 14, 12, 8, 6, 16, 22, 28, 8, 28, 18, 8, 60, 28]);
+    }
     XLSX.writeFile(wb, `qr_despachos_${d.desde}_${d.hasta}.xlsx`);
   } catch (e) { toast('No se pudo exportar: ' + (e.message || e), 'err'); }
   finally { btn.disabled = false; btn.textContent = prev; }
