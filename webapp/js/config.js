@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v370';
+export const APP_VERSION = 'v371';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -713,6 +713,9 @@ export const TABLES = {
       { key: 'estado_despacho', label: 'Despacho', badge: true, m: true },
       { key: 'realizo_programado', label: 'Prog. realizó', badge: true },
       { key: 'estado', label: 'Novedad', badge: true },
+      // 🚨 Lo que vio el Vigilante de ruta en ESTE viaje (sql/193), con la sugerencia de si hay que verificarlo.
+      // Solo monitores (sus rutas) y admin. Se arma al cargar la tabla; no es una columna de la base.
+      { label: '🚨 Vigilante', vigilante: true, auditCol: true, m: true, noExport: true },
       { key: 'ubicacion', label: 'Ubicación', maps: true },
       // ----- Control / Auditoría ----- (auditCol: solo las ven el admin y el auditor)
       { key: 'control_interno', label: 'Control interno', auditCol: true },

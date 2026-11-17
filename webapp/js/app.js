@@ -144,6 +144,14 @@ function filtraComoDespachador() { return !!PREVIEW || !isAdmin(); }
 // (No es control de acceso —el actor sigue siendo admin y la RLS manda—, solo fidelidad visual.)
 function efIsAdmin() { return PREVIEW ? false : isAdmin(); }
 function efIsAuditor() { return PREVIEW ? PREVIEW.rol === 'auditor' : isAuditor(); }
+// ¿Puede cancelar este viaje en SONAR? Desde el 16/11/2026 solo el MONITOR (auditor) de la ruta del
+// viaje y el admin; el despachador ya no cancela. Es solo la vista: la base valida lo mismo (sql/191).
+function puedeCancelarViaje(row) {
+  if (efIsAdmin()) return true;
+  if (!efIsAuditor()) return false;
+  const ids = (PREVIEW ? PREVIEW.ids : CTX?.ids) || [];
+  return ids.map(Number).includes(Number(row?.ruta_id));
+}
 // Puesto actual: el simulado en vista previa, o el del despachador logueado (admin normal = ninguno)
 function puestoActual() { return PREVIEW ? (PREVIEW.puesto || '') : (CTX?.puesto || ''); }
 // Muestra "📌 Puesto" junto al título de la tabla (identifica en qué puesto estamos)
@@ -2797,7 +2805,7 @@ function vigModal() {
     if (st) { vigVerSitio(st.dataset.sitio); return; }
     if (e.target.closest('[data-kmz-ver]')) { vigVerificarKmz(); return; }
     const c = e.target.closest('[data-caso]');
-    if (c) { openVigCaso(Number(c.dataset.caso)); return; }
+    if (c) { _vig.alGuardar = null; openVigCaso(Number(c.dataset.caso)); return; }
     if (e.target.closest('[data-recargar]')) { vigCargar(); return; }
     const x = e.target.closest('[data-excel]'); if (x) vigExcel(x);
   });
@@ -2941,6 +2949,7 @@ async function openVigCaso(id) {
       <div class="vigc-meta">Del ${esc(c.desde_h)} al ${esc(c.hasta_h)} · ${esc(String(c.fecha).split('-').reverse().join('/'))}
         · ${c.estado === 'ABIERTO' ? '🔴 sigue pasando' : 'terminó'} · ${ev.length} lectura(s) cada 2 min${c.kmz ? ` · trazo ${esc(c.kmz)}` : ' · <b>la ruta no tiene trazo KMZ</b>'}</div>
     </div>
+    ${vigFinalHtml(c, d)}
     <div class="vigc-donde cargando" data-donde>📍 Buscando en el GPS de SONAR ${adel ? 'dónde lo pasó' : c.tipo === 'FUERA_RUTA' ? 'dónde se salió de la ruta' : 'dónde se quedó apagado'}…</div>
     <div class="vigc-grid">
       <div>
@@ -2985,6 +2994,18 @@ async function openVigCaso(id) {
   if (turno === _vig.turnoCaso) vigAnalizar();   // 📍 dónde pasó: se busca solo al abrir el caso
 }
 
+// 🏁 Cómo terminó el viaje (y el del de adelante) en SONAR, con la sugerencia de si vale la pena verificarlo (sql/193).
+function vigFinalHtml(c, d) {
+  const adel = c.tipo === 'ADELANTAMIENTO';
+  const s = vigSugerencia({ tipo: c.tipo, viaje: d.viaje, viaje_rel: d.viaje_rel });
+  const txt = adel
+    ? `el de atrás (${esc(c.movil)}): ${esc(vigViajeTxt(d.viaje))}; el de adelante (${esc(c.movil_rel || '')}): ${esc(vigViajeTxt(d.viaje_rel))}`
+    : esc(vigViajeTxt(d.viaje));
+  return `<div class="vigc-final${s?.ok ? ' ok' : ''}">🏁 <b>Cómo terminó en SONAR:</b> ${txt}.
+    ${s?.ok ? `<br>👍 <b>Sugerencia: no hace falta verificarlo</b>: ${esc(s.txt)}.`
+    : s?.txt ? `<br>⚠️ ${esc(s.txt)}.` : ''}</div>`;
+}
+
 // Qué va a marcar en el despacho, según la decisión (lo mismo que hace vigilancia_auditar).
 function vigFormPintar() {
   const m = vigCasoModal(), c = _vig.caso?.caso; if (!c) return;
@@ -3018,7 +3039,10 @@ async function vigGuardar() {
       ? (data.marcados ? `Caso confirmado: se marcó en ${data.marcados} despacho(s).` : data.sin_despacho ? 'Caso confirmado. Ese viaje no tiene despacho en la app: no se marcó nada.' : 'Caso confirmado (el despacho ya estaba marcado).')
       : 'Auditoría guardada.', 'ok');
     m.hidden = true;
-    await vigCargar();
+    // Desde la lista del vigilante se recarga la lista; desde una fila de despachos, la tabla (sql/193)
+    const vm = $('vig-modal');
+    if (vm && !vm.hidden) await vigCargar();
+    if (typeof _vig.alGuardar === 'function') { try { _vig.alGuardar(); } catch (_) { /* la tabla se recarga sola luego */ } }
   } catch (e) { msg.textContent = 'No se pudo: ' + (e.message || e); }
   finally { b.disabled = false; }
 }
@@ -3391,18 +3415,110 @@ function vigClasificar(casos) {
   }
   const espera = (c) => { const s = sit.get(`${c.ruta}|${c.punto_desde}`); return !!s && s.buses.size >= 4 && s.dias.size >= Math.min(3, dias); };
   for (const c of casos) {
-    const fin = !!c.par_total && c.punto_desde != null && Number(c.punto_desde) >= Number(c.par_total) - 3;
-    let r = null;
-    if (c.tipo === 'FUERA_RUTA') r = c.punto_desde == null ? 'SIN_PUNTO' : Number(c.punto_desde) === 0 ? 'SALIDA' : fin ? 'TERMINO' : null;
-    else if (c.tipo === 'APAGADO') r = espera(c) ? 'ESPERA' : null;
-    else {
-      const a = vigMinDe(c.sale), b = vigMinDe(c.sale_rel);
-      r = c.causa === 'ADELANTE_SIN_GPS' ? 'SIN_GPS' : (a != null && b != null && a - b < 5) ? 'JUNTOS'
-        : Number(c.minutos) < 10 ? 'CORTO' : fin ? 'FINAL' : null;
-    }
-    c._ruido = r;
+    c.espera = c.tipo === 'APAGADO' && espera(c);
+    c._ruido = vigRuido(c);
     c._hora = vigMinDe(c.desde) == null ? null : Math.floor(vigMinDe(c.desde) / 60);
   }
+}
+// Motivo de "probable ruido" de UN caso (null = vale la pena revisar). El sitio de espera de los apagados
+// (c.espera) lo calcula vigClasificar con la lista o, en las filas, la base (vigilancia_por_viajes).
+function vigRuido(c) {
+  const fin = !!c.par_total && c.punto_desde != null && Number(c.punto_desde) >= Number(c.par_total) - 3;
+  if (c.tipo === 'FUERA_RUTA') return c.punto_desde == null ? 'SIN_PUNTO' : Number(c.punto_desde) === 0 ? 'SALIDA' : fin ? 'TERMINO' : null;
+  if (c.tipo === 'APAGADO') return c.espera ? 'ESPERA' : null;
+  const a = vigMinDe(c.sale), b = vigMinDe(c.sale_rel);
+  return c.causa === 'ADELANTE_SIN_GPS' ? 'SIN_GPS' : (a != null && b != null && a - b < 5) ? 'JUNTOS'
+    : Number(c.minutos) < 10 ? 'CORTO' : fin ? 'FINAL' : null;
+}
+
+// ---- 🚨 El vigilante en las FILAS de los despachos (sql/193): monitores (sus rutas) y admin ----
+// Cada caso se amarra a la fila por el regId de SONAR: el del bus (regid) y, en un adelantamiento, también el
+// del de adelante (regid_rel). Se trae una vez por carga de tabla y se pinta en la columna "🚨 Vigilante";
+// al tocarlo se abre el caso (mapa, dónde pasó y auditoría).
+const _vigFilas = new Map();      // regId -> [{ c, rol: 'PROPIO' | 'ADELANTE' }]
+const VIG_TOLERANCIA_ATRASO = 5;  // min: llegar hasta 5 min tarde no es "contratiempo"
+const VIG_RECORTE = 10;           // min: un fuera de ruta que llega más de 10 min antes pudo recortar la ruta
+
+async function vigFilasCargar(rows) {
+  _vigFilas.clear();
+  const regs = [...new Set(rows.map((r) => String(r.sonar_regid || '').trim()).filter((x) => /^\d{1,18}$/.test(x)))];
+  if (!regs.length) return;
+  const { data, error } = await sb.rpc('vigilancia_por_viajes', { p_regids: regs });
+  if (error || !data?.ok) return;
+  const add = (reg, c, rol) => {
+    if (!reg) return;
+    const l = _vigFilas.get(String(reg)) || [];
+    l.push({ c, rol }); _vigFilas.set(String(reg), l);
+  };
+  for (const c of data.casos || []) {
+    c._ruido = vigRuido(c);
+    add(c.regid, c, 'PROPIO');
+    if (c.tipo === 'ADELANTAMIENTO') add(c.regid_rel, c, 'ADELANTE');
+  }
+}
+
+// Cómo terminó un viaje en SONAR, dicho en palabras (vigilancia_viajes: lo llena el cron cada 5 min).
+function vigViajeTxt(v) {
+  if (!v) return 'todavía no se sabe cómo terminó';
+  const E = { COMPLETO: 'completo', INCOMPLETO: 'incompleto (cerró marcado)', CANCELADO: 'cancelado',
+    EN_CURSO: 'todavía en curso', NO_ENCONTRADO: 'SONAR no lo devolvió' };
+  let t = E[v.estado] || String(v.estado || '').toLowerCase();
+  if (v.atraso_fin != null && (v.estado === 'COMPLETO' || v.estado === 'INCOMPLETO')) {
+    t += v.atraso_fin > 0 ? `, llegó ${v.atraso_fin} min tarde` : v.atraso_fin < 0 ? `, llegó ${-v.atraso_fin} min antes` : ', llegó a la hora';
+  }
+  return t;
+}
+// "Si el viaje fue completo y no tuvo contratiempo, sugerir que no se debe verificar" (pedido del 17/11/2026):
+// completo en SONAR y sin llegar tarde (5 min o menos). En un adelantamiento, los DOS viajes. Un fuera de ruta
+// que llegó mucho antes de la hora NO se descarta: pudo recortar la ruta.
+function vigSugerencia(c) {
+  const v = c.viaje, vr = c.viaje_rel;
+  const sinContratiempo = (x) => !!x && x.estado === 'COMPLETO' && x.atraso_fin != null && x.atraso_fin <= VIG_TOLERANCIA_ATRASO;
+  if (!sinContratiempo(v)) return null;
+  if (c.tipo === 'ADELANTAMIENTO') {
+    return sinContratiempo(vr) ? { ok: true, txt: 'los dos viajes terminaron completos y sin atraso' } : null;
+  }
+  if (c.tipo === 'FUERA_RUTA' && v.atraso_fin < -VIG_RECORTE) {
+    return { ok: false, txt: `terminó completo pero llegó ${-v.atraso_fin} min antes de la hora: pudo recortar la ruta` };
+  }
+  return { ok: true, txt: 'el viaje terminó completo y sin atraso' };
+}
+// La etiqueta del caso en la fila: auditado > pasando ahora > no hace falta verificar > probable ruido > por revisar
+function vigEtiquetaFila(c) {
+  if (c.decision) { const d = VIG_DECISION[c.decision]; return { cls: d[2], txt: `${d[0]} ${d[1]}`, tenue: c.decision !== 'CONFIRMADO' }; }
+  if (c.estado === 'ABIERTO') return { cls: 'chip-amber', txt: '🔴 Pasando ahora' };
+  const s = vigSugerencia(c);
+  if (s?.ok) return { cls: 'chip-green', txt: '👍 No hace falta verificar', por: s.txt, tenue: true };
+  if (c._ruido) return { cls: 'chip-gray', txt: 'Probable ruido', por: VIG_RUIDO[c._ruido], tenue: true };
+  return { cls: 'chip-amber', txt: '📝 Por revisar', por: s?.txt || '' };
+}
+// Lo que pasó, corto, visto desde ESTA fila (en un adelantamiento cambia si la fila es del de atrás o del de adelante)
+function vigFraseCorta(c, rol) {
+  const p = c.punto_desde != null ? ` · punto ${vigPunto(c.punto_desde, c.par_total)}` : '';
+  if (c.tipo === 'ADELANTAMIENTO') {
+    return rol === 'ADELANTE' ? `Lo pasó el ${c.movil} a las ${c.desde}${p}` : `Pasó al ${c.movil_rel} a las ${c.desde}${p}`;
+  }
+  if (c.tipo === 'APAGADO') return `Apagado ${vigMin(c.minutos)} desde las ${c.desde}${p}`;
+  return `Fuera de ruta hasta ${c.max_dist} m, ${vigMin(c.minutos)} desde las ${c.desde}`;
+}
+function vigCeldaFila(row) {
+  const box = document.createElement('div');
+  box.className = 'vigf';
+  for (const { c, rol } of _vigFilas.get(String(row.sonar_regid || '').trim()) || []) {
+    const e = vigEtiquetaFila(c);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `vigf-it vigf-${c.tipo.toLowerCase()}${e.tenue ? ' vigf-tenue' : ''}`;
+    b.innerHTML = `<span class="vigf-tx">${VIG_TIPOS[c.tipo][0]} ${esc(vigFraseCorta(c, rol))}</span><span class="chip ${e.cls}">${esc(e.txt)}</span>`;
+    b.title = [vigFraseCorta(c, rol) + '.',
+      c.causa ? 'Causa probable: ' + (VIG_CAUSAS[c.causa] || c.causa) + '.' : '',
+      'Este viaje: ' + vigViajeTxt(rol === 'ADELANTE' ? c.viaje_rel : c.viaje) + '.',
+      e.por ? `${e.txt}: ${e.por}.` : '',
+      'Toca para ver el mapa, dónde pasó y auditarlo.'].filter(Boolean).join('\n');
+    b.onclick = (ev) => { ev.stopPropagation(); _vig.alGuardar = () => loadData(); openVigCaso(c.id); };
+    box.appendChild(b);
+  }
+  return box;
 }
 
 function vigQuitarMapas() {
@@ -4349,6 +4465,11 @@ async function loadData() {
   if ((cfg.columns || []).some((c) => c.qr)) { try { await ensureQRGen(); await ensureLogo(); } catch { /* */ } }
   // Estado GPS de los móviles (color junto al número), igual que en el mapa
   if (cfg.dispatchable) { try { await cargarEstadoMoviles(cfg); } catch { /* */ } }
+  // 🚨 Casos del Vigilante de ruta de estos viajes (sql/193): solo monitores y admin
+  if (cfg.dispatchable && (efIsAdmin() || efIsAuditor())) {
+    try { await vigFilasCargar(rows); } catch { _vigFilas.clear(); }
+    if (reqTabla !== current || reqPage !== page) return;
+  } else _vigFilas.clear();
   // Inicio y fin de labores: cruza con el horario del día para saber quién entró tarde
   if (current === 'asistencia' && puedeVerPuntualidad()) { try { await cruzarPuntualidad(rows); } catch { /* sin horarios, la tabla se ve igual */ } }
   pintarAlertaPuntualidad(rows); // se oculta sola si la tabla no es asistencia
@@ -4544,6 +4665,8 @@ function renderTable(cfg, rows, count, diaSel = false) {
         }
         tr.appendChild(td); continue;
       }
+      // 🚨 Lo que vio el Vigilante de ruta en este viaje (monitores y admin; sql/193)
+      if (c.vigilante) { td.appendChild(vigCeldaFila(row)); tr.appendChild(td); continue; }
       // Cambio de RUTA: ruta programada → ruta despachada, solo cuando difieren.
       if (c.cambioRuta) {
         const rp = row.rutap && row.rutap.nombre, rr = row.ruta && row.ruta.nombre;
@@ -4615,11 +4738,12 @@ function renderTable(cfg, rows, count, diaSel = false) {
           className: 'lock-badge', textContent: '🔒', title: cfg.lockedHint || 'Bloqueado',
         }));
       } else {
-        if (cfg.dispatchable && !efIsAuditor()) { // el auditor no despacha ni cancela: solo audita
+        if (cfg.dispatchable && !efIsAuditor()) { // el auditor no despacha: audita y cancela (abajo)
           const dsp = Object.assign(document.createElement('button'), { className: 'act act-go', innerHTML: ICON.send });
           if (row.sonar_regid) {
             dsp.title = 'Ya despachado (regId ' + row.sonar_regid + ')';
-            dsp.onclick = () => toast('Ya despachado en SONAR (regId ' + row.sonar_regid + ').', 'ok');
+            dsp.onclick = () => toast('Ya despachado en SONAR (regId ' + row.sonar_regid + ').'
+              + (puedeCancelarViaje(row) ? '' : ' Si hay que cancelarlo, pídeselo al monitor.'), 'ok');
           } else if (esPasada) {
             dsp.title = 'Fecha ya pasada: no se puede despachar';
             dsp.onclick = () => toast('No se puede despachar: la fecha del viaje ya pasó.', 'err');
@@ -4631,22 +4755,23 @@ function renderTable(cfg, rows, count, diaSel = false) {
             dsp.onclick = () => openSonar(row);
           }
           act.appendChild(dsp);
-          // Cancelar SOLO tiene sentido si el viaje YA se despachó (tiene regId de SONAR).
-          // Un viaje SIN DESPACHO no se cancela: no se muestra el botón.
-          if (row.sonar_regid) {
-            const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
-            if (esPasada) {
-              can.title = 'Fecha ya pasada: no se puede cancelar';
-              can.onclick = () => toast('No se puede cancelar: la fecha del viaje ya pasó.', 'err');
-            } else if (esFutura) {
-              can.title = 'Fecha adelantada: solo se cancela el día actual';
-              can.onclick = () => toast('Solo se cancela el día de HOY. Esta fila es de otra fecha (' + frow + ').', 'err');
-            } else {
-              can.title = 'Cancelar en SONAR';
-              can.onclick = () => openCancelar(row);
-            }
-            act.appendChild(can);
+        }
+        // Cancelar en SONAR: desde el 16/11/2026 lo hace el MONITOR (auditor) de la ruta, y el admin;
+        // el despachador ya NO cancela (la base lo exige igual: cancelar_despacho, sql/191-192).
+        // Solo tiene sentido si el viaje YA se despachó (tiene regId de SONAR).
+        if (cfg.dispatchable && row.sonar_regid && puedeCancelarViaje(row)) {
+          const can = Object.assign(document.createElement('button'), { className: 'act act-stop', innerHTML: ICON.ban });
+          if (esPasada) {
+            can.title = 'Fecha ya pasada: no se puede cancelar';
+            can.onclick = () => toast('No se puede cancelar: la fecha del viaje ya pasó.', 'err');
+          } else if (esFutura) {
+            can.title = 'Fecha adelantada: solo se cancela el día actual';
+            can.onclick = () => toast('Solo se cancela el día de HOY. Esta fila es de otra fecha (' + frow + ').', 'err');
+          } else {
+            can.title = 'Cancelar en SONAR';
+            can.onclick = () => openCancelar(row);
           }
+          act.appendChild(can);
         }
         // Estado REAL del viaje en SONAR, cruzado EN VIVO por el regId (Completo /
         // Incompleto / Cancelado / En progreso). Solo en viajes ya despachados (con
@@ -6706,7 +6831,7 @@ async function exportarExcel() {
   // El Excel sale con las mismas columnas que la pantalla: si los datos del dueño están
   // ocultos para este rol, tampoco se van en la descarga.
   const cols = (cfg.exportCols || cfg.columns || [])
-    .filter((c) => !(c.privado && !puedeVerDatosAfiliado()) && !(c.soloControl && !puedeVerPuntualidad()));
+    .filter((c) => !c.noExport && !(c.privado && !puedeVerDatosAfiliado()) && !(c.soloControl && !puedeVerPuntualidad()));
   if (!cols.length) { toast('Esta tabla no tiene columnas para exportar.', 'err'); return; }
   const btn = $('export-btn'); const prev = btn.textContent;
   btn.disabled = true; btn.textContent = '⏳ Generando…';
@@ -26126,6 +26251,12 @@ $('cancel-send').addEventListener('click', async () => {
   const regId = $('c-regid').value.trim();
   const com = $('c-com').value.trim();
   if (!regId) { err.textContent = 'No hay regId: no se puede cancelar este despacho.'; err.hidden = false; return; }
+  // Se cancela SIEMPRE un viaje de la tabla: la base toma el móvil y el regId de la fila (sql/191)
+  if (!cancelRow?.id) { err.textContent = 'No hay un viaje seleccionado.'; err.hidden = false; return; }
+  if (cancelRow.vehiculo_id && String(vr.id) !== String(cancelRow.vehiculo_id)) {
+    err.textContent = 'Este viaje se despachó con el móvil ' + (cancelRow.veh?.numero || '') + ': para cancelarlo deja ese móvil.';
+    err.hidden = false; return;
+  }
   // Revalida la regla de 50 min con la hora real de la BD
   if (cancelRow?.id) {
     const { data: cur } = await sb.from(cancelTable).select('despachado_en').eq('id', cancelRow.id).maybeSingle();
@@ -26148,7 +26279,9 @@ $('cancel-send').addEventListener('click', async () => {
   showBusy('Cancelando en SONAR…'); // capa que bloquea la pantalla mientras responde SONAR
   let data, error;
   try {
-    ({ data, error } = await sb.rpc('cancelar_sonar', { p_mid: String(mId), p_regid: regId, p_comments: com }));
+    // Todo en el servidor (sql/191): valida monitor/ruta/hoy/50 min, cancela en SONAR y, si SONAR
+    // acepta, marca la fila CANCELADO, limpia el regId y deja el sello del monitor.
+    ({ data, error } = await sb.rpc('cancelar_despacho', { p_tabla: cancelTable, p_id: String(cancelRow.id), p_comments: com }));
   } finally {
     hideBusy();
     btn.dataset.busy = '0'; btn.disabled = false; btn.textContent = 'Cancelar despacho';
@@ -26157,13 +26290,10 @@ $('cancel-send').addEventListener('click', async () => {
   const res = $('cancel-result'); res.hidden = false;
   if (error) { res.className = 'sonar-result err'; res.textContent = 'Error: ' + error.message; return; }
   if (data && data.ok) {
-    // Marcar el despacho como cancelado y limpiar el regId usado
-    if (cancelRow?.id) {
-      await sb.from(cancelTable).update({ estado_despacho: 'CANCELADO', sonar_regid: null }).eq('id', cancelRow.id);
-      if (current === cancelTable) loadData();
-    }
+    if (current === cancelTable) loadData();
     res.className = 'sonar-result ok';
-    res.textContent = '✅ Cancelado en SONAR (HTTP ' + (data.status ?? '') + ')\n\n' + (data.response || '').slice(0, 1200);
+    res.textContent = '✅ Cancelado en SONAR (HTTP ' + (data.status ?? '') + ')'
+      + (data.aviso ? '\n\n⚠️ ' + data.aviso : '') + '\n\n' + (data.response || '').slice(0, 1200);
     toast('Despacho cancelado en SONAR', 'ok');
     // Ya quedó cancelado: no permitir cancelar de nuevo en este modal
     cancelRow = null;
