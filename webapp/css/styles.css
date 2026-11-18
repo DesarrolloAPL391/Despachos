@@ -3399,6 +3399,24 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
   .pp-tarjetas { grid-template-columns: repeat(2, 1fr); }
 }
 
+/* 🪪 Categoría de licencia (sql/198): reutiliza las piezas del Control del día (pp-*) */
+.pp-card.aviso { background: #fff7ed; border-color: #fcd9a8; } .pp-card.aviso b { color: #b45309; }
+.vlc-regla { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; border-radius: 10px;
+             padding: 10px 12px; margin-bottom: 12px; font-size: 13.5px; line-height: 1.45; }
+.vlc-sub { font-size: 12.5px; margin: -4px 0 12px; }
+.vlc-muted { color: var(--muted); font-size: 12.5px; }
+.vlc-vencida { color: #b91c1c; font-weight: 700; }
+.vlc-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* En el celular la regla general (table-layout: fixed, ancho 100 %) apretaba las columnas hasta
+   montar la cédula sobre el código: aquí la tabla toma su ancho natural y se desplaza de lado.
+   Cédula, código, fechas y conteos no se parten. */
+.vlc-scroll .pp-tabla { table-layout: auto; width: max-content; min-width: 100%; }
+.vlc-scroll .pp-tabla td:not(:first-child), .vlc-scroll .pp-tabla th:not(:first-child) { white-space: nowrap; }
+.vlc-scroll .pp-tabla td:first-child { min-width: 150px; }
+.pp-atras .vlc-scroll { margin-top: 8px; }
+.vlc-blanca { background: #fff; border-radius: 9px; }
+#vlc-filtros .pp-fecha select { flex: 0 0 auto; }
+
 /* Salud del GPS (sql/136). La tabla se lee en el celular del auditor: el id del equipo va en
    monoespaciada porque son codigos como ADXW o 0190 y se dictan por telefono. */
 .gs-mid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;

@@ -762,6 +762,8 @@ function buildSidebar() {
       const aviso = PREOP_PEND ? ` <span class="nav-badge">${PREOP_PEND}</span>` : '';
       addNavAction(gVial, '📋', 'Control del día' + aviso, openPreopPanel, 'nav-preop-panel');
       addNavAction(gVial, '📲', 'Enviar preoperacional', openPreopEnvio, 'nav-preop-envio');
+      // Categoría de licencia vs. clase del vehículo (sql/198): C1 solo microbús, bus y buseta piden C2
+      addNavAction(gVial, '🪪', 'Categoría de licencia', () => openVialLicCat(), 'nav-vial-liccat');
       // Reclamaciones por daños de terceros (sql/160): las radican por reclamacion.html
       const rcl = RCL_PEND ? ` <span class="nav-badge">${RCL_PEND}</span>` : '';
       addNavAction(gVial, '📑', 'Reclamaciones' + rcl, openReclamaciones, 'nav-reclamaciones');
@@ -4145,6 +4147,193 @@ async function abrirPreopPorId(id) {
     if (error || !data) throw error || new Error('sin fila');
     await openPreop(data);
   } catch (e) { toast('No se pudo abrir la inspección', 'err'); }
+}
+
+// ---------- 🪪 Categoría de licencia vs. clase de vehículo (sql/198) ----------
+// Bus y buseta piden C2 (la C3 también sirve); el microbús admite C1. La categoría llega del libro
+// de Gestión Humana y quién manejó qué sale de los despachos (solo salidas reales). Esta pantalla
+// solo MUESTRA: no bloquea ni avisa al despachar (el 17/11 se pidió no restringir por licencia).
+const _vlc = { dias: 30, data: null, vista: 'c1', buscar: '', cat: '' };
+
+function vlcModal() {
+  let m = $('vlc-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'vlc-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>🪪 Categoría de licencia</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body"></div>
+    <div class="modal-foot"><button type="button" class="btn" id="vlc-excel">⬇️ Excel</button>
+      <span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  m.querySelector('#vlc-excel').onclick = vlcExcel;
+  return m;
+}
+
+async function openVialLicCat(dias) {
+  if (!isSeguridadVial()) return;
+  const m = vlcModal(), body = m.querySelector('.pf-body');
+  if (dias) _vlc.dias = dias;
+  body.innerHTML = '<div class="loading">Cruzando las licencias con los despachos…</div>';
+  m.hidden = false;
+  try {
+    const { data, error } = await sb.rpc('vial_licencias_categoria', { p_dias: _vlc.dias });
+    if (error) throw error;
+    if (!data || !data.ok) { body.innerHTML = `<div class="cump-empty">${esc((data && data.error) || 'Sin datos.')}</div>`; return; }
+    _vlc.data = data;
+  } catch (e) { body.innerHTML = `<div class="cump-empty">No se pudo cargar: ${esc(e.message || e)}</div>`; return; }
+  pintarVlc();
+}
+
+// Fecha de vencimiento de la licencia, en rojo si ya pasó
+function vlcVence(f) {
+  if (!f) return '<span class="vlc-muted">—</span>';
+  return f < hoyServidor() ? `<span class="vlc-vencida" title="Licencia vencida">${esc(fmt(f))}</span>` : esc(fmt(f));
+}
+function vlcCat(c) {
+  if (!c) return '<span class="chip chip-gray">Sin dato</span>';
+  return `<span class="chip ${c === 'C1' ? 'chip-amber' : 'chip-green'}">${esc(c)}</span>`;
+}
+
+function pintarVlc() {
+  const d = _vlc.data, a = d.activos || {}, pq = d.parque || {};
+  const nh = d.no_habilitados || [], sc = d.sin_categoria || [];
+  const c1 = d.c1 || [], mb = d.microbuses || [], todos = d.todos || [];
+  const body = vlcModal().querySelector('.pf-body');
+  const periodo = `${fmt(d.desde)} al ${fmt(d.hasta)}`;
+  const totNh = nh.reduce((s, x) => s + (x.viajes_no_hab || 0), 0);
+
+  const alerta = nh.length ? `
+    <div class="pp-alerta">
+      <h4>🚨 ${nh.length === 1 ? '1 conductor manejó' : `${nh.length} conductores manejaron`} un vehículo que su licencia
+        no permite · ${totNh} viaje${totNh === 1 ? '' : 's'}</h4>
+      <div class="vlc-scroll"><table class="pp-tabla vlc-blanca"><thead><tr><th>Conductor</th><th>Cédula</th><th>Licencia</th>
+        <th>Viajes sin la categoría</th><th>Vehículos</th><th>Último</th></tr></thead><tbody>
+      ${nh.map((x) => `<tr><td><b>${esc(x.nombre || '')}</b>${x.estado && x.estado !== 'ACTIVO' ? ` <span class="chip chip-gray">${esc(x.estado)}</span>` : ''}</td>
+        <td>${esc(x.cedula || '')}</td><td>${vlcCat(x.categoria)}</td>
+        <td><b>${x.viajes_no_hab}</b> <span class="vlc-muted">de ${x.viajes}</span></td>
+        <td>${esc(x.moviles || '')}</td><td>${esc(fmt(x.ultimo))}</td></tr>`).join('')}
+      </tbody></table></div>
+    </div>`
+    : `<div class="pr-ok">✅ Del ${esc(periodo)} nadie manejó un vehículo que su licencia no permite</div>`;
+
+  const sinCat = sc.length ? `
+    <div class="pp-atras">
+      <b>⚠️ ${sc.length === 1 ? '1 conductor despachó' : `${sc.length} conductores despacharon`} y no se sabe su categoría.</b>
+      No están en el perfil o la hoja de Gestión Humana no trae la categoría. Se corrige en ese libro.
+      <div class="vlc-scroll"><table class="pp-tabla"><thead><tr><th>Conductor (como sale en Despachos)</th><th>Qué pasa</th>
+        <th>Viajes</th><th>Último</th><th>Vehículos</th></tr></thead><tbody>
+      ${sc.map((x) => `<tr><td>${esc(x.nombre_despacho || x.nombre || '')}</td>
+        <td>${x.en_perfil ? 'En el perfil sin categoría' : 'No está en el perfil'}</td>
+        <td>${x.viajes}</td><td>${esc(fmt(x.ultimo))}</td><td>${esc(x.moviles || '')}</td></tr>`).join('')}
+      </tbody></table></div>
+    </div>` : '';
+
+  body.innerHTML = `
+    <div class="pp-fecha">
+      <select id="vlc-dias">${[7, 30, 60, 90].map((n) => `<option value="${n}" ${n === d.dias ? 'selected' : ''}>Últimos ${n} días</option>`).join('')}</select>
+      <span class="vlc-muted">${esc(periodo)} · ${Number(d.viajes || 0).toLocaleString('es-CO')} salidas</span>
+    </div>
+    <div class="vlc-regla">📏 <b>Bus y buseta piden licencia C2</b> (la C3 también sirve). <b>El microbús admite C1.</b>
+      Un conductor con C1 solo puede manejar los ${mb.length} microbuses del parque.</div>
+    <div class="pp-tarjetas">
+      <div class="pp-card"><b>${a.C2 || 0}</b><span>Con C2</span></div>
+      <div class="pp-card"><b>${a.C3 || 0}</b><span>Con C3</span></div>
+      <div class="pp-card ${a.C1 ? 'aviso' : ''}"><b>${a.C1 || 0}</b><span>Con C1 (solo microbús)</span></div>
+      <div class="pp-card ${a.sin || a.otra ? 'mal' : ''}"><b>${(a.sin || 0) + (a.otra || 0)}</b><span>Sin categoría</span></div>
+    </div>
+    <div class="vlc-muted vlc-sub">Conductores activos en el perfil: ${a.total || 0} · Parque activo: ${pq.bus || 0} buses,
+      ${pq.buseta || 0} busetas, ${pq.microbus || 0} microbuses</div>
+    ${alerta}
+    ${sinCat}
+    <div class="pp-tabs">
+      <button type="button" data-v="c1" class="${_vlc.vista === 'c1' ? 'on' : ''}">Licencia C1 (${c1.length})</button>
+      <button type="button" data-v="micro" class="${_vlc.vista === 'micro' ? 'on' : ''}">Microbuses (${mb.length})</button>
+      <button type="button" data-v="todos" class="${_vlc.vista === 'todos' ? 'on' : ''}">Todos (${todos.length})</button>
+    </div>
+    <div id="vlc-filtros"></div>
+    <div id="vlc-lista" class="vlc-scroll"></div>`;
+
+  $('vlc-dias').onchange = (e) => openVialLicCat(Number(e.target.value));
+  body.querySelectorAll('.pp-tabs button').forEach((b) => {
+    b.onclick = () => { _vlc.vista = b.dataset.v; pintarVlc(); };
+  });
+  if (_vlc.vista === 'todos') {
+    $('vlc-filtros').innerHTML = `<div class="pp-fecha">
+      <input type="search" id="vlc-buscar" placeholder="Buscar por nombre, cédula o código" value="${esc(_vlc.buscar)}" />
+      <select id="vlc-cat">${[['', 'Todas'], ['C1', 'C1'], ['C2', 'C2'], ['C3', 'C3'], ['-', 'Sin dato']]
+        .map(([v, t]) => `<option value="${v}" ${_vlc.cat === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>`;
+    $('vlc-buscar').oninput = (e) => { _vlc.buscar = e.target.value; pintarVlcLista(); };
+    $('vlc-cat').onchange = (e) => { _vlc.cat = e.target.value; pintarVlcLista(); };
+  }
+  pintarVlcLista();
+}
+
+// Solo la tabla de la pestaña: al escribir en el buscador no se repinta el resto (no pierde el foco)
+function pintarVlcLista() {
+  const d = _vlc.data, lista = $('vlc-lista');
+  if (!d || !lista) return;
+  if (_vlc.vista === 'c1') {
+    const c1 = d.c1 || [];
+    lista.innerHTML = c1.length ? `<table class="pp-tabla"><thead><tr><th>Conductor</th><th>Cédula</th><th>Código</th>
+        <th>Vence</th><th>Viajes en microbús</th><th>Viajes en bus o buseta</th><th>Vehículos</th></tr></thead><tbody>
+      ${c1.map((x) => `<tr><td><b>${esc(x.nombre || '')}</b>${x.estado !== 'ACTIVO' ? ` <span class="chip chip-gray">${esc(x.estado || '')}</span>` : ''}</td>
+        <td>${esc(x.cedula || '')}</td><td>${esc(x.codigo || '')}</td><td>${vlcVence(x.vence)}</td>
+        <td>${x.viajes_microbus}</td>
+        <td>${x.viajes_bus ? `<span class="chip chip-red">${x.viajes_bus}</span>` : '0'}</td>
+        <td>${esc(x.moviles || '')}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="cump-empty">Ningún conductor activo tiene licencia C1.</div>';
+  } else if (_vlc.vista === 'micro') {
+    const mb = d.microbuses || [];
+    lista.innerHTML = mb.length ? `<table class="pp-tabla"><thead><tr><th>Móvil</th><th>Placa</th><th>Ruta</th><th>Sentados</th></tr></thead><tbody>
+      ${mb.map((x) => `<tr><td><b>${esc(x.movil)}</b></td><td>${esc(x.placa || '')}</td><td>${esc(x.ruta || '')}</td>
+        <td>${x.sentados ?? ''}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="cump-empty">No hay microbuses activos en el parque.</div>';
+  } else {
+    const t = _normPuesto(_vlc.buscar); // minúsculas y sin tildes
+    const filas = (d.todos || []).filter((x) => {
+      if (_vlc.cat === '-' ? x.categoria : (_vlc.cat && x.categoria !== _vlc.cat)) return false;
+      if (!t) return true;
+      return _normPuesto(`${x.nombre || ''} ${x.cedula || ''} ${x.codigo || ''}`).includes(t);
+    });
+    lista.innerHTML = filas.length ? `<table class="pp-tabla"><thead><tr><th>Conductor</th><th>Cédula</th><th>Código</th>
+        <th>Licencia</th><th>Vence</th><th>Viajes</th></tr></thead><tbody>
+      ${filas.slice(0, 400).map((x) => `<tr><td>${esc(x.nombre || '')}${x.estado !== 'ACTIVO' ? ` <span class="chip chip-gray">${esc(x.estado || '')}</span>` : ''}</td>
+        <td>${esc(x.cedula || '')}</td><td>${esc(x.codigo || '')}</td><td>${vlcCat(x.categoria)}</td><td>${vlcVence(x.vence)}</td>
+        <td>${x.viajes}${x.viajes_no_hab ? ` <span class="chip chip-red" title="Viajes en un vehículo que su licencia no permite">🚨 ${x.viajes_no_hab}</span>` : ''}</td></tr>`).join('')}
+      </tbody></table>`
+      : '<div class="cump-empty">Nadie coincide con la búsqueda.</div>';
+  }
+}
+
+function vlcExcel() {
+  const d = _vlc.data; if (!d) { toast('Primero carga la pantalla.', 'err'); return; }
+  _conExcelBtn('vlc-excel', async () => {
+    const F = (v) => celdaFechaXlsx(v);
+    const hojas = [
+      { name: 'Sin la categoría', filtro: true, aoa: [
+        ['Conductor', 'Cédula', 'Código', 'Estado', 'Licencia', 'Vence', 'Viajes sin la categoría', 'Viajes en total', 'Vehículos', 'Último'],
+        ...(d.no_habilitados || []).map((x) => [x.nombre, x.cedula, x.codigo, x.estado, x.categoria, F(x.vence),
+          x.viajes_no_hab, x.viajes, x.moviles, F(x.ultimo)])] },
+      { name: 'Sin categoría conocida', filtro: true, aoa: [
+        ['Conductor (Despachos)', 'Qué pasa', 'Viajes', 'Último', 'Vehículos'],
+        ...(d.sin_categoria || []).map((x) => [x.nombre_despacho || x.nombre,
+          x.en_perfil ? 'En el perfil sin categoría' : 'No está en el perfil', x.viajes, F(x.ultimo), x.moviles])] },
+      { name: 'Licencia C1', filtro: true, aoa: [
+        ['Conductor', 'Cédula', 'Código', 'Estado', 'Vence', 'Viajes en microbús', 'Viajes en bus o buseta', 'Vehículos'],
+        ...(d.c1 || []).map((x) => [x.nombre, x.cedula, x.codigo, x.estado, F(x.vence), x.viajes_microbus, x.viajes_bus, x.moviles])] },
+      { name: 'Microbuses', filtro: true, aoa: [
+        ['Móvil', 'Placa', 'Ruta', 'Sentados'],
+        ...(d.microbuses || []).map((x) => [x.movil, x.placa, x.ruta, x.sentados])] },
+      { name: 'Todos', filtro: true, aoa: [
+        ['Conductor', 'Cédula', 'Código', 'Estado', 'Licencia', 'Vence', 'Viajes', 'Viajes sin la categoría'],
+        ...(d.todos || []).map((x) => [x.nombre, x.cedula, x.codigo, x.estado, x.categoria || 'Sin dato', F(x.vence), x.viajes, x.viajes_no_hab])] },
+    ];
+    await _xlsxDescargar(hojas, `licencias_categoria_${d.desde}_a_${d.hasta}.xlsx`);
+  });
 }
 
 // ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
