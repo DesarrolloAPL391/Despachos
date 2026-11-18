@@ -8969,8 +8969,9 @@ async function updateNdInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('nd-movil').value);
   const info = $('nd-info');
-  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn', 'nd-licwarn', 'nd-tallerwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; s.dataset.licblock = ''; aplicarBloqueosBtn(s); } return; }
+  if (!vr) { info.hidden = true; ['nd-restrwarn', 'nd-docblk', 'nd-docwarn', 'nd-pvwarn', 'nd-licwarn', 'nd-tallerwarn', 'nd-preopwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); const s = $('nd-save'); if (s) { s.dataset.docblock = ''; s.dataset.licblock = ''; s.dataset.preopblock = ''; aplicarBloqueosBtn(s); } return; }
   avisoRestriccionND(); // aviso de restricción vigente de hoy (por móvil o por conductor)
+  avisarPreopMovil(vr.numero, 'nd-preopwarn', 'nd-save'); // 🧰 preoperacional del día (bloquea desde sql/196)
   avisarBloqueoDocMovil(vr.numero, 'nd-docblk', 'nd-save'); // BLOQUEO por documento vencido (SOAT/tecno/tarjeta)
   avisarDocsMovil(vr.numero, 'nd-docwarn'); // aviso de documentos vencidos / por vencer
   avisarPreventivaMovil(vr.numero, 'nd-pvwarn', 'nd-save'); // preventiva: bloqueo (rechazada) o recordatorio
@@ -9540,11 +9541,11 @@ function dbFechaHora(x) {
   try { return new Date(x).toLocaleString('es-CO', { timeZone: 'America/Bogota', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   catch (e) { return String(x || ''); }
 }
-// Los bloqueos del despacho son tres (preventiva, documento del vehículo y licencia del
-// conductor) y cada uno pone su bandera. El botón lo decide esta función mirándolas todas:
-// si cada bloqueo manejara el disabled por su cuenta, apagar uno habilitaría el botón
-// aunque otro siguiera activo.
-const BLOQUEOS_BTN = ['pvblock', 'docblock', 'licblock'];
+// Los bloqueos del despacho son cuatro (preventiva, documento del vehículo, licencia del
+// conductor y preoperacional del día) y cada uno pone su bandera. El botón lo decide esta
+// función mirándolas todas: si cada bloqueo manejara el disabled por su cuenta, apagar uno
+// habilitaría el botón aunque otro siguiera activo.
+const BLOQUEOS_BTN = ['pvblock', 'docblock', 'licblock', 'preopblock'];
 function aplicarBloqueosBtn(btn) {
   if (!btn) return;
   btn.disabled = BLOQUEOS_BTN.some((k) => btn.dataset[k] === '1');
@@ -9800,6 +9801,106 @@ Object.keys(LIC_BOX_BTN).forEach((id) => {
     const b = e.target.closest('.lic-subir'); if (!b) return;
     openLicSubir(b.dataset.dr, b.dataset.nombre,
       () => avisarLicenciaConductor(b.dataset.dr, id, LIC_BOX_BTN[id]));
+  });
+});
+
+// ---- 🧰 PREOPERACIONAL ANTES DE DESPACHAR (sql/196) ----
+// Todo bus necesita su preoperacional de HOY antes de salir (Res. 315 de 2013, alistamiento
+// diario). Es por bus, no por conductor: si cualquier conductor ya se lo hizo hoy, el bus sale.
+// El arranque vive en la base (preop_bloqueo_config): apagado no se muestra nada; encendido con
+// fecha futura es aviso con la hora en que empieza; desde esa hora, bloquea.
+// Fail-open, como los otros bloqueos: si la consulta falla (sin señal), no traba el despacho.
+async function preopEstadoBus(numero) {
+  if (!numero) return null;
+  try {
+    const { data, error } = await sb.rpc('preop_despacho_estado', { p_interno: String(numero).trim() });
+    return error ? null : data;
+  } catch (e) { return null; }
+}
+async function preopBloqueado(numero) {
+  const d = await preopEstadoBus(numero);
+  return (d && d.bloqueado) ? d : null;
+}
+function preopBloqueoMsg(b) {
+  return `🚫 <b>DESPACHO BLOQUEADO</b> · móvil ${esc(String(b.interno || ''))} sin preoperacional de hoy<br>`
+    + 'Todo bus debe tener su <b>inspección preoperacional del día</b> antes de salir (Res. 315 de 2013).<br>'
+    + '<b>¿Qué hacer?</b> Que el conductor la haga en el enlace, entrando con su cédula. '
+    + 'Apenas la envíe, toca <b>🔄 Ya la hizo</b>.';
+}
+function preopAcciones(numero) {
+  return `<div class="preop-acc" data-mov="${esc(String(numero))}">`
+    + '<button type="button" data-preop="wa">💬 Enviar enlace por WhatsApp</button>'
+    + '<button type="button" data-preop="copiar">📋 Copiar enlace</button>'
+    + `<a href="${esc(PREOP_LINK)}" target="_blank" rel="noopener">📝 Abrir el formulario</a>`
+    + '<button type="button" data-preop="revisar">🔄 Ya la hizo, revisar otra vez</button></div>';
+}
+// Caja del bus elegido. Solo la de Nuevo despacho deshabilita su botón; en la ventana de las
+// tablas el mismo botón sirve para "no realizó", así que ahí bloquea solo al despachar.
+async function avisarPreopMovil(numero, boxId, btnId) {
+  const box = $(boxId); if (!box) return null;
+  const btn = btnId ? $(btnId) : null;
+  box.hidden = true; box.innerHTML = ''; box.className = 'field full';
+  if (btn) { btn.dataset.preopblock = ''; aplicarBloqueosBtn(btn); }
+  if (!numero) return null;
+  const pedido = String(numero).trim(); box.dataset.mov = pedido;
+  const d = await preopEstadoBus(pedido);
+  if (box.dataset.mov !== pedido) return null; // cambiaron de bus mientras consultaba
+  if (!d || !d.activo) return d;               // apagado: no se muestra nada
+  if (d.bloqueado) {
+    box.className = 'field full sonar-info docblk';
+    box.innerHTML = preopBloqueoMsg(d) + preopAcciones(pedido);
+    box.hidden = false;
+    if (btn) { btn.dataset.preopblock = '1'; aplicarBloqueosBtn(btn); }
+    return d;
+  }
+  if (!d.tiene) {
+    if (d.habilitado === false) {
+      // El formulario del conductor no deja elegir este bus: no se bloquea, se avisa.
+      box.className = 'field full sonar-info docblk revi';
+      box.innerHTML = `🧰 <b>Móvil ${esc(pedido)} sin preoperacional de hoy</b><br>`
+        + 'Este bus no figura <b>Activo</b> en el parque, así que el conductor no lo encuentra en el formulario. Avísale a operaciones.';
+      box.hidden = false;
+    } else if (d.desde && !d.vigente) {
+      box.className = 'field full sonar-info docblk revi';
+      box.innerHTML = `🧰 <b>Móvil ${esc(pedido)} sin preoperacional de hoy</b><br>`
+        + `⏳ Desde el <b>${esc(dbFechaHora(d.desde))}</b> no se podrá despachar un bus sin su preoperacional del día. `
+        + 'Pídele al conductor que la haga.' + preopAcciones(pedido);
+      box.hidden = false;
+    }
+    return d;
+  }
+  const nov = Number(d.novedades) || 0;
+  if (nov > 0) {
+    // Se despacha, pero el despachador tiene que saber qué reportó el conductor.
+    box.className = 'field full sonar-info docblk revi';
+    box.innerHTML = `🧰 <b>Preoperacional de hoy con ${nov} punto${nov === 1 ? '' : 's'} en mal estado</b> · móvil ${esc(pedido)}<br>`
+      + (d.puntos || []).map((p) => '• ' + esc(p)).join('<br>')
+      + `<br>Lo reportó el conductor${d.hora ? ' a las ' + esc(d.hora) : ''} y taller aún no lo marca como atendido. Se puede despachar: avísale a taller.`;
+  } else {
+    box.className = 'field full sonar-info ok';
+    box.innerHTML = `✅ Preoperacional de hoy hecho${d.hora ? ' a las ' + esc(d.hora) : ''}${d.conductor ? ' · ' + esc(d.conductor) : ''}`;
+  }
+  box.hidden = false;
+  return d;
+}
+const PREOP_BOX_BTN = { 'nd-preopwarn': 'nd-save', 's-preopwarn': null };
+Object.keys(PREOP_BOX_BTN).forEach((id) => {
+  $(id)?.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-preop]'); if (!b) return;
+    const mov = b.closest('.preop-acc')?.dataset.mov || '';
+    if (b.dataset.preop === 'wa') {
+      const msg = `Buen dia. Antes de salir a ruta, realiza la INSPECCION PREOPERACIONAL del bus ${mov} en este enlace: `
+        + PREOP_LINK + ' Ingresas con tu numero de cedula. Gracias.';
+      window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank', 'noopener');
+    } else if (b.dataset.preop === 'copiar') {
+      try { await navigator.clipboard.writeText(PREOP_LINK); toast('📋 Enlace copiado', 'ok'); }
+      catch (er) { toast('No se pudo copiar. El enlace es: ' + PREOP_LINK, 'err'); }
+    } else if (b.dataset.preop === 'revisar') {
+      b.disabled = true;
+      const d = await avisarPreopMovil(mov, id, PREOP_BOX_BTN[id]);
+      if (d && d.bloqueado) toast(`Todavía no aparece el preoperacional de hoy del móvil ${mov}.`, 'err');
+      else if (d && d.tiene) toast('✅ Preoperacional encontrado', 'ok');
+    }
   });
 });
 
@@ -25454,6 +25555,8 @@ $('nd-save').addEventListener('click', async () => {
   if (vrow?.numero) { const db = await docSuspendido(vrow.numero); if (db) { err.innerHTML = docBloqueoMsg(db); err.hidden = false; return; } }
   // Bloqueo por LICENCIA VENCIDA del conductor (sql/110): se levanta subiendo las dos fotos
   { const lb = await licBloqueada($('nd-cond').value); if (lb) { err.innerHTML = licBloqueoMsg(lb); err.hidden = false; return; } }
+  // Bloqueo por PREOPERACIONAL: el bus no tiene la inspección de hoy (sql/196)
+  if (vrow?.numero) { const pb = await preopBloqueado(vrow.numero); if (pb) { err.innerHTML = preopBloqueoMsg(pb); err.hidden = false; return; } }
   // Bloqueo por RESTRICCIÓN de ruta (castigo del auditor): móvil restringido en esa ruta/fecha/ventana
   if (vrow?.numero) { const rb = await restriccionSuspende(vrow.numero, itin?.nombre || '', intent.fecha, intent.hora, current, drow?.nombre || ''); if (rb) { err.innerHTML = restriccionBloqueoMsg(rb); err.hidden = false; return; } }
 
@@ -25631,7 +25734,7 @@ async function updateSonarInfo() {
   const veh = await loadVehiculos();
   const vr = veh.find((v) => String(v.id) === $('s-mov').value);
   const info = $('s-info');
-  if (!vr) { info.hidden = true; ['s-restrwarn', 's-docblk', 's-docwarn', 's-pvwarn', 's-tallerwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
+  if (!vr) { info.hidden = true; ['s-restrwarn', 's-docblk', 's-docwarn', 's-pvwarn', 's-tallerwarn', 's-preopwarn'].forEach((id) => { const e = $(id); if (e) e.hidden = true; }); return; }
   const _drsR = await loadDrivers();
   const _drowR = _drsR.find((d) => d.dr_id === $('s-drv').value);
   avisarRestriccionMovil(vr.numero, _drowR?.nombre || '', 's-restrwarn'); // aviso: móvil (puesto) o conductor (despachos)
@@ -25639,6 +25742,7 @@ async function updateSonarInfo() {
   // BLOQUEO por documento vencido. En SONAR el botón también sirve para "no realizó" (no es despacho):
   // NO deshabilitamos el botón; la caja roja avisa y el guarda de "Despachar" bloquea solo el despacho real.
   avisarBloqueoDocMovil(vr.numero, 's-docblk');
+  avisarPreopMovil(vr.numero, 's-preopwarn'); // 🧰 preoperacional del día: avisa aquí, bloquea al despachar (sql/196)
   avisarDocsMovil(vr.numero); // aviso de documentos vencidos / por vencer de este móvil
   avisarPreventivaMovil(vr.numero, 's-pvwarn');
   avisarTallerMovil(vr.numero, 's-tallerwarn'); // 🛠️ taller (sql/111): solo avisa
@@ -25943,6 +26047,8 @@ $('sonar-send').addEventListener('click', async () => {
       if (db) { const e = $('sonar-error'); e.innerHTML = docBloqueoMsg(db); e.hidden = false; return; }
       const lb = await licBloqueada($('s-drv').value);
       if (lb) { const e = $('sonar-error'); e.innerHTML = licBloqueoMsg(lb); e.hidden = false; return; }
+      const pb = await preopBloqueado(vrB.numero); // 🧰 sin preoperacional de hoy (sql/196)
+      if (pb) { const e = $('sonar-error'); e.innerHTML = preopBloqueoMsg(pb); e.hidden = false; return; }
       const rutaNom = $('s-itin')?.selectedOptions[0]?.textContent || '';
       const condNom = $('s-drv')?.selectedOptions[0]?.textContent || '';
       const rb = await restriccionSuspende(vrB.numero, rutaNom, hoyServidor(), $('s-hora')?.value || null, current, condNom);
