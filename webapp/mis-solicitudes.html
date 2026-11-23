@@ -272,5 +272,26 @@
       </div>`;
     }
   </script>
+  <!-- Viene del menú del conductor (preoperacional.html, sql/200): la cédula va escrita y hay un botón
+       para volver. La fecha de nacimiento se sigue pidiendo (decisión del 23/11/2026). -->
+  <script>
+    (function () {
+      try {
+        if (sessionStorage.getItem('menu_conductor') !== '1') return;
+        var c = sessionStorage.getItem('preop_ced') || '';
+        var i = document.getElementById('cedula');
+        if (i && c && !i.value) i.value = c;
+        var a = document.createElement('a');
+        a.href = 'preoperacional.html#menu';
+        a.id = 'volver-menu';
+        a.textContent = '⬅ Volver al menú del conductor';
+        a.style.cssText = 'display:inline-block;margin:0 0 12px;padding:10px 14px;background:#fff;color:#1c1c1c;'
+          + 'border:1px solid #e6dada;border-radius:12px;font-weight:700;font-size:14px;text-decoration:none;'
+          + 'box-shadow:0 4px 14px rgba(0,0,0,.08)';
+        var m = document.querySelector('main');
+        if (m) m.insertBefore(a, m.firstChild);
+      } catch (e) { /* modo privado: la cédula se escribe a mano */ }
+    })();
+  </script>
 </body>
 </html>

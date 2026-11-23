@@ -19,6 +19,11 @@
     Se entra SOLO con la cédula, por eso identificar devuelve únicamente el nombre.
     Pensado para el celular y para usarse todos los días: pocos toques, letra grande y la
     pregunta completa a la vista (el conductor responde por lo que lee, no de memoria).
+    MENÚ DEL CONDUCTOR (sql/200, 23/11/2026): después de la cédula el conductor elige qué hacer:
+    el preoperacional, los documentos del bus (preop_docs_bus: fechas y estado, sin datos del
+    propietario), o ir a permisos / vacaciones / ¿cómo va mi solicitud?, que son páginas aparte y
+    siguen pidiendo la fecha de nacimiento (ahí se ven datos personales). La cédula viaja en
+    sessionStorage ('preop_ced') solo dentro de la pestaña.
   -->
   <style>
     :root {
@@ -229,12 +234,55 @@
                  margin-top: 14px; font-size: 14px; }
     .lista-mal b { display: block; margin-bottom: 6px; color: #b91c1c; }
     .lista-mal ul { margin: 0; padding-left: 20px; }
+
+    /* --- Menú del conductor (sql/200) --- */
+    .menu-ops { display: grid; gap: 10px; margin-top: 12px; }
+    .mop { display: flex; align-items: center; gap: 13px; width: 100%; text-align: left; padding: 15px 14px;
+           border: 1px solid var(--borde); border-radius: 14px; background: #fff; font-family: inherit;
+           color: var(--txt); cursor: pointer; font-size: 16px; }
+    .mop .mi { font-size: 28px; line-height: 1; flex: 0 0 auto; width: 34px; text-align: center; }
+    .mop b { display: block; font-size: 16.5px; }
+    .mop small { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; line-height: 1.32; }
+    .mop::after { content: '›'; margin-left: auto; padding-left: 6px; font-size: 28px; line-height: 1; color: #c9bcbc; }
+    .mop.prin { background: var(--rojo); border-color: var(--rojo); color: #fff; padding: 18px 14px; }
+    .mop.prin b { font-size: 18px; }
+    .mop.prin small { color: #fff; opacity: .95; font-weight: 600; }
+    .mop.prin::after { color: rgba(255,255,255,.85); }
+    .mop.prin.hecho { background: var(--ok); border-color: var(--ok); }
+    .m-nota { font-size: 12.5px; color: var(--muted); margin: 12px 2px 0; line-height: 1.45; }
+    .m-salir { display: block; margin: 14px auto 0; background: none; border: 0; padding: 8px;
+               color: var(--muted); font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
+
+    /* --- Documentos del bus (sql/200): fechas y estado --- */
+    .dbus { display: flex; align-items: center; gap: 11px; background: #eef6ff; border: 1px solid #bcd9f7;
+            border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; }
+    .dbus .bi { font-size: 28px; line-height: 1; }
+    .dbus b { display: block; font-size: 18px; color: #0b3d7a; }
+    .dbus span { font-size: 13px; color: #40618a; }
+    .dbus button { margin-left: auto; flex: 0 0 auto; background: #fff; border: 1px solid #bcd9f7; color: #1d4ed8;
+                   font: inherit; font-weight: 700; font-size: 14px; padding: 8px 12px; border-radius: 10px; cursor: pointer; }
+    .doc { background: #fff; border: 1px solid var(--borde); border-left-width: 6px; border-radius: 14px;
+           padding: 13px 14px; margin-bottom: 10px; }
+    .doc.ok  { border-left-color: var(--ok); }
+    .doc.pv  { border-left-color: #f59e0b; }
+    .doc.ven { border-left-color: var(--mal); background: #fffafa; }
+    .doc-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .doc-top b { font-size: 16px; }
+    .est { font-size: 12.5px; font-weight: 800; padding: 3px 9px; border-radius: 99px; white-space: nowrap; flex: 0 0 auto; }
+    .est.ok  { background: var(--okbg); color: #15803d; }
+    .est.pv  { background: #fef3c7; color: #92400e; }
+    .est.ven { background: var(--malbg); color: #b91c1c; }
+    .doc-d { font-size: 14px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+    .doc-av { font-size: 13px; font-weight: 700; color: #b91c1c; margin-top: 7px; }
+    .doc-av.pv { color: #92400e; }
+    .doc-rev { font-size: 13px; font-weight: 700; color: #1e40af; margin-top: 7px; }
+    #d-elegir .lista-buses { margin-bottom: 12px; }
   </style>
 </head>
 <body>
   <header>
     <img src="icons/logo.png" alt="APL" />
-    <h1>Inspección preoperacional</h1>
+    <h1 id="hd-tit">Inspección preoperacional</h1>
     <p id="hd-sub">Antes de salir a ruta</p>
     <div class="pasos" id="pasos">
       <div data-p="1"><i></i>Tú</div>
@@ -250,12 +298,56 @@
       <h2>👋 Empecemos</h2>
       <div class="guia">
         <span class="ic">1️⃣</span>
-        <div><b>Escribe tu número de cédula.</b>Con ella te identificamos: no necesitas usuario ni clave.</div>
+        <div><b>Escribe tu número de cédula.</b>Con ella te identificamos: no necesitas usuario ni clave.
+          Después eliges qué hacer: el preoperacional, ver los documentos del bus, pedir un permiso o vacaciones.</div>
       </div>
       <label for="cedula">Cédula</label>
       <input type="tel" id="cedula" class="grande" inputmode="numeric" autocomplete="off" placeholder="1 0 2 4 …" />
       <div class="err" id="e1"></div>
       <button class="btn" id="b1">Continuar</button>
+    </section>
+
+    <!-- MENÚ DEL CONDUCTOR (sql/200). El preoperacional va primero y grande: es lo de todos los días. -->
+    <section class="card" id="pm" hidden>
+      <div class="hola"><div class="ini" id="m-ini">—</div><div><b id="m-nom">—</b><span>Conductor identificado</span></div></div>
+      <h2>¿Qué vas a hacer?</h2>
+      <div class="menu-ops">
+        <button type="button" class="mop prin" id="m-preop">
+          <span class="mi">🧰</span><span><b>Preoperacional de hoy</b><small id="m-preop-est">Revisa el bus antes de salir a ruta</small></span>
+        </button>
+        <button type="button" class="mop" id="m-docs">
+          <span class="mi">📄</span><span><b>Documentos del bus</b><small id="m-docs-est">SOAT, técnico-mecánica, tarjeta de operación y preventiva</small></span>
+        </button>
+        <button type="button" class="mop" id="m-perm">
+          <span class="mi">📝</span><span><b>Pedir un permiso</b><small>Cita médica, calamidad, luto y los demás permisos o licencias</small></span>
+        </button>
+        <button type="button" class="mop" id="m-vac">
+          <span class="mi">🏖️</span><span><b>Pedir vacaciones</b><small>Tus períodos, las fechas y el día en que vuelves a trabajar</small></span>
+        </button>
+        <button type="button" class="mop" id="m-mis">
+          <span class="mi">📋</span><span><b>¿Cómo va mi solicitud?</b><small>En qué va tu permiso o tus vacaciones</small></span>
+        </button>
+      </div>
+      <p class="m-nota">Para permisos y vacaciones te pedimos también tu fecha de nacimiento, porque ahí se ven tus datos personales.</p>
+      <button type="button" class="m-salir" id="m-salir">👤 No soy yo · es otra persona</button>
+    </section>
+
+    <!-- DOCUMENTOS DEL BUS (sql/200): fechas y estado. Sin la foto del documento: trae datos del propietario. -->
+    <section class="card" id="pd" hidden>
+      <div class="dbus" id="d-bus" hidden>
+        <span class="bi">🚌</span>
+        <div><b id="d-bus-tit">—</b><span id="d-bus-sub">—</span></div>
+        <button type="button" id="d-cambiar">Cambiar</button>
+      </div>
+      <div id="d-elegir" hidden>
+        <div class="guia"><span class="ic">🚌</span><div><b>¿De qué bus quieres ver los documentos?</b>Búscalo por número o placa y tócalo.</div></div>
+        <input type="text" id="d-buscar" class="buscar" inputmode="text" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" placeholder="Buscar por número o placa" />
+        <div class="lista-buses"><div class="lb-scroll" id="d-lista"></div></div>
+      </div>
+      <div id="d-cont"></div>
+      <div class="err" id="ed"></div>
+      <button class="btn btn-sec" id="d-volver">⬅ Volver al menú</button>
     </section>
 
     <!-- PASO 2 · bus y kilometraje -->
@@ -414,6 +506,7 @@
            el dia no puede hacer la segunda, y el celular prestado no puede pasar al siguiente. -->
       <div class="g-acciones">
         <button class="btn" id="b-otro">🚌 Revisar otro bus</button>
+        <button class="btn btn-sec" id="b-menu">🏠 Volver al menú</button>
         <button class="btn btn-sec" id="b-otra">👤 Es otra persona</button>
       </div>
     </section>
@@ -446,16 +539,24 @@
     const $ = (id) => document.getElementById(id);
     const err = (el, m) => { $(el).textContent = m || ''; };
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    // Cambiar de paso: se marca arriba dónde va y la tarjeta entra con un pequeño movimiento,
+    // Cambiar de pantalla: se marca arriba dónde va y la tarjeta entra con un pequeño movimiento,
     // para que se note que avanzó (el conductor lo hace de afán, en la calle).
+    // Los números son los pasos del preoperacional; 'm' es el menú del conductor y 'd' los
+    // documentos del bus (sql/200), que no son pasos: ahí no se muestra la barra de avance.
+    const PANTALLAS = { 1: 'p1', 2: 'p2', 3: 'p3', 4: 'p4', 5: 'p5', m: 'pm', d: 'pd' };
     const paso = (n) => {
-      [1, 2, 3, 4, 5].forEach((i) => { $('p' + i).hidden = (i !== n); });
-      const vis = $('p' + n);
+      Object.keys(PANTALLAS).forEach((k) => { $(PANTALLAS[k]).hidden = (k !== String(n)); });
+      const vis = $(PANTALLAS[n]);
       vis.classList.remove('anim'); void vis.offsetWidth; vis.classList.add('anim');
+      const esPaso = typeof n === 'number';
+      $('pasos').hidden = !esPaso;
+      $('hd-tit').textContent = n === 'm' ? 'Menú del conductor' : n === 'd' ? 'Documentos del bus' : 'Inspección preoperacional';
+      if (!esPaso) $('hd-sub').textContent = 'Autobuses El Poblado';
+      else if (n <= 2) $('hd-sub').textContent = 'Antes de salir a ruta';
       document.querySelectorAll('#pasos div').forEach((d) => {
         const p = Number(d.dataset.p);
-        d.classList.toggle('on', p === n);
-        d.classList.toggle('hecho', p < n || n === 5);
+        d.classList.toggle('on', esPaso && p === n);
+        d.classList.toggle('hecho', esPaso && (p < n || n === 5));
       });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -465,25 +566,179 @@
     const RESP = new Map(); // orden → { respuesta, comentario }
 
     // ---------- Paso 1: identificarse con la cédula ----------
-    $('b1').addEventListener('click', async () => {
-      const ced = ($('cedula').value || '').replace(/\D/g, '');
-      if (ced.length < 4) return err('e1', 'Escribe tu número de cédula.');
-      err('e1', '');
+    // Lleva al menú del conductor; o directo a revisar el bus cuando viene de "Revisar otro bus",
+    // que ya eligió qué hacer.
+    let SUG = null, HOY_MIOS = [], BUS_HOY = null;
+    async function identificar(ced, destino) {
       $('b1').disabled = true; $('b1').textContent = 'Buscando…';
       try {
         const { data, error } = await sb.rpc('preop_identificar', { p_cedula: ced });
         if (error) throw error;
-        if (!data || !data.ok) return err('e1', (data && data.error) || 'No se pudo verificar la cédula.');
+        if (!data || !data.ok) { paso(1); return err('e1', (data && data.error) || 'No se pudo verificar la cédula.'); }
         CED = ced; NOMBRE = data.nombre || ''; PREGUNTAS = data.preguntas || [];
-        $('nom').textContent = NOMBRE;
-        $('ini').textContent = (NOMBRE.trim()[0] || '?').toUpperCase();
+        SUG = data.sugerido && data.sugerido.movil ? data.sugerido : null;
+        HOY_MIOS = Array.isArray(data.hoy) ? data.hoy : [];   // sql/200: lo que ya hizo hoy
+        BUS_HOY = data.bus_hoy || null;                       // sql/200: el bus propuesto ya tiene la de hoy
+        const ini = (NOMBRE.trim()[0] || '?').toUpperCase();
+        $('nom').textContent = NOMBRE; $('ini').textContent = ini;
+        $('m-nom').textContent = NOMBRE; $('m-ini').textContent = ini;
         pintarPreguntas();
         mostrarSugerencia(data.sugerido);
-        paso(2);
-      } catch (ex) { err('e1', 'No se pudo conectar. Revisa la señal e intenta otra vez.'); }
+        pintarMenu();
+        paso(destino || 'm');
+      } catch (ex) { paso(1); err('e1', 'No se pudo conectar. Revisa la señal e intenta otra vez.'); }
       finally { $('b1').disabled = false; $('b1').textContent = 'Continuar'; }
+    }
+    $('b1').addEventListener('click', () => {
+      const ced = ($('cedula').value || '').replace(/\D/g, '');
+      if (ced.length < 4) return err('e1', 'Escribe tu número de cédula.');
+      err('e1', '');
+      identificar(ced, 'm');
     });
     $('cedula').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('b1').click(); });
+
+    // ---------- Menú del conductor (sql/200) ----------
+    function pintarMenu() {
+      const b = $('m-preop'), est = $('m-preop-est');
+      if (HOY_MIOS.length) {
+        b.classList.add('hecho');
+        est.textContent = '✅ Ya la hiciste hoy: ' + HOY_MIOS.map((x) => 'bus ' + x.movil + ' a las ' + x.hora).join(', ')
+          + '. Si cambias de bus, haz la del nuevo.';
+      } else {
+        b.classList.remove('hecho');
+        est.textContent = SUG && BUS_HOY
+          ? '⚠️ Aún no la has hecho hoy. El bus ' + SUG.movil + ' ya tiene una de hoy (' + BUS_HOY + ').'
+          : '⚠️ Aún no la has hecho hoy. Sin ella el bus no se puede despachar.';
+      }
+      $('m-docs-est').textContent = (SUG ? 'Bus ' + SUG.movil + ': ' : '')
+        + 'SOAT, técnico-mecánica, tarjeta de operación y preventiva';
+    }
+    $('m-preop').addEventListener('click', () => paso(2));
+    $('m-docs').addEventListener('click', () => abrirDocs(SUG ? SUG.movil : ''));
+    // Permisos, vacaciones y la consulta son páginas que ya existen. Se abren en esta misma pestaña
+    // con la cédula escrita y un botón para volver; la fecha de nacimiento la siguen pidiendo
+    // (decisión del 23/11/2026: ahí se ven datos personales).
+    function irA(pagina) {
+      try { sessionStorage.setItem('preop_ced', CED); sessionStorage.setItem('menu_conductor', '1'); }
+      catch (e) { /* modo privado: allá escribe la cédula a mano */ }
+      location.href = pagina;
+    }
+    $('m-perm').addEventListener('click', () => irA('permisos.html'));
+    $('m-vac').addEventListener('click', () => irA('vacaciones.html'));
+    $('m-mis').addEventListener('click', () => irA('mis-solicitudes.html'));
+    $('m-salir').addEventListener('click', () => {
+      try { sessionStorage.removeItem('preop_ced'); sessionStorage.removeItem('menu_conductor'); } catch (e) { /* modo privado */ }
+      location.replace(location.pathname + location.search);
+    });
+
+    // ---------- Documentos del bus (sql/200): fechas y estado ----------
+    const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const DIAS_SEM = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    function fechaLarga(iso) {
+      const [y, mo, da] = String(iso || '').slice(0, 10).split('-').map(Number);
+      if (!y || !mo || !da) return '—';
+      const d = new Date(y, mo - 1, da);
+      return DIAS_SEM[d.getDay()] + ' ' + da + ' de ' + MESES[mo - 1] + ' de ' + y;
+    }
+    const dias = (n) => n + ' día' + (n === 1 ? '' : 's');
+    // Mismos umbrales que el aviso de documentos al despachar: vencido, por vencer (30 días) o vigente.
+    function estadoDoc(d) {
+      if (d.vence == null || d.dias == null) return { c: 'pv', t: 'Sin fecha', det: 'La empresa no tiene registrada la fecha de vencimiento.' };
+      const n = Number(d.dias);
+      if (n < 0) return { c: 'ven', t: '⛔ Vencido', det: 'Venció el ' + fechaLarga(d.vence) + ' (hace ' + dias(-n) + ').' };
+      if (n === 0) return { c: 'pv', t: '🟠 Vence hoy', det: 'Vence hoy, ' + fechaLarga(d.vence) + '.' };
+      if (n <= 30) return { c: 'pv', t: '🟠 Por vencer', det: 'Vence el ' + fechaLarga(d.vence) + ' (en ' + dias(n) + ').' };
+      return { c: 'ok', t: '✅ Vigente', det: 'Vence el ' + fechaLarga(d.vence) + ' (faltan ' + dias(n) + ').' };
+    }
+    async function abrirDocs(mov) {
+      paso('d'); err('ed', '');
+      $('d-cont').innerHTML = ''; $('d-bus').hidden = true;
+      if (!mov) { elegirBusDocs(); return; }
+      $('d-elegir').hidden = true;
+      $('d-cont').innerHTML = '<p class="hint">Buscando los documentos del bus ' + esc(mov) + '…</p>';
+      try {
+        const { data, error } = await sb.rpc('preop_docs_bus', { p_cedula: CED, p_movil: mov });
+        if (error) throw error;
+        if (!data || !data.ok) {
+          $('d-cont').innerHTML = '';
+          err('ed', (data && data.error) || 'No se pudieron traer los documentos.');
+          elegirBusDocs();
+          return;
+        }
+        pintarDocs(data);
+      } catch (ex) {
+        $('d-cont').innerHTML = '';
+        err('ed', 'No se pudo conectar. Revisa la señal e intenta otra vez.');
+      }
+    }
+    function pintarDocs(x) {
+      $('d-bus-tit').textContent = 'Bus ' + x.movil + (x.placa ? ' · ' + x.placa : '');
+      $('d-bus-sub').textContent = [x.marca, x.modelo, x.clase].filter(Boolean).join(' · ') || 'Vehículo de la compañía';
+      $('d-bus').hidden = false;
+      const html = (x.docs || []).map((d) => {
+        const e = estadoDoc(d);
+        const extra = [d.numero ? 'N.° ' + esc(d.numero) : '', d.entidad ? esc(d.entidad) : ''].filter(Boolean).join(' · ');
+        const aviso = d.en_revision
+          ? '<div class="doc-rev">📎 Ya se subió el documento nuevo: operaciones lo está revisando.</div>'
+          : e.c === 'ven' ? '<div class="doc-av">Avísale a operaciones: con este documento vencido el bus no se puede despachar.</div>'
+          : e.c === 'pv' ? '<div class="doc-av pv">' + (d.vence == null ? 'Avísale a operaciones para que registren la fecha.'
+            : 'Avísale a operaciones para que lo renueven a tiempo.') + '</div>' : '';
+        return '<div class="doc ' + e.c + '"><div class="doc-top"><b>' + esc(d.nombre) + '</b><span class="est ' + e.c + '">' + e.t + '</span></div>'
+          + '<div class="doc-d">' + esc(e.det) + (extra ? '<br>' + extra : '') + '</div>' + aviso + '</div>';
+      });
+      const pv = x.preventiva;
+      if (x.preventiva_suspendido) {
+        html.push('<div class="doc ven"><div class="doc-top"><b>🔧 Revisión preventiva</b><span class="est ven">🚫 No aprobó</span></div>'
+          + '<div class="doc-d">El bus no aprobó la última revisión preventiva. No se puede despachar hasta que operaciones apruebe la nueva'
+          + (pv ? ', que es el ' + esc(fechaLarga(pv.fecha)) + (pv.lugar ? ' en ' + esc(pv.lugar) : '') : '') + '.</div></div>');
+      } else if (pv) {
+        const n = Number(pv.dias), c = n <= 7 ? 'pv' : 'ok';
+        html.push('<div class="doc ' + c + '"><div class="doc-top"><b>🔧 Próxima revisión preventiva</b><span class="est ' + c + '">'
+          + (n === 0 ? 'Es hoy' : n === 1 ? 'Es mañana' : 'En ' + dias(n)) + '</span></div>'
+          + '<div class="doc-d">El ' + esc(fechaLarga(pv.fecha)) + (pv.lugar ? '<br>' + esc(pv.lugar) : '') + '</div></div>');
+      } else {
+        html.push('<div class="doc"><div class="doc-top"><b>🔧 Revisión preventiva</b></div>'
+          + '<div class="doc-d">Por ahora no tiene una cita programada.</div></div>');
+      }
+      $('d-cont').innerHTML = html.join('')
+        + '<p class="m-nota">Son los datos que la empresa tiene registrados. Los documentos originales van en el bus. Si algo no coincide, avísale a operaciones.</p>';
+    }
+    // Elegir otro bus para ver sus documentos: la misma lista de vehículos activos del paso 2.
+    let FILT_D = [];
+    function elegirBusDocs() {
+      $('d-elegir').hidden = false;
+      $('d-buscar').value = '';
+      pintarListaDocs('');
+    }
+    function pintarListaDocs(filtro) {
+      const cont = $('d-lista');
+      if (!BUSES.length) {
+        FILT_D = [];
+        cont.innerHTML = '<div class="lb-vacio">Sin la lista de buses. Escribe el número del bus y toca Enter.</div>';
+        return;
+      }
+      const t = normP(filtro);
+      FILT_D = t ? BUSES.filter((b) => normP(b.movil).startsWith(t) || normP(b.placa).includes(t)) : BUSES;
+      cont.innerHTML = FILT_D.length
+        ? FILT_D.map((b, i) => '<button type="button" data-i="' + i + '"><b>' + esc(b.movil) + '</b><span>' + esc(b.placa || '') + '</span></button>').join('')
+        : '<div class="lb-vacio">Ningún vehículo activo coincide con «' + esc(filtro) + '».</div>';
+    }
+    $('d-buscar').addEventListener('input', () => pintarListaDocs($('d-buscar').value));
+    $('d-buscar').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const v = $('d-buscar').value.trim();
+      if (v) abrirDocs(FILT_D.length === 1 ? FILT_D[0].movil : v);
+    });
+    $('d-lista').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-i]'); if (!b) return;
+      const it = FILT_D[Number(b.dataset.i)];
+      if (it) abrirDocs(it.movil);
+    });
+    $('d-cambiar').addEventListener('click', () => {
+      $('d-cont').innerHTML = ''; $('d-bus').hidden = true; err('ed', '');
+      elegirBusDocs();
+    });
+    $('d-volver').addEventListener('click', () => paso('m'));
 
     // ---------- Paso 2: el bus (QR, lista o escribiéndolo) ----------
     // La lista de buses activos se trae una vez: con ella la búsqueda es instantánea y el QR
@@ -748,7 +1003,8 @@
       $('hd-sub').textContent = 'Bus ' + MOVIL + ' · ' + PLACA;
       paso(3);
     });
-    $('b2v').addEventListener('click', () => { cerrarSugs(); paso(1); });
+    // Volver lleva al menú. (Antes llamaba a cerrarSugs(), que no existe: el botón no hacía nada.)
+    $('b2v').addEventListener('click', () => paso('m'));
 
     // ---------- Paso 3: las preguntas ----------
     function pintarPreguntas() {
@@ -967,18 +1223,26 @@
     // temprano; recargar es la unica forma segura de empezar limpio.
     // La cedula se conserva en la pestana para el caso comun -- el mismo conductor que cambia
     // de carro -- y se borra cuando el celular pasa a otra persona.
-    $('b-otro').addEventListener('click', () => {
+    // Recarga y vuelve a entrar solo: '#preop' = directo a elegir el bus, '#menu' = al menú.
+    const recargarEn = (donde) => {
       try { sessionStorage.setItem('preop_ced', CED); } catch (e) { /* modo privado */ }
+      history.replaceState(null, '', location.pathname + location.search + '#' + donde);
       location.reload();
-    });
+    };
+    $('b-otro').addEventListener('click', () => recargarEn('preop'));
+    $('b-menu').addEventListener('click', () => recargarEn('menu'));
     $('b-otra').addEventListener('click', () => {
-      try { sessionStorage.removeItem('preop_ced'); } catch (e) { /* modo privado */ }
-      location.reload();
+      try { sessionStorage.removeItem('preop_ced'); sessionStorage.removeItem('menu_conductor'); } catch (e) { /* modo privado */ }
+      location.replace(location.pathname + location.search);
     });
-    // Si viene de hacer una, no tiene por que volver a teclear 10 digitos en plena calle.
+    // Si viene de hacer una, o vuelve de permisos / vacaciones ("Volver al menú"), no tiene por qué
+    // volver a teclear 10 dígitos en plena calle: entra solo y va a donde iba.
     try {
       const ced0 = sessionStorage.getItem('preop_ced');
+      const ir = (location.hash || '').slice(1);
       if (ced0) $('cedula').value = ced0;
+      if (ir) history.replaceState(null, '', location.pathname + location.search);
+      if (ced0 && (ir === 'menu' || ir === 'preop')) identificar(ced0, ir === 'preop' ? 2 : 'm');
     } catch (e) { /* modo privado: se escribe a mano y ya */ }
   </script>
 </body>

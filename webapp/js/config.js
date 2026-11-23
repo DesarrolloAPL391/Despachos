@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v373';
+export const APP_VERSION = 'v374';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -196,6 +196,53 @@ export function reemplazoOpciones(lista, vacio = '— Todavía no se sabe —') 
     h += `<option value="${e(p.n)}">${e(nombre(p.n))}${p.c ? ' · ' + e(frase(p.c)) : ''}</option>`;
   });
   return (lista || []).length ? h + '</optgroup>' : h;
+}
+
+// ¿Quién te reemplaza?, con la lista partida (pedido del 23/11/2026, sql/201): primero SOLO las
+// personas de su área y, de última, "Es de otra área…", que abre una segunda lista con las demás.
+// La base marca con m=true a los de su misma área; si todavía no lo manda, su área es la del
+// primero de la lista (la base siempre la pone primero). Si no tiene compañeros de área, sale la
+// lista completa como antes. Lo elegido se lee con reemplazoValor(), no con sel.value.
+export const REEMPLAZO_OTRA = '__otra_area__';
+export function montarReemplazo(sel, lista, vacio = '— Todavía no se sabe —') {
+  if (!sel) return;
+  const todos = Array.isArray(lista) ? lista : [];
+  const marca = todos.some((p) => typeof p.m === 'boolean');
+  const area0 = todos.length ? (todos[0].a || '') : '';
+  const mia = (p) => (marca ? p.m === true : (p.a || '') === area0);
+  const propios = todos.filter(mia), otros = todos.filter((p) => !mia(p));
+  let w2 = sel._reempOtra || null;
+  if (!propios.length || !otros.length) {
+    sel.innerHTML = reemplazoOpciones(todos, vacio);
+    if (w2) { w2.hidden = true; w2.querySelector('select').innerHTML = ''; }
+    sel.onchange = null;
+    return;
+  }
+  sel.innerHTML = reemplazoOpciones(propios, vacio) + `<option value="${REEMPLAZO_OTRA}">➕ Es de otra área…</option>`;
+  if (!w2) {
+    const wrap = sel.closest('label') || sel.parentNode;
+    w2 = document.createElement('label');
+    w2.className = wrap.className;            // mismo ancho que el campo de arriba en la grilla
+    w2.setAttribute('data-reemp-otra', '');
+    w2.append('¿Quién, de otra área? ');
+    w2.appendChild(document.createElement('select'));
+    wrap.insertAdjacentElement('afterend', w2);
+    sel._reempOtra = w2;
+  }
+  const s2 = w2.querySelector('select');
+  s2.innerHTML = reemplazoOpciones(otros, '— Elige a la persona —');
+  w2.hidden = true;
+  sel.onchange = () => {
+    const otra = sel.value === REEMPLAZO_OTRA;
+    w2.hidden = !otra;
+    if (otra) s2.focus(); else s2.value = '';
+  };
+}
+// Lo que se guarda: la persona elegida, sea de su área o de otra ('' = todavía no se sabe).
+export function reemplazoValor(sel) {
+  if (!sel) return '';
+  if (sel.value !== REEMPLAZO_OTRA) return sel.value;
+  return sel._reempOtra ? sel._reempOtra.querySelector('select').value : '';
 }
 
 export const PERFIL_LISTAS = {

@@ -2,7 +2,7 @@
 // antes de este módulo). Antes venía de esm.sh sin versión fija: 13 archivos encadenados (28 s con la red lenta) y
 // cualquier versión nueva de la librería entraba sola a la app.
 const { createClient } = window.supabase;
-import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, reemplazoOpciones, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, ANTECEDENTES_DESDE, ANTECEDENTES_ENT, antecedentesObligatoria, antecedentesEsConductor, antecedentesFaltan, ingresoRequisitos, tiempoEntre } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, TABLES, TABLE_ORDER, PAGE_SIZE, APP_VERSION, TOMTOM_KEY, configTablaPuesto, PERFIL_LISTAS, edadPerfil, antiguedadPerfil, ASPIRANTE_LISTAS, ASPIRANTE_ETAPAS, ASPIRANTE_CAMPOS, PERMISO_TIPOS, permisoReglas, permisoVence, montarReemplazo, reemplazoValor, HV_LISTAS, hvFilaTexto, hvListaTexto, hojaVidaFaltantes, PERFIL_SELECCION, ANTECEDENTES_DESDE, ANTECEDENTES_ENT, antecedentesObligatoria, antecedentesEsConductor, antecedentesFaltan, ingresoRequisitos, tiempoEntre } from './config.js';
 import { listaEditor, leerLista } from './hoja-vida.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -20881,7 +20881,7 @@ async function vacRegBuscar() {
     m.querySelector('[data-sabado]').checked = !!data.sabado_habil;
     // Quién lo reemplaza: solo a administrativos que no son despachadores ni gestores (sql/170).
     m.querySelector('[data-reemplaza-w]').hidden = !Array.isArray(data.reemplazo);
-    m.querySelector('[data-reemplaza]').innerHTML = reemplazoOpciones(data.reemplazo);
+    montarReemplazo(m.querySelector('[data-reemplaza]'), data.reemplazo); // su área primero; "Es de otra área" (sql/201)
     m.querySelector('[data-form]').hidden = data.estado !== 'ACTIVO';
     m.querySelector('[data-guardar]').disabled = data.estado !== 'ACTIVO';
     vacRegCalcular();
@@ -20929,7 +20929,7 @@ async function vacRegGuardar() {
     const { data, error } = await sb.rpc('vacaciones_registrar', {
       p_cedula: p.cedula, p_periodo: periodo, p_inicio: dias ? (m.querySelector('[data-inicio]').value || null) : null,
       p_dias_disfrute: dias, p_dias_dinero: Math.floor(Number(m.querySelector('[data-dinero]').value) || 0),
-      p_reemplaza: Array.isArray(p.reemplazo) ? (m.querySelector('[data-reemplaza]').value || null) : null,
+      p_reemplaza: Array.isArray(p.reemplazo) ? (reemplazoValor(m.querySelector('[data-reemplaza]')) || null) : null,
       p_solicitada_por: m.querySelector('[data-por]').value, p_sabado_habil: m.querySelector('[data-sabado]').checked,
       p_observacion: m.querySelector('[data-obs]').value.trim() || null });
     if (error) throw error;

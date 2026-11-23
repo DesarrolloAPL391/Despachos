@@ -190,7 +190,7 @@
         <div class="grid">
           <label class="full" id="reemplaza-w" hidden>¿Quién te reemplaza?
             <select id="reemplaza"></select>
-            <span class="hint">Elige al compañero administrativo que hace tus funciones en tus vacaciones.</span>
+            <span class="hint">Elige al compañero de tu área que hace tus funciones en tus vacaciones. Si es de otra área, toca «Es de otra área…».</span>
           </label>
           <label class="full">Celular
             <input type="tel" id="celular" inputmode="numeric" placeholder="3001234567" />
@@ -241,7 +241,7 @@
 
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-    import { SUPABASE_URL, SUPABASE_ANON_KEY, reemplazoOpciones } from './js/config.js';
+    import { SUPABASE_URL, SUPABASE_ANON_KEY, montarReemplazo, reemplazoValor } from './js/config.js?v=374'; // ?v: que no use un config.js viejo de la caché del navegador (sql/201)
 
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
     const PRUEBA = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
@@ -353,7 +353,7 @@
       $('hola').hidden = false;
       // Solo a los administrativos que no son despachadores ni gestores (la base decide, sql/170).
       $('reemplaza-w').hidden = !Array.isArray(quien.reemplazo);
-      $('reemplaza').innerHTML = reemplazoOpciones(quien.reemplazo);
+      montarReemplazo($('reemplaza'), quien.reemplazo); // su área primero; "Es de otra área" abre las demás (sql/201)
       const mias = quien.solicitudes || [];
       $('mias').hidden = !mias.length;
       $('mias-l').innerHTML = mias.map((s) => `<div class="mia">
@@ -521,7 +521,7 @@
           const r = await sb.rpc('vacaciones_radicar', {
             p_cedula: ced(), p_fecha_nacimiento: $('fnac').value,
             p_periodo: per, p_inicio: dias ? inicio : null, p_dias_disfrute: dias, p_dias_dinero: din,
-            p_reemplaza: Array.isArray(quien.reemplazo) ? ($('reemplaza').value || null) : null, p_solicitada_por: por,
+            p_reemplaza: Array.isArray(quien.reemplazo) ? (reemplazoValor($('reemplaza')) || null) : null, p_solicitada_por: por,
             p_celular: ($('celular').value || '').replace(/\D/g, '') || null, p_observacion: $('obs').value.trim() || null });
           if (r.error) throw r.error;
           data = r.data;
@@ -541,6 +541,27 @@
       } finally { b.disabled = false; b.textContent = 'Enviar la solicitud'; }
     });
     $('otra').addEventListener('click', () => location.reload());
+  </script>
+  <!-- Viene del menú del conductor (preoperacional.html, sql/200): la cédula va escrita y hay un botón
+       para volver. La fecha de nacimiento se sigue pidiendo (decisión del 23/11/2026). -->
+  <script>
+    (function () {
+      try {
+        if (sessionStorage.getItem('menu_conductor') !== '1') return;
+        var c = sessionStorage.getItem('preop_ced') || '';
+        var i = document.getElementById('cedula');
+        if (i && c && !i.value) i.value = c;
+        var a = document.createElement('a');
+        a.href = 'preoperacional.html#menu';
+        a.id = 'volver-menu';
+        a.textContent = '⬅ Volver al menú del conductor';
+        a.style.cssText = 'display:inline-block;margin:0 0 12px;padding:10px 14px;background:#fff;color:#1c1c1c;'
+          + 'border:1px solid #e6dada;border-radius:12px;font-weight:700;font-size:14px;text-decoration:none;'
+          + 'box-shadow:0 4px 14px rgba(0,0,0,.08)';
+        var m = document.querySelector('main');
+        if (m) m.insertBefore(a, m.firstChild);
+      } catch (e) { /* modo privado: la cédula se escribe a mano */ }
+    })();
   </script>
 </body>
 </html>
