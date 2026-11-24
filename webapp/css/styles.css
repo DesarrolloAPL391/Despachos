@@ -2782,6 +2782,93 @@ body:has(#asp-modal:not([hidden])) .toast, body:has(#aspdet-modal:not([hidden]))
 .liq-rev td.ok { color: #15803d; }
 .liq-rev small { color: #64748b; }
 .liq-rev small.mal { color: #b91c1c; font-weight: 700; }
+/* Cartera de conductores (sql/154 + 155): tablero sobre la pantalla de estadísticas */
+.car-tile { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.car-tile:hover, .car-tile:focus-visible { border-color: #c9c7bd; box-shadow: 0 2px 10px rgba(0,0,0,.06); outline: none; }
+.car-t-debe { border-left: 4px solid #b91c1c; }
+.car-t-debe .pst-tile-v { color: #b91c1c; }
+.car-t-ok { border-left: 4px solid #15803d; }
+.car-t-ok .pst-tile-v { color: #15803d; }
+.car-track { margin-right: 120px; }
+.pst-bar-row.car-sel { background: #eef4fd; }
+.car-svg { width: 100%; height: auto; display: block; }
+.car-eje { font-size: 11px; fill: #52514e; font-variant-numeric: tabular-nums; }
+.car-ley { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: #52514e; margin: 0 0 6px; }
+.car-ley span { display: inline-flex; align-items: center; gap: 6px; }
+.car-ley i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.car-ley i.car-ley-pt { width: 9px; height: 9px; border-radius: 50%; border: 2px solid; background: #fff; }
+.car-rev { display: grid; gap: 6px; max-height: 300px; overflow-y: auto; }
+.car-rev-f { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px;
+             border: 1px solid #e1e0d9; border-radius: 10px; font-size: 13px; cursor: pointer; }
+.car-rev-f small { color: #6b6b6b; }
+.car-chip { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 99px;
+            white-space: nowrap; background: #fff4e0; color: #8a4b05; }
+.car-chip.ok { background: #e8f6ec; color: #15803d; }
+.car-chip.mal { background: #fdecec; color: #b91c1c; }
+.car-filtros { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.car-fchip { border: 1px solid var(--border); background: #fff; border-radius: 99px; padding: 5px 11px; font-size: 12.5px;
+             cursor: pointer; color: #1c1c1c; font-family: inherit; }
+.car-fchip b { font-variant-numeric: tabular-nums; margin-left: 2px; }
+.car-fchip.on { background: #0b0b0b; border-color: #0b0b0b; color: #fff; }
+.car-buscar { flex: 1 1 220px; min-width: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+              font-size: 13.5px; background: #fff; color: inherit; font-family: inherit; }
+.car-tabla td small { color: #6b6b6b; }
+.car-tabla td:first-child { overflow-wrap: anywhere; }
+.pst-tabla .car-debe, .car-tabla small.car-debe { color: #b91c1c; font-weight: 700; }
+.pst-tabla .car-ok { color: #15803d; }
+.car-volver { margin-bottom: 10px; }
+/* En el celular la lista deja lo esencial (conductor, saldo, si paga a tiempo); el resto está en el detalle */
+@media (max-width: 600px) {
+  .car-tabla th:nth-child(2), .car-tabla td:nth-child(2), .car-tabla th:nth-child(3), .car-tabla td:nth-child(3),
+  .car-tabla th:nth-child(n+6), .car-tabla td:nth-child(n+6) { display: none; }
+}
+/* En el detalle, las dos tablas van a lo ancho de media pantalla (con tres columnas no caben) */
+.car-det-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); }
+.car-cab h3 { margin: 0; font-size: 18px; }
+.car-cab { margin-bottom: 12px; }
+/* Tope de alerta: los que lo pasan (arriba, en rojo) y la línea para cambiarlo */
+.car-alerta-box { background: #fdeaea; border: 1px solid #f3b4ad; border-left: 4px solid #b91c1c; border-radius: 12px;
+  padding: 10px 14px; margin: 0 0 12px; color: #5f1414; font-size: 14px; }
+.car-alerta-h { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.car-alerta-l { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.car-al-c { border: 1px solid #f3b4ad; background: #fff; border-radius: 99px; padding: 4px 11px; font-size: 12.5px;
+  color: #2b2b2b; cursor: pointer; text-align: left; }
+.car-al-c:hover, .car-al-c:focus-visible { border-color: #b91c1c; outline: none; }
+.car-al-pasa { color: #b91c1c; font-weight: 800; }
+.car-al-mas { align-self: center; font-size: 12.5px; }
+.car-cfg { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 9px 14px; margin: 0 0 12px; font-size: 13.5px; }
+.car-cfg.sin { border: 1px dashed #d9a400; background: #fffaf0; }
+.car-cfg summary { cursor: pointer; line-height: 1.5; }
+.car-cfg summary .lnk { margin-left: 4px; }
+.car-cfg .car-ok { color: #15803d; font-weight: 700; }
+.car-cfg-f { display: grid; gap: 10px; margin-top: 10px; }
+.car-cfg-f label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.car-cfg-in { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; }
+.car-cfg-in input { width: 130px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 15px;
+  font-variant-numeric: tabular-nums; }
+#car-cfg-dias { width: 76px; }
+.car-tabla tr.car-al-fila td { background: #fff4f4; }
+.car-tabla small.car-al-tag { color: #b91c1c; font-weight: 700; }
+.car-ley i.car-ley-tope { width: 16px; height: 0; border-top: 2px dashed #b91c1c; border-radius: 0; }
+/* Top 10 de los que pagan a tiempo y de los que no (sql/155) */
+.car-top { display: grid; gap: 2px; }
+.car-top-f { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(60px, 28%) 46px; align-items: center; gap: 10px;
+  padding: 7px 8px; border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; width: 100%; }
+.car-top-f:hover, .car-top-f:focus-visible { background: #f4f3ef; outline: none; }
+.car-top-n { font-weight: 800; color: #6b6b6b; text-align: right; font-variant-numeric: tabular-nums; }
+.car-top-q { min-width: 0; font-size: 13.5px; line-height: 1.3; }
+.car-top-q b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.car-top-q small { color: #6b6b6b; }
+.car-top-q small.car-debe { color: #b91c1c; font-weight: 700; }
+.car-top-b { height: 8px; background: #eeede7; border-radius: 4px; overflow: hidden; }
+.car-top-b i { display: block; height: 100%; border-radius: 4px; }
+.car-top-p { font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+  .car-top-f { grid-template-columns: 22px minmax(0, 1fr) 46px; }
+  .car-top-b { display: none; }
+  .car-top-q b { white-space: normal; }
+}
 .col-foto { display: block; max-width: 100%; max-height: 520px; margin: 0 auto 8px; border-radius: 8px; border: 1px solid var(--border); }
 .col-ocr { white-space: pre-wrap; font-size: 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px; max-height: 240px; overflow: auto; }
 
@@ -3490,9 +3577,144 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .liq-cond-box { background: var(--bg); border-radius: 10px; padding: 9px 12px; margin-bottom: 10px;
                 font-size: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .liq-ced { font-size: 12.5px; color: var(--muted); font-weight: 600; }
-.liq-foto { margin-top: 18px; border-top: 2px solid var(--border); padding-top: 12px; }
+.liq-foto { margin-top: 12px; }
 .liq-foto h4 { margin: 0 0 6px; font-size: 15px; }
 .liq-foto-hay { font-size: 13px; color: var(--muted); }
+
+/* Liquidaciones como PANTALLA del programa (antes era una ventana): a lo ancho, en tarjetas */
+.liq-cab { grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.liq-card { background: #fff; padding: 14px 12px; border-radius: 14px; }
+.liq-card b { font-size: clamp(16px, 2.2vw, 24px); }
+.liq-card span { font-size: 12.5px; }
+.liq-verif { display: flex; gap: 12px 18px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+             background: #fff8e6; border: 1px solid #f3e0b0; border-radius: 14px; padding: 14px 18px; margin-bottom: 12px; }
+.liq-verif-t { display: flex; flex-direction: column; gap: 4px; color: #7a5200; font-size: 14px; min-width: 0; flex: 1 1 320px; }
+.liq-verif-t > b { font-size: 16px; }
+.liq-verif-t small { color: #92650a; font-size: 12.5px; }
+.liq-verif .btn { font-size: 15px; padding: 10px 20px; }
+.liq-estado { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.liq-est { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px;
+           display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.liq-est h4 { margin: 0; font-size: 14.5px; }
+.liq-est p { margin: 0; font-size: 13.5px; color: var(--muted); flex: 1; overflow-wrap: anywhere; }
+.liq-est small { font-size: 12px; color: var(--muted); }
+.liq-est .btn { align-self: flex-start; }
+.liq-est-acc { display: flex; gap: 6px; flex-wrap: wrap; }
+.liq-lista-card { margin-bottom: 12px; }
+.liq-lista-card .liq-filtros { margin-bottom: 12px; }
+.liq-filtros input[type="date"], .liq-filtros select { font-size: 14px; padding: 8px 10px; }
+.liq-tot { font-size: 14px; }
+.liq-tabla-wrap { overflow-x: auto; }
+.liq-tabla-wrap .pp-tabla { font-size: 14.5px; }
+.liq-tabla-wrap .pp-tabla td { padding: 11px 10px; }
+.liq-cond { max-width: 260px; }
+.liq-fila-vista td { background: #fff8e6; }
+.liq-volver { margin-bottom: 12px; }
+.liq-cond-box { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 12px 16px; font-size: 16px; }
+/* 🔎 Qué corregir en la hoja */
+.liq-guia { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 12px 16px;
+            margin: 4px 0 12px; font-size: 13.5px; }
+.liq-guia ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.liq-guia .btn { margin-left: 4px; }
+.liq-rev-card { margin-bottom: 12px; }
+.liq-rev2 td.ok { color: #15803d; font-weight: 600; }
+.liq-rev2 td.mal { color: #b91c1c; font-weight: 700; }
+.liq-rev2 tbody tr.liq-fila { cursor: pointer; }
+.liq-rev2 tbody tr.liq-fila:hover { background: var(--bg); }
+.liq-abrir { color: var(--primary); font-weight: 700; white-space: nowrap; text-align: right; }
+/* 🏦 ¿Se pagó este día? (día de un bus): verde pagado, amarillo pendiente/en plazo, rojo sin pagar */
+.liq-pago-chip { margin-left: auto; border-radius: 999px; padding: 5px 12px; font-size: 13.5px; font-weight: 700;
+                 background: #eef2f7; color: #475569; white-space: nowrap; }
+.liq-pago-chip.ok { background: #e9f8ee; color: #15803d; }
+.liq-pago-chip.parcial { background: #fff4d6; color: #8a5a00; }
+.liq-pago-chip.debe { background: #fde8e8; color: #b91c1c; }
+.liq-pago { margin-bottom: 12px; border-left: 6px solid #cbd5e1; }
+.liq-pago.ok { border-left-color: #16a34a; background: #f6fcf8; }
+.liq-pago.parcial { border-left-color: #d97706; background: #fffbf0; }
+.liq-pago.debe { border-left-color: #dc2626; background: #fff7f7; }
+.liq-pago h4 { margin: 0 0 8px; font-size: 15px; }
+.liq-pago p { margin: 6px 0; font-size: 13.5px; color: var(--muted); }
+.liq-pago-est { font-size: 19px; font-weight: 800; margin: 2px 0 8px; color: #0f172a; }
+.liq-pago.ok .liq-pago-est { color: #15803d; }
+.liq-pago.debe .liq-pago-est { color: #b91c1c; }
+.liq-pago.parcial .liq-pago-est { color: #8a5a00; }
+.liq-pago-cifras { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; margin-bottom: 10px; }
+.liq-pago-tabla { margin-bottom: 4px; }
+/* En el celular estas tablas se deslizan de lado en vez de apretarse (y montar un texto encima de otro) */
+.liq-tabla-wrap .liq-pago-tabla, .liq-tabla-wrap .liq-dia-tabla { table-layout: auto; width: max-content; min-width: 100%; }
+.liq-pago-tabla th, .liq-pago-tabla td, .liq-dia-tabla th, .liq-dia-tabla td { white-space: nowrap; }
+.liq-pago-nota { font-size: 12.5px !important; }
+.liq-pago-banco { font-size: 13px; color: var(--muted); margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.liq-pago-quien { font-weight: 700; margin-top: 4px; }
+.liq-pago-hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+.liq-pago .btn { margin-top: 6px; }
+@media (max-width: 720px) { .liq-pago-chip { margin-left: 0; white-space: normal; } .liq-pago-est { font-size: 17px; } }
+/* Filtros de Liquidaciones: período en un toque, conductor con sugerencias y los filtros puestos con ✕ */
+/* grid y no flex en columna con wrap: así Chrome reservaba el alto de dos renglones para una sola fila */
+.liq-filtros.liq-f2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 12px 14px; }
+.liq-f-fila { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+.liq-f-grupo { display: flex; flex-direction: column; gap: 3px; }
+.liq-f-lbl { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.liq-f-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.liq-f-chip { border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 8px 13px; font: inherit;
+              font-size: 13px; cursor: pointer; color: var(--text); }
+.liq-f-chip:hover { border-color: var(--primary); }
+.liq-f-chip.on { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 700; }
+.liq-filtros label.liq-f-cond { flex: 1 1 280px; min-width: 0; }
+.liq-f-buscar { position: relative; display: block; }
+.liq-f-buscar input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px;
+                      font: inherit; font-size: 14px; background: #fff; }
+.liq-sug { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); background: #fff; border: 1px solid var(--border);
+           border-radius: 12px; box-shadow: 0 12px 28px rgba(15, 23, 42, .16); max-height: 320px; overflow-y: auto; padding: 4px; }
+.liq-sug-i { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; border: 0;
+             background: none; padding: 8px 10px; border-radius: 8px; font: inherit; cursor: pointer; color: var(--text); }
+.liq-sug-i b { font-size: 13.5px; }
+.liq-sug-i small { font-size: 12px; color: var(--muted); font-weight: 500; }
+.liq-sug-i:hover, .liq-sug-i.on { background: var(--bg); }
+.liq-sug-vacio { display: block; padding: 10px; font-size: 13px; color: var(--muted); font-weight: 500; }
+.liq-filtros label.liq-f-punto { flex: 1 1 200px; }
+.liq-f-punto select { width: 100%; }
+.liq-f-acc { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; border-top: 1px dashed var(--border); padding-top: 10px; }
+.liq-f-activos { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; flex: 1 1 260px; }
+.liq-f-act { display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid var(--border); border-radius: 999px;
+             padding: 4px 4px 4px 12px; font-size: 13px; font-weight: 600; max-width: 100%; }
+.liq-f-act button { border: 0; background: var(--bg); border-radius: 999px; width: 24px; height: 24px; cursor: pointer; font-size: 11px;
+                    color: var(--muted); flex: none; }
+.liq-f-act button:hover { background: #fde8e8; color: #b91c1c; }
+.liq-f-nada { font-size: 13px; color: var(--muted); }
+.liq-f-der { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
+.liq-filtros label.liq-f-tam { flex-direction: row; align-items: center; gap: 6px; flex: none; }
+@media (max-width: 720px) {
+  .liq-f-der { margin-left: 0; width: 100%; }
+  .liq-f-der .btn { flex: 1 1 auto; }
+}
+/* 🚨 Conductores en mora */
+.mora-nota { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; margin: 4px 0 12px; font-size: 13px; }
+.mora-card { margin-bottom: 12px; }
+.mora-barra { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
+.mora-barra .car-buscar { flex: 1 1 260px; min-width: 0; }
+.mora-orden { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.mora-orden select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; font: inherit; font-size: 13px; background: #fff; }
+/* Se desliza de lado en el celular en vez de apretarse; textos a la izquierda y plata a la derecha */
+.mora-tabla { table-layout: auto; width: max-content; min-width: 100%; }
+.mora-tabla td { vertical-align: middle; }
+.mora-tabla td, .mora-tabla th { white-space: nowrap; }
+.pst-tabla.mora-tabla td:not(:first-child), .pst-tabla.mora-tabla th:not(:first-child),
+.mora-det .pp-tabla td, .mora-det .pp-tabla th { text-align: left; }
+.pst-tabla.mora-tabla td.liq-plata, .mora-det .pp-tabla td.liq-plata { text-align: right; }
+.mora-fila.abierto td { background: #fff7f7; }
+.mora-det td { background: #fffafa; }
+.mora-det .pp-tabla { font-size: 13px; margin: 2px 0 6px; }
+.mora-atraso { display: inline-block; border-radius: 999px; padding: 3px 10px; font-weight: 700; font-size: 12.5px; background: #fff4d6; color: #8a5a00; }
+.mora-atraso.alto { background: #fde8e8; color: #b91c1c; }
+.mora-acc { display: flex; gap: 6px; }
+.mora-btn { color: #b91c1c; border-color: #f5c2c2; }
+/* La columna «Pago» de la lista */
+.liq-pago-celda { white-space: nowrap; }
+.liq-pago-celda .liq-pago-chip { margin: 0; font-size: 12.5px; padding: 3px 10px; display: inline-block; }
+.liq-tot-pago { margin-top: 2px; font-size: 13.5px; color: var(--muted); }
+.liq-tot-pago small { font-size: 12px; }
+.liq-amar { color: #8a5a00; }
 
 /* --- Reingreso (sql/143) --- */
 /* Lo primero es QUIEN es: antes de ofrecer nada hay que poder reconocer a la persona y ver
@@ -3512,6 +3734,8 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
                  border-radius: 9px; font: inherit; font-size: 14px; }
 @media (max-width: 720px) {
   .liq-cab { grid-template-columns: repeat(2, 1fr); }
+  .liq-card { padding: 12px 6px; }
+  .liq-card b { font-size: 16px; white-space: nowrap; }
   .liq-filtros label { flex: 1 1 44%; }
   .liq-cond { max-width: 110px; }
 }

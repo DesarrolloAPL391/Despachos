@@ -493,6 +493,11 @@ async function verificarSesionVigente() {
     _gpsAlertPedido = Date.now();
     refrescarGpsAlertas(true);
   }
+  // Conductores que pasan el tope de la cartera: cada 10 minutos
+  if (isAdmin() && Date.now() - _carAlertPedido > 600000) {
+    _carAlertPedido = Date.now();
+    refrescarCarteraAlertas(true);
+  }
   // Reporta la latencia medida en el heartbeat anterior + la versión de app en uso
   // (para que el admin vea en "Conectados" quién va lento o quedó en versión vieja).
   const { data, error } = await sb.rpc('heartbeat', {
@@ -712,8 +717,19 @@ function buildSidebar() {
 
   // 💵 Liquidaciones de vehículos (sql/138-140). Solo administración.
   if (isAdmin()) {
-    const gLq = addNavGroup(nav, '💵', 'Liquidaciones', 'liq');
+    // El número rojo va también en el título del grupo: plegado no se vería
+    const avCar = CAR_ALERTAS ? ` <span class="nav-badge">${CAR_ALERTAS}</span>` : '';
+    const gLq = addNavGroup(nav, '💵', 'Liquidaciones' + avCar, 'liq');
     addNavAction(gLq, '💵', 'Historial y soportes', openLiquidaciones, 'nav-liq');
+    addNavAction(gLq, '🔎', 'Qué corregir en la hoja', liqVerRevisar, 'nav-liq-rev');
+    addNavAction(gLq, '💼', 'Cartera de conductores' + avCar, openCartera, 'nav-cartera');
+    addNavAction(gLq, '🚨', 'Conductores en mora', openMora, 'nav-mora');
+    if (currentView === 'cartera') $('nav-cartera')?.classList.add('active');
+    if (currentView === 'mora') $('nav-mora')?.classList.add('active');
+    if (currentView === 'liquidaciones') {
+      const rev = _liq.vista === 'revisar' || (_liq.vista === 'dia' && _liq.volver === 'revisar');
+      $(rev ? 'nav-liq-rev' : 'nav-liq')?.classList.add('active');
+    }
   }
 
   // ⚖️ Procesos disciplinarios (sql/102). El auditor no entra aquí: solo reporta el hecho.
@@ -6231,6 +6247,7 @@ async function refrescarAlertasDocs() {
   await refrescarPreop(false);
   await refrescarReclamaciones(false);
   await refrescarGpsAlertas(false);
+  _carAlertPedido = Date.now(); await refrescarCarteraAlertas(false);
   buildSidebar(); // refresca el contador 🔔 del menú
   const banner = $('doc-banner');
   if (!banner) return;
@@ -16722,52 +16739,265 @@ async function pqrPanelGestion(cont, row) {
 // El paginado y los totales los hace el servidor: traerse 29.000 filas al celular para cortarlas
 // allá no tiene sentido, y los totales de arriba son de TODO el filtro, no de la página visible
 // — si no, el número engañaría.
-let _liqF = { desde: '', hasta: '', movil: '', ruta: '', punto: '', sinFoto: false, pagina: 1, tam: 25 };
+// cedula/condNombre: el filtro por conductor (la base filtra por cédula: liquidaciones_listar.p_cedula)
+const liqFiltroVacio = (tam = 25) => ({ desde: '', hasta: '', movil: '', ruta: '', punto: '', cedula: '', condNombre: '', sinFoto: false, pagina: 1, tam });
+let _liqF = liqFiltroVacio();
 let _liqCat = null;
 
-function liqModal() {
-  let m = $('liq-modal');
-  if (m) return m;
-  m = document.createElement('div');
-  m.id = 'liq-modal'; m.className = 'modal'; m.hidden = true;
-  m.innerHTML = `<div class="modal-card pf-card">
-    <div class="modal-head"><h3>💵 Liquidaciones</h3><span class="spacer"></span>
-      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
-    <div class="pf-body"></div>
-    <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
-  </div>`;
-  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
-  document.body.appendChild(m);
-  return m;
+// Liquidaciones es una PANTALLA del programa (la misma de los tableros), no una ventana encima:
+// la lista, el día de un bus, lo que hay que corregir en la hoja y las colillas se abren ahí, a lo
+// ancho, cada una con su «Volver». _liq.vista dice cuál está a la vista y _liq.tok cuál se pidió de
+// último: si el usuario se va a otra parte mientras algo carga, lo que llega tarde no se pinta encima.
+const _liq = { vista: 'lista', volver: 'lista', fila: null, tok: 0 };
+const liqBody = () => $('pst-body');
+const liqVivo = (tok) => currentView === 'liquidaciones' && _liq.tok === tok;
+function liqPrepararVista(vista, titulo, navId = 'nav-liq') {
+  currentView = 'liquidaciones';
+  _liq.vista = vista;
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
+  const x = $('pst-excel'); if (x) x.hidden = true;            // la planilla tiene su propio botón
+  $(navId)?.classList.add('active');
+  buildBottomNav();
+  const tit = $('pst-title'); if (tit) tit.textContent = titulo;
+  window.scrollTo(0, 0);
+  const b = liqBody(); if (b) b.scrollTop = 0;
+  return ++_liq.tok;
+}
+// El «Volver» de las páginas de adentro: a la lista (con sus filtros) o a lo que hay que corregir
+function liqBotonVolver(a = _liq.volver) {
+  const b = pstEl('button', 'btn btn-sec liq-volver', a === 'revisar' ? '‹ Volver a lo que hay que corregir' : '‹ Volver a Liquidaciones');
+  b.type = 'button';
+  b.addEventListener('click', () => (a === 'revisar' ? liqVerRevisar() : openLiquidaciones({ mantener: true })));
+  return b;
+}
+// ↻ de la barra: vuelve a leer lo que está a la vista
+function liqRecargar() {
+  _liqCat = null;
+  _liqCarCache.clear();
+  if (_liq.vista === 'revisar') return liqVerRevisar();
+  if (_liq.vista === 'colillas') return liqVerColillas();
+  if (_liq.vista === 'dia' && _liq.fila) return abrirLiqDia(_liq.fila.movil, _liq.fila.fecha);
+  return openLiquidaciones({ mantener: true });
 }
 
 const liqPlata = (v) => '$' + Number(v || 0).toLocaleString('es-CO');
 
-async function openLiquidaciones() {
+// opc.mantener: vuelve con los filtros y la página que tenía (de regreso del día de un bus)
+async function openLiquidaciones(opc = {}) {
   if (!isAdmin()) return;
-  _liqF = { desde: '', hasta: '', movil: '', ruta: '', punto: '', sinFoto: false, pagina: 1, tam: 25 };
-  const m = liqModal();
-  m.querySelector('.pf-body').innerHTML = '<div class="loading">Cargando…</div>';
-  m.hidden = false;
+  if (!opc.mantener) {
+    _liqF = liqFiltroVacio(_liqF.tam || 25);
+    _liqCarCache.clear();                 // al volver a entrar, la cartera se vuelve a leer
+  }
+  const tok = liqPrepararVista('lista', '💵 Liquidaciones');
+  _liq.volver = 'lista';
+  const body = liqBody();
+  body.innerHTML = '<div class="loading">Cargando…</div>';
   if (!_liqCat) {
     try {
       const { data, error } = await sb.rpc('liquidaciones_resumen');
       if (error) throw error;
       _liqCat = data;
-    } catch (e) { m.querySelector('.pf-body').innerHTML = '<div class="cump-empty">No se pudo cargar.</div>'; return; }
+    } catch (e) { if (liqVivo(tok)) body.innerHTML = '<div class="cump-empty">No se pudo cargar.</div>'; return; }
   }
+  if (!liqVivo(tok)) return;
   if (!_liqCat || !_liqCat.ok) {
-    m.querySelector('.pf-body').innerHTML = `<div class="cump-empty">${esc((_liqCat && _liqCat.error) || 'Sin datos.')}</div>`;
+    body.innerHTML = `<div class="cump-empty">${esc((_liqCat && _liqCat.error) || 'Sin datos.')}</div>`;
     return;
   }
   pintarLiqArmazon();
   await cargarLiqPagina();
+  // De regreso del día de un bus: esa fila queda a la vista y marcada
+  if (opc.mantener && _liq.fila && liqVivo(tok)) {
+    const tr = [...body.querySelectorAll('.liq-fila')].find((x) => x.dataset.movil === _liq.fila.movil && x.dataset.fecha === _liq.fila.fecha);
+    if (tr) { tr.classList.add('liq-fila-vista'); tr.scrollIntoView({ block: 'center' }); }
+  }
+}
+
+// ---------- Filtros de la lista ----------
+// Período en un toque (fechas de Colombia: hoyServidor), conductor por nombre o cédula con sugerencias
+// (sin tildes: «pena» encuentra «PEÑA»), y todo se aplica solo al cambiarlo. Encima de la tabla quedan
+// los filtros puestos, cada uno con su ✕.
+const LIQ_PERIODOS = [['hoy', 'Hoy'], ['ayer', 'Ayer'], ['7d', 'Últimos 7 días'], ['mes', 'Este mes'], ['mesant', 'Mes pasado'], ['todo', 'Todo']];
+function liqPeriodo(k, hoy = hoyServidor()) {
+  const [y, m] = String(hoy).split('-').map(Number);
+  const ini = (yy, mm) => `${yy}-${String(mm).padStart(2, '0')}-01`;
+  const finMes = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).toISOString().slice(0, 10);   // mm de 1 a 12
+  if (k === 'hoy') return [hoy, hoy];
+  if (k === 'ayer') { const a = liqMasDias(hoy, -1); return [a, a]; }
+  if (k === '7d') return [liqMasDias(hoy, -6), hoy];
+  if (k === 'mes') return [ini(y, m), hoy];
+  if (k === 'mesant') { const yy = m === 1 ? y - 1 : y, mm = m === 1 ? 12 : m - 1; return [ini(yy, mm), finMes(yy, mm)]; }
+  return ['', ''];
+}
+function liqFiltrosAPantalla() {
+  const f = _liqF, s = (id, v) => { const e = $(id); if (e) e.value = v || ''; };
+  s('lf-desde', f.desde); s('lf-hasta', f.hasta); s('lf-movil', f.movil); s('lf-ruta', f.ruta); s('lf-punto', f.punto);
+  s('lf-cond', f.condNombre || f.cedula);
+  const c = $('lf-sinfoto'); if (c) c.checked = !!f.sinFoto;
+}
+function liqAplicarFiltros() {
+  if (!$('lf-desde')) return;
+  let d = $('lf-desde').value, h = $('lf-hasta').value;
+  if (d && h && d > h) {
+    [d, h] = [h, d]; $('lf-desde').value = d; $('lf-hasta').value = h;
+    toast('«Desde» quedaba después de «Hasta»: las cambié de lugar.', 'ok');
+  }
+  Object.assign(_liqF, { desde: d, hasta: h, movil: $('lf-movil').value, ruta: $('lf-ruta').value, punto: $('lf-punto').value,
+    sinFoto: $('lf-sinfoto').checked, pagina: 1 });
+  liqPintarActivos();
+  cargarLiqPagina();
+}
+function liqEngancharFiltros(body) {
+  const q = (id) => body.querySelector('#' + id);
+  liqFiltrosAPantalla();
+  let t = null;
+  const aplicar = (ya = false) => { clearTimeout(t); t = setTimeout(liqAplicarFiltros, ya ? 0 : 250); };
+  ['lf-movil', 'lf-ruta', 'lf-punto', 'lf-sinfoto', 'lf-desde', 'lf-hasta'].forEach((id) => q(id).addEventListener('change', () => aplicar()));
+  q('lf-periodos').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-per]'); if (!b) return;
+    const [d, h] = liqPeriodo(b.dataset.per);
+    q('lf-desde').value = d; q('lf-hasta').value = h;
+    aplicar(true);
+  });
+  q('lf-buscar').addEventListener('click', () => { liqCondDelTexto(); aplicar(true); });
+  q('lf-tam').addEventListener('change', (e) => { _liqF.tam = Number(e.target.value) || 25; _liqF.pagina = 1; cargarLiqPagina(); });
+  q('lf-limpiar').addEventListener('click', () => { _liqF = liqFiltroVacio(_liqF.tam); liqFiltrosAPantalla(); liqPintarActivos(); cargarLiqPagina(); });
+  liqEngancharConductor(q('lf-cond'), q('lf-sug'), () => aplicar(true));
+  liqPintarActivos();
+}
+// Los filtros puestos, encima de la tabla: cada uno se quita con su ✕
+function liqPintarActivos() {
+  const box = $('lf-activos');
+  if (!box) return;
+  const f = _liqF, it = [];
+  if (f.desde || f.hasta) {
+    it.push(['fechas', f.desde && f.desde === f.hasta ? `📅 ${fechaLegible(f.desde)}`
+      : `📅 ${f.desde ? fechaLegible(f.desde) : 'desde el principio'} → ${f.hasta ? fechaLegible(f.hasta) : 'hoy'}`]);
+  }
+  if (f.cedula) it.push(['cond', `👤 ${f.condNombre || 'C.C. ' + f.cedula}`]);
+  if (f.movil) it.push(['movil', `🚌 Bus ${f.movil}`]);
+  if (f.ruta) it.push(['ruta', `🛣️ Ruta ${f.ruta}`]);
+  if (f.punto) it.push(['punto', `📍 ${f.punto}`]);
+  if (f.sinFoto) it.push(['sinFoto', '📎 Solo sin foto']);
+  box.innerHTML = it.length
+    ? it.map(([k, x]) => `<span class="liq-f-act">${esc(x)}<button type="button" data-quitar="${k}" title="Quitar este filtro" aria-label="Quitar ${esc(x)}">✕</button></span>`).join('')
+      + (f.cedula ? '<button type="button" class="lnk" id="lf-cartera">💼 Ver su cartera</button>' : '')
+    : '<span class="liq-f-nada">Sin filtros: se ven todas las liquidaciones</span>';
+  box.querySelectorAll('[data-quitar]').forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.quitar;
+    if (k === 'fechas') { _liqF.desde = ''; _liqF.hasta = ''; }
+    else if (k === 'cond') { _liqF.cedula = ''; _liqF.condNombre = ''; }
+    else if (k === 'sinFoto') _liqF.sinFoto = false;
+    else _liqF[k] = '';
+    _liqF.pagina = 1;
+    liqFiltrosAPantalla(); liqPintarActivos(); cargarLiqPagina();
+  }));
+  const bc = box.querySelector('#lf-cartera');
+  if (bc) bc.addEventListener('click', async () => { const c = _liqF.cedula; await openCartera(); carDetalle(c); });
+  // El botón del período queda marcado si las fechas son justo las suyas
+  document.querySelectorAll('#lf-periodos [data-per]').forEach((b) => {
+    const [d, h] = liqPeriodo(b.dataset.per);
+    b.classList.toggle('on', d === (f.desde || '') && h === (f.hasta || ''));
+  });
+}
+
+// Conductores para buscar: el Perfil sociodemográfico (solo admin lo lee), de a 1.000 (tope del API)
+let _liqConds = null;
+async function liqConductores() {
+  if (_liqConds) return _liqConds;
+  const out = [];
+  for (let i = 0; i < 20; i++) {
+    const { data, error } = await sb.from('perfilsociodemografico').select('cedula,nombre,estado,tipo')
+      .order('nombre').range(i * 1000, i * 1000 + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  _liqConds = out.filter((x) => x.cedula).map((x) => ({ ced: String(x.cedula), nom: x.nombre || '', activo: x.estado !== 'INACTIVO',
+    cond: x.tipo === 'CONDUCTOR', w: _sinTilde(x.nombre || '').split(' ').filter(Boolean) }));
+  return _liqConds;
+}
+// Cada palabra escrita tiene que ser el COMIENZO de una palabra del nombre, en cualquier orden («gonz andr»);
+// los números se buscan dentro de la cédula. Conductores y activos primero.
+function liqBuscarConductores(lista, texto, max = 12) {
+  const pal = _sinTilde(texto).split(' ').filter(Boolean);
+  if (!pal.length) return [];
+  const tiene = (x, p) => (/^\d+$/.test(p) ? x.ced.includes(p) : x.w.some((w) => w.startsWith(p)));
+  return lista.filter((x) => pal.every((p) => tiene(x, p)))
+    .sort((a, b) => (b.cond - a.cond) || (b.activo - a.activo) || a.nom.localeCompare(b.nom))
+    .slice(0, max);
+}
+function liqEngancharConductor(inp, sug, aplicar) {
+  let items = [], sel = -1, t = null;
+  const cerrar = () => { sug.hidden = true; inp.setAttribute('aria-expanded', 'false'); sel = -1; };
+  const elegir = (x) => { _liqF.cedula = x.ced; _liqF.condNombre = x.nom; inp.value = x.nom; cerrar(); aplicar(); };
+  const pintar = () => {
+    sug.innerHTML = items.length
+      ? items.map((x, i) => `<button type="button" role="option" tabindex="-1" class="liq-sug-i${i === sel ? ' on' : ''}" data-i="${i}">
+          <b>${esc(x.nom || '(sin nombre)')}</b><small>C.C. ${esc(x.ced)}${x.cond ? '' : ' · no es conductor'}${x.activo ? '' : ' · retirado'}</small></button>`).join('')
+      : '<span class="liq-sug-vacio">Nadie con ese nombre o cédula.</span>';
+    sug.hidden = false; inp.setAttribute('aria-expanded', 'true');
+  };
+  inp.addEventListener('input', () => {
+    clearTimeout(t);
+    const v = inp.value.trim();
+    if (!v) {                                   // borró el conductor: se quita el filtro
+      cerrar();
+      if (_liqF.cedula) { _liqF.cedula = ''; _liqF.condNombre = ''; aplicar(); }
+      return;
+    }
+    t = setTimeout(async () => {
+      let lista;
+      try { lista = await liqConductores(); } catch (e) {
+        sug.innerHTML = '<span class="liq-sug-vacio">No se pudo leer el perfil. Escribe la cédula completa y toca Buscar.</span>';
+        sug.hidden = false; return;
+      }
+      if (inp.value.trim() !== v) return;
+      items = liqBuscarConductores(lista, v); sel = items.length ? 0 : -1; pintar();
+    }, 150);
+  });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (sug.hidden || !items.length) return;
+      e.preventDefault(); sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; pintar();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!sug.hidden && items[sel]) elegir(items[sel]); else { cerrar(); liqCondDelTexto(); aplicar(); }
+    } else if (e.key === 'Escape') cerrar();
+  });
+  // mousedown y no click: si no, el blur del campo cierra la lista antes de elegir
+  sug.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); elegir(items[Number(b.dataset.i)]); } });
+  inp.addEventListener('blur', () => setTimeout(cerrar, 150));
+}
+// Lo escrito a mano: una cédula (solo números) filtra directo; un nombre que es de UNA sola persona, también
+function liqCondDelTexto() {
+  const inp = $('lf-cond');
+  if (!inp) return;
+  const v = inp.value.trim();
+  if (!v) { _liqF.cedula = ''; _liqF.condNombre = ''; return; }
+  if (_liqF.cedula && (v === _liqF.condNombre || v === _liqF.cedula)) return;     // ya estaba elegido
+  const dig = v.replace(/\D/g, '');
+  if (/^[\d.\s]+$/.test(v) && dig.length >= 5) {
+    const x = (_liqConds || []).find((c) => c.ced === dig);
+    _liqF.cedula = dig; _liqF.condNombre = x ? x.nom : '';
+    return;
+  }
+  const xs = liqBuscarConductores(_liqConds || [], v, 2);
+  if (xs.length === 1) { _liqF.cedula = xs[0].ced; _liqF.condNombre = xs[0].nom; inp.value = xs[0].nom; }
+  else toast(xs.length ? 'Hay varios con ese nombre: elige uno de la lista.' : 'No encontré ese conductor: escribe el nombre o la cédula.', 'err');
 }
 
 function pintarLiqArmazon() {
-  const c = _liqCat, body = liqModal().querySelector('.pf-body');
+  const c = _liqCat, body = liqBody();
   const opts = (arr, sel) => '<option value="">Todas</option>' +
     (arr || []).map((x) => `<option value="${esc(x)}"${x === sel ? ' selected' : ''}>${esc(x)}</option>`).join('');
+  const sub = $('pst-sub'); if (sub) sub.textContent = `Del ${c.desde} al ${c.hasta}`;
+  const porCorregir = [
+    c.sin_cedula ? `<b>${pstNum(c.sin_cedula)}</b> liquidación(es) sin la cédula del conductor` : '',
+    c.no_cuadran ? `<b>${pstNum(c.no_cuadran)}</b> fila(s) donde la propia hoja no cuadra` : '',
+  ].filter(Boolean);
   body.innerHTML = `
     <div class="liq-cab">
       <div class="liq-card"><b>${Number(c.filas).toLocaleString('es-CO')}</b><span>Liquidaciones</span></div>
@@ -16775,53 +17005,65 @@ function pintarLiqArmazon() {
       <div class="liq-card"><b>${c.vehiculos}</b><span>Vehículos</span></div>
       <div class="liq-card ok"><b>${liqPlata(c.dinero)}</b><span>Total liquidado</span></div>
     </div>
-    <div class="liq-nota">Del ${esc(c.desde)} al ${esc(c.hasta)}
-      ${c.ultima_sync && c.ultima_sync.cuando ? ' · última actualización ' + esc(c.ultima_sync.cuando) : ''}
-      · <button type="button" class="lnk" id="liq-sync">Traer lo nuevo de la hoja</button></div>
-    <div class="liq-nota" id="liq-banco">🏦 Extractos del banco: <span class="liq-banco-txt">consultando…</span>
-      · <button type="button" class="lnk" id="liq-banco-cargar">Cargar extracto del banco</button>
-      <input type="file" id="liq-banco-file" accept=".xls,.xlsx" multiple hidden></div>
-    <div class="liq-nota">🧾 Colillas de los conductores: <span id="liq-col-txt">consultando…</span>
-      · <button type="button" class="lnk" id="liq-colillas">Ver</button>
-      · <button type="button" class="lnk" id="liq-col-link">Copiar enlace para conductores</button></div>
-    ${c.sin_cedula || c.no_cuadran ? `
-      <div class="liq-avisos">
-        ${c.sin_cedula ? `<div class="liq-aviso"><b>${c.sin_cedula}</b> liquidación(es) sin cédula del conductor:
-          el nombre de la hoja no coincide con ninguno del perfil
-          (${(c.nombres_sin_cedula || []).map((x) => esc(x)).join(', ')}). Se corrige en la hoja.</div>` : ''}
-        ${c.no_cuadran ? `<div class="liq-aviso"><b>${c.no_cuadran}</b> fila(s) donde la propia hoja no cuadra
-          (unidades − descontados ≠ total). Se marcan con ⚠️ en la lista.</div>` : ''}
-        <button type="button" class="lnk" id="liq-revisar">🔎 Ver cuáles son</button>
-      </div>` : ''}
-    <div class="liq-filtros">
-      <label>Desde<input type="date" id="lf-desde"></label>
-      <label>Hasta<input type="date" id="lf-hasta"></label>
-      <label>Bus<select id="lf-movil">${opts(c.moviles)}</select></label>
-      <label>Ruta<select id="lf-ruta">${opts(c.rutas)}</select></label>
-      <label>Punto<select id="lf-punto">${opts(c.puntos)}</select></label>
-      <label class="liq-chk"><input type="checkbox" id="lf-sinfoto"> Solo sin foto</label>
-      <button type="button" class="btn" id="lf-buscar">Buscar</button>
-      <button type="button" class="btn btn-sec" id="lf-limpiar">Limpiar</button>
-      <button type="button" class="btn" id="liq-planilla" title="Arma el Excel con las columnas de la planilla METRO">📋 Armar planilla</button>
+    ${porCorregir.length ? `
+      <section class="liq-verif" role="alert">
+        <div class="liq-verif-t"><b>🔎 Hay cosas por corregir en la hoja</b>
+          <span>${porCorregir.join(' · ')}</span>
+          <small>Sin la cédula, ese día no se le cobra a nadie en la cartera ni se cruza con el banco.</small></div>
+        <button type="button" class="btn" id="liq-revisar">Verificar ›</button>
+      </section>` : ''}
+    <div class="liq-estado">
+      <section class="liq-est"><h4>📄 Hoja de liquidaciones</h4>
+        <p>${c.ultima_sync && c.ultima_sync.cuando ? 'Última actualización: ' + esc(c.ultima_sync.cuando) : 'Se actualiza sola a las 5:40 a.m.'}</p>
+        <button type="button" class="btn btn-sm" id="liq-sync">🔄 Traer lo nuevo de la hoja</button></section>
+      <section class="liq-est" id="liq-banco"><h4>🏦 Recaudo del banco</h4>
+        <p class="liq-banco-txt">consultando…</p>
+        <button type="button" class="btn btn-sm" id="liq-banco-cargar">📥 Cargar recaudo del banco</button>
+        <small>Los zip del correo tal cual, varios a la vez, o el Excel</small>
+        <input type="file" id="liq-banco-file" accept="${LIQ_BANCO_ACEPTA}" multiple hidden></section>
+      <section class="liq-est"><h4>💼 Cartera por conductor</h4>
+        <p id="liq-car-txt">consultando…</p>
+        <span class="liq-est-acc"><button type="button" class="btn btn-sm" id="liq-cartera">Abrir el tablero ›</button>
+          <button type="button" class="btn btn-sm mora-btn" id="liq-mora">🚨 En mora ›</button></span></section>
+      <section class="liq-est"><h4>🧾 Colillas de los conductores</h4>
+        <p id="liq-col-txt">consultando…</p>
+        <span class="liq-est-acc"><button type="button" class="btn btn-sm" id="liq-colillas">Ver ›</button>
+          <button type="button" class="btn btn-sm btn-sec" id="liq-col-link">Copiar enlace</button></span></section>
     </div>
-    <div id="liq-tot" class="liq-tot"></div>
-    <div id="liq-lista"></div>
-    <div id="liq-pag" class="liq-pag"></div>`;
-
-  body.querySelector('#lf-buscar').addEventListener('click', () => {
-    _liqF.desde = $('lf-desde').value; _liqF.hasta = $('lf-hasta').value;
-    _liqF.movil = $('lf-movil').value; _liqF.ruta = $('lf-ruta').value;
-    _liqF.punto = $('lf-punto').value; _liqF.sinFoto = $('lf-sinfoto').checked;
-    _liqF.pagina = 1;
-    cargarLiqPagina();
-  });
-  body.querySelector('#lf-limpiar').addEventListener('click', () => {
-    ['lf-desde', 'lf-hasta'].forEach((i) => { $(i).value = ''; });
-    ['lf-movil', 'lf-ruta', 'lf-punto'].forEach((i) => { $(i).value = ''; });
-    $('lf-sinfoto').checked = false;
-    _liqF = { desde: '', hasta: '', movil: '', ruta: '', punto: '', sinFoto: false, pagina: 1, tam: _liqF.tam };
-    cargarLiqPagina();
-  });
+    <section class="pst-card liq-lista-card">
+      <div class="liq-filtros liq-f2">
+        <div class="liq-f-fila">
+          <div class="liq-f-grupo"><span class="liq-f-lbl">Período</span>
+            <div class="liq-f-chips" id="lf-periodos">${LIQ_PERIODOS.map(([k, t]) =>
+              `<button type="button" class="liq-f-chip" data-per="${k}">${t}</button>`).join('')}</div></div>
+          <label>Desde<input type="date" id="lf-desde"></label>
+          <label>Hasta<input type="date" id="lf-hasta"></label>
+        </div>
+        <div class="liq-f-fila">
+          <label class="liq-f-cond">Conductor
+            <span class="liq-f-buscar"><input type="search" id="lf-cond" placeholder="🔎 Nombre o cédula" autocomplete="off" spellcheck="false"
+              role="combobox" aria-autocomplete="list" aria-controls="lf-sug" aria-expanded="false">
+              <span class="liq-sug" id="lf-sug" role="listbox" hidden></span></span></label>
+          <label>Bus<select id="lf-movil">${opts(c.moviles, _liqF.movil)}</select></label>
+          <label>Ruta<select id="lf-ruta">${opts(c.rutas, _liqF.ruta)}</select></label>
+          <label class="liq-f-punto">Punto<select id="lf-punto">${opts(c.puntos, _liqF.punto)}</select></label>
+          <label class="liq-chk"><input type="checkbox" id="lf-sinfoto"> Solo sin foto</label>
+        </div>
+        <div class="liq-f-acc">
+          <div class="liq-f-activos" id="lf-activos"></div>
+          <span class="liq-f-der">
+            <label class="liq-f-tam">Filas<select id="lf-tam">${[25, 50, 100].map((n) => `<option value="${n}"${n === Number(_liqF.tam) ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
+            <button type="button" class="btn btn-sec" id="lf-limpiar">Limpiar</button>
+            <button type="button" class="btn btn-primary" id="lf-buscar">🔎 Buscar</button>
+            <button type="button" class="btn" id="liq-planilla" title="Arma el Excel con las columnas de la planilla METRO (por fechas, bus y punto)">📋 Armar planilla</button>
+          </span>
+        </div>
+      </div>
+      <div id="liq-tot" class="liq-tot"></div>
+      <div id="liq-lista" class="liq-tabla-wrap"></div>
+      <div id="liq-pag" class="liq-pag"></div>
+    </section>`;
+  liqEngancharFiltros(body);
   body.querySelector('#liq-sync').addEventListener('click', sincronizarLiq);
   body.querySelector('#liq-planilla').addEventListener('click', liqArmarPlanilla);
   const bRev = body.querySelector('#liq-revisar');
@@ -16834,6 +17076,9 @@ function pintarLiqArmazon() {
   body.querySelector('#liq-colillas').addEventListener('click', liqVerColillas);
   body.querySelector('#liq-col-link').addEventListener('click', liqCopiarEnlaceColilla);
   liqContarColillas();
+  body.querySelector('#liq-cartera').addEventListener('click', () => openCartera());
+  body.querySelector('#liq-mora').addEventListener('click', () => openMora());
+  liqContarCartera();
 }
 
 async function cargarLiqPagina() {
@@ -16844,28 +17089,31 @@ async function cargarLiqPagina() {
   try {
     const { data, error } = await sb.rpc('liquidaciones_listar', {
       p_desde: _liqF.desde || null, p_hasta: _liqF.hasta || null,
-      p_movil: _liqF.movil || null, p_cedula: null,
+      p_movil: _liqF.movil || null, p_cedula: _liqF.cedula || null,
       p_ruta: _liqF.ruta || null, p_punto: _liqF.punto || null,
       p_sin_foto: !!_liqF.sinFoto, p_pagina: _liqF.pagina, p_tam: _liqF.tam,
     });
     if (error) throw error;
     d = data;
   } catch (e) { lista.innerHTML = '<div class="cump-empty">No se pudo buscar.</div>'; return; }
+  if (!lista.isConnected) return;            // se fue a otra pantalla mientras buscaba
   if (!d || !d.ok) { lista.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
 
   const t = d.totales || {};
   tot.innerHTML = `<b>${Number(d.total_dias).toLocaleString('es-CO')}</b> día(s) ·
     <b>${Number(t.filas || 0).toLocaleString('es-CO')}</b> liquidación(es) ·
     <b>${Number(t.viajes || 0).toLocaleString('es-CO')}</b> viajes ·
-    <b>${Number(t.unidades || 0).toLocaleString('es-CO')}</b> pasajeros ·
+    <b>${Number(t.unidades || 0).toLocaleString('es-CO')}</b> unidades ·
     <b class="liq-plata">${liqPlata(t.dinero)}</b> ·
-    ${t.con_foto || 0} con foto`;
+    ${t.con_foto || 0} con foto
+    <div id="liq-tot-pago" class="liq-tot-pago">🏦 Cruzando con el banco…</div>`;
 
   const fs = d.filas || [];
   lista.innerHTML = fs.length
     ? `<table class="pp-tabla liq-tabla"><thead><tr>
-        <th>Fecha</th><th>Bus</th><th>Ruta</th><th>Viajes</th><th>Pasajeros</th>
-        <th>Se paga</th><th>Dinero</th><th>Conductor</th><th>Soporte</th></tr></thead><tbody>
+        <th>Fecha</th><th>Bus</th><th>Ruta</th><th>Viajes</th><th>Unidades</th>
+        <th title="Las unidades que se cobran: Dinero = Liquidar × tarifa">Liquidar</th><th>Dinero</th>
+        <th title="Lo que dice el banco, con el mismo cruce de la cartera">Pago</th><th>Conductor</th><th>Soporte</th></tr></thead><tbody>
         ${fs.map((f) => `<tr class="liq-fila" data-movil="${esc(f.movil)}" data-fecha="${esc(f.fecha_iso)}">
           <td>${esc(f.fecha)}</td>
           <td><b>${esc(f.movil)}</b>${f.no_cuadran ? ' <span title="La hoja no cuadra">⚠️</span>' : ''}</td>
@@ -16874,12 +17122,14 @@ async function cargarLiqPagina() {
           <td>${Number(f.unidades || 0).toLocaleString('es-CO')}</td>
           <td>${Number(f.liquidar || 0).toLocaleString('es-CO')}</td>
           <td class="liq-plata">${liqPlata(f.dinero)}</td>
+          <td class="liq-pago-celda"><span class="liq-pago-chip">⏳</span></td>
           <td class="liq-cond">${esc(f.conductor || '—')}${f.sin_cedula ? ' <span title="Sin cédula">❓</span>' : ''}</td>
           <td>${f.foto ? '📎' : '<span class="liq-falta">—</span>'}</td>
         </tr>`).join('')}</tbody></table>`
     : '<div class="cump-empty">No hay liquidaciones con esos filtros.</div>';
   lista.querySelectorAll('.liq-fila').forEach((tr) => tr.addEventListener('click',
     () => abrirLiqDia(tr.dataset.movil, tr.dataset.fecha)));
+  if (fs.length) liqPintarPagosLista(fs, lista); else { const r = $('liq-tot-pago'); if (r) r.remove(); }
 
   const p = d.pagina, n = d.paginas;
   pag.innerHTML = n > 1
@@ -16897,29 +17147,39 @@ async function cargarLiqPagina() {
 
 // ---------- El día de un vehículo: sus rutas y el soporte ----------
 async function abrirLiqDia(movil, fechaIso) {
-  const m = liqModal(), body = m.querySelector('.pf-body');
-  const volver = body.innerHTML;
+  // Desde la lista o desde lo que hay que corregir: el «Volver» regresa a donde estaba
+  if (_liq.vista !== 'dia') _liq.volver = _liq.vista === 'revisar' ? 'revisar' : 'lista';
+  _liq.fila = { movil: String(movil), fecha: String(fechaIso) };
+  const tok = liqPrepararVista('dia', `🚌 Bus ${movil} · ${fechaLegible(fechaIso)}`, _liq.volver === 'revisar' ? 'nav-liq-rev' : 'nav-liq');
+  const body = liqBody();
   body.innerHTML = '<div class="loading">Cargando…</div>';
   let d = null;
   try {
     const { data, error } = await sb.rpc('liquidaciones_dia', { p_movil: movil, p_fecha: fechaIso });
     if (error) throw error;
     d = data;
-  } catch (e) { body.innerHTML = '<div class="cump-empty">No se pudo abrir.</div>'; return; }
-  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+  } catch (e) { if (liqVivo(tok)) { body.innerHTML = '<div class="cump-empty">No se pudo abrir.</div>'; body.prepend(liqBotonVolver()); } return; }
+  if (!liqVivo(tok)) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; body.prepend(liqBotonVolver()); return; }
 
   const fs = d.filas || [], f0 = fs[0] || {};
   const suma = (k) => fs.reduce((a, x) => a + Number(x[k] || 0), 0);
+  const sub = $('pst-sub'); if (sub) sub.textContent = `${fs.length} ruta(s) liquidada(s) ese día`;
   body.innerHTML = `
-    <button type="button" class="btn btn-sec" id="liq-volver">‹ Volver a la lista</button>
-    <h3 class="liq-tit">Bus ${esc(d.movil)} · ${esc(d.fecha)}</h3>
     <div class="liq-cond-box">
       <b>${esc(f0.conductor || 'Sin conductor')}</b>
       ${f0.cedula ? `<span class="liq-ced">C.C. ${esc(f0.cedula)}</span>`
                   : '<span class="liq-falta">sin cédula — el nombre no coincide con el perfil</span>'}
+      <span class="liq-pago-chip" id="liq-pago-chip">⏳ buscando el pago en el banco…</span>
     </div>
-    <table class="pp-tabla"><thead><tr><th>Ruta</th><th>Punto</th><th>Viajes</th>
-      <th>Pasajeros</th><th>Descontados</th><th>Total</th><th>Se paga</th><th>Dinero</th></tr></thead>
+    <section class="pst-card liq-pago" id="liq-pago">
+      <h4>🏦 ¿Se pagó este día?</h4>
+      <div class="loading">Buscando en lo que se ha cargado del banco…</div>
+    </section>
+    <section class="pst-card liq-lista-card"><div class="liq-tabla-wrap">
+    <table class="pp-tabla liq-dia-tabla"><thead><tr><th>Ruta</th><th>Punto</th><th>Viajes</th>
+      <th>Unidades</th><th>Pasajeros a descontar</th><th>Total a liquidar</th>
+      <th title="Las unidades que se cobran: Dinero = Liquidar × tarifa">Liquidar</th><th>Dinero</th></tr></thead>
       <tbody>${fs.map((x) => `<tr${x.cuadra === false ? ' class="liq-malo"' : ''}>
         <td><b>${esc(x.ruta || '')}</b></td><td>${esc(x.punto || '')}</td><td>${x.viajes || 0}</td>
         <td>${Number(x.unidades || 0).toLocaleString('es-CO')}</td>
@@ -16931,8 +17191,8 @@ async function abrirLiqDia(movil, fechaIso) {
         <td>${suma('unidades').toLocaleString('es-CO')}</td><td>${suma('descontar')}</td>
         <td>${suma('total_liquidar').toLocaleString('es-CO')}</td>
         <td>${suma('liquidar').toLocaleString('es-CO')}</td>
-        <td class="liq-plata">${liqPlata(suma('dinero'))}</td></tr></tbody></table>
-    <section class="liq-foto">
+        <td class="liq-plata">${liqPlata(suma('dinero'))}</td></tr></tbody></table></div></section>
+    <section class="pst-card liq-foto">
       <h4>📎 Soporte de la liquidación</h4>
       ${d.foto
         ? `<div class="liq-foto-hay">Montado por ${esc(d.foto.por || '')} el ${esc(d.foto.cuando || '')}
@@ -16946,7 +17206,7 @@ async function abrirLiqDia(movil, fechaIso) {
       <input type="file" id="liq-file" accept="image/*,application/pdf" hidden>
     </section>`;
 
-  body.querySelector('#liq-volver').addEventListener('click', () => { body.innerHTML = volver; reengancharLiq(); });
+  body.prepend(liqBotonVolver());
   const file = body.querySelector('#liq-file');
   const pedir = () => file.click();
   const bm = body.querySelector('#liq-montar'); if (bm) bm.addEventListener('click', pedir);
@@ -16954,15 +17214,214 @@ async function abrirLiqDia(movil, fechaIso) {
   const bv = body.querySelector('#liq-ver');
   if (bv) bv.addEventListener('click', () => verLiqFoto(d.foto.path));
   file.addEventListener('change', () => subirLiqFoto(movil, fechaIso, file.files[0]));
+  liqPintarPago(fs, fechaIso, tok);
 }
 
-// Vuelve a enganchar los eventos de la lista cuando se regresa del detalle.
-function reengancharLiq() {
-  const body = liqModal().querySelector('.pf-body');
-  const b1 = body.querySelector('#lf-buscar');
-  if (!b1) { cargarLiqPagina(); return; }
-  pintarLiqArmazon();
-  cargarLiqPagina();
+// ---------- 🏦 ¿Se pagó este día? ----------
+// Lo dice la cartera (sql/154-155 y 202), no una cuenta aparte: los pagos del banco (y las colillas)
+// se reparten del día liquidado más viejo al más nuevo. La base da los cargos y los abonos en el
+// orden del reparto; aquí se rehacen los mismos tramos acumulados para decir QUÉ consignación pagó
+// este día y cuánto puso en él. Solo lectura.
+// ¿Está cargado el archivo del banco de ese día? (los de PRUEBA no cuentan)
+const liqBancoTiene = (b, f) => ((b && b.archivos) || []).some((a) => !/^PRUEBA/.test(a.archivo) && f >= a.desde && f <= a.hasta);
+const liqMasDias = (iso, n) => new Date(new Date(iso + 'T12:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+// cual: el Set de keys de las liquidaciones del día, o una función que dice si un cargo es de ese día
+function liqPagoDeDia(data, cual) {
+  const es = typeof cual === 'function' ? cual : (c) => cual.has(c.key);
+  let a0 = 0, c0 = 0;
+  const abonos = (data.abonos || []).map((x) => { const ini = a0; a0 += Number(x.valor || 0); return { ...x, ini, fin: a0 }; });
+  const cargos = (data.cargos || []).map((x) => { const ini = c0; c0 += Number(x.dinero || 0); return { ...x, ini, fin: c0 }; });
+  const mios = cargos.filter(es);
+  const pagos = new Map();
+  mios.forEach((c) => abonos.forEach((a) => {
+    const m = Math.min(c.fin, a.fin) - Math.max(c.ini, a.ini);
+    if (m <= 0) return;
+    const k = `${a.clase}:${a.id}`;
+    const p = pagos.get(k) || { ...a, aqui: 0 };
+    p.aqui += m; pagos.set(k, p);
+  }));
+  const pun = new Map((data.puntual || []).map((p) => [p.key, p]));
+  const ps = mios.map((c) => pun.get(c.key) || {});
+  const suma = (k) => mios.reduce((s, c) => s + Number(c[k] || 0), 0);
+  const pendiente = suma('pendiente');
+  return {
+    mios, exigido: suma('dinero'), pagado: suma('pagado'), pendiente,
+    pagos: [...pagos.values()].sort((x, y) => String(x.fecha).localeCompare(String(y.fecha))),
+    pagado_el: !pendiente && ps.length ? ps.map((p) => p.pagado_el).filter(Boolean).sort().pop() || null : null,
+    dias: Math.max(0, ...ps.map((p) => Number(p.dias || 0))),
+    tarde: ps.some((p) => p.a_tiempo === false), aTiempo: ps.length > 0 && ps.every((p) => p.a_tiempo === true),
+    prueba: ps.some((p) => p.prueba === 'NO_APARECE') ? 'NO_APARECE' : ps.some((p) => p.prueba === 'POR_CONFIRMAR') ? 'POR_CONFIRMAR'
+      : ps.some((p) => p.prueba === 'BANCO') ? 'BANCO' : null,
+    plazo: data.plazo, desde: data.desde, nombre: data.nombre, cedula: data.cedula,
+  };
+}
+// El estado de un día ya cruzado: color (ok | parcial | debe), la frase grande y la etiqueta corta
+function liqPagoEstado(p) {
+  let est, cls, corto;
+  if (!p.pendiente) {
+    cls = 'ok'; corto = p.aTiempo ? '✅ pagado a tiempo' : p.tarde ? '✅ pagado, tarde' : '✅ pagado';
+    est = `✅ Pagado${p.pagado_el ? ` el ${fechaLegible(p.pagado_el)}` : ''}`
+      + (p.aTiempo ? ' · a tiempo' : p.tarde ? ` · ⏰ tarde (${p.dias} día(s) después)` : '');
+    if (p.prueba === 'POR_CONFIRMAR') { est += ' · ⏳ con colilla que el banco todavía no confirma'; cls = 'parcial'; corto = '⏳ pagado con colilla sin confirmar'; }
+    if (p.prueba === 'NO_APARECE') { est += ' · ❌ la colilla no aparece en el banco'; cls = 'debe'; corto = '❌ la colilla no aparece en el banco'; }
+  } else if (p.pagado > 0) {
+    cls = 'parcial'; corto = `🟡 faltan ${liqPlata(p.pendiente)}`;
+    est = `🟡 Pagado en parte: faltan ${liqPlata(p.pendiente)}${p.tarde ? ' · ⏰ ya fuera de plazo' : ''}`;
+  } else if (p.tarde) {
+    cls = 'debe'; corto = '❌ sin pagar';
+    est = `❌ Sin pagar · fuera de plazo (hace ${p.dias} día(s))`;
+  } else {
+    cls = 'parcial'; corto = '⏳ sin pagar, en plazo';
+    est = '⏳ Sin pagar todavía · está en plazo';
+  }
+  return { cls, est, corto };
+}
+
+// La cartera de cada conductor, guardada mientras se mira la lista (una consulta por cédula, no por fila).
+// Se borra al cargar el banco, al traer lo nuevo de la hoja, con ↻ y al volver a entrar a Liquidaciones.
+const _liqCarCache = new Map();
+let _liqCarDesde = null;
+function liqCarteraDe(ced, fresca = false) {
+  if (fresca) _liqCarCache.delete(ced);
+  if (!_liqCarCache.has(ced)) {
+    _liqCarCache.set(ced, sb.rpc('cartera_conductor', { p_cedula: ced }).then((r) => {
+      if (r.error || !r.data || !r.data.ok) { _liqCarCache.delete(ced); return r.data && !r.error ? r.data : null; }
+      if (r.data.desde) _liqCarDesde = r.data.desde;
+      return r.data;
+    }, () => { _liqCarCache.delete(ced); return null; }));
+  }
+  return _liqCarCache.get(ced);
+}
+// De a pocas consultas a la vez: 100 filas no son 100 consultas juntas a la base
+async function liqEnTandas(items, n, fn) {
+  let i = 0;
+  const trabajador = async () => { while (i < items.length) { const k = i++; await fn(items[k]); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, trabajador));
+}
+
+// La columna «Pago» de la lista: el mismo cruce del día de un bus, fila por fila
+async function liqPintarPagosLista(fs, lista) {
+  const celdas = lista.querySelectorAll('.liq-pago-celda');
+  if (!celdas.length) return;
+  const fiso = (f) => String(f.fecha_iso || '').slice(0, 10);
+  const cuenta = (f) => f.cedula && Number(f.dinero) > 0 && !(_liqCarDesde && fiso(f) < _liqCarDesde);
+  const ceds = [...new Set(fs.filter(cuenta).map((f) => String(f.cedula)))];
+  const datos = new Map();
+  await liqEnTandas(ceds, 6, async (c) => { datos.set(c, await liqCarteraDe(c)); });
+  if (!lista.isConnected) return;
+  const n = { ok: 0, parcial: 0, debe: 0, neutro: 0 };
+  fs.forEach((f, i) => {
+    const td = celdas[i];
+    if (!td) return;
+    let cls = 'neutro', txt = '➖', tit = '';
+    const data = f.cedula ? datos.get(String(f.cedula)) : null;
+    const desde = (data && data.desde) || _liqCarDesde;
+    if (!(Number(f.dinero) > 0)) tit = 'Da $0: no hay nada que consignar';
+    else if (!f.cedula) { cls = 'debe'; txt = '❓ sin cédula'; tit = 'Sin la cédula del conductor no se puede cruzar con el banco'; }
+    else if (desde && fiso(f) < desde) tit = `De antes del arranque de la cartera (${fechaLegible(desde)})`;
+    else if (!data || !data.ok) { txt = '—'; tit = 'No se pudo consultar la cartera'; }
+    else {
+      const p = liqPagoDeDia(data, (c) => String(c.movil) === String(f.movil) && String(c.fecha).slice(0, 10) === fiso(f));
+      if (!p.mios.length) tit = 'No está en la cartera';
+      else { const e = liqPagoEstado(p); cls = e.cls; txt = e.corto; tit = e.est; }
+    }
+    n[cls]++;
+    td.innerHTML = `<span class="liq-pago-chip ${cls}" title="${esc(tit)}">${esc(txt)}</span>`;
+  });
+  const res = $('liq-tot-pago');
+  if (res) {
+    res.innerHTML = `En esta página: <b class="car-ok">✅ ${n.ok} pagado(s)</b> · <b class="liq-amar">🟡 ${n.parcial} pendiente(s)</b>`
+      + ` · <b class="car-debe">❌ ${n.debe} sin pagar</b>${n.neutro ? ` · ➖ ${n.neutro} que no se cruzan` : ''}`
+      + ` <small>· toca una fila para ver con qué consignaciones se pagó</small>`;
+  }
+}
+
+async function liqPintarPago(fs, fechaIso, tok) {
+  const box = $('liq-pago'), chip = $('liq-pago-chip');
+  if (!box) return;
+  const total = fs.reduce((s, x) => s + Number(x.dinero || 0), 0);
+  const ceds = [...new Set(fs.map((x) => String(x.cedula || '')).filter(Boolean))];
+  const banco = await liqEstadoBanco();
+  if (!liqVivo(tok)) return;
+  // Los archivos del banco que importan: el del día liquidado y el siguiente (lo normal es pagar al otro día)
+  const sig = liqMasDias(fechaIso, 1);
+  const arch = (f) => `${liqBancoTiene(banco, f) ? '✅' : '❌'} del ${fechaLegible(f).slice(0, 5)}`;
+  const lineaBanco = `<div class="liq-pago-banco">Archivos del banco: ${arch(fechaIso)} · ${arch(sig)}
+    · ${banco && banco.hasta ? `el último cargado es del <b>${esc(fechaLegible(banco.hasta))}</b>` : 'todavía no hay ninguno cargado'}
+    · <button type="button" class="lnk" id="liq-pago-cargar">📥 Cargar los zip del banco</button>
+    <input type="file" id="liq-pago-file" accept="${LIQ_BANCO_ACEPTA}" multiple hidden></div>`;
+  const pintar = (cls, chipTxt, html) => {
+    box.className = `pst-card liq-pago ${cls}`;
+    box.innerHTML = `<h4>🏦 ¿Se pagó este día?</h4>${html}${lineaBanco}`;
+    if (chip) { chip.className = `liq-pago-chip ${cls}`; chip.textContent = chipTxt; }
+    // Cargar aquí mismo los zip que falten: al terminar se vuelve a mirar este día
+    const inp = box.querySelector('#liq-pago-file'), bt = box.querySelector('#liq-pago-cargar');
+    bt.addEventListener('click', () => inp.click());
+    inp.addEventListener('change', async () => {
+      const files = [...inp.files]; inp.value = '';
+      if (!files.length) return;
+      bt.disabled = true; bt.textContent = 'Cargando…';
+      try { await liqCargarExtractos(files); } finally { if (liqVivo(tok)) liqPintarPago(fs, fechaIso, tok); }
+    });
+  };
+  if (total <= 0) {
+    pintar('neutro', '➖ sin plata que consignar', '<div class="liq-pago-est">➖ Este día no tiene plata que consignar</div><p>Lo que se liquida da $0: la cartera no lo cobra.</p>');
+    return;
+  }
+  if (!ceds.length) {
+    pintar('debe', '❓ no se puede cruzar con el banco', `<div class="liq-pago-est">❓ No se puede saber si lo pagó</div>
+      <p>La liquidación no tiene la cédula del conductor y la cédula es la referencia con la que consigna en el banco.
+      Corrígelo en la hoja: está en <button type="button" class="lnk" id="liq-pago-rev">🔎 Qué corregir en la hoja</button>.</p>`);
+    box.querySelector('#liq-pago-rev').addEventListener('click', liqVerRevisar);
+    return;
+  }
+  // Aquí siempre fresca (y queda guardada para la lista)
+  const rs = await Promise.all(ceds.map((c) => liqCarteraDe(c, true)));
+  if (!liqVivo(tok)) return;
+  const keys = new Set(fs.map((x) => x.key));
+  const partes = [], estados = [], chips = [];
+  for (const data of rs) {
+    if (!data || !data.ok) {
+      partes.push(`<p class="liq-falta">No se pudo consultar la cartera${data && data.error ? ': ' + esc(data.error) : ''}.</p>`);
+      estados.push('neutro'); chips.push(['neutro', '➖ no se pudo consultar']); continue;
+    }
+    const p = liqPagoDeDia(data, keys);
+    const quien = ceds.length > 1 ? `<div class="liq-pago-quien">${esc(p.nombre || '')} · C.C. ${esc(p.cedula)}</div>` : '';
+    if (!p.mios.length) {
+      const antes = data.desde && fechaIso < data.desde;
+      partes.push(`${quien}<div class="liq-pago-est">➖ ${antes ? 'De antes del arranque de la cartera' : 'Este día no está en la cartera'}</div>
+        <p>${antes ? `La cartera cuenta desde el <b>${esc(fechaLegible(data.desde))}</b>: los días anteriores no se cruzan con el banco.`
+          : 'No se encontró este día entre lo que se le cobra al conductor.'}</p>`);
+      estados.push('neutro'); chips.push(['neutro', antes ? '➖ antes del arranque de la cartera' : '➖ no está en la cartera']); continue;
+    }
+    const plazo = carPlazoTxt(p.plazo);
+    const { cls, corto } = liqPagoEstado(p);
+    const est = esc(liqPagoEstado(p).est);
+    estados.push(cls); chips.push([cls, corto]);
+    const filas = p.pagos.map((a) => {
+      const e = CAR_ESTADO[a.estado] || ['', a.estado || ''];
+      const que = a.clase === 'banco' ? '🏦 Banco' : '🧾 Colilla';
+      return `<tr><td>${esc(fechaLegible(a.fecha))}</td><td>${que}</td><td class="liq-plata">${liqPlata(a.valor)}</td>
+        <td class="liq-plata"><b>${liqPlata(a.aqui)}</b></td><td><span class="car-chip ${e[0]}">${e[1]}</span></td></tr>`;
+    }).join('');
+    partes.push(`${quien}<div class="liq-pago-est">${est}</div>
+      <div class="liq-pago-cifras"><span>Exigido <b>${liqPlata(p.exigido)}</b></span><span>Pagado <b>${liqPlata(p.pagado)}</b></span>
+        <span class="${p.pendiente ? 'car-debe' : ''}">Falta <b>${liqPlata(p.pendiente)}</b></span><span>Plazo: ${esc(plazo)}</span></div>
+      ${filas ? `<div class="liq-tabla-wrap"><table class="pp-tabla liq-pago-tabla"><thead><tr><th>Fecha del pago</th><th>Pago</th>
+        <th>Valor del pago</th><th>Para este día</th><th>Prueba</th></tr></thead><tbody>${filas}</tbody></table></div>
+        <p class="liq-pago-nota">Los pagos se descuentan del día más viejo que deba: una consignación puede pagar varios días, y un día puede quedar pagado con varias.</p>`
+        : `<p>No hay consignaciones de su cédula que alcancen para este día${p.pendiente && banco && banco.hasta ? `: si pagó después del
+          ${esc(fechaLegible(banco.hasta))}, aparecerá al cargar los zip del banco que faltan` : ''}.</p>`}
+      <button type="button" class="btn btn-sm btn-sec" data-cartera="${esc(p.cedula)}">💼 Ver toda su cartera ›</button>`);
+  }
+  // El color del recuadro y la etiqueta de arriba: el peor de los conductores de ese día (casi siempre es uno solo)
+  const peor = ['debe', 'parcial', 'neutro', 'ok'].find((c) => estados.includes(c)) || 'neutro';
+  const chipTxt = (chips.find((c) => c[0] === peor) || [peor, '➖'])[1] + (chips.length > 1 ? ` (${chips.length} conductores)` : '');
+  pintar(peor, chipTxt, partes.join('<hr class="liq-pago-hr">'));
+  box.querySelectorAll('[data-cartera]').forEach((b) => b.addEventListener('click', async () => {
+    await openCartera();
+    carDetalle(b.dataset.cartera);
+  }));
 }
 
 async function verLiqFoto(path) {
@@ -17015,12 +17474,15 @@ async function sincronizarLiq() {
       if (!d.ok) { toast(d.error || 'No se pudo procesar.', 'err'); return; }
       toast(`Listo: ${d.nuevas || 0} nueva(s), ${d.actualizadas || 0} actualizada(s).`, 'ok');
       _liqCat = null;
-      await openLiquidaciones();
+      _liqCarCache.clear();
+      // Se queda en la pantalla donde estaba (la lista, o lo que hay que corregir: así se ve que
+      // lo corregido en la hoja ya salió). Si se fue a otra parte, no se le cambia la pantalla.
+      if (currentView === 'liquidaciones') await (_liq.vista === 'revisar' ? liqVerRevisar() : openLiquidaciones({ mantener: true }));
       return;
     }
     toast('La hoja está tardando más de lo normal. Se intentará sola mañana a las 5:40 a.m.', 'err');
   } catch (e) { toast('No se pudo actualizar: ' + (e.message || e), 'err'); }
-  finally { if ($('liq-sync')) { $('liq-sync').disabled = false; $('liq-sync').textContent = 'Traer lo nuevo de la hoja'; } }
+  finally { if ($('liq-sync')) { $('liq-sync').disabled = false; $('liq-sync').textContent = '🔄 Traer lo nuevo de la hoja'; } }
 }
 
 
@@ -17222,6 +17684,12 @@ function fechaMasDias(iso, n) {
 }
 
 async function liqArmarPlanilla() {
+  // La planilla METRO es por fechas, bus y punto: con un conductor filtrado saldrían igual todos
+  if (_liqF.cedula && !(await confirmAction({
+    title: '¿Armar la planilla?', lead: 'La planilla se arma por fechas, bus y punto.',
+    message: `No se filtra por conductor: van a salir todos los conductores de esas fechas, no solo ${_liqF.condNombre || 'el elegido'}.`,
+    okLabel: 'Armar igual',
+  }))) return;
   await _conExcelBtn('liq-planilla', async () => {
     // Sin fechas en los filtros, el mes corrido: una planilla es de un mes.
     const hoy = hoyServidor();
@@ -17357,21 +17825,42 @@ async function liqArmarPlanilla() {
 // El "RecaudosDiasAnteriores" del Banco de Bogotá trae la cédula del conductor en la
 // referencia. Se lee aquí, en el navegador, y se mandan las filas a recaudos_cargar. La llave
 // es archivo + línea: subir el mismo archivo dos veces no duplica nada.
+// Desde el 23/11 también entra el zip del correo "Archivo Recaudo" (lo lee js/recaudo-banco.js).
 let _liqBanco = null;
+const LIQ_BANCO_ACEPTA = '.zip,.lst,.xls,.xlsx';
 
-async function liqPintarBanco() {
-  const box = $('liq-banco');
-  if (!box) return;
+async function liqEstadoBanco() {
   try {
     const { data, error } = await sb.rpc('recaudos_estado');
     if (error) throw error;
     _liqBanco = data && data.ok ? data : null;
   } catch (e) { _liqBanco = null; }
-  const b = _liqBanco;
-  box.querySelector('.liq-banco-txt').textContent = !b ? 'no se pudo consultar'
-    : !b.dias ? 'todavía no hay ninguno cargado'
-    : b.dias === 1 ? `1 día cargado: ${fechaLegible(b.desde)}`
+  return _liqBanco;
+}
+
+// "18 días cargados, del 31/10 al 19/11 · sin archivo: 01/11, 02/11". Los días sin archivo se buscan en
+// los últimos 45 días cargados: un domingo sin pagos puede no traer archivo, pero conviene preguntarlo.
+function liqBancoTxt(b) {
+  if (!b) return 'no se pudo consultar';
+  if (!b.dias) return 'todavía no hay ninguno cargado';
+  const base = b.dias === 1 ? `1 día cargado: ${fechaLegible(b.desde)}`
     : `${b.dias} días cargados, del ${fechaLegible(b.desde)} al ${fechaLegible(b.hasta)}`;
+  const tiene = (f) => (b.archivos || []).some((a) => !/^PRUEBA/.test(a.archivo) && f >= a.desde && f <= a.hasta);
+  const faltan = [];
+  const fin = new Date(b.hasta + 'T12:00:00Z');
+  for (let d = new Date(fin.getTime() - 45 * 864e5); d < fin; d = new Date(d.getTime() + 864e5)) {
+    const f = d.toISOString().slice(0, 10);
+    if (f > b.desde && !tiene(f)) faltan.push(f);
+  }
+  if (!faltan.length) return base;
+  const lista = faltan.slice(-6).map((f) => fechaLegible(f).slice(0, 5)).join(', ');
+  return `${base} · sin archivo: ${faltan.length > 6 ? `${faltan.length} días (los últimos ${lista})` : lista}`;
+}
+
+async function liqPintarBanco() {
+  const box = $('liq-banco');
+  if (!box) return;
+  box.querySelector('.liq-banco-txt').textContent = liqBancoTxt(await liqEstadoBanco());
 }
 
 const _sinTilde = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -17433,46 +17922,103 @@ async function liqLeerExtracto(file) {
   return out;
 }
 
+// El Excel "RecaudosDiasAnteriores": su llave sigue siendo el nombre del archivo.
+// "Recaudos… (1).xls" es el mismo archivo bajado dos veces: sin el (1) la llave lo reconoce.
+const liqLoteExcel = (nombre, filas) => ({ archivo: nombre.replace(/^.*[\\/]/, '').replace(/\s*\(\d+\)(?=\.[^.]+$)/, ''), filas });
+
+// Lo que se sube puede ser el zip del correo del banco, el .lst o el Asobancaria sueltos, o el Excel.
+// Devuelve los lotes a cargar (uno por día para el zip) y lo que no se pudo leer.
+async function liqLotesDeArchivo(file) {
+  const RB = await import('./recaudo-banco.js');
+  const tipo = RB.tipoArchivoBanco(file.name);
+  const latin1 = (buf) => new TextDecoder('windows-1252').decode(buf);
+  if (tipo === 'lst' || tipo === 'asobancaria') {
+    const texto = tipo === 'lst' ? latin1(await file.arrayBuffer()) : await file.text();
+    return RB.lotesDeZip([{ nombre: file.name, texto }]);
+  }
+  if (tipo !== 'zip') return { lotes: [liqLoteExcel(file.name, await liqLeerExtracto(file))], errores: [] };
+  const JSZip = (await import('https://esm.sh/jszip@3.10.1')).default;
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const entradas = [], xls = [];
+  for (const z of Object.values(zip.files)) {
+    if (z.dir) continue;
+    const t = RB.tipoArchivoBanco(z.name);
+    if (t === 'lst') entradas.push({ nombre: z.name, texto: latin1(await z.async('uint8array')) });
+    else if (t === 'asobancaria') entradas.push({ nombre: z.name, texto: await z.async('string') });
+    else if (t === 'xls') xls.push(z);
+  }
+  // Con el .lst o el Asobancaria el Excel sobra: trae los mismos pagos (y a veces de otro día)
+  if (entradas.length) return RB.lotesDeZip(entradas, xls.map((x) => x.name));
+  const lotes = [], errores = [];
+  for (const x of xls) {
+    try { lotes.push(liqLoteExcel(x.name, await liqLeerExtracto({ arrayBuffer: () => x.async('arraybuffer') }))); }
+    catch (e) { errores.push(`${x.name}: ${e.message || e}`); }
+  }
+  if (!xls.length) errores.push(`${file.name}: no trae archivos del banco`);
+  return { lotes, errores };
+}
+
 async function liqCargarExtractos(files) {
-  if (!files.length) return;
+  if (!files.length) return null;
   const b = $('liq-banco-cargar');
   if (b) { b.disabled = true; b.textContent = 'Cargando…'; }
-  const res = [];
-  let malo = false;
+  const errores = [], dias = new Set();
+  let nuevas = 0, repetidas = 0, sinCed = 0, noCargados = 0;
   try {
+    const yaHay = [...(((await liqEstadoBanco()) || {}).archivos || [])];
+    const vistos = new Set();
     for (const file of files) {
-      // "Recaudos… (1).xls" es el mismo archivo bajado dos veces: sin el (1) la llave lo reconoce.
-      const nombre = file.name.replace(/\s*\(\d+\)(?=\.[^.]+$)/, '');
-      let filas;
-      try { filas = await liqLeerExtracto(file); } catch (e) { res.push(`${nombre}: ${e.message || e}`); malo = true; continue; }
-      if (!filas.length) { res.push(`${nombre}: no trae consignaciones`); malo = true; continue; }
-      // Los mismos días ya cargados con OTRO nombre: puede ser el mismo extracto renombrado.
-      const fechas = [...new Set(filas.map((x) => _isoBanco(x.fecha)))];
-      const otro = ((_liqBanco && _liqBanco.archivos) || []).find((a) => a.archivo !== nombre
-        && fechas.some((f) => f >= a.desde && f <= a.hasta));
-      if (otro) {
-        const ok = await confirmAction({
-          title: '¿Cargar este extracto?',
-          lead: `Ya hay uno cargado de esas fechas: ${otro.archivo}.`,
-          message: `Si ${nombre} es el mismo extracto con otro nombre, las consignaciones quedarían dobles.`,
-          okLabel: 'Cargar igual', danger: true,
-        });
-        if (!ok) { res.push(`${nombre}: no se cargó`); continue; }
+      let r;
+      try { r = await liqLotesDeArchivo(file); } catch (e) { errores.push(`${file.name}: ${e.message || e}`); continue; }
+      errores.push(...(r.errores || []));
+      for (const lote of r.lotes) {
+        // El mismo día dos veces en la misma tanda (el zip reenviado): la llave igual lo saltaría
+        if (vistos.has(lote.archivo)) { repetidas += lote.filas.length; continue; }
+        vistos.add(lote.archivo);
+        if (!lote.filas.length) { errores.push(`${lote.archivo}: no trae consignaciones`); continue; }
+        // Los mismos días ya cargados con OTRO nombre (el Excel y el zip del mismo día): quedarían dobles.
+        const fechas = [...new Set(lote.filas.map((x) => _isoBanco(x.fecha)))].sort();
+        const otro = yaHay.find((a) => a.archivo !== lote.archivo && !/^PRUEBA/.test(a.archivo)
+          && fechas.some((f) => f >= a.desde && f <= a.hasta));
+        if (otro) {
+          const ok = await confirmAction({
+            title: '¿Cargar este día del banco?',
+            lead: `Del ${fechas.map(fechaLegible).join(', ')} ya hay pagos cargados desde ${otro.archivo}.`,
+            message: `Si ${lote.archivo} es el mismo día del banco en otro formato, los pagos quedarían dobles.`,
+            okLabel: 'Cargar igual', danger: true,
+          });
+          if (!ok) { noCargados++; continue; }
+        }
+        const { data, error } = await sb.rpc('recaudos_cargar', { p_archivo: lote.archivo, p_filas: lote.filas });
+        if (error || !data || !data.ok) {
+          errores.push(`${lote.archivo}: ${(error && error.message) || (data && data.error) || 'no se pudo cargar'}`);
+          continue;
+        }
+        nuevas += data.nuevas; repetidas += data.repetidas; sinCed += data.sin_cedula;
+        fechas.forEach((f) => dias.add(f));
+        yaHay.push({ archivo: lote.archivo, desde: fechas[0], hasta: fechas[fechas.length - 1] });
       }
-      const { data, error } = await sb.rpc('recaudos_cargar', { p_archivo: nombre, p_filas: filas });
-      if (error || !data || !data.ok) {
-        res.push(`${nombre}: ${(error && error.message) || (data && data.error) || 'no se pudo cargar'}`);
-        malo = true; continue;
-      }
-      res.push(`${fechas.map(fechaLegible).join(', ')}: ${data.nuevas} nueva(s)`
-        + (data.repetidas ? `, ${data.repetidas} ya estaban` : '')
-        + (data.sin_cedula ? `, ${data.sin_cedula} sin cédula` : ''));
     }
   } finally {
-    if ($('liq-banco-cargar')) { $('liq-banco-cargar').disabled = false; $('liq-banco-cargar').textContent = 'Cargar extracto del banco'; }
+    if ($('liq-banco-cargar')) { $('liq-banco-cargar').disabled = false; $('liq-banco-cargar').textContent = '📥 Cargar recaudo del banco'; }
   }
-  toast('Extracto ' + res.join(' · '), malo ? 'err' : 'ok');
+  const ds = [...dias].sort();
+  const partes = [];
+  if (ds.length) {
+    partes.push(`${ds.length === 1 ? `el ${fechaLegible(ds[0])}` : `${ds.length} días, del ${fechaLegible(ds[0])} al ${fechaLegible(ds[ds.length - 1])}`}: `
+      + `${nuevas.toLocaleString('es-CO')} pago(s) nuevo(s)`);
+  }
+  if (repetidas) partes.push(`${repetidas.toLocaleString('es-CO')} ya estaban`);
+  if (sinCed) partes.push(`${sinCed} sin cédula en la referencia`);
+  if (noCargados) partes.push(`${noCargados} día(s) no se cargaron`);
+  toast('Banco: ' + ([...partes, ...errores].join(' · ') || 'no había nada que cargar'), errores.length ? 'err' : 'ok');
   liqPintarBanco();
+  // Pagos nuevos: la columna «Pago» de la lista se vuelve a cruzar con el banco
+  if (nuevas) {
+    _liqCarCache.clear();
+    if (currentView === 'liquidaciones' && _liq.vista === 'lista' && $('liq-lista')) cargarLiqPagina();
+  }
+  return { dias: ds, nuevas, repetidas, errores };
 }
 
 // ---------- 🧾 Colillas de consignación (sql/149) ----------
@@ -17507,16 +18053,27 @@ function liqCopiarEnlaceColilla() {
 }
 
 async function liqVerColillas() {
-  const { data, error } = await sb.rpc('colillas_listar', { p_desde: null, p_hasta: null });
+  if (!isAdmin()) return;
+  const tok = liqPrepararVista('colillas', '🧾 Colillas de consignación');
+  _liq.volver = 'lista';
+  const body = liqBody();
+  body.innerHTML = '<div class="loading">Cargando las colillas…</div>';
+  let data = null, error = null;
+  try { ({ data, error } = await sb.rpc('colillas_listar', { p_desde: null, p_hasta: null })); } catch (e) { error = e; }
+  if (!liqVivo(tok)) return;
+  body.innerHTML = '';
+  body.appendChild(liqBotonVolver('lista'));
   if (error || !data || !data.ok) {
-    toast('No se pudo consultar: ' + ((error && error.message) || (data && data.error) || ''), 'err');
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudo consultar: ' + ((error && error.message) || (data && data.error) || '')));
     return;
   }
   const fs = data.filas || [];
-  const m = liqColModal();
+  const sub = $('pst-sub'); if (sub) sub.textContent = `${fs.length} en el último mes · solo para reclamos: la prueba del pago es el banco`;
+  const m = pstEl('section', 'pst-card liq-lista-card');
+  body.appendChild(m);
   const cubre = (x) => (x.cubre || []).map((c) => `${fechaLegible(c.fecha)} · bus ${esc(c.movil)}`).join('<br>') || '—';
-  m.querySelector('.pf-body').innerHTML = fs.length ? `
-    <table class="liq-rev"><thead><tr><th>Conductor</th><th>Colilla</th><th>Valor</th>
+  m.innerHTML = fs.length ? `
+    <div class="liq-tabla-wrap"><table class="liq-rev"><thead><tr><th>Conductor</th><th>Colilla</th><th>Valor</th>
       <th>Paga</th><th>Resultado</th><th>Banco</th><th></th></tr></thead><tbody>
       ${fs.map((x) => {
         const b = COL_BANCO[x.estado_banco] || ['', x.estado_banco];
@@ -17530,7 +18087,7 @@ async function liqVerColillas() {
             ${Number(x.sobrante) ? `<br><small>sobran ${liqPlata(x.sobrante)}</small>` : ''}</td>
           <td class="${b[0]}">${b[1]}${x.banco_fecha ? `<br><small>${esc(fechaLegible(x.banco_fecha))}</small>` : ''}</td>
           <td><button type="button" class="lnk" data-foto="${x.id}">Ver foto</button></td></tr>`;
-      }).join('')}</tbody></table>
+      }).join('')}</tbody></table></div>
     <div id="col-foto"></div>
     <div class="pst-nota">La colilla la lee el celular del conductor; la prueba de que la plata entró es el
       extracto del banco. "No aparece" quiere decir que ya están los extractos de ese día y del siguiente
@@ -17547,74 +18104,956 @@ async function liqVerColillas() {
       ${d.texto ? `<details><summary>Lo que leyó el OCR</summary><pre class="col-ocr">${esc(d.texto)}</pre></details>` : ''}`;
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
-  m.hidden = false;
 }
 
-function liqColModal() {
-  let m = $('liqcol-modal');
-  if (m) return m;
-  m = document.createElement('div');
-  m.id = 'liqcol-modal'; m.className = 'modal'; m.hidden = true;
-  m.innerHTML = `<div class="modal-card pf-card">
-    <div class="modal-head"><h3>🧾 Colillas de consignación</h3><span class="spacer"></span>
-      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
-    <div class="pf-body"></div>
-    <div class="modal-foot"><span class="spacer"></span>
-      <button type="button" class="btn" data-x>Cerrar</button></div>
-  </div>`;
-  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
-  document.body.appendChild(m);
-  return m;
+// ---------- 🚨 Conductores en mora ----------
+// Mora = días liquidados SIN PAGAR y FUERA DE PLAZO, con la regla de la cartera (sql/202): plazo en días
+// hábiles, y nadie cae en mora por un día cuyo archivo del banco todavía no se ha cargado. «Debe» del
+// tablero incluye además lo que sigue en plazo; aquí va solo lo vencido. El tablero dice QUIÉNES tienen
+// días vencidos y la cartera de cada uno (la misma consulta del día de un bus) dice CUÁNTO y desde cuándo.
+const _mora = { filas: [], hoy: null, desde: null, plazo: null, banco: null, q: '', orden: 'monto', abierto: new Set(), tok: 0 };
+async function openMora() {
+  if (!isAdmin()) return;
+  currentView = 'mora';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
+  $('nav-mora')?.classList.add('active');
+  buildBottomNav();
+  const tit = $('pst-title'); if (tit) tit.textContent = '🚨 Conductores en mora';
+  window.scrollTo(0, 0);
+  _liqCarCache.clear();                       // la mora se calcula con lo último de la base
+  await cargarMora();
+}
+async function cargarMora() {
+  const body = $('pst-body');
+  const tok = ++_mora.tok;
+  const vivo = () => currentView === 'mora' && _mora.tok === tok;
+  body.innerHTML = '<div class="loading">Buscando a los que están en mora…</div>';
+  let d = null;
+  try {
+    const r = await sb.rpc('cartera_tablero');
+    if (r.error) throw r.error;
+    d = r.data;
+  } catch (e) { if (vivo()) body.innerHTML = `<div class="cump-empty">No se pudo consultar: ${esc(e.message || e)}</div>`; return; }
+  if (!vivo()) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+  const cands = (d.conductores || []).filter((c) => Number(c.vencidos) > 0);
+  body.innerHTML = `<div class="loading">Calculando la mora de ${cands.length} conductor(es)…</div>`;
+  const datos = new Map();
+  const [banco] = await Promise.all([liqEstadoBanco(),
+    liqEnTandas(cands.map((c) => String(c.cedula)), 6, async (c) => { datos.set(c, await liqCarteraDe(c)); })]);
+  if (!vivo()) return;
+  const filas = [];
+  for (const c of cands) {
+    const data = datos.get(String(c.cedula));
+    if (!data || !data.ok) continue;
+    const pun = new Map((data.puntual || []).map((p) => [p.key, p]));
+    const venc = (data.cargos || []).filter((x) => Number(x.pendiente) > 0 && (pun.get(x.key) || {}).a_tiempo === false);
+    if (!venc.length) continue;
+    const desde = venc.map((x) => String(x.fecha).slice(0, 10)).sort()[0];
+    filas.push({
+      cedula: String(c.cedula), nombre: c.nombre || '', buses: [...new Set(venc.map((x) => x.movil))].join(', '),
+      monto: venc.reduce((s, x) => s + Number(x.pendiente), 0), dias: venc.length, desde, atraso: carDias(desde, d.hoy),
+      debe: Number(c.debe || 0), ultimo: c.ultimo_pago || null, alerta: !!c.alerta,
+      venc: venc.map((x) => ({ fecha: String(x.fecha).slice(0, 10), movil: x.movil, ruta: x.ruta, dinero: Number(x.dinero), falta: Number(x.pendiente) })),
+    });
+  }
+  Object.assign(_mora, { filas, hoy: d.hoy, desde: d.desde, plazo: d.alerta && d.alerta.plazo, banco });
+  renderMora();
+}
+function moraOrdenadas() {
+  const q = _sinTilde(_mora.q);
+  const fs = _mora.filas.filter((f) => !q || _sinTilde(`${f.nombre} ${f.cedula} ${f.buses}`).includes(q));
+  const por = {
+    monto: (a, b) => b.monto - a.monto || b.atraso - a.atraso,
+    atraso: (a, b) => b.atraso - a.atraso || b.monto - a.monto,
+    dias: (a, b) => b.dias - a.dias || b.monto - a.monto,
+    nombre: (a, b) => a.nombre.localeCompare(b.nombre),
+  };
+  return fs.sort(por[_mora.orden] || por.monto);
+}
+function renderMora() {
+  const body = $('pst-body'), m = _mora, fs = m.filas;
+  const total = fs.reduce((s, f) => s + f.monto, 0), dias = fs.reduce((s, f) => s + f.dias, 0);
+  const viejo = fs.map((f) => f.desde).sort()[0];
+  const hasta = m.banco && m.banco.hasta;
+  $('pst-sub').textContent = `Días liquidados sin pagar y fuera de plazo · plazo: ${carPlazoTxt(m.plazo)}`;
+  body.innerHTML = '';
+  const kpis = pstEl('div', 'pst-kpis');
+  const t1 = pstTile('En mora', liqPlata(total), `${fs.length} conductor(es)`); t1.classList.add(fs.length ? 'car-t-debe' : 'car-t-ok');
+  kpis.append(t1,
+    pstTile('Días en mora', pstNum(dias), 'días liquidados vencidos sin pagar'),
+    pstTile('La más vieja', viejo ? fechaLegible(viejo) : '—', viejo ? `hace ${carDias(viejo, m.hoy)} día(s)` : 'nadie está en mora'),
+    pstTile('Promedio por conductor', fs.length ? liqPlata(Math.round(total / fs.length)) : '—', 'de lo que está en mora'));
+  body.appendChild(kpis);
+  // Hasta dónde se puede afirmar que alguien no pagó: el último archivo del banco cargado
+  const nota = pstEl('div', 'pst-nota mora-nota');
+  nota.innerHTML = `🏦 Banco cargado hasta el <b>${hasta ? esc(fechaLegible(hasta)) : '—'}</b>: lo liquidado después todavía no puede estar
+    en mora (puede que ya hayan pagado). · <button type="button" class="lnk" id="mora-cargar">📥 Cargar los zip del banco</button>
+    <input type="file" id="mora-file" accept="${LIQ_BANCO_ACEPTA}" multiple hidden>
+    · Las liquidaciones sin cédula no se le cobran a nadie: <button type="button" class="lnk" id="mora-rev">🔎 Qué corregir en la hoja</button>`;
+  body.appendChild(nota);
+  const inp = nota.querySelector('#mora-file');
+  nota.querySelector('#mora-cargar').addEventListener('click', () => inp.click());
+  inp.addEventListener('change', async () => {
+    const files = [...inp.files]; inp.value = '';
+    if (!files.length) return;
+    const r = await liqCargarExtractos(files);
+    if (r && r.nuevas && currentView === 'mora') { _liqCarCache.clear(); cargarMora(); }
+  });
+  nota.querySelector('#mora-rev').addEventListener('click', liqVerRevisar);
+
+  const card = pstEl('section', 'pst-card pst-ancha mora-card');
+  card.innerHTML = `<div class="pst-card-h"><div><h4>Quiénes están en mora</h4>
+      <div class="pst-nota">Toca un conductor para ver sus días vencidos · los pagos se descuentan del día más viejo que deba</div></div></div>
+    <div class="mora-barra">
+      <input type="search" id="mora-buscar" class="car-buscar" placeholder="Buscar conductor, cédula o bus…" value="${esc(m.q)}">
+      <label class="mora-orden">Ordenar por <select id="mora-orden">
+        ${[['monto', 'Más plata en mora'], ['atraso', 'Más días de atraso'], ['dias', 'Más días vencidos'], ['nombre', 'Nombre']]
+          .map(([k, t]) => `<option value="${k}"${m.orden === k ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+    </div>
+    <div class="pst-tabla-wrap" id="mora-tabla"></div>`;
+  body.appendChild(card);
+  card.querySelector('#mora-buscar').addEventListener('input', (e) => { _mora.q = e.target.value; moraPintarTabla(); });
+  card.querySelector('#mora-orden').addEventListener('change', (e) => { _mora.orden = e.target.value; moraPintarTabla(); });
+  moraPintarTabla();
+}
+function moraPintarTabla() {
+  const box = $('mora-tabla');
+  if (!box) return;
+  const fs = moraOrdenadas();
+  if (!_mora.filas.length) { box.innerHTML = '<div class="pst-vacio">✅ Nadie está en mora.</div>'; return; }
+  box.innerHTML = `<table class="pst-tabla mora-tabla"><thead><tr><th>#</th><th>Conductor</th><th>Bus(es)</th><th>En mora</th>
+      <th>Días vencidos</th><th>Desde</th><th>Atraso</th><th>Debe en total</th><th>Último pago</th><th></th></tr></thead><tbody>
+    ${fs.map((f, i) => {
+      const abierto = _mora.abierto.has(f.cedula);
+      return `<tr class="pst-clic mora-fila${abierto ? ' abierto' : ''}" tabindex="0" data-ced="${esc(f.cedula)}">
+        <td>${i + 1}</td>
+        <td><b>${esc(f.nombre || 'Sin nombre conocido')}</b>${f.alerta ? ' <small class="car-al-tag">⚠️ pasa el tope</small>' : ''}<br><small>C.C. ${esc(f.cedula)}</small></td>
+        <td>${esc(f.buses)}</td>
+        <td class="liq-plata car-debe">${liqPlata(f.monto)}</td>
+        <td>${f.dias}</td>
+        <td>${esc(fechaLegible(f.desde))}</td>
+        <td><span class="mora-atraso ${f.atraso > 7 ? 'alto' : ''}">${f.atraso} día(s)</span></td>
+        <td class="liq-plata">${liqPlata(f.debe)}</td>
+        <td>${f.ultimo ? esc(fechaLegible(f.ultimo)) : '<small class="car-debe">nunca</small>'}</td>
+        <td><span class="mora-acc"><button type="button" class="btn btn-sm btn-sec" data-cartera="${esc(f.cedula)}">💼 Cartera</button>
+          <button type="button" class="btn btn-sm btn-sec" data-liq="${esc(f.cedula)}">💵 Liquidaciones</button></span></td></tr>
+      ${abierto ? `<tr class="mora-det"><td></td><td colspan="9"><table class="pp-tabla"><thead><tr><th>Día liquidado</th><th>Bus</th><th>Ruta</th>
+        <th>Liquidado</th><th>Falta</th><th>Atraso</th></tr></thead><tbody>${f.venc.map((v) => `<tr><td>${esc(fechaLegible(v.fecha))}</td>
+          <td><b>${esc(v.movil)}</b></td><td>${esc(v.ruta || '')}</td><td class="liq-plata">${liqPlata(v.dinero)}</td>
+          <td class="liq-plata car-debe">${liqPlata(v.falta)}</td><td>${carDias(v.fecha, _mora.hoy)} día(s)</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`;
+    }).join('') || '<tr><td colspan="10" class="pst-vacio">Nadie con esa búsqueda.</td></tr>'}
+    </tbody></table>`;
+  box.querySelectorAll('.mora-fila').forEach((tr) => {
+    const alternar = () => { const c = tr.dataset.ced; if (_mora.abierto.has(c)) _mora.abierto.delete(c); else _mora.abierto.add(c); moraPintarTabla(); };
+    tr.addEventListener('click', (e) => { if (!e.target.closest('button')) alternar(); });
+    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); alternar(); } });
+  });
+  box.querySelectorAll('[data-cartera]').forEach((b) => b.addEventListener('click', async () => { await openCartera(); carDetalle(b.dataset.cartera); }));
+  box.querySelectorAll('[data-liq]').forEach((b) => b.addEventListener('click', () => {
+    const f = _mora.filas.find((x) => x.cedula === b.dataset.liq);
+    liqAbrirConductor(f.cedula, f.nombre, _mora.desde || '');
+  }));
+}
+// Liquidaciones de un conductor (desde la mora o la cartera): la lista ya filtrada, con la columna «Pago»
+function liqAbrirConductor(ced, nombre, desde = '') {
+  _liqF = { ...liqFiltroVacio(_liqF.tam || 25), cedula: String(ced), condNombre: nombre || '', desde: desde || '' };
+  _liq.fila = null;
+  openLiquidaciones({ mantener: true });
+}
+async function exportarMora() {
+  const fs = moraOrdenadas();
+  const btn = $('pst-excel'); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
+  try {
+    await _xlsxDescargar([
+      { name: 'En mora', aoa: [[`Días liquidados sin pagar y fuera de plazo · plazo: ${carPlazoTxt(_mora.plazo)} · banco cargado hasta el ${_mora.banco && _mora.banco.hasta ? fechaLegible(_mora.banco.hasta) : '—'}`],
+        ['Conductor', 'Cédula', 'Bus(es)', 'En mora', 'Días vencidos', 'Desde', 'Atraso (días)', 'Debe en total', 'Último pago', 'Pasa el tope'],
+        ...fs.map((f) => [f.nombre, f.cedula, f.buses, f.monto, f.dias, fechaLegible(f.desde), f.atraso, f.debe, f.ultimo ? fechaLegible(f.ultimo) : '', f.alerta ? 'sí' : ''])] },
+      { name: 'Días vencidos', aoa: [['Conductor', 'Cédula', 'Día liquidado', 'Bus', 'Ruta', 'Liquidado', 'Falta', 'Atraso (días)'],
+        ...fs.flatMap((f) => f.venc.map((v) => [f.nombre, f.cedula, fechaLegible(v.fecha), v.movil, v.ruta || '', v.dinero, v.falta, carDias(v.fecha, _mora.hoy)]))] },
+    ], `conductores_en_mora_${_mora.hoy || hoyServidor()}.xlsx`);
+  } finally { if (btn) { btn.disabled = false; btn.textContent = prev; } }
 }
 
-// Lo que hay que corregir, en pantalla (lo mismo que va en la hoja "Corregir" del Excel).
-async function liqVerRevisar() {
-  const { data, error } = await sb.rpc('liquidaciones_revisar');
+// ---------- 💼 Cartera de conductores (sql/154 + 155) ----------
+// La deuda persigue al conductor en el bus que sea: cada liquidación es un cargo, cada colilla o
+// consignación del extracto es un abono, y el servidor reparte los abonos del día más viejo al
+// más nuevo. Pantalla propia (la de estadísticas): cifras, el top 10 de los que pagan a tiempo y de
+// los que no, deuda por antigüedad, liquidado contra pagado, lo que hay que revisar y la lista de
+// conductores; cada uno abre su detalle con cada día exigido, cuándo lo pagó y con qué prueba.
+const CAR_ESTADO = {
+  BANCO: ['ok', '🏦 En el extracto'],
+  CONFIRMADA: ['ok', '✅ Confirmada por el banco'],
+  POR_CONFIRMAR: ['', '⏳ Falta el extracto'],
+  NO_APARECE: ['mal', '❌ No aparece en el banco'],
+};
+const CAR_TRAMOS = { 1: 'Hasta 3 días', 2: '4 a 7 días', 3: '8 a 15 días', 4: '16 a 30 días', 5: 'Más de 30 días' };
+const CAR_FILTROS = [
+  ['alerta', '⚠️ Pasan el tope'], ['mora', '🚨 En mora'], ['deben', 'Deben'], ['tarde', '⏰ Pagan tarde'], ['viejos', 'Más de 7 días'],
+  ['favor', 'A favor'], ['aldia', 'Al día'], ['todos', 'Todos'],
+];
+// Con qué está probado que pagó un día liquidado (sql/155, _cartera_cumple)
+const CAR_PRUEBA = {
+  BANCO: ['ok', '🏦 Confirmado'],
+  POR_CONFIRMAR: ['', '⏳ Colilla sin confirmar'],
+  NO_APARECE: ['mal', '❌ No aparece en el banco'],
+};
+// Para entrar al top 10 hay que tener al menos estos días liquidados ya vencidos (con menos no se mide)
+const CAR_MIN_TOP = 3;
+const carNombre = (c) => c.nombre || 'Sin nombre conocido';
+// El plazo cuenta días hábiles (sql/202): domingos y festivos no cuentan, así lo del sábado se paga el lunes
+const carPlazoTxt = (p) => (Number(p) === 0 ? 'el mismo día' : Number(p) === 1 ? 'al día hábil siguiente' : `hasta ${p} días hábiles después`);
+const _car = { d: null, filtro: 'deben', tramo: null, q: '', ced: null };
+
+// ---- Tope de alerta (sql/155): el administrador dice cuánto es mucho; el que lo pase salta ----
+// Número rojo en el menú y aviso al que tiene la app abierta: es plata que está en juego.
+let CAR_ALERTAS = 0, _carAlertasVistas = null, _carAlertPedido = 0;
+async function refrescarCarteraAlertas(rebuild = true) {
+  if (!isAdmin()) { CAR_ALERTAS = 0; return; }
+  let d = null;
+  try {
+    const { data, error } = await sb.rpc('cartera_alertas');
+    if (error) throw error;
+    d = data;
+  } catch (e) { return; }           // sin red (o sin sql/155) se deja el número anterior
+  if (!d || !d.ok) return;
+  carAvisar(d.lista || []);
+  if (rebuild) buildSidebar();
+}
+// Al entrar avisa si alguien pasa el tope; después, solo por los nuevos. Con el tablero abierto no
+// suena (el tablero ya lo muestra arriba). lista = [{cedula, nombre, valor}]
+function carAvisar(lista, callado = false) {
+  CAR_ALERTAS = lista.length;
+  if (!callado && !_carAlertasVistas && lista.length) {
+    toast(`💼 Cartera: ${lista.length} conductor(es) pasan el tope · ${liqPlata(lista.reduce((s, x) => s + Number(x.valor || 0), 0))} en juego`, 'err');
+  } else if (!callado && _carAlertasVistas) {
+    const nuevos = lista.filter((x) => !_carAlertasVistas.has(x.cedula));
+    if (nuevos.length === 1) toast(`💼 ${carNombre(nuevos[0])} pasó el tope de la cartera: debe ${liqPlata(nuevos[0].valor)}`, 'err');
+    else if (nuevos.length > 1) toast(`💼 ${nuevos.length} conductores más pasaron el tope de la cartera`, 'err');
+  }
+  _carAlertasVistas = new Set(lista.map((x) => x.cedula));
+}
+// La misma lista que da la base (cartera_alertas), armada con las filas del tablero
+const carAlertasDe = (cs) => cs.filter((c) => c.alerta).map((c) => ({ cedula: c.cedula, nombre: c.nombre, valor: c.debe }));
+// Por qué pasa el tope: por el monto, por los días, o por los dos
+function carMotivo(c, a = (_car.d && _car.d.alerta) || {}) {
+  const dd = c.debe_desde && _car.d ? carDias(c.debe_desde, _car.d.hoy) : 0;
+  return { dd, monto: a.monto != null && Number(c.debe) >= Number(a.monto), dias: a.dias != null && dd > Number(a.dias) };
+}
+// Lo que debe con más de 7 días (tramos 3, 4 y 5)
+const carViejo = (c) => [3, 4, 5].reduce((s, k) => s + Number((c.edades || {})[k] || 0), 0);
+const carDias = (iso, hoy) => Math.round((new Date(String(hoy).slice(0, 10) + 'T12:00:00') - new Date(String(iso).slice(0, 10) + 'T12:00:00')) / 864e5);
+// $ abreviado para los ejes: $1,2 M · $350 mil
+const carCorto = (v) => {
+  const n = Math.abs(Number(v || 0)), sg = Number(v) < 0 ? '−' : '';
+  return n >= 1e6 ? `${sg}$${(n / 1e6).toLocaleString('es-CO', { maximumFractionDigits: 1 })} M`
+    : n >= 1e3 ? `${sg}$${Math.round(n / 1e3).toLocaleString('es-CO')} mil` : `${sg}$${Math.round(n)}`;
+};
+
+// Línea en Liquidaciones: el resumen y el acceso al tablero
+async function liqContarCartera() {
+  const el = $('liq-car-txt');
+  if (!el) return;
+  try {
+    const { data, error } = await sb.rpc('cartera_conductores');
+    if (error) throw error;
+    if (!data || !data.ok) { el.textContent = (data && data.error) || 'no se pudo consultar'; return; }
+    const deben = (data.filas || []).filter((x) => Number(x.debe) > 0);
+    el.textContent = `${deben.length} conductor(es) deben ${liqPlata(deben.reduce((s, x) => s + Number(x.debe), 0))}`
+      + (CAR_ALERTAS ? ` · ⚠️ ${CAR_ALERTAS} pasan el tope` : '');
+  } catch (e) { el.textContent = 'no se pudo consultar'; }
+}
+
+async function openCartera() {
+  if (!isAdmin()) return;
+  currentView = 'cartera';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
+  $('nav-cartera')?.classList.add('active');
+  buildBottomNav();
+  const tit = $('pst-title'); if (tit) tit.textContent = '💼 Cartera de conductores';
+  _car.ced = null;
+  await cargarCartera();
+}
+
+async function cargarCartera() {
+  const body = $('pst-body');
+  body.innerHTML = '<div class="loading">Calculando la cartera…</div>';
+  try {
+    const { data, error } = await sb.rpc('cartera_tablero');
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'Sin permiso.');
+    _car.d = data;
+    $('pst-sub').textContent = `Desde el ${fechaLegible(data.desde)} hasta el ${fechaLegible(data.hoy)}`;
+    // El número del menú queda igual al tablero
+    carAvisar(carAlertasDe(data.conductores || []), true);
+    buildSidebar();
+    if (_car.ced) await carDetalle(_car.ced); else renderCartera();
+  } catch (e) {
+    const t = String(e.message || e);
+    body.innerHTML = `<div class="cump-empty">${/cartera_tablero/.test(t)
+      ? 'Falta ejecutar <b>sql/155_cartera_tablero.sql</b> en la base.' : esc(t)}</div>`;
+  }
+}
+
+function carFiltrar(cs, f = _car.filtro, tramo = _car.tramo, q = _car.q) {
+  return cs.filter((c) => (f === 'alerta' ? !!c.alerta : f === 'mora' ? Number(c.vencidos) > 0 : f === 'tarde' ? Number(c.tarde) > 0
+    : f === 'deben' ? Number(c.debe) > 0 : f === 'viejos' ? carViejo(c) > 0
+    : f === 'favor' ? Number(c.a_favor) > 0 : f === 'aldia' ? !(Number(c.debe) > 0) && !(Number(c.a_favor) > 0) : true))
+    .filter((c) => !tramo || Number((c.edades || {})[tramo] || 0) > 0)
+    .filter((c) => !q || `${c.nombre || ''} ${c.cedula} ${c.buses || ''}`.toLowerCase().includes(q));
+}
+const carIrALista = () => $('car-lista')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+function renderCartera() {
+  const d = _car.d, body = $('pst-body');
+  const cs = d.conductores || [];
+  const suma = (arr, fn) => arr.reduce((s, x) => s + Number(fn(x) || 0), 0);
+  const deben = cs.filter((c) => Number(c.debe) > 0), favor = cs.filter((c) => Number(c.a_favor) > 0);
+  const viejos = cs.filter((c) => carViejo(c) > 0);
+  const aldia = cs.length - deben.length - favor.length;
+  _pst.tablas = [];
+  body.innerHTML = '';
+
+  // ---- Lo primero: los que pasan el tope, y las reglas ----
+  const box = carAlertaBox(cs);
+  if (box) body.appendChild(box);
+  body.appendChild(carTopeCfg(d, cs));
+  body.appendChild(carBancoLinea());
+
+  // ---- Cifras: las que tienen filtro llevan a la lista de conductores ----
+  const kpis = pstEl('div', 'pst-kpis');
+  const tile = (etq, val, det, filtro, cls) => {
+    const t = pstTile(etq, val, det);
+    if (cls) t.classList.add(cls);
+    if (filtro) {
+      t.classList.add('pst-clic', 'car-tile'); t.tabIndex = 0; t.setAttribute('role', 'button');
+      t.title = 'Ver quiénes son, en la lista';
+      const ir = () => { _car.filtro = filtro; _car.tramo = null; renderCartera(); carIrALista(); };
+      t.addEventListener('click', ir);
+      t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ir(); } });
+    }
+    return t;
+  };
+  // Lo exigido es lo liquidado; lo consignado, de los que tienen liquidaciones (sin a favor de más)
+  const conLiq = cs.filter((c) => !c.sin_liquidaciones);
+  const exigido = suma(conLiq, (c) => c.cargos), cubierto = suma(conLiq, (c) => Math.min(Number(c.abonos), Number(c.cargos)));
+  const ev = suma(cs, (c) => c.evaluados), at = suma(cs, (c) => c.a_tiempo);
+  kpis.append(
+    tile('Consignado de lo exigido', `${pstPct(cubierto, exigido)}%`, `${liqPlata(cubierto)} de ${liqPlata(exigido)} liquidado`),
+    tile('Días pagados a tiempo', `${pstPct(at, ev)}%`, `${pstNum(at)} de ${pstNum(ev)} días · plazo: ${carPlazoTxt(d.alerta && d.alerta.plazo)}`, 'tarde'),
+    tile('Deben', liqPlata(suma(deben, (c) => c.debe)), `${deben.length} conductor(es) · ${liqPlata(suma(viejos, carViejo))} con más de 7 días`, 'deben', 'car-t-debe'),
+    tile('Pagos por confirmar', liqPlata(suma(cs, (c) => c.por_confirmar)), 'colillas sin el extracto del banco'),
+    tile('A favor', liqPlata(suma(favor, (c) => c.a_favor)), `${favor.length} conductor(es)`, 'favor', 'car-t-ok'),
+    tile('Al día', pstNum(aldia), `de ${cs.length} conductores`, 'aldia'),
+  );
+  body.appendChild(kpis);
+
+  // ---- El top 10: los que mejor pagan a tiempo y los que peor ----
+  const top = carTop(cs);
+  const gt = pstEl('div', 'pst-grid car-det-grid');
+  gt.append(carTopCard(top.mejores, true, top.n, d), carTopCard(top.peores, false, top.n, d));
+  body.appendChild(gt);
+
+  const g = pstEl('div', 'pst-grid');
+  g.append(carTramosCard(d), carRevisarCard(d), carSemanasCard(d));
+  body.append(g, carListaCard(cs));
+  carDibujar();
+}
+
+// El orden del top: % de días pagados a tiempo; si empatan, el que tarda menos (o más) en promedio
+// y el que debe menos (o más). Solo entran los que tienen al menos CAR_MIN_TOP días para medir, y
+// nadie sale en las dos listas.
+const carMedibles = (cs) => cs.filter((c) => Number(c.evaluados) >= CAR_MIN_TOP);
+// Si siguen empatados, primero el que tiene sus pagos confirmados por el banco
+const carMejorPrimero = (a, b) => Number(b.pct_tiempo) - Number(a.pct_tiempo) || Number(a.prom_dias || 0) - Number(b.prom_dias || 0)
+  || Number(b.evaluados) - Number(a.evaluados) || Number(a.por_confirmar) - Number(b.por_confirmar) || Number(a.debe) - Number(b.debe);
+function carTop(cs) {
+  const medibles = carMedibles(cs);
+  const mejores = medibles.slice().sort(carMejorPrimero).slice(0, 10);
+  const ya = new Set(mejores.map((c) => c.cedula));
+  const peores = medibles.filter((c) => Number(c.tarde) > 0 && !ya.has(c.cedula))
+    .sort((a, b) => Number(a.pct_tiempo) - Number(b.pct_tiempo) || Number(b.prom_dias || 0) - Number(a.prom_dias || 0)
+      || Number(b.debe) - Number(a.debe)).slice(0, 10);
+  return { mejores, peores, n: medibles.length };
+}
+// Una lista del top: puesto, conductor, cuántos días a tiempo y la barra del % (una sola serie)
+function carTopCard(lista, buenos, n, d) {
+  const cont = pstEl('div', 'car-top');
+  if (!lista.length) {
+    cont.appendChild(pstEl('div', 'pst-vacio', buenos ? 'Todavía nadie tiene días suficientes para medir.' : 'Nadie paga tarde. 🎉'));
+  }
+  lista.forEach((c, i) => {
+    const b = pstEl('button', 'car-top-f'); b.type = 'button'; b.dataset.ced = c.cedula;
+    const pct = Number(c.pct_tiempo || 0), pd = Number(c.prom_dias || 0);
+    const tarda = pd < 0.05 ? 'paga sin demora' : `tarda ${pd.toLocaleString('es-CO', { maximumFractionDigits: 1 })} día(s) en promedio`;
+    b.innerHTML = `<span class="car-top-n">${i + 1}</span>
+      <span class="car-top-q"><b>${esc(carNombre(c))}</b><small>${pstNum(c.a_tiempo)} de ${pstNum(c.evaluados)} días a tiempo · ${tarda}${Number(c.vencidos) > 0
+        ? ` · <span class="car-debe">debe ${liqPlata(c.debe)}</span>` : ''}${Number(c.por_confirmar) > 0 ? ` · ⏳ ${liqPlata(c.por_confirmar)} sin confirmar por el banco` : ''}</small></span>
+      <span class="car-top-b" aria-hidden="true"><i style="width:${Math.max(pct, pct ? 2 : 0)}%;background:${PST_COL.s2}"></i></span>
+      <span class="car-top-p">${pct}%</span>`;
+    b.title = `${carNombre(c)} · bus(es) ${c.buses || ''}`;
+    b.addEventListener('click', () => carDetalle(c.cedula));
+    cont.appendChild(b);
+  });
+  const plazo = carPlazoTxt(d.alerta && d.alerta.plazo);
+  return pstCard(buenos ? '🏆 Los 10 que mejor pagan a tiempo' : '⏰ Los 10 que más se atrasan',
+    `De ${n} conductores con ${CAR_MIN_TOP} días o más para medir · a tiempo = pagado ${plazo} · toca uno para ver sus días`,
+    cont, { cab: ['Puesto', 'Conductor', 'Cédula', 'Días a tiempo', 'Días medidos', '% a tiempo', 'Tarda en promedio (días)', 'Debe'],
+      filas: lista.map((c, i) => [i + 1, carNombre(c), c.cedula, Number(c.a_tiempo), Number(c.evaluados), `${Number(c.pct_tiempo || 0)}%`,
+        Number(c.prom_dias || 0), liqPlata(c.debe)]) });
+}
+
+// Los que pasan el tope: cuánta plata está en juego y quiénes son (cada uno abre su detalle)
+function carAlertaBox(cs) {
+  const al = cs.filter((c) => c.alerta);
+  if (!al.length) return null;
+  const box = pstEl('div', 'car-alerta-box');
+  box.setAttribute('role', 'alert');
+  const MAX = 8;
+  box.innerHTML = `<div class="car-alerta-h"><span>⚠️ <b>${al.length} conductor(es) pasan el tope</b> ·
+      <b>${liqPlata(al.reduce((s, c) => s + Number(c.debe), 0))}</b> en juego</span>
+      <button type="button" class="btn btn-sm" id="car-al-ver">Ver en la lista</button></div>
+    <div class="car-alerta-l">${al.slice(0, MAX).map((c) => {
+      const m = carMotivo(c);
+      return `<button type="button" class="car-al-c" data-ced="${esc(c.cedula)}"><b>${esc(carNombre(c))}</b>
+        · debe <span class="${m.monto ? 'car-al-pasa' : ''}">${liqPlata(c.debe)}</span>${m.dd ? `
+        · hace <span class="${m.dias ? 'car-al-pasa' : ''}">${m.dd} días</span>` : ''}</button>`;
+    }).join('')}${al.length > MAX ? `<span class="car-al-mas">y ${al.length - MAX} más</span>` : ''}</div>`;
+  box.querySelector('#car-al-ver').addEventListener('click', () => { _car.filtro = 'alerta'; _car.tramo = null; renderCartera(); carIrALista(); });
+  box.querySelectorAll('.car-al-c').forEach((b) => b.addEventListener('click', () => carDetalle(b.dataset.ced)));
+  return box;
+}
+
+// 🏦 El banco es la prueba del pago: de qué días hay archivo cargado y el botón para subir el zip
+// tal como llega en el correo del banco (varios a la vez). Al terminar se recalcula el tablero.
+function carBancoLinea() {
+  const div = pstEl('div', 'pst-nota car-banco');
+  div.innerHTML = `🏦 <b>Recaudo del banco:</b> <span class="car-banco-txt">consultando…</span>
+    · <button type="button" class="lnk" id="car-banco-cargar">📥 Cargar los zip del banco</button>
+    <input type="file" id="car-banco-file" accept="${LIQ_BANCO_ACEPTA}" multiple hidden>`;
+  const txt = div.querySelector('.car-banco-txt');
+  liqEstadoBanco().then((b) => { txt.textContent = liqBancoTxt(b); });
+  const inp = div.querySelector('#car-banco-file'), btn = div.querySelector('#car-banco-cargar');
+  btn.addEventListener('click', () => inp.click());
+  inp.addEventListener('change', async () => {
+    const files = [...inp.files];
+    inp.value = '';
+    if (!files.length) return;
+    btn.disabled = true; btn.textContent = 'Cargando…';
+    try {
+      const r = await liqCargarExtractos(files);
+      if (r && r.nuevas) await cargarCartera();
+      else txt.textContent = liqBancoTxt(_liqBanco);
+    } finally { btn.disabled = false; btn.textContent = '📥 Cargar los zip del banco'; }
+  });
+  return div;
+}
+
+// Las reglas de la cartera: cuánto es mucho (tope de alerta) y el plazo para pagar. Una línea que
+// se abre para cambiarlas (tope vacío = sin alerta; plazo vacío = al día siguiente)
+function carTopeCfg(d, cs) {
+  const a = d.alerta || {};
+  const hay = a.monto != null || a.dias != null;
+  const partes = [a.monto != null ? `deber <b>${liqPlata(a.monto)}</b> o más` : '', a.dias != null ? `más de <b>${a.dias} días</b> debiendo` : ''].filter(Boolean).join(' · o ');
+  const nadie = hay && !cs.some((c) => c.alerta);
+  const fmt = (v) => (v != null ? Number(v).toLocaleString('es-CO') : '');
+  const det = pstEl('details', 'car-cfg' + (hay ? '' : ' sin'));
+  if (!hay) det.open = true;
+  det.innerHTML = `<summary>⚙️ <b>Tope de alerta:</b> ${hay ? partes : 'sin definir. Di desde cuánta plata (o cuántos días debiendo) quieres que te avise'}
+      ${nadie ? ' · <span class="car-ok">✅ nadie lo pasa</span>' : ''} · <b>Plazo para pagar:</b> ${carPlazoTxt(a.plazo)}
+      <span class="lnk">cambiar</span></summary>
+    <div class="car-cfg-f">
+      <label>Avisar cuando un conductor deba
+        <span class="car-cfg-in">$ <input id="car-cfg-monto" inputmode="numeric" autocomplete="off" placeholder="500.000"
+          value="${fmt(a.monto)}"></span> o más</label>
+      <label>o cuando lo que debe tenga más de
+        <span class="car-cfg-in"><input id="car-cfg-dias" type="number" min="1" max="365" inputmode="numeric" placeholder="15"
+          value="${a.dias != null ? a.dias : ''}"> días sin pagar</span></label>
+      <label>Un día liquidado está pagado a tiempo si se consigna hasta
+        <span class="car-cfg-in"><input id="car-cfg-plazo" type="number" min="0" max="30" inputmode="numeric" placeholder="1"
+          value="${a.plazo != null ? a.plazo : 1}"> día(s) hábil(es) después</span> (0 = el mismo día)</label>
+      <div class="pst-nota">Deja vacío el tope que no quieras usar. El plazo cambia el top 10 y los días a tiempo de todos.
+        Los domingos y festivos no cuentan para el plazo: lo del sábado se puede pagar el lunes.
+        ${a.cambiado_en ? `Último cambio: ${esc(fechaLegible(new Date(a.cambiado_en).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })))}${a.cambiado_por ? ` por ${esc(a.cambiado_por)}` : ''}.` : ''}</div>
+      <div><button type="button" class="btn btn-primary btn-sm" id="car-cfg-ok">Guardar</button></div>
+    </div>`;
+  const inM = det.querySelector('#car-cfg-monto'), inD = det.querySelector('#car-cfg-dias'), inP = det.querySelector('#car-cfg-plazo');
+  carPlataInput(inM);
+  det.querySelector('#car-cfg-ok').addEventListener('click', async (ev) => {
+    const monto = carPlataValor(inM);
+    const dias = inD.value === '' ? null : Math.round(Number(inD.value));
+    const plazo = inP.value === '' ? null : Math.round(Number(inP.value));
+    if (dias != null && !(dias >= 1 && dias <= 365)) { toast('Los días van de 1 a 365.', 'err'); return; }
+    if (plazo != null && !(plazo >= 0 && plazo <= 30)) { toast('El plazo va de 0 (el mismo día) a 30 días.', 'err'); return; }
+    ev.target.disabled = true;
+    try {
+      const { data, error } = await sb.rpc('cartera_reglas_guardar', { p_monto: monto, p_dias: dias, p_plazo: plazo });
+      if (error) throw error;
+      if (!data || !data.ok) { toast((data && data.error) || 'No se pudo guardar.', 'err'); return; }
+      toast(monto == null && dias == null ? 'Guardado. Sin tope: no avisa a nadie.' : 'Guardado.', 'ok');
+      _car.filtro = 'alerta'; _car.tramo = null;
+      await cargarCartera();
+      if (!(_car.d.conductores || []).some((c) => c.alerta)) { _car.filtro = 'deben'; renderCartera(); }
+    } catch (e) { toast('No se pudo guardar: ' + (e.message || e), 'err'); }
+    finally { ev.target.disabled = false; }
+  });
+  return det;
+}
+// Un campo de plata: se ve con sus puntos de mil mientras se escribe
+function carPlataInput(inp) {
+  inp.addEventListener('input', () => {
+    const n = String(inp.value).replace(/\D/g, '');
+    inp.value = n ? Number(n).toLocaleString('es-CO') : '';
+  });
+}
+const carPlataValor = (inp) => Number(String(inp.value).replace(/\D/g, '')) || null;
+
+// Deuda por antigüedad: barras de una serie, en orden fijo (del tramo más nuevo al más viejo)
+function carTramosCard(d) {
+  const tr = new Map((d.tramos || []).map((t) => [Number(t.tramo), t]));
+  const items = [1, 2, 3, 4, 5].map((k) => ({ k, lbl: CAR_TRAMOS[k], v: Number(tr.get(k)?.valor || 0), n: Number(tr.get(k)?.conductores || 0) }));
+  const total = items.reduce((s, i) => s + i.v, 0);
+  const max = Math.max(1, ...items.map((i) => i.v));
+  const cont = pstEl('div', 'pst-bars');
+  for (const it of items) {
+    const fila = pstEl('div', 'pst-bar-row pst-clic' + (_car.tramo === it.k ? ' car-sel' : ''));
+    fila.tabIndex = 0; fila.setAttribute('role', 'button');
+    fila.setAttribute('aria-label', `${it.lbl}: ${liqPlata(it.v)}, ${it.n} conductores`);
+    fila.appendChild(pstEl('div', 'pst-bar-lbl', it.lbl));
+    const track = pstEl('div', 'pst-bar-track car-track');
+    const ancho = it.v ? Math.max(0.8, (it.v / max) * 100) : 0;
+    const bar = pstEl('div', 'pst-bar'); bar.style.width = ancho + '%'; bar.style.background = PST_COL.s1;
+    const val = pstEl('span', 'pst-bar-val', it.v ? `${carCorto(it.v)} · ${it.n} cond.` : '—'); val.style.left = `calc(${ancho}% + 8px)`;
+    track.append(bar, val); fila.appendChild(track);
+    const lineas = [{ valor: liqPlata(it.v), etiqueta: it.lbl }, { valor: String(it.n), etiqueta: 'conductor(es) · toca para verlos' }];
+    fila.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
+    fila.addEventListener('pointerleave', pstTipOcultar);
+    const ir = () => { pstTipOcultar(); _car.tramo = _car.tramo === it.k ? null : it.k; _car.filtro = 'deben'; renderCartera(); carIrALista(); };
+    fila.addEventListener('click', ir);
+    fila.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ir(); } });
+    cont.appendChild(fila);
+  }
+  return pstCard('Deuda por antigüedad', `${liqPlata(total)} pendientes · contada desde el día liquidado · toca una barra para ver quiénes`,
+    cont, { cab: ['Antigüedad', 'Pendiente', 'Conductores'], filas: items.map((i) => [i.lbl, liqPlata(i.v), i.n]) });
+}
+
+// Lo que hay que revisar: colillas que el banco no muestra o que llevan días sin extracto
+function carRevisarCard(d) {
+  const rs = d.revisar || [];
+  const cont = pstEl('div', 'car-rev');
+  if (!rs.length) cont.appendChild(pstEl('div', 'pst-vacio', 'Nada pendiente de revisar.'));
+  rs.forEach((r) => {
+    const e = CAR_ESTADO[r.estado] || ['', r.estado];
+    const fila = pstEl('div', 'car-rev-f pst-clic'); fila.tabIndex = 0; fila.setAttribute('role', 'button');
+    fila.innerHTML = `<div><b>${esc(r.nombre || r.cedula)}</b><br><small>Colilla del ${esc(fechaLegible(r.fecha))} por
+      ${liqPlata(r.valor)} · hace ${r.dias} día(s)</small></div><span class="car-chip ${e[0]}">${e[1]}</span>`;
+    const ir = () => carDetalle(r.cedula);
+    fila.addEventListener('click', ir);
+    fila.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); ir(); } });
+    cont.appendChild(fila);
+  });
+  const nNo = rs.filter((r) => r.estado === 'NO_APARECE').length;
+  return pstCard('Para revisar', rs.length ? `${nNo} no aparece(n) en el banco · ${rs.length - nNo} sin extracto hace más de 3 días`
+    : 'Colillas que el banco no muestra o sin confirmar', cont,
+  { cab: ['Conductor', 'Colilla', 'Valor', 'Estado'],
+    filas: rs.map((r) => [r.nombre || r.cedula, fechaLegible(r.fecha), liqPlata(r.valor), (CAR_ESTADO[r.estado] || ['', r.estado])[1]]) });
+}
+
+// Liquidado contra pagado por semana: dos series, un solo eje, columnas pareadas con tooltip
+function carSemanasCard(d) {
+  const ss = (d.semanas || []).map((s) => {
+    const ini = s.semana < d.desde ? d.desde : s.semana;
+    const finIso = new Date(new Date(s.semana + 'T12:00:00').getTime() + 6 * 864e5).toISOString().slice(0, 10);
+    const fin = finIso > d.hoy ? d.hoy : finIso;
+    const [a, b] = [fechaLegible(ini).slice(0, 5), fechaLegible(fin).slice(0, 5)];
+    // Corto para el eje (01–04/10) y completo para el tooltip y la tabla
+    return { lbl: a.slice(3) === b.slice(3) ? `${a.slice(0, 2)}–${b}` : `${a}–${b}`, largo: `${a} al ${b}`,
+      liq: Number(s.liquidado || 0), pag: Number(s.pagado || 0) };
+  });
+  // Se dibuja al ancho real de la tarjeta (las letras no se estiran) y se redibuja al cambiar la ventana
+  const lienzo = pstEl('div', 'pst-lienzo');
+  lienzo._redibujar = () => {
+    const W = Math.max(280, Math.round(lienzo.clientWidth || 360)), H = 230, L = 56, R = 6, T = 10, B = 26;
+    const e = carEscala(0, Math.max(1, ...ss.flatMap((s) => [s.liq, s.pag])));
+    const y = (v) => T + (H - T - B) * (1 - v / e.hi);
+    const n = Math.max(1, ss.length), gw = (W - L - R) / n, bw = Math.max(6, Math.min(26, (gw - 14) / 2));
+    let svg = `<svg class="car-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Liquidado y pagado por semana">`;
+    for (let v = 0; v <= e.hi + 1e-6; v += e.paso) {
+      const yy = y(v);
+      svg += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="${v ? PST_COL.grid : PST_COL.eje}" stroke-width="1"/>`
+        + `<text x="${L - 6}" y="${yy + 4}" text-anchor="end" class="car-eje">${carCorto(v)}</text>`;
+    }
+    // Columna con la punta redondeada (4 px) y apoyada en el eje; 2 px de aire entre las dos
+    const col = (v, x, c) => {
+      if (!(v > 0)) return '';
+      const top = y(v), r = Math.min(4, (y(0) - top) / 2, bw / 2);
+      return `<path d="M${x},${y(0)} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${y(0)} Z" fill="${c}"/>`;
+    };
+    ss.forEach((s, i) => {
+      const cx = L + gw * i + gw / 2;
+      svg += `<g class="car-sem" data-i="${i}"><rect x="${L + gw * i}" y="${T}" width="${gw}" height="${H - T - B}" fill="transparent"/>`
+        + col(s.liq, cx - bw - 1, PST_COL.s1) + col(s.pag, cx + 1, PST_COL.s2)
+        + `<text x="${cx}" y="${H - 8}" text-anchor="middle" class="car-eje">${esc(s.lbl)}</text></g>`;
+    });
+    lienzo.innerHTML = svg + '</svg>';
+    lienzo.querySelectorAll('.car-sem').forEach((gr) => {
+      const s = ss[Number(gr.dataset.i)];
+      const lineas = [{ valor: s.largo, etiqueta: '' }, { valor: liqPlata(s.liq), etiqueta: 'liquidado', color: PST_COL.s1 },
+        { valor: liqPlata(s.pag), etiqueta: 'pagado', color: PST_COL.s2 }];
+      gr.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
+      gr.addEventListener('pointerleave', pstTipOcultar);
+    });
+  };
+  const cont = pstEl('div');
+  cont.innerHTML = `<div class="car-ley"><span><i style="background:${PST_COL.s1}"></i>Liquidado</span>
+    <span><i style="background:${PST_COL.s2}"></i>Pagado</span></div>`;
+  cont.appendChild(lienzo);
+  const tl = ss.reduce((a, s) => a + s.liq, 0), tp = ss.reduce((a, s) => a + s.pag, 0);
+  return pstCard('Liquidado contra pagado, por semana', `${liqPlata(tl)} liquidado · ${liqPlata(tp)} pagado (${pstPct(tp, tl)}%)`,
+    cont, { cab: ['Semana', 'Liquidado', 'Pagado'], filas: ss.map((s) => [s.largo, liqPlata(s.liq), liqPlata(s.pag)]) });
+}
+// Las gráficas se dibujan cuando ya están en la página (necesitan su ancho)
+const carDibujar = () => $('pst-body').querySelectorAll('.pst-lienzo').forEach((l) => l._redibujar && l._redibujar());
+// Escala redonda para un eje (pasos de 1, 2, 2,5 o 5 × 10ⁿ), que siempre incluye el cero
+function carEscala(lo, hi, n = 4) {
+  const bruto = Math.max(1, (hi - lo) / n);
+  const p = Math.pow(10, Math.floor(Math.log10(bruto)));
+  const paso = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= bruto);
+  return { lo: Math.floor(Math.min(0, lo) / paso) * paso, hi: Math.ceil(Math.max(0, hi) / paso) * paso, paso };
+}
+
+// La lista de conductores: filtros, buscador y desde cuándo debe cada uno
+function carListaCard(cs) {
+  const card = pstEl('section', 'pst-card pst-ancha car-lista'); card.id = 'car-lista';
+  const fs = carFiltrar(cs);
+  card.innerHTML = `<div class="pst-card-h"><div><h4>Conductores</h4>
+      <div class="pst-nota">${fs.length} de ${cs.length}${_car.tramo ? ` · deben con ${CAR_TRAMOS[_car.tramo].toLowerCase()}
+        (<button type="button" class="lnk" id="car-sin-tramo">quitar</button>)` : ''} · toca uno para ver su detalle</div></div></div>
+    <div class="car-filtros">${CAR_FILTROS.map(([k, t]) => `<button type="button" class="car-fchip${_car.filtro === k && !_car.tramo ? ' on' : ''}"
+        data-f="${k}">${t} <b>${carFiltrar(cs, k, null, '').length}</b></button>`).join('')}
+      <input type="search" class="car-buscar" id="car-buscar" placeholder="Buscar conductor, cédula o bus…" value="${esc(_car.q)}"></div>
+    <div class="pst-tabla-wrap"><table class="pst-tabla car-tabla"><thead><tr><th>Conductor</th><th>Exigido</th>
+      <th>Consignado</th><th>Saldo</th><th>A tiempo</th><th>Pruebas</th><th>Último pago</th></tr></thead><tbody>
+      ${fs.map((c) => {
+        const debe = Number(c.debe), dd = c.debe_desde ? carDias(c.debe_desde, _car.d.hoy) : null;
+        const cargos = Number(c.cargos), abonos = Number(c.abonos);
+        // Las pruebas: colillas con foto (y cuántas ya confirmó el banco) y lo que solo está en el extracto
+        const pr = [Number(c.colillas) ? `🧾 ${c.colillas} colilla(s) · ${c.confirmadas} confirmada(s)` : '',
+          Number(c.en_extracto) ? `🏦 ${c.en_extracto} en el extracto` : '',
+          Number(c.por_confirmar) ? `⏳ ${liqPlata(c.por_confirmar)} sin confirmar` : '',
+          Number(c.no_aparece) ? `<span class="car-debe">❌ ${c.no_aparece} no aparece(n) en el banco</span>` : ''].filter(Boolean).join('<br>');
+        return `<tr class="pst-clic car-fila${c.alerta ? ' car-al-fila' : ''}" tabindex="0" data-ced="${esc(c.cedula)}">
+          <td><b>${esc(carNombre(c))}</b><br><small>${esc(c.cedula)}${c.buses ? ` · bus ${esc(c.buses)}` : ''}${c.sin_liquidaciones ? ' · sin liquidaciones' : ''}</small></td>
+          <td>${cargos ? liqPlata(cargos) : ''}${Number(c.dias_liq) ? `<br><small>${c.dias_liq} día(s)</small>` : ''}</td>
+          <td>${liqPlata(abonos)}${cargos ? `<br><small class="${Number(c.vencidos) > 0 ? 'car-debe' : ''}">${pstPct(Math.min(abonos, cargos), cargos)}% de lo exigido</small>` : ''}</td>
+          <td class="${debe > 0 ? 'car-debe' : 'car-ok'}">${debe > 0 ? liqPlata(debe)
+            : Number(c.a_favor) > 0 ? `a favor ${liqPlata(c.a_favor)}` : 'al día'}${debe > 0 ? `<br><small class="${dd > 7 ? 'car-debe' : ''}">${c.dias_pendientes} día(s) · hace ${dd}</small>` : ''}${c.alerta
+            ? '<br><small class="car-al-tag">⚠️ pasa el tope</small>' : ''}</td>
+          <td>${Number(c.evaluados) ? `<b class="${Number(c.tarde) ? 'car-debe' : 'car-ok'}">${Number(c.pct_tiempo)}%</b><br><small>${c.a_tiempo} de ${c.evaluados} días</small>` : '<small>sin días para medir</small>'}</td>
+          <td><small>${pr || 'ningún pago'}</small></td>
+          <td>${c.ultimo_pago ? esc(fechaLegible(c.ultimo_pago)) : '<small>ninguno</small>'}</td></tr>`;
+      }).join('') || '<tr><td colspan="7" class="pst-vacio">Nadie con este filtro.</td></tr>'}
+    </tbody></table></div>`;
+  card.querySelectorAll('.car-fchip').forEach((b) => b.addEventListener('click', () => {
+    _car.filtro = b.dataset.f; _car.tramo = null; renderCartera(); $('car-lista')?.scrollIntoView({ block: 'start' });
+  }));
+  card.querySelector('#car-sin-tramo')?.addEventListener('click', () => { _car.tramo = null; renderCartera(); $('car-lista')?.scrollIntoView({ block: 'start' }); });
+  const q = card.querySelector('#car-buscar');
+  q.addEventListener('input', () => {
+    _car.q = q.value.trim().toLowerCase();
+    card.querySelectorAll('.car-fila').forEach((tr) => {
+      const c = cs.find((x) => x.cedula === tr.dataset.ced);
+      tr.hidden = !!_car.q && !`${c.nombre || ''} ${c.cedula} ${c.buses || ''}`.toLowerCase().includes(_car.q);
+    });
+  });
+  card.querySelectorAll('.car-fila').forEach((tr) => {
+    tr.addEventListener('click', () => carDetalle(tr.dataset.ced));
+    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); carDetalle(tr.dataset.ced); } });
+  });
+  return card;
+}
+
+// ---- Detalle de un conductor ----
+async function carDetalle(ced) {
+  _car.ced = ced;
+  const body = $('pst-body');
+  body.innerHTML = '<div class="loading">Cargando…</div>';
+  window.scrollTo({ top: 0 });
+  const { data, error } = await sb.rpc('cartera_conductor', { p_cedula: ced });
   if (error || !data || !data.ok) {
-    toast('No se pudo consultar: ' + ((error && error.message) || (data && data.error) || ''), 'err');
+    body.innerHTML = `<div class="cump-empty">${esc((data && data.error) || (error && error.message) || 'No se pudo consultar.')}</div>`;
     return;
   }
-  const nc = data.no_cuadran || [], sc = data.sin_cedula || [];
-  const m = liqRevModal();
-  m.querySelector('.pf-body').innerHTML = `
-    ${nc.length ? `<div class="liq-rev-t">Filas donde la hoja no cuadra (${nc.length})</div>
-      <table class="liq-rev"><thead><tr><th>Fecha</th><th>Bus</th><th>Ruta</th>
-        <th>Unidades</th><th>Descontar</th><th>Debería</th><th>Dice</th></tr></thead><tbody>
-        ${nc.map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td>${esc(x.movil || '')}</td>
-          <td>${esc(x.ruta || '')}</td><td>${x.unidades == null ? '—' : x.unidades}</td>
-          <td>${x.descontar == null ? '—' : x.descontar}</td>
-          <td><b>${x.deberia == null ? '—' : x.deberia}</b></td>
-          <td class="mal">${x.dice == null ? '—' : x.dice}</td></tr>`).join('')}
-      </tbody></table>` : ''}
-    ${sc.length ? `<div class="liq-rev-t">Conductores sin cédula (${sc.length})</div>
-      <table class="liq-rev"><thead><tr><th>Conductor</th><th>Liquidaciones</th>
-        <th>Desde</th><th>Hasta</th><th>En el perfil</th></tr></thead><tbody>
-        ${sc.map((x) => `<tr><td>${esc(x.conductor || '')}</td><td>${x.filas}</td>
-          <td>${esc(fechaLegible(x.desde))}</td><td>${esc(fechaLegible(x.hasta))}</td>
-          <td class="${Number(x.en_perfil) === 1 ? 'ok' : 'mal'}">${Number(x.en_perfil) === 1
-    ? 'sí, una persona' : Number(x.en_perfil) === 0 ? 'no aparece' : x.en_perfil + ' coincidencias'}</td></tr>`).join('')}
-      </tbody></table>` : ''}
-    ${!nc.length && !sc.length ? '<div class="rst-empty">No hay nada por corregir.</div>' : ''}
-    <div class="pst-nota">Esto se corrige <b>en la hoja de Google</b>, que es la fuente:
-      si se cambiara aquí, la próxima sincronización lo volvería a pisar.</div>`;
-  m.hidden = false;
+  const cs = data.cargos || [], as = data.abonos || [];
+  const pend = cs.filter((x) => Number(x.pendiente) > 0);
+  const buses = [...new Set(cs.map((x) => x.movil))].join(', ');
+  const ult = as.length ? as[as.length - 1].fecha : null;
+  const hoy = (_car.d && _car.d.hoy) || ult;
+  // Por cada día liquidado: qué día quedó pagado, si fue a tiempo y con qué prueba (sql/155)
+  const pun = new Map((data.puntual || []).map((p) => [p.key, p]));
+  const medidos = (data.puntual || []).filter((p) => p.a_tiempo != null);
+  const aTiempo = medidos.filter((p) => p.a_tiempo).length;
+  _pst.tablas = [];
+  body.innerHTML = '';
+  const volver = pstEl('button', 'btn btn-sm car-volver', '← Volver al tablero'); volver.type = 'button';
+  volver.onclick = () => { _car.ced = null; if (_car.d) renderCartera(); else cargarCartera(); };
+  const cab = pstEl('div', 'car-cab');
+  cab.innerHTML = `<h3>${esc(carNombre(data))}</h3><div class="pst-nota">Cédula ${esc(data.cedula)}${buses ? ` · buses ${esc(buses)}` : ''}</div>`;
+  body.append(volver, cab);
+  // Si pasa el tope, por qué (lo dice el tablero: una sola regla, la de la base)
+  const fila = ((_car.d && _car.d.conductores) || []).find((x) => x.cedula === ced);
+  if (fila && fila.alerta) {
+    const a = _car.d.alerta || {}, m = carMotivo(fila, a);
+    const por = [m.monto ? `debe <b>${liqPlata(fila.debe)}</b> y el tope es ${liqPlata(a.monto)}` : '',
+      m.dias ? `lo que debe tiene <b>${m.dd} días</b> y el tope es ${a.dias}` : ''].filter(Boolean).join(' · ');
+    const al = pstEl('div', 'car-alerta-box'); al.setAttribute('role', 'alert');
+    al.innerHTML = `⚠️ <b>Pasa el tope de la cartera:</b> ${por}`;
+    body.appendChild(al);
+  }
+
+  const kpis = pstEl('div', 'pst-kpis');
+  const debe = Number(data.debe), favor = Number(data.a_favor);
+  const exigido = Number(data.total_cargos), consignado = Number(data.total_abonos);
+  const saldo = debe > 0 ? pstTile('Debe', liqPlata(debe), `${pend.length} día(s)${pend.length ? ` · desde el ${fechaLegible(pend[0].fecha)}` : ''}`)
+    : pstTile(favor > 0 ? 'A favor' : 'Al día', favor > 0 ? liqPlata(favor) : '✅',
+      favor > 0 ? (data.sin_liquidaciones ? 'no tiene días liquidados que pagar' : 'paga lo próximo que se le liquide') : 'no debe nada');
+  saldo.classList.add(debe > 0 ? 'car-t-debe' : 'car-t-ok');
+  const tiempo = pstTile('Días pagados a tiempo', medidos.length ? `${pstPct(aTiempo, medidos.length)}%` : '—',
+    medidos.length ? `${aTiempo} de ${medidos.length} días · plazo: ${carPlazoTxt(data.plazo)}` : 'todavía no hay días para medir');
+  if (medidos.length) tiempo.classList.add(aTiempo === medidos.length ? 'car-t-ok' : 'car-t-debe');
+  kpis.append(saldo,
+    pstTile('Exigido', liqPlata(exigido), `${cs.length} día(s) liquidados desde el ${fechaLegible(data.desde)}`),
+    pstTile('Consignado', liqPlata(consignado), exigido ? `${pstPct(Math.min(consignado, exigido), exigido)}% de lo exigido · ${as.length} pago(s)` : `${as.length} pago(s)`),
+    tiempo,
+    pstTile('Último pago', ult ? fechaLegible(ult) : '—', ult ? `hace ${carDias(ult, hoy)} día(s)` : 'no ha pagado'));
+  body.appendChild(kpis);
+
+  const g = pstEl('div', 'pst-grid car-det-grid');
+  g.appendChild(carSaldoCard(data));
+  // Lo liquidado, día por día: cuándo se pagó y con qué prueba
+  const c1 = pstEl('section', 'pst-card');
+  c1.innerHTML = `<div class="pst-card-h"><div><h4>Lo exigido, día por día</h4>
+    <div class="pst-nota">Del más nuevo al más viejo · a tiempo = pagado ${esc(carPlazoTxt(data.plazo))} · los días en cero o negativos no se cobran</div></div></div>
+    <div class="pst-tabla-wrap">${cs.length ? `<table class="pst-tabla"><thead><tr><th>Fecha</th><th>Bus</th><th>Exigido</th><th>Pagado</th><th>¿A tiempo?</th><th>Prueba</th></tr></thead><tbody>
+    ${cs.slice().reverse().map((x) => {
+      const p = pun.get(x.key) || {};
+      const cuando = p.pagado_el
+        ? `${p.a_tiempo ? '<span class="car-ok">✅ a tiempo</span>' : `<span class="car-debe">⏰ ${p.dias} días después</span>`}<br><small>pagado el ${esc(fechaLegible(p.pagado_el))}</small>`
+        : p.a_tiempo === false ? `<span class="car-debe">⏰ sin pagar hace ${p.dias} días</span>` : '<small>sin pagar, todavía en plazo</small>';
+      const pr = CAR_PRUEBA[p.prueba];
+      return `<tr><td>${esc(fechaLegible(x.fecha))}<br><small>${esc(x.ruta || '')}</small></td><td><b>${esc(x.movil)}</b></td>
+      <td>${liqPlata(x.dinero)}</td><td class="${p.a_tiempo === false && Number(x.pendiente) > 0 ? 'car-debe' : ''}">${Number(x.pagado) ? liqPlata(x.pagado) : '—'}${Number(x.pendiente) > 0
+        ? `<br><small>faltan ${liqPlata(x.pendiente)}</small>` : ''}</td>
+      <td>${cuando}</td><td>${pr ? `<span class="car-chip ${pr[0]}">${pr[1]}</span>` : ''}</td></tr>`; }).join('')}
+    </tbody></table>` : '<div class="pst-vacio">No tiene liquidaciones desde el arranque.</div>'}</div>`;
+  // Sus pagos: cada colilla con su foto y lo que dice el banco
+  const c2 = pstEl('section', 'pst-card');
+  c2.innerHTML = `<div class="pst-card-h"><div><h4>Sus pagos y sus pruebas</h4>
+    <div class="pst-nota">Colillas que subió (con la foto) y consignaciones del extracto con su cédula</div></div></div>
+    <div class="pst-tabla-wrap">${as.length ? `<table class="pst-tabla"><thead><tr><th>Fecha</th><th>Valor</th><th>Pagó</th><th>Banco</th></tr></thead><tbody>
+    ${as.slice().reverse().map((x) => {
+      const e = CAR_ESTADO[x.estado] || ['', x.estado];
+      const que = x.clase === 'banco' ? '🏦 extracto' : `🧾 colilla · <button type="button" class="lnk" data-foto="${esc(x.id)}">ver foto</button>`;
+      return `<tr><td>${esc(fechaLegible(x.fecha))}<br><small>${que}</small></td>
+        <td><b>${liqPlata(x.valor)}</b></td><td>${liqPlata(x.aplicado)}${Number(x.a_favor) ? `<br><small>${liqPlata(x.a_favor)} a favor</small>` : ''}</td>
+        <td><span class="car-chip ${e[0]}">${e[1]}</span></td></tr>`; }).join('')}
+    </tbody></table><div id="car-foto"></div>` : '<div class="pst-vacio">No tiene pagos desde el arranque.</div>'}</div>`;
+  g.append(c1, c2);
+  body.appendChild(g);
+  carDibujar();
+  c2.querySelectorAll('[data-foto]').forEach((b) => b.addEventListener('click', async () => {
+    const box = c2.querySelector('#car-foto');
+    box.innerHTML = '<div class="loading">Cargando la foto…</div>';
+    const r = await sb.rpc('colilla_foto', { p_id: Number(b.dataset.foto) });
+    const f = r.data || {};
+    box.innerHTML = r.error || !f.ok || !f.foto ? '<div class="pst-vacio">No se pudo abrir la foto.</div>'
+      : `<img class="col-foto" alt="Colilla" src="${esc(f.foto)}">`;
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }));
 }
 
-function liqRevModal() {
-  let m = $('liqrev-modal');
-  if (m) return m;
-  m = document.createElement('div');
-  m.id = 'liqrev-modal'; m.className = 'modal'; m.hidden = true;
-  m.innerHTML = `<div class="modal-card pf-card">
-    <div class="modal-head"><h3>🔎 Qué corregir en la hoja</h3><span class="spacer"></span>
-      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
-    <div class="pf-body"></div>
-    <div class="modal-foot"><span class="spacer"></span>
-      <button type="button" class="btn" data-x>Cerrar</button></div>
-  </div>`;
-  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
-  document.body.appendChild(m);
-  return m;
+// Cómo subió y bajó su saldo: sube con cada día liquidado y baja con cada pago (escalones)
+function carSaldoCard(data) {
+  const ev = new Map();
+  const en = (f) => { const e = ev.get(f) || { liq: 0, pag: 0 }; ev.set(f, e); return e; };
+  (data.cargos || []).forEach((x) => { en(x.fecha).liq += Number(x.dinero); });
+  (data.abonos || []).forEach((x) => { en(x.fecha).pag += Number(x.valor); });
+  const fechas = [...ev.keys()].sort();
+  let acum = 0;
+  const pts = fechas.map((f) => { const e = ev.get(f); acum += e.liq - e.pag; return { f, ...e, saldo: acum }; });
+  // La raya del tope, solo si el saldo llegó al menos a la mitad (si no, aplasta la gráfica)
+  const tm = _car.d && _car.d.alerta && _car.d.alerta.monto != null ? Number(_car.d.alerta.monto) : null;
+  const tope = tm != null && Math.max(0, ...pts.map((p) => p.saldo)) >= tm / 2 ? tm : null;
+  const cont = pstEl('div');
+  if (!pts.length) cont.appendChild(pstEl('div', 'pst-vacio', 'Sin movimientos.'));
+  else {
+    cont.innerHTML = `<div class="car-ley"><span><i style="background:${PST_COL.s1}"></i>Lo que debe</span>
+      <span><i class="car-ley-pt" style="border-color:${PST_COL.s2}"></i>Día que pagó</span>
+      ${tope != null ? `<span><i class="car-ley-tope"></i>Tope de alerta (${liqPlata(tope)})</span>` : ''}</div>`;
+    const lienzo = pstEl('div', 'pst-lienzo');
+    cont.appendChild(lienzo);
+    lienzo._redibujar = () => carSaldoDibujar(lienzo, data, pts, fechas, tope);
+  }
+  return pstCard('Cómo va su saldo', 'Sube con cada día liquidado y baja con cada pago · por debajo de la línea gris es saldo a favor', cont,
+    { cab: ['Fecha', 'Liquidado', 'Pagó', 'Saldo'], filas: pts.map((p) => [fechaLegible(p.f), liqPlata(p.liq), liqPlata(p.pag), liqPlata(p.saldo)]) }, true);
+}
+// Escalones del saldo, al ancho real de la tarjeta
+function carSaldoDibujar(lienzo, data, pts, fechas, tope = null) {
+  {
+    const W = Math.max(280, Math.round(lienzo.clientWidth || 600)), H = 220, L = 62, R = 12, T = 12, B = 28;
+    const fin = (_car.d && _car.d.hoy) || fechas[fechas.length - 1];
+    const d0 = new Date(data.desde + 'T12:00:00').getTime(), d1 = new Date(fin + 'T12:00:00').getTime();
+    const x = (f) => L + (W - L - R) * ((new Date(f + 'T12:00:00').getTime() - d0) / Math.max(864e5, d1 - d0));
+    const e = carEscala(Math.min(...pts.map((p) => p.saldo)), Math.max(1, tope || 0, ...pts.map((p) => p.saldo)));
+    const y = (v) => T + (H - T - B) * (1 - (v - e.lo) / (e.hi - e.lo || 1));
+    let svg = `<svg class="car-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Saldo del conductor día por día">`;
+    for (let v = e.lo; v <= e.hi + 1e-6; v += e.paso) {
+      svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${PST_COL.grid}"/>`
+        + `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" class="car-eje">${carCorto(v)}</text>`;
+    }
+    svg += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="${PST_COL.eje}" stroke-width="1.5"/>`;
+    if (tope != null) {
+      svg += `<line x1="${L}" x2="${W - R}" y1="${y(tope)}" y2="${y(tope)}" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="6 4"/>`
+        + `<text x="${W - R}" y="${y(tope) - 5}" text-anchor="end" class="car-eje">Tope ${carCorto(tope)}</text>`;
+    }
+    let dp = `M${x(data.desde)},${y(0)}`;
+    pts.forEach((p) => { dp += ` H${x(p.f)} V${y(p.saldo)}`; });
+    dp += ` H${x(fin)}`;
+    svg += `<path d="${dp}" fill="none" stroke="${PST_COL.s1}" stroke-width="2" stroke-linejoin="round"/>`;
+    pts.forEach((p, i) => {
+      svg += `<circle cx="${x(p.f)}" cy="${y(p.saldo)}" r="4.5" fill="#fff" stroke="${p.pag ? PST_COL.s2 : PST_COL.s1}" stroke-width="2"/>`
+        + `<circle class="car-hit" data-i="${i}" cx="${x(p.f)}" cy="${y(p.saldo)}" r="12" fill="transparent"/>`;
+    });
+    svg += `<text x="${x(data.desde)}" y="${H - 8}" text-anchor="start" class="car-eje">${fechaLegible(data.desde).slice(0, 5)}</text>`
+      + `<text x="${x(fin)}" y="${H - 8}" text-anchor="end" class="car-eje">${fechaLegible(fin).slice(0, 5)}</text></svg>`;
+    lienzo.innerHTML = svg;
+    lienzo.querySelectorAll('.car-hit').forEach((c) => {
+      const p = pts[Number(c.dataset.i)];
+      const lineas = [{ valor: fechaLegible(p.f), etiqueta: '' }];
+      if (p.liq) lineas.push({ valor: liqPlata(p.liq), etiqueta: 'liquidado' });
+      if (p.pag) lineas.push({ valor: liqPlata(p.pag), etiqueta: 'pagó', color: PST_COL.s2 });
+      lineas.push(p.saldo >= 0 ? { valor: liqPlata(p.saldo), etiqueta: 'queda debiendo', color: PST_COL.s1 }
+        : { valor: liqPlata(-p.saldo), etiqueta: 'queda a favor', color: PST_COL.s1 });
+      c.addEventListener('pointermove', (e) => pstTipMostrar(e.clientX, e.clientY, lineas));
+      c.addEventListener('pointerleave', pstTipOcultar);
+    });
+  }
+}
+
+async function exportarCartera() {
+  const d = _car.d;
+  if (!d) return;
+  const btn = $('pst-excel'); const prev = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Generando…';
+  try {
+    const cs = d.conductores || [];
+    const tr = new Map((d.tramos || []).map((t) => [Number(t.tramo), t]));
+    // Todos los que se pueden medir, en el orden del top (del que mejor paga a tiempo al que peor)
+    const rank = carMedibles(cs).sort(carMejorPrimero);
+    await _xlsxDescargar([
+      { name: 'Cartera', aoa: [['Conductor', 'Cédula', 'Exigido (liquidado)', 'Días liquidados', 'Consignado', '% de lo exigido',
+        'Debe', 'A favor', 'Días que debe', 'Debe desde', 'Con más de 7 días', 'Días medidos', 'Días a tiempo', 'Días tarde',
+        '% a tiempo', 'Tarda en promedio (días)', 'Colillas', 'Colillas confirmadas por el banco', 'Consignaciones solo en el extracto',
+        'Por confirmar', 'Colillas que no aparecen', 'Buses', 'Último pago', 'Pasa el tope', 'Sin liquidaciones'],
+      ...cs.map((c) => [c.nombre || '', c.cedula, Number(c.cargos), Number(c.dias_liq), Number(c.abonos),
+        Number(c.cargos) ? pstPct(Math.min(Number(c.abonos), Number(c.cargos)), Number(c.cargos)) : '',
+        Number(c.debe), Number(c.a_favor), Number(c.dias_pendientes), c.debe_desde ? fechaLegible(c.debe_desde) : '', carViejo(c),
+        Number(c.evaluados), Number(c.a_tiempo), Number(c.tarde), Number(c.evaluados) ? Number(c.pct_tiempo) : '',
+        c.prom_dias != null ? Number(c.prom_dias) : '', Number(c.colillas), Number(c.confirmadas), Number(c.en_extracto),
+        Number(c.por_confirmar), Number(c.no_aparece), c.buses || '', c.ultimo_pago ? fechaLegible(c.ultimo_pago) : '',
+        c.alerta ? 'Sí' : '', c.sin_liquidaciones ? 'Sí' : ''])] },
+      { name: 'Puntualidad', aoa: [[`A tiempo = pagado ${carPlazoTxt(d.alerta && d.alerta.plazo)} · con ${CAR_MIN_TOP} días o más para medir`],
+        ['Puesto', 'Conductor', 'Cédula', 'Buses', 'Días medidos', 'Días a tiempo', 'Días tarde', '% a tiempo',
+          'Tarda en promedio (días)', 'Sin pagar y fuera de plazo', 'Debe'],
+        ...rank.map((c, i) => [i + 1, c.nombre || '', c.cedula, c.buses || '', Number(c.evaluados), Number(c.a_tiempo), Number(c.tarde),
+          Number(c.pct_tiempo), Number(c.prom_dias || 0), Number(c.vencidos), Number(c.debe)])] },
+      { name: 'Antigüedad', aoa: [['Antigüedad', 'Pendiente', 'Conductores'],
+        ...[1, 2, 3, 4, 5].map((k) => [CAR_TRAMOS[k], Number(tr.get(k)?.valor || 0), Number(tr.get(k)?.conductores || 0)])] },
+      { name: 'Para revisar', aoa: [['Conductor', 'Cédula', 'Fecha colilla', 'Valor', 'Estado', 'Días'],
+        ...(d.revisar || []).map((r) => [r.nombre || '', r.cedula, fechaLegible(r.fecha), Number(r.valor), (CAR_ESTADO[r.estado] || ['', r.estado])[1], r.dias])] },
+    ], `cartera_conductores_${d.hoy}.xlsx`);
+  } finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+// 🔎 Verificar: lo que hay que corregir en la hoja (lo mismo que va en la hoja "Corregir" del Excel),
+// como página del programa. Los conductores sin cédula van primero y los más recientes arriba: son los
+// que dejan días sin cobrar en la cartera. Cada fila que no cuadra abre el día de ese bus.
+async function liqVerRevisar() {
+  if (!isAdmin()) return;
+  const tok = liqPrepararVista('revisar', '🔎 Qué corregir en la hoja', 'nav-liq-rev');
+  _liq.volver = 'lista';
+  const body = liqBody();
+  body.innerHTML = '<div class="loading">Buscando lo que hay que corregir…</div>';
+  let data = null, error = null;
+  try { ({ data, error } = await sb.rpc('liquidaciones_revisar')); } catch (e) { error = e; }
+  if (!liqVivo(tok)) return;
+  body.innerHTML = '';
+  body.appendChild(liqBotonVolver('lista'));
+  if (error || !data || !data.ok) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudo consultar: ' + ((error && error.message) || (data && data.error) || '')));
+    return;
+  }
+  const nc = data.no_cuadran || [];
+  const sc = (data.sin_cedula || []).slice().sort((a, b) => String(b.hasta).localeCompare(String(a.hasta)));
+  const tSc = Number(data.total_sin_cedula || 0), tNc = Number(data.total_no_cuadran || 0);
+  const sub = $('pst-sub');
+  if (sub) sub.textContent = !tSc && !tNc ? 'Todo cuadra' : `${pstNum(tSc + tNc)} liquidación(es) por corregir`;
+
+  const kpis = pstEl('div', 'pst-kpis');
+  kpis.append(
+    pstTile('Liquidaciones sin cédula', pstNum(tSc), `${sc.length} nombre(s) que no coinciden con el perfil`),
+    pstTile('Filas que no cuadran', pstNum(tNc), 'unidades − descontados ≠ total a liquidar'),
+  );
+  body.appendChild(kpis);
+
+  // Cómo se corrige: en la hoja, y después se trae lo nuevo aquí mismo
+  const guia = pstEl('section', 'liq-guia');
+  guia.innerHTML = `<b>Cómo se corrige</b>
+    <ol><li>Corrígelo <b>en la hoja de Google</b>, que es la fuente: si se cambiara aquí, la próxima actualización lo volvería a pisar.</li>
+      <li>Vuelve y toca <button type="button" class="btn btn-sm" id="liq-sync">🔄 Traer lo nuevo de la hoja</button></li>
+      <li>Lo que quedó bien sale de esta lista.</li></ol>`;
+  guia.querySelector('#liq-sync').addEventListener('click', sincronizarLiq);
+  body.appendChild(guia);
+
+  if (!sc.length && !nc.length) { body.appendChild(pstEl('div', 'rst-empty', '✅ No hay nada por corregir.')); return; }
+
+  if (sc.length) {
+    const card = pstEl('section', 'pst-card liq-rev-card');
+    card.innerHTML = `<div class="pst-card-h"><div><h4>❓ Conductores sin cédula (${sc.length})</h4>
+        <div class="pst-nota">Con el nombre que trae la hoja no se pudo sacar la cédula. «En el perfil» dice si ese nombre está en el
+          Perfil sociodemográfico: si no aparece, el nombre está escrito distinto en la hoja o la persona no está creada en el perfil.</div></div></div>
+      <div class="liq-tabla-wrap"><table class="pp-tabla liq-rev2"><thead><tr><th>Conductor (como está en la hoja)</th><th>Bus(es)</th>
+        <th>Liquidaciones</th><th>Desde</th><th>Hasta</th><th>En el perfil</th></tr></thead><tbody>
+        ${sc.map((x) => `<tr><td><b>${esc(x.conductor || '(sin nombre)')}</b></td><td>${esc(x.moviles || '')}</td><td>${pstNum(x.filas)}</td>
+          <td>${esc(fechaLegible(x.desde))}</td><td>${esc(fechaLegible(x.hasta))}</td>
+          <td class="${Number(x.en_perfil) === 1 ? 'ok' : 'mal'}">${Number(x.en_perfil) === 1
+    ? '✅ sí, una persona' : Number(x.en_perfil) === 0 ? '❌ no aparece' : `⚠️ ${x.en_perfil} coincidencias`}</td></tr>`).join('')}
+      </tbody></table></div>`;
+    body.appendChild(card);
+  }
+  if (nc.length) {
+    const card = pstEl('section', 'pst-card liq-rev-card');
+    card.innerHTML = `<div class="pst-card-h"><div><h4>⚠️ Filas donde la hoja no cuadra (${nc.length})</h4>
+        <div class="pst-nota">Unidades − descontar debería dar el total a liquidar. Toca una fila para ver el día completo de ese bus.</div></div></div>
+      <div class="liq-tabla-wrap"><table class="pp-tabla liq-rev2"><thead><tr><th>Fecha</th><th>Bus</th><th>Ruta</th><th>Conductor</th>
+        <th>Unidades</th><th>Descontar</th><th>Debería</th><th>Dice</th><th>Diferencia</th><th></th></tr></thead><tbody>
+        ${nc.map((x) => {
+          const dif = x.deberia == null || x.dice == null ? null : Number(x.dice) - Number(x.deberia);
+          return `<tr class="liq-fila" data-movil="${esc(x.movil || '')}" data-fecha="${esc(String(x.fecha || '').slice(0, 10))}">
+          <td>${esc(fechaLegible(x.fecha))}</td><td><b>${esc(x.movil || '')}</b></td><td>${esc(x.ruta || '')}</td>
+          <td class="liq-cond">${esc(x.conductor || '—')}</td>
+          <td>${x.unidades == null ? '—' : pstNum(x.unidades)}</td><td>${x.descontar == null ? '—' : pstNum(x.descontar)}</td>
+          <td><b>${x.deberia == null ? '—' : pstNum(x.deberia)}</b></td>
+          <td class="mal">${x.dice == null ? '—' : pstNum(x.dice)}</td>
+          <td class="mal">${dif == null ? '—' : (dif > 0 ? '+' : '') + pstNum(dif)}</td>
+          <td class="liq-abrir">Abrir ›</td></tr>`;
+        }).join('')}
+      </tbody></table></div>`;
+    card.querySelectorAll('.liq-fila').forEach((tr) => tr.addEventListener('click', () => abrirLiqDia(tr.dataset.movil, tr.dataset.fecha)));
+    body.appendChild(card);
+  }
 }
 
 let _sinRow = null;
@@ -22680,6 +24119,8 @@ function statsPrepararVista() {
   document.getElementById('app').classList.remove('view-map');
   ocultarVistas('perfilstats-view');
   $('perfilstats-view').hidden = false;
+  const sub = $('pst-sub'); if (sub) sub.textContent = '';   // cada tablero pone el suyo
+  const xl = $('pst-excel'); if (xl) xl.hidden = false;      // Liquidaciones lo esconde (tiene su planilla)
   document.querySelectorAll('#sidebar button').forEach((b) => b.classList.remove('active'));
 }
 async function openPerfilStats(bloque) {
@@ -24494,9 +25935,10 @@ async function sinExportarLista(titulo, filas) {
 
 ['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
 ['sst-anio', 'sst-mes', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
-$('pst-recargar')?.addEventListener('click', () => (currentView === 'pqrstats' ? cargarPqrsfStats()
+$('pst-recargar')?.addEventListener('click', () => (currentView === 'liquidaciones' ? liqRecargar()
+  : currentView === 'mora' ? (_liqCarCache.clear(), cargarMora()) : currentView === 'cartera' ? cargarCartera() : currentView === 'pqrstats' ? cargarPqrsfStats()
   : currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
-$('pst-excel')?.addEventListener('click', () => (currentView === 'pqrstats' ? exportarPqrsfStats()
+$('pst-excel')?.addEventListener('click', () => (currentView === 'mora' ? exportarMora() : currentView === 'cartera' ? exportarCartera() : currentView === 'pqrstats' ? exportarPqrsfStats()
   : currentView === 'sinstats' ? exportarSiniestrosStats() : exportarPerfilStats()));
 // Cambiar de año o de mes vuelve a pedir el resumen: el recorte lo hace el servidor
 ['pqs-anio', 'pqs-mes'].forEach((id) => $(id)?.addEventListener('change', () => {
@@ -24506,7 +25948,7 @@ $('pst-excel')?.addEventListener('click', () => (currentView === 'pqrstats' ? ex
 $('pst-close')?.addEventListener('click', cerrarPerfilStats);
 window.addEventListener('resize', () => {
   clearTimeout(_pst.rz);
-  _pst.rz = setTimeout(() => { if (currentView === 'perfilstats') document.querySelectorAll('.pst-lienzo').forEach((l) => l._redibujar && l._redibujar()); }, 200);
+  _pst.rz = setTimeout(() => { if (currentView === 'perfilstats' || currentView === 'cartera') document.querySelectorAll('.pst-lienzo').forEach((l) => l._redibujar && l._redibujar()); }, 200);
 });
 $('top-periodo')?.addEventListener('change', onTopPeriodoChange);
 $('top-modo')?.addEventListener('change', consultarTop);
