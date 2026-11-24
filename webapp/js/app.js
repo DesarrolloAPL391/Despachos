@@ -16777,6 +16777,7 @@ function liqRecargar() {
   _liqCarCache.clear();
   if (_liq.vista === 'revisar') return liqVerRevisar();
   if (_liq.vista === 'colillas') return liqVerColillas();
+  if (_liq.vista === 'cpq') { cpqOlvidarCartera(); return liqVerConsignaPor(); }
   if (_liq.vista === 'dia' && _liq.fila) return abrirLiqDia(_liq.fila.movil, _liq.fila.fecha);
   return openLiquidaciones({ mantener: true });
 }
@@ -17029,6 +17030,10 @@ function pintarLiqArmazon() {
         <p id="liq-col-txt">consultando…</p>
         <span class="liq-est-acc"><button type="button" class="btn btn-sm" id="liq-colillas">Ver ›</button>
           <button type="button" class="btn btn-sm btn-sec" id="liq-col-link">Copiar enlace</button></span></section>
+      <section class="liq-est"><h4>🤝 Quién consigna por quién</h4>
+        <p id="liq-cpq-txt">consultando…</p>
+        <span class="liq-est-acc"><button type="button" class="btn btn-sm" id="liq-cpq">Ver ›</button></span>
+        <small>Cuando la plata la pone otra persona y entra con su cédula</small></section>
     </div>
     <section class="pst-card liq-lista-card">
       <div class="liq-filtros liq-f2">
@@ -17078,7 +17083,9 @@ function pintarLiqArmazon() {
   liqContarColillas();
   body.querySelector('#liq-cartera').addEventListener('click', () => openCartera());
   body.querySelector('#liq-mora').addEventListener('click', () => openMora());
+  body.querySelector('#liq-cpq').addEventListener('click', () => liqVerConsignaPor());
   liqContarCartera();
+  liqContarConsignaPor();
 }
 
 async function cargarLiqPagina() {
@@ -17400,7 +17407,8 @@ async function liqPintarPago(fs, fechaIso, tok) {
     estados.push(cls); chips.push([cls, corto]);
     const filas = p.pagos.map((a) => {
       const e = CAR_ESTADO[a.estado] || ['', a.estado || ''];
-      const que = a.clase === 'banco' ? '🏦 Banco' : '🧾 Colilla';
+      const t = a.clase === 'banco' && data.terceros ? data.terceros[a.id] : null;   // lo consignó otra persona (sql/203)
+      const que = a.clase === 'banco' ? '🏦 Banco' + (t ? `<br><small>lo consignó ${cpqQuien(t.nombre, t.cedula)}</small>` : '') : '🧾 Colilla';
       return `<tr><td>${esc(fechaLegible(a.fecha))}</td><td>${que}</td><td class="liq-plata">${liqPlata(a.valor)}</td>
         <td class="liq-plata"><b>${liqPlata(a.aqui)}</b></td><td><span class="car-chip ${e[0]}">${e[1]}</span></td></tr>`;
     }).join('');
@@ -18104,6 +18112,334 @@ async function liqVerColillas() {
       ${d.texto ? `<details><summary>Lo que leyó el OCR</summary><pre class="col-ocr">${esc(d.texto)}</pre></details>` : ''}`;
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
+}
+
+// ---------- 🤝 Quién consigna por quién (sql/203) ----------
+// El banco solo trae la cédula de QUIEN consigna (no la del conductor ni el bus). Cuando un familiar, un
+// conocido u otro conductor paga por él, la plata entra con otra cédula: la cartera no se la abona y el
+// conductor sale en mora. Aquí el administrador dice de quién es esa plata: todo lo de esa persona (regla)
+// o un depósito solo. La cartera, la mora, el pago de cada día y la planilla lo toman solos.
+const CPQ_OCULTAS = 'cpq-ocultas';          // personas que no son de METRO (p. ej. CENTRO): solo en este navegador
+function cpqOcultas() {
+  try { return new Set(JSON.parse(localStorage.getItem(CPQ_OCULTAS) || '[]')); } catch (e) { return new Set(); }
+}
+function cpqGuardarOcultas(s) {
+  try { localStorage.setItem(CPQ_OCULTAS, JSON.stringify([...s])); } catch (e) { /* sin almacenamiento: no se recuerda */ }
+}
+const cpqQuien = (nombre, ced) => (nombre ? esc(nombre) : `C.C. ${esc(ced || '')}`);
+// Lo que cambia la plata de alguien: se vuelve a leer la cartera de cada conductor y el tablero
+function cpqOlvidarCartera() { _liqCarCache.clear(); _car.d = null; }
+
+async function liqContarConsignaPor() {
+  const el = $('liq-cpq-txt');
+  if (!el) return;
+  try {
+    const { data, error } = await sb.rpc('consigna_por_resumen');
+    if (error || !data || !data.ok) throw error || new Error('x');
+    const asig = Number(data.reglas) + Number(data.asignados);
+    el.textContent = (Number(data.personas)
+      ? `${data.personas} persona(s) consignan sin tener liquidación (${liqPlata(data.sin_asignar)})`
+      : 'Toda la plata del banco tiene a quién pagarle')
+      + (asig ? ` · ${asig} asignación(es) que mueven ${liqPlata(data.movido)}` : '');
+  } catch (e) { el.textContent = 'no se pudo consultar'; }
+}
+
+// Buscador de conductor (nombre o cédula), el mismo del filtro de la lista
+function cpqBuscador(inicial) {
+  const box = pstEl('span', 'liq-f-buscar cpq-buscar');
+  box.innerHTML = `<input type="search" placeholder="🔎 Conductor: nombre o cédula" autocomplete="off" spellcheck="false"
+      role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Conductor al que se le abona la plata">
+    <span class="liq-sug" role="listbox" hidden></span>`;
+  const inp = box.querySelector('input'), sug = box.querySelector('.liq-sug');
+  let elegido = inicial && inicial.ced ? { ced: String(inicial.ced), nom: inicial.nom || '' } : null;
+  let items = [], sel = -1, t = null;
+  const mostrar = (x) => `${x.nom || 'C.C. ' + x.ced} · C.C. ${x.ced}`;
+  if (elegido) inp.value = mostrar(elegido);
+  const cerrar = () => { sug.hidden = true; inp.setAttribute('aria-expanded', 'false'); sel = -1; };
+  const elegir = (x) => { elegido = { ced: x.ced, nom: x.nom }; inp.value = mostrar(x); cerrar(); };
+  const pintar = () => {
+    sug.innerHTML = items.length
+      ? items.map((x, i) => `<button type="button" role="option" tabindex="-1" class="liq-sug-i${i === sel ? ' on' : ''}" data-i="${i}">
+          <b>${esc(x.nom || '(sin nombre)')}</b><small>C.C. ${esc(x.ced)}${x.cond ? '' : ' · no es conductor'}${x.activo ? '' : ' · retirado'}</small></button>`).join('')
+      : '<span class="liq-sug-vacio">Nadie con ese nombre o cédula.</span>';
+    sug.hidden = false; inp.setAttribute('aria-expanded', 'true');
+  };
+  inp.addEventListener('input', () => {
+    elegido = null; clearTimeout(t);
+    const v = inp.value.trim();
+    if (!v) { cerrar(); return; }
+    t = setTimeout(async () => {
+      let lista = [];
+      try { lista = await liqConductores(); } catch (e) { /* sin perfil: queda escribir la cédula completa */ }
+      if (inp.value.trim() !== v) return;
+      items = liqBuscarConductores(lista, v, 8); sel = items.length ? 0 : -1; pintar();
+    }, 150);
+  });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (sug.hidden || !items.length) return;
+      e.preventDefault(); sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; pintar();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!sug.hidden && items[sel]) elegir(items[sel]);
+    } else if (e.key === 'Escape') cerrar();
+  });
+  sug.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); elegir(items[Number(b.dataset.i)]); } });
+  inp.addEventListener('blur', () => setTimeout(cerrar, 150));
+  return {
+    el: box, inp,
+    // Lo elegido de la lista, o una cédula escrita completa (solo números)
+    eleccion: () => {
+      if (elegido) return elegido;
+      const v = inp.value.trim(), dig = v.replace(/\D/g, '');
+      return /^[\d.\s]+$/.test(v) && dig.length >= 5 ? { ced: dig, nom: '' } : null;
+    },
+  };
+}
+
+// Formulario para asignar la plata: todo lo de esa persona (desde una fecha, opcional) o un depósito solo.
+// titulo ya viene escapado.
+function cpqFormulario({ titulo, pagador, recaudoId = null, sugerido = null, alGuardar }) {
+  const f = pstEl('div', 'cpq-form');
+  f.innerHTML = `<div class="cpq-form-t">${titulo}</div>
+    <div class="cpq-form-campos">
+      <label class="cpq-form-cond">Conductor al que se le abona</label>
+      ${recaudoId ? '' : `<label class="cpq-form-desde">Desde<input type="date" class="cpq-desde">
+        <small>vacío = todo lo que ha consignado</small></label>`}
+      <label class="cpq-form-nota">Nota (opcional)<input type="text" class="cpq-nota" maxlength="300" placeholder="Ej.: es la esposa del conductor"></label>
+    </div>
+    <div class="cpq-form-acc"><button type="button" class="btn btn-sec" data-x>Cancelar</button>
+      <button type="button" class="btn btn-primary" data-ok>Guardar</button></div>`;
+  const b = cpqBuscador(sugerido);
+  f.querySelector('.cpq-form-cond').appendChild(b.el);
+  f.querySelector('[data-x]').addEventListener('click', () => {
+    const tr = f.closest('tr.cpq-extra'); f.remove(); if (tr && !tr.querySelector('td').children.length) tr.hidden = true;
+  });
+  f.querySelector('[data-ok]').addEventListener('click', async (e) => {
+    const x = b.eleccion();
+    if (!x) { toast('Elige el conductor de la lista o escribe su cédula completa.', 'err'); b.inp.focus(); return; }
+    const bt = e.currentTarget;
+    bt.disabled = true; bt.textContent = 'Guardando…';
+    let data = null, error = null;
+    try {
+      ({ data, error } = await sb.rpc('consigna_por_guardar', {
+        p_pagador: pagador || null, p_conductor: x.ced, p_recaudo_id: recaudoId,
+        p_desde: (f.querySelector('.cpq-desde') || {}).value || null,
+        p_nota: f.querySelector('.cpq-nota').value.trim() || null,
+      }));
+    } catch (err) { error = err; }
+    if (error || !data || !data.ok) {
+      toast((data && data.error) || (error && error.message) || 'No se pudo guardar.', 'err');
+      bt.disabled = false; bt.textContent = 'Guardar';
+      return;
+    }
+    cpqOlvidarCartera();
+    toast(data.quitado ? 'Listo: ese depósito vuelve a quien lo consignó.'
+      : `Listo: ${data.depositos} depósito(s) por ${liqPlata(data.total)} ahora le pagan a ${x.nom || 'C.C. ' + x.ced}.`, 'ok');
+    if (alGuardar) alGuardar(data);
+  });
+  setTimeout(() => b.inp.focus(), 0);
+  return f;
+}
+
+// Los depósitos de una persona sin liquidación, cada uno con su «es de…»
+function cpqListaDepositos(p, alGuardar) {
+  const box = pstEl('div', 'cpq-deps');
+  box.innerHTML = `<div class="cpq-form-t">Depósitos de ${cpqQuien(p.nombre, p.cedula)} que todavía no le pagan a nadie</div>
+    <div class="liq-tabla-wrap"><table class="liq-rev liq-dia-tabla"><thead><tr><th>Fecha</th><th>Valor</th><th></th></tr></thead><tbody>
+    ${(p.depositos || []).map((d) => `<tr><td>${esc(fechaLegible(d.fecha))}</td><td><b>${liqPlata(d.valor)}</b></td>
+      <td><button type="button" class="lnk" data-dep="${Number(d.id)}">Este depósito es de… ›</button></td></tr>`).join('')}
+    </tbody></table></div><div class="cpq-dep-form"></div>`;
+  box.querySelectorAll('[data-dep]').forEach((b) => b.addEventListener('click', () => {
+    const d = (p.depositos || []).find((x) => String(x.id) === b.dataset.dep);
+    if (!d) return;
+    const slot = box.querySelector('.cpq-dep-form');
+    slot.innerHTML = '';
+    slot.appendChild(cpqFormulario({
+      titulo: `El depósito del <b>${esc(fechaLegible(d.fecha))}</b> por <b>${liqPlata(d.valor)}</b> es de:`,
+      pagador: p.cedula, recaudoId: d.id, alGuardar,
+    }));
+    slot.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }));
+  return box;
+}
+
+async function liqVerConsignaPor() {
+  if (!isAdmin()) return;
+  const tok = liqPrepararVista('cpq', '🤝 Quién consigna por quién');
+  _liq.volver = 'lista';
+  const body = liqBody();
+  body.innerHTML = '<div class="loading">Buscando la plata que consignó otra persona…</div>';
+  let data = null, error = null;
+  try { ({ data, error } = await sb.rpc('consigna_por_listar')); } catch (e) { error = e; }
+  if (!liqVivo(tok)) return;
+  body.innerHTML = '';
+  body.appendChild(liqBotonVolver('lista'));
+  if (error || !data || !data.ok) {
+    body.appendChild(pstEl('div', 'cump-empty', 'No se pudo consultar: ' + ((data && data.error) || (error && error.message) || '')));
+    return;
+  }
+  const recargar = () => { if (liqVivo(tok)) liqVerConsignaPor(); };
+  const sub = $('pst-sub');
+  if (sub) sub.textContent = `Desde el arranque de la cartera (${fechaLegible(data.desde)}) · el banco solo trae la cédula de quien consigna`;
+  const oc = cpqOcultas();
+  const ps = data.personas || [], rs = data.reglas || [];
+  const vis = ps.filter((p) => !oc.has(p.cedula)), ocul = ps.filter((p) => oc.has(p.cedula));
+  const reglas = rs.filter((r) => !r.recaudo_id), asig = rs.filter((r) => r.recaudo_id);
+  const suma = (xs, k) => xs.reduce((s, x) => s + Number(x[k] || 0), 0);
+
+  const kpis = pstEl('div', 'pst-kpis');
+  const t1 = pstTile('Consignan sin liquidación', pstNum(vis.length),
+    vis.length ? `${liqPlata(suma(vis, 'total'))} que no le pagan a nadie` : 'nadie');
+  t1.classList.add(vis.length ? 'car-t-debe' : 'car-t-ok');
+  kpis.append(t1,
+    pstTile('Reglas («todo lo de esta persona»)', pstNum(reglas.length), `${pstNum(suma(reglas, 'depositos'))} depósito(s) · ${liqPlata(suma(reglas, 'total'))}`),
+    pstTile('Depósitos asignados uno a uno', pstNum(asig.length), liqPlata(suma(asig, 'total'))));
+  body.appendChild(kpis);
+
+  const ayuda = pstEl('section', 'liq-verif liq-banco-bien');
+  ayuda.innerHTML = `<div class="liq-verif-t"><b>¿Para qué es esto?</b>
+    <small>El banco trae la cédula de quien hace la consignación, no la del conductor ni el bus. Si un familiar, un conocido u
+    otro conductor paga por él, la plata entra con otra cédula: la cartera no se la abona y el conductor sale en mora.
+    Aquí se dice de quién es esa plata, y la cartera, la mora, el pago de cada día y la planilla lo toman solos.
+    Quitar una asignación devuelve la plata a quien la consignó.</small></div>`;
+  body.appendChild(ayuda);
+
+  // A) Personas que consignan sin tener liquidación
+  const cA = pstEl('section', 'pst-card liq-lista-card');
+  cA.innerHTML = `<div class="pst-card-h"><div><h4>Consignan sin tener liquidación</h4>
+    <div class="pst-nota">Su plata no paga ningún día. La sugerencia es el conductor con días pendientes por el mismo valor,
+      de 0 a 4 días antes de cada depósito: revísala antes de guardar.</div></div></div>`;
+  if (!vis.length) {
+    cA.appendChild(pstEl('div', 'pst-vacio', ps.length ? 'Las que quedan están ocultas.' : 'Nadie: toda la plata del banco tiene a quién pagarle.'));
+  } else {
+    const wrap = pstEl('div', 'liq-tabla-wrap');
+    wrap.innerHTML = `<table class="liq-rev cpq-tabla"><thead><tr><th>Quién consigna</th><th>Depósitos</th><th>Valor</th>
+      <th>Sugerencia</th><th></th></tr></thead><tbody></tbody></table>`;
+    const tb = wrap.querySelector('tbody');
+    vis.forEach((p) => {
+      const s = (p.sugerencias || [])[0];
+      const per = p.perfil;
+      const que = [
+        per ? [per.cargo || 'está en el perfil', per.area, /INACTIV|RETIR/i.test(per.estado || '') ? 'retirado' : ''].filter(Boolean).join(' · ') : 'no aparece en el perfil',
+        p.duenio_de && p.duenio_de.length ? `dueño del bus ${p.duenio_de.join(', ')}` : '',
+      ].filter(Boolean).join(' · ');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td><b>${p.nombre ? esc(p.nombre) : 'No aparece en la app'}</b><br><small>C.C. ${esc(p.cedula)} · ${esc(que)}</small></td>
+        <td>${pstNum(p.n)}<br><small>${p.primero === p.ultimo ? esc(fechaLegible(p.primero))
+          : `${esc(fechaLegible(p.primero).slice(0, 5))} al ${esc(fechaLegible(p.ultimo))}`}</small></td>
+        <td><b>${liqPlata(p.total)}</b></td>
+        <td>${s ? `${cpqQuien(s.nombre, s.conductor)}<br><small>coincide en ${pstNum(s.coinciden)} de ${pstNum(p.n)} depósito(s)${(p.sugerencias || []).length > 1 ? ` · hay ${p.sugerencias.length - 1} más` : ''}</small>`
+          : '<small>Sin sugerencia: nadie tiene días pendientes por esos valores</small>'}</td>
+        <td class="cpq-acc"><button type="button" class="btn btn-sm" data-todo>Asignar todo ›</button>
+          <span><button type="button" class="lnk" data-ver>Uno por uno</button> · <button type="button" class="lnk" data-ocultar
+            title="Para quien no es de METRO (por ejemplo, un conductor de CENTRO). Solo en este navegador.">Ocultar</button></span></td>`;
+      const extra = document.createElement('tr');
+      extra.className = 'cpq-extra'; extra.hidden = true;
+      extra.innerHTML = '<td colspan="5"></td>';
+      tb.append(tr, extra);
+      const celda = extra.firstElementChild;
+      const abrir = (nodo) => { celda.innerHTML = ''; celda.appendChild(nodo); extra.hidden = false; };
+      tr.querySelector('[data-todo]').addEventListener('click', () => abrir(cpqFormulario({
+        titulo: `Todo lo que consigne <b>${cpqQuien(p.nombre, p.cedula)}</b> (C.C. ${esc(p.cedula)}) es de:`,
+        pagador: p.cedula, sugerido: s ? { ced: s.conductor, nom: s.nombre } : null, alGuardar: recargar })));
+      tr.querySelector('[data-ver]').addEventListener('click', () => abrir(cpqListaDepositos(p, recargar)));
+      tr.querySelector('[data-ocultar]').addEventListener('click', () => { oc.add(p.cedula); cpqGuardarOcultas(oc); recargar(); });
+    });
+    cA.appendChild(wrap);
+  }
+  if (ocul.length) {
+    const d = pstEl('div', 'pst-nota cpq-ocultas');
+    d.innerHTML = `${ocul.length} persona(s) oculta(s) en este navegador (${liqPlata(suma(ocul, 'total'))}) ·
+      <button type="button" class="lnk" data-mostrar>Mostrarlas</button>`;
+    d.querySelector('[data-mostrar]').addEventListener('click', () => { cpqGuardarOcultas(new Set()); recargar(); });
+    cA.appendChild(d);
+  }
+  body.appendChild(cA);
+
+  // B) Lo que ya está asignado
+  const cB = pstEl('section', 'pst-card liq-lista-card');
+  cB.innerHTML = `<div class="pst-card-h"><div><h4>Lo que ya está asignado</h4>
+    <div class="pst-nota">Quitar una asignación devuelve la plata a quien la consignó.</div></div></div>`;
+  if (!rs.length) cB.appendChild(pstEl('div', 'pst-vacio', 'Todavía no hay nada asignado.'));
+  else {
+    const wrap = pstEl('div', 'liq-tabla-wrap');
+    wrap.innerHTML = `<table class="liq-rev cpq-tabla"><thead><tr><th>Quién consigna</th><th>Se le abona a</th><th>Qué</th>
+      <th>Movido</th><th>Nota</th><th></th></tr></thead><tbody>
+      ${rs.map((r) => {
+        const que = r.recaudo_id
+          ? `Solo el depósito del ${esc(fechaLegible((r.deposito || {}).fecha))} por ${liqPlata((r.deposito || {}).valor)}`
+          : (r.desde ? `Todo desde el ${esc(fechaLegible(r.desde))}` : 'Todo lo que consigne') + (r.hasta ? ` hasta el ${esc(fechaLegible(r.hasta))}` : '');
+        return `<tr><td>${r.pagador ? `${cpqQuien(r.pagador_nombre, r.pagador)}<br><small>C.C. ${esc(r.pagador)}</small>` : '<small>sin cédula en el banco</small>'}</td>
+          <td><b>${cpqQuien(r.conductor_nombre, r.conductor)}</b><br><small>C.C. ${esc(r.conductor)}</small></td>
+          <td>${que}<br><small>${esc(r.creado || '')}</small></td>
+          <td>${pstNum(r.depositos)} depósito(s)<br><b>${liqPlata(r.total)}</b></td>
+          <td><small>${esc(r.nota || '')}</small></td>
+          <td><button type="button" class="lnk mal" data-quitar="${Number(r.id)}">Quitar</button></td></tr>`;
+      }).join('')}</tbody></table>`;
+    wrap.querySelectorAll('[data-quitar]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('¿Quitar esta asignación? La plata vuelve a quedar de quien la consignó.')) return;
+      b.disabled = true;
+      const { data: q, error: e } = await sb.rpc('consigna_por_quitar', { p_id: Number(b.dataset.quitar) });
+      if (e || !q || !q.ok) { toast((q && q.error) || (e && e.message) || 'No se pudo quitar.', 'err'); b.disabled = false; return; }
+      cpqOlvidarCartera();
+      toast('Quitada: la plata volvió a quien la consignó.', 'ok');
+      recargar();
+    }));
+    cB.appendChild(wrap);
+  }
+  body.appendChild(cB);
+
+  // C) Un conductor que pagó por un compañero: se pasa ESE depósito, el resto sigue siendo suyo
+  const cC = pstEl('section', 'pst-card liq-lista-card');
+  cC.innerHTML = `<div class="pst-card-h"><div><h4>Un depósito de un conductor que era para otro</h4>
+    <div class="pst-nota">Busca la cédula de quien consignó y pasa SOLO ese depósito al otro conductor; el resto de su plata sigue siendo suya.</div></div></div>
+    <div class="cpq-buscar-ced"><input type="search" inputmode="numeric" placeholder="Cédula de quien consignó" aria-label="Cédula de quien consignó">
+      <button type="button" class="btn" data-buscar>🔎 Ver sus depósitos</button></div>
+    <div class="cpq-res"></div>`;
+  const inpC = cC.querySelector('input'), res = cC.querySelector('.cpq-res');
+  const buscar = async () => {
+    const ced = inpC.value.replace(/\D/g, '');
+    if (ced.length < 5) { toast('Escribe la cédula completa.', 'err'); inpC.focus(); return; }
+    res.innerHTML = '<div class="loading">Buscando…</div>';
+    let d = null, e = null;
+    try { ({ data: d, error: e } = await sb.rpc('consigna_por_depositos', { p_cedula: ced })); } catch (err) { e = err; }
+    if (!res.isConnected) return;
+    if (e || !d || !d.ok) { res.innerHTML = `<div class="pst-vacio">${esc((d && d.error) || (e && e.message) || 'No se pudo consultar.')}</div>`; return; }
+    const ds = d.depositos || [];
+    res.innerHTML = `<div class="cpq-form-t">${d.nombre ? esc(d.nombre) : 'No aparece en la app'} · C.C. ${esc(d.cedula)} ·
+        ${pstNum(ds.length)} depósito(s) desde el arranque${d.tiene_liquidaciones ? '' : ' · no tiene liquidaciones'}</div>
+      ${ds.length ? `<div class="liq-tabla-wrap"><table class="liq-rev liq-dia-tabla"><thead><tr><th>Fecha</th><th>Valor</th><th>Se le abona a</th><th></th></tr></thead><tbody>
+        ${ds.map((x) => `<tr><td>${esc(fechaLegible(x.fecha))}</td><td><b>${liqPlata(x.valor)}</b></td>
+          <td>${x.como === 'PROPIO' ? 'a quien consignó' : `<b>${cpqQuien(x.a_nombre, x.a)}</b><br><small>${x.como === 'REGLA' ? 'por una regla' : 'asignado a mano'}</small>`}</td>
+          <td><button type="button" class="lnk" data-dep="${Number(x.id)}">${x.como === 'ASIGNADO' ? 'Cambiar' : 'Es de otro conductor ›'}</button>
+            ${x.como === 'ASIGNADO' ? ` · <button type="button" class="lnk mal" data-devolver="${Number(x.regla)}">Devolver</button>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="pst-vacio">No tiene depósitos desde el arranque.</div>'}
+      <div class="cpq-dep-form"></div>`;
+    const despues = () => { cpqOlvidarCartera(); buscar(); };
+    res.querySelectorAll('[data-dep]').forEach((b) => b.addEventListener('click', () => {
+      const x = ds.find((y) => String(y.id) === b.dataset.dep);
+      if (!x) return;
+      const slot = res.querySelector('.cpq-dep-form');
+      slot.innerHTML = '';
+      slot.appendChild(cpqFormulario({
+        titulo: `El depósito del <b>${esc(fechaLegible(x.fecha))}</b> por <b>${liqPlata(x.valor)}</b> es de:`,
+        pagador: d.cedula, recaudoId: x.id, alGuardar: despues,
+      }));
+      slot.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }));
+    res.querySelectorAll('[data-devolver]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('¿Devolver este depósito a quien lo consignó?')) return;
+      b.disabled = true;
+      const { data: q, error: er } = await sb.rpc('consigna_por_quitar', { p_id: Number(b.dataset.devolver) });
+      if (er || !q || !q.ok) { toast((q && q.error) || (er && er.message) || 'No se pudo.', 'err'); b.disabled = false; return; }
+      toast('Listo: el depósito volvió a quien lo consignó.', 'ok');
+      despues();
+    }));
+  };
+  cC.querySelector('[data-buscar]').addEventListener('click', buscar);
+  inpC.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); buscar(); } });
+  body.appendChild(cC);
 }
 
 // ---------- 🚨 Conductores en mora ----------
@@ -18856,11 +19192,15 @@ async function carDetalle(ced) {
     <div class="pst-tabla-wrap">${as.length ? `<table class="pst-tabla"><thead><tr><th>Fecha</th><th>Valor</th><th>Pagó</th><th>Banco</th></tr></thead><tbody>
     ${as.slice().reverse().map((x) => {
       const e = CAR_ESTADO[x.estado] || ['', x.estado];
-      const que = x.clase === 'banco' ? '🏦 extracto' : `🧾 colilla · <button type="button" class="lnk" data-foto="${esc(x.id)}">ver foto</button>`;
+      const t = x.clase === 'banco' && data.terceros ? data.terceros[x.id] : null;   // lo consignó otra persona (sql/203)
+      const que = x.clase === 'banco' ? '🏦 extracto' + (t ? ` · lo consignó ${cpqQuien(t.nombre, t.cedula)}` : '')
+        : `🧾 colilla · <button type="button" class="lnk" data-foto="${esc(x.id)}">ver foto</button>`;
       return `<tr><td>${esc(fechaLegible(x.fecha))}<br><small>${que}</small></td>
         <td><b>${liqPlata(x.valor)}</b></td><td>${liqPlata(x.aplicado)}${Number(x.a_favor) ? `<br><small>${liqPlata(x.a_favor)} a favor</small>` : ''}</td>
         <td><span class="car-chip ${e[0]}">${e[1]}</span></td></tr>`; }).join('')}
-    </tbody></table><div id="car-foto"></div>` : '<div class="pst-vacio">No tiene pagos desde el arranque.</div>'}</div>`;
+    </tbody></table><div id="car-foto"></div>` : '<div class="pst-vacio">No tiene pagos desde el arranque.</div>'}</div>
+    ${(data.cedidos || []).length ? `<div class="pst-nota cpq-cedidos">🤝 Consignó con su cédula plata que era de otro conductor
+      (no cuenta aquí): ${data.cedidos.map((x) => `${esc(fechaLegible(x.fecha))} ${liqPlata(x.valor)} → ${cpqQuien(x.nombre, x.a)}`).join(' · ')}</div>` : ''}`;
   g.append(c1, c2);
   body.appendChild(g);
   carDibujar();
