@@ -18,6 +18,9 @@ let current = null;     // nombre de la tabla actual
 let page = 0;
 let term = '';
 let soloPendientes = false; // en tablas de despacho: mostrar solo los viajes que faltan por despachar
+// ✅ Filtro de la revisión en las tablas de despacho (sql/208): el estado elegido y la última carga del día (para volver
+// a filtrar sin consultar). Va arriba con las demás variables porque selectTable lo limpia al cambiar de tabla.
+let revFiltroTabla = { estado: '', por: '', ult: null };
 const estadoMoviles = new Map(); // movil -> 'mov'|'idle'|'off' (estado GPS de SONAR vía tabla `ubicaciones`)
 let _estadoMovilesTs = 0;        // marca de tiempo del último cargue (para cachear ~30s)
 let filters = {};       // filtros dinámicos activos { columna: valor }
@@ -144,6 +147,9 @@ function filtraComoDespachador() { return !!PREVIEW || !isAdmin(); }
 // (No es control de acceso —el actor sigue siendo admin y la RLS manda—, solo fidelidad visual.)
 function efIsAdmin() { return PREVIEW ? false : isAdmin(); }
 function efIsAuditor() { return PREVIEW ? PREVIEW.rol === 'auditor' : isAuditor(); }
+// ✅ Revisión de viajes: administración y monitores (abierta a los monitores en la v379, 25/11/2026). También en
+// «🔎 Ver como auditor»; en «Ver como despachador», no.
+function puedeVerRevision() { return efIsAdmin() || efIsAuditor(); }
 // ¿Puede cancelar este viaje en SONAR? Desde el 16/11/2026 solo el MONITOR (auditor) de la ruta del
 // viaje y el admin; el despachador ya no cancela. Es solo la vista: la base valida lo mismo (sql/191).
 function puedeCancelarViaje(row) {
@@ -665,6 +671,9 @@ function buildSidebar() {
   const enDespachos = (n) => n === 'despachos' || n === 'despachos_sonar' || n === 'resumen' || n === 'asistencia' || puestoTables.includes(n);
   const gDe = addNavGroup(nav, '🚌', 'Despachos', 'desp', true);
   for (const name of vis) { if (enDespachos(name)) addTableBtn(gDe, name); }
+  // ✅ Revisión de viajes (sql/206): los completos se revisan solos; incompletos y vigilante, el monitor. Administración y monitores.
+  if (puedeVerRevision()) addNavAction(gDe, '✅', 'Revisión de viajes', openRevViajes, 'nav-revviajes');
+  if (currentView === 'revviajes') $('nav-revviajes')?.classList.add('active');
   // acciones especiales (no son tablas), organizadas en SUBMENÚS plegables
   if (isAdmin() || CTX?.rol === 'despachador' || CTX?.rol === 'afiliado') addNavNotif(nav);
   if (!isGestionHumana()) addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa'); // acceso rápido, fuera de grupos
@@ -1057,6 +1066,7 @@ function selectTable(name, filtroInicial) {
   $('dispatch-btn').hidden = true;
   $('count-btn').hidden = !TABLES[name].dispatchable || afiliadoSoloLectura();  // Contador: en tablas de despacho (no al afiliado)
   soloPendientes = false;                                              // al cambiar de tabla, ver todas
+  revFiltroTabla.estado = ''; revFiltroTabla.por = ''; revFiltroTabla.ult = null;   // y el filtro de la revisión
   $('pend-btn').hidden = !TABLES[name].dispatchable || afiliadoSoloLectura();   // "Solo pendientes": en tablas de despacho (no al afiliado)
   $('pend-btn').classList.remove('on'); $('pend-btn').textContent = '⏳ Solo pendientes';
   // Asistencia: los botones de marcación los maneja la tarjeta dinámica (abajo), no la barra
@@ -4668,9 +4678,11 @@ async function loadData() {
   if (soloPendientes && cfg.dispatchable && diaSel) {
     rows = rows.filter((r) => esPendienteDespacho(cfg, r));
     total = rows.length;
-  } else if (cfg.dispatchable && diaSel) {
+  } else if (cfg.dispatchable && diaSel && !efIsAuditor()) {
     // AUTOMÁTICO: sube los SIN DESPACHO al comienzo (por hora) para que el despachador
     // vea de una lo próximo por despachar; lo ya resuelto queda debajo, también por hora.
+    // El monitor (y «Ver como auditor»), no: ve el día por hora, en orden, como viene de la base, para ir revisando
+    // lo que ya pasó (pedido 25/11: «que lo vea en forma ascendente para que sepa qué debe revisar»).
     rows = rows.slice().sort((a, b) => {
       const pa = esPendienteDespacho(cfg, a) ? 0 : 1;
       const pb = esPendienteDespacho(cfg, b) ? 0 : 1;
@@ -4687,6 +4699,17 @@ async function loadData() {
     try { await vigFilasCargar(rows); } catch { _vigFilas.clear(); }
     if (reqTabla !== current || reqPage !== page) return;
   } else _vigFilas.clear();
+  // ✅ La revisión de estos viajes (sql/208): administración y monitores.
+  if (cfg.dispatchable && puedeVerRevision()) {
+    try { await revFilasCargar(rows); } catch { _revFilas.clear(); }
+    if (reqTabla !== current || reqPage !== page) return;
+  } else _revFilas.clear();
+  // ✅ Filtro de la revisión (con el día completo cargado): conteos del día y solo las filas del estado elegido
+  if (cfg.dispatchable && puedeVerRevision() && diaSel) {
+    revFiltroTabla.ult = { tabla: reqTabla, cfg, rows, total, diaSel };
+    const vis = revFiltrarFilas(rows, true);
+    if (revFiltroTabla.estado) { rows = vis; total = vis.length; }
+  } else { revFiltroTabla.ult = null; revFiltrarFilas(rows, false); }
   // Inicio y fin de labores: cruza con el horario del día para saber quién entró tarde
   if (current === 'asistencia' && puedeVerPuntualidad()) { try { await cruzarPuntualidad(rows); } catch { /* sin horarios, la tabla se ve igual */ } }
   pintarAlertaPuntualidad(rows); // se oculta sola si la tabla no es asistencia
@@ -4799,6 +4822,7 @@ function renderTable(cfg, rows, count, diaSel = false) {
   // solo las ven el admin y el auditor; al despachador se le ocultan.
   const cols = cfg.columns.filter((c) =>
     !(c.auditCol && !efIsAdmin() && !efIsAuditor()) &&
+    !(c.revision && !puedeVerRevision()) &&     // ✅ Revisión: administración y monitores
     !(c.despHide && !efIsAdmin() && !efIsAuditor()) &&
     !(c.privado && !puedeVerDatosAfiliado()) && // datos personales del dueño del vehículo
     !(c.soloControl && !puedeVerPuntualidad()));  // puntualidad del ingreso (no la ve el despachador)
@@ -4884,6 +4908,8 @@ function renderTable(cfg, rows, count, diaSel = false) {
       }
       // 🚨 Lo que vio el Vigilante de ruta en este viaje (monitores y admin; sql/193)
       if (c.vigilante) { td.appendChild(vigCeldaFila(row)); tr.appendChild(td); continue; }
+      // ✅ La revisión del viaje: qué pasó con lo que dijo SONAR o vio el vigilante (sql/206-208)
+      if (c.revision) { td.appendChild(revCeldaFila(row)); tr.appendChild(td); continue; }
       // Cambio de RUTA: ruta programada → ruta despachada, solo cuando difieren.
       if (c.cambioRuta) {
         const rp = row.rutap && row.rutap.nombre, rr = row.ruta && row.ruta.nombre;
@@ -14421,6 +14447,7 @@ const AVISO_ACCION = {
   'LICENCIAS-2026-09': { l: '❓ Cómo se hace', fn: () => openGuiaLicencias('despachador') },
   'LICENCIAS-2026-10': { l: '❓ Cómo se hace', fn: () => openGuiaLicencias('despachador') },
   'TALLER-2026-09': { alCerrar: () => { if (puedeVerTaller()) openTaller('taller'); } },
+  'REVISION-VIAJES-2026-11': { alCerrar: () => { if (puedeVerRevision()) openRevViajes(); } },   // sql/209
 };
 
 async function revisarAvisos() {
@@ -26288,10 +26315,10 @@ async function sinExportarLista(titulo, filas) {
 
 ['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
 ['sst-anio', 'sst-mes', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
-$('pst-recargar')?.addEventListener('click', () => (currentView === 'correspondencia' ? corrRecargar() : currentView === 'liquidaciones' ? liqRecargar()
+$('pst-recargar')?.addEventListener('click', () => (currentView === 'revviajes' ? revRecargar() : currentView === 'correspondencia' ? corrRecargar() : currentView === 'liquidaciones' ? liqRecargar()
   : currentView === 'mora' ? (_liqCarCache.clear(), cargarMora()) : currentView === 'cartera' ? cargarCartera() : currentView === 'pqrstats' ? cargarPqrsfStats()
   : currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
-$('pst-excel')?.addEventListener('click', () => (currentView === 'mora' ? exportarMora() : currentView === 'cartera' ? exportarCartera() : currentView === 'pqrstats' ? exportarPqrsfStats()
+$('pst-excel')?.addEventListener('click', () => (currentView === 'revviajes' ? revExcel() : currentView === 'mora' ? exportarMora() : currentView === 'cartera' ? exportarCartera() : currentView === 'pqrstats' ? exportarPqrsfStats()
   : currentView === 'sinstats' ? exportarSiniestrosStats() : exportarPerfilStats()));
 // Cambiar de año o de mes vuelve a pedir el resumen: el recorte lo hace el servidor
 ['pqs-anio', 'pqs-mes'].forEach((id) => $(id)?.addEventListener('change', () => {
@@ -31717,6 +31744,626 @@ async function qrCtlExcel(btn) {
   finally { btn.disabled = false; btn.textContent = prev; }
 }
 
+
+// ---------- ✅ Revisión de viajes (sql/206) ----------
+// Pedido del 25/11/2026: los viajes COMPLETOS en SONAR y sin novedad se revisan solos (también si lo único del vigilante
+// es «probable ruido»); los INCOMPLETOS, los que SONAR no cerró y los que el vigilante marcó los responde el monitor:
+// qué pasó (lista), si es falta del conductor y una nota. La misma respuesta cierra los casos del vigilante del viaje.
+// Todo pasa por la base (revision_viajes_dia / revisar_viaje): nadie marca «auditado» a mano. De cada viaje por revisar
+// un cron trae de SONAR qué puntos marcó y cuáles no. Administración y monitores (v379).
+// Qué pasó, con la decisión que propone cada motivo (la misma de _rev_motivos en sql/206; el monitor la puede cambiar)
+const REV_MOTIVOS = [
+  ['VARADO', 'Varado o daño mecánico', 'JUSTIFICADO'],
+  ['SINIESTRO', 'Siniestro vial (choque o accidente)', 'JUSTIFICADO'],
+  ['CONGESTION', 'Congestión, vía cerrada o manifestación', 'JUSTIFICADO'],
+  ['DESVIO_AUTORIZADO', 'Desvío autorizado por el despacho', 'JUSTIFICADO'],
+  ['CAMBIO_RUTA', 'Cambio de ruta o de tabla', 'JUSTIFICADO'],
+  ['REQUERIMIENTO', 'Requerimiento de la empresa', 'JUSTIFICADO'],
+  ['DESPACHO_ERRADO', 'Error del despacho (doble despacho, carro o ruta equivocada)', 'JUSTIFICADO'],
+  ['NO_SALIO', 'No salió a hacer el viaje', 'CONFIRMADO'],
+  ['RECORTE', 'Recortó la ruta (no hizo todo el recorrido)', 'CONFIRMADO'],
+  ['ABANDONO', 'Abandonó el servicio', 'CONFIRMADO'],
+  ['ADELANTO', 'Se adelantó a otro carro', 'CONFIRMADO'],
+  ['PERDIDA_TIEMPO', 'Se demoró o se quedó parado sin razón', 'CONFIRMADO'],
+  ['FALLA_GPS', 'Falla del GPS o de SONAR (sí hizo el recorrido)', 'FALSA_ALARMA'],
+  ['CIERRE_SONAR', 'SONAR cerró el viaje antes o después de tiempo', 'FALSA_ALARMA'],
+  ['OTRO', 'Otro (explicarlo en la nota)', null],
+];
+const REV_MOTIVO_TXT = Object.fromEntries([...REV_MOTIVOS.map(([k, t]) => [k, t]), ['CASO_VIGILANTE', 'Respondido en el caso del vigilante']]);
+const REV_MOTIVO_DEC = Object.fromEntries(REV_MOTIVOS.map(([k, , d]) => [k, d]));
+const REV_DECISION = {
+  CONFIRMADO: ['🔴', 'Sí, es falta del conductor', 'chip-red'],
+  JUSTIFICADO: ['🟦', 'Pasó, pero se justifica', 'chip-blue'],
+  FALSA_ALARMA: ['⚪', 'No pasó: falla de SONAR o del GPS', 'chip-gray'],
+};
+// Para un caso del vigilante, las mismas tres decisiones dichas desde el caso
+const REV_DEC_CASO = { CONFIRMADO: 'Sí, incumplió', JUSTIFICADO: 'Pasó, pero se justifica', FALSA_ALARMA: 'No pasó (falsa alarma)' };
+const REV_POR = {
+  INCOMPLETO: ['🛰️', 'Incompleto en SONAR'], CANCELADO: ['🛰️', 'Cancelado en SONAR'],
+  SIN_CERRAR: ['⏳', 'SONAR no lo cerró'], VIGILANTE: ['🚨', 'Novedad del vigilante'],
+};
+const REV_GRUPOS = [['PENDIENTE', '📝 Por revisar', 'pendiente'], ['REVISADO', '✅ Revisados', 'revisado'],
+  ['AUTO', '🤖 Se revisaron solos', 'auto'], ['SIN', '⏳ En curso', 'sin']];
+const _rev = { fecha: null, grupo: 'PENDIENTE', d: null, ruta: '', por: '', q: '', tok: 0, v: null, corregir: false, dias: null };
+
+async function openRevViajes() {
+  if (!puedeVerRevision()) return;
+  currentView = 'revviajes';
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
+  $('nav-revviajes')?.classList.add('active');
+  buildBottomNav();
+  const tit = $('pst-title'); if (tit) tit.textContent = '✅ Revisión de viajes';
+  window.scrollTo(0, 0);
+  if (!_rev.fecha) _rev.fecha = hoyServidor();
+  _rev.dias = null;                          // los días con pendientes se vuelven a contar
+  await revCargar();
+}
+function revRecargar() { _rev.dias = null; return revCargar(); }
+// Los días de las últimas 2 semanas con viajes por revisar: 14 conteos rápidos con la misma RLS de Auditoría SONAR
+async function revContarDias() {
+  const hoy = hoyServidor();
+  const res = await Promise.all(Array.from({ length: 14 }, (_, k) => vigDia(hoy, -k)).map(async (f) => {
+    try {
+      const { count, error } = await sb.from('despachos_sonar').select('itl_id', { count: 'exact', head: true }).eq('fecha', f).eq('revision', 'PENDIENTE');
+      return [f, error ? null : (count || 0)];
+    } catch (_) { return [f, null]; }
+  }));
+  _rev.dias = Object.fromEntries(res.filter(([, n]) => n != null));
+}
+const revPasado = () => !!_rev.fecha && _rev.fecha < hoyServidor();
+// Un día pasado que no se clasificó (la revisión automática cubre hoy y ayer): el admin lo clasifica a pedido
+async function revClasificar() {
+  if (!efIsAdmin()) return;
+  const f = _rev.fecha;
+  const ok = await confirmAction({ title: '⚙️ Clasificar este día', lead: `Viajes del ${fechaLegible(f)}`,
+    message: 'Los completos sin novedad se revisan solos y el resto queda «Por revisar» para los monitores. Lo que ya está revisado no se toca.',
+    okLabel: 'Clasificar' });
+  if (!ok) return;
+  try {
+    const { data, error } = await sb.rpc('revision_viajes_auto', { p_desde: f, p_hasta: f });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    toast(`Clasificado: ${data.auto} se revisaron solos y ${data.pendientes} quedaron por revisar.`, 'ok');
+  } catch (e) { toast('No se pudo clasificar: ' + (e.message || e), 'err'); return; }
+  _rev.dias = null; _rev.grupo = 'PENDIENTE';
+  await revCargar();
+}
+async function revCargar() {
+  const body = $('pst-body');
+  const tok = ++_rev.tok;
+  const vivo = () => currentView === 'revviajes' && _rev.tok === tok;
+  body.innerHTML = '<div class="loading">Cargando los viajes…</div>';
+  let d = null;
+  try {
+    const r = await sb.rpc('revision_viajes_dia', { p_fecha: _rev.fecha, p_grupo: _rev.grupo });
+    if (r.error) throw r.error;
+    d = r.data;
+  } catch (e) { if (vivo()) body.innerHTML = `<div class="cump-empty">No se pudo consultar: ${esc(e.message || e)}</div>`; return; }
+  if (!vivo()) return;
+  if (!d || !d.ok) { body.innerHTML = `<div class="cump-empty">${esc((d && d.error) || 'Sin datos.')}</div>`; return; }
+  _rev.d = d;
+  if (!_rev.dias) { await revContarDias(); if (!vivo()) return; }
+  else if (_rev.fecha in _rev.dias) _rev.dias[_rev.fecha] = Number((d.resumen || {}).pendiente || 0);   // lo que se acaba de revisar
+  revPintar();
+}
+const revDia = (n) => vigDia(hoyServidor(), n);
+// Los viajes del día que le tocan: todos al admin; en «Ver como auditor», los de las rutas de ese monitor (como se los da la base)
+const revEnAlcance = () => (_rev.d?.viajes || []).filter((v) => !PREVIEW || rutaEnAlcance(v.ruta));
+// Los viajes que se ven con los filtros de arriba (ruta, por qué, búsqueda)
+function revFiltrados() {
+  const q = _sinTilde(_rev.q);
+  return revEnAlcance().filter((v) => (!_rev.ruta || v.ruta === _rev.ruta)
+    && (!_rev.por || (v.por || []).includes(_rev.por))
+    && (!q || _sinTilde(`${v.movil || ''} ${v.placa || ''} ${v.conductor || ''} ${v.ruta || ''}`).includes(q)));
+}
+
+function revPintar() {
+  const body = $('pst-body'), d = _rev.d, s = d.resumen || {};
+  $('pst-sub').textContent = 'Los completos sin novedad se revisan solos · los incompletos y lo que vio el vigilante los responde el monitor';
+  body.innerHTML = '';
+  const cerrados = Number(s.total || 0) - Number(s.sin || 0);
+  const hechos = Number(s.auto || 0) + Number(s.revisado || 0);
+  const kpis = pstEl('div', 'pst-kpis');
+  const tP = pstTile('📝 Por revisar', pstNum(s.pendiente || 0),
+    [s.incompleto ? `${s.incompleto} incompleto(s)` : '', s.vigilante ? `${s.vigilante} del vigilante` : '',
+      s.sin_cerrar ? `${s.sin_cerrar} sin cerrar` : '', s.cancelado ? `${s.cancelado} cancelado(s)` : ''].filter(Boolean).join(' · ') || 'nada pendiente');
+  tP.classList.add(Number(s.pendiente) ? 'car-t-debe' : 'car-t-ok');
+  kpis.append(
+    pstTile('Viajes del día', pstNum(s.total || 0), s.sin ? `${pstNum(s.sin)} ${revPasado() ? 'sin clasificar' : 'todavía en curso'}` : 'todos cerrados en SONAR'),
+    pstTile('🤖 Se revisaron solos', pstNum(s.auto || 0), `${cerrados ? Math.round(100 * Number(s.auto || 0) / cerrados) : 0} %${s.auto_ruido ? ` · ${s.auto_ruido} con ruido del vigilante` : ''}`),
+    tP,
+    pstTile('✅ Revisados por monitores', pstNum(s.revisado || 0), s.confirmados ? `${s.confirmados} con falta del conductor` : 'ninguno con falta del conductor'),
+    pstTile('Avance', `${cerrados ? Math.round(100 * hechos / cerrados) : 0} %`, `${hechos} de ${cerrados} viajes cerrados`));
+  body.appendChild(kpis);
+
+  const card = pstEl('section', 'pst-card pst-ancha rev-card');
+  const rutas = [...new Set(revEnAlcance().map((v) => v.ruta).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+  const fuera = (d.viajes || []).length - revEnAlcance().length;
+  if (_rev.ruta && !rutas.includes(_rev.ruta)) _rev.ruta = '';
+  const dias = Object.entries(_rev.dias || {}).filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b));
+  card.innerHTML = `
+    <div class="rev-barra">
+      <label class="rev-f">Fecha <input type="date" id="rev-fecha" value="${esc(_rev.fecha)}" max="${esc(hoyServidor())}"></label>
+      <button type="button" class="btn btn-sm btn-sec" data-dia="0">Hoy</button>
+      <button type="button" class="btn btn-sm btn-sec" data-dia="-1">Ayer</button>
+      <label class="rev-f">Ruta <select id="rev-ruta"><option value="">Todas</option>${rutas.map((r) =>
+    `<option${_rev.ruta === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
+      ${_rev.grupo === 'PENDIENTE' ? `<label class="rev-f">Por qué <select id="rev-por"><option value="">Todo</option>${Object.entries(REV_POR).map(([k, v]) =>
+    `<option value="${k}"${_rev.por === k ? ' selected' : ''}>${v[0]} ${esc(v[1])}</option>`).join('')}</select></label>` : ''}
+      <input type="search" id="rev-q" class="car-buscar" placeholder="Buscar móvil, placa o conductor…" value="${esc(_rev.q)}">
+    </div>
+    ${dias.length ? `<div class="rev-dias"><span>Días con viajes por revisar (${pstNum(dias.reduce((a, [, n]) => a + n, 0))}):</span>${dias.map(([f, n]) =>
+    `<button type="button" class="rev-dia${f === _rev.fecha ? ' on' : ''}" data-fecha="${esc(f)}">${esc(f.slice(8, 10) + '/' + f.slice(5, 7))} <b>${pstNum(n)}</b></button>`).join('')}</div>` : ''}
+    ${revPasado() && Number(s.sin) > 0 ? `<div class="rev-aviso">⚠️ Este día tiene ${pstNum(s.sin)} viaje(s) sin clasificar: la revisión automática cubre hoy y ayer.
+      ${efIsAdmin() ? '<button type="button" class="btn btn-sm btn-primary" data-clasificar>⚙️ Clasificar este día</button>' : 'Pídele a administración que lo clasifique.'}</div>` : ''}
+    ${fuera ? '<div class="rev-aviso">👁️ Vista previa: la lista trae solo las rutas de este monitor; los números de arriba y los días son de todas las rutas.</div>' : ''}
+    <div class="rev-tabs" role="tablist">${REV_GRUPOS.map(([k, t, c]) =>
+    `<button type="button" class="rev-tab${_rev.grupo === k ? ' on' : ''}" data-grupo="${k}" role="tab" aria-selected="${_rev.grupo === k}">${k === 'SIN' && revPasado() ? '⏳ Sin clasificar' : t} <b>${pstNum(s[c] || 0)}</b></button>`).join('')}</div>
+    <div class="pst-tabla-wrap" id="rev-tabla"></div>
+    <div class="pst-nota rev-pie">Los viajes despachados directo en SONAR (no desde la app) llegan con la consulta de la noche: el día queda
+      completo a la 1:10 a. m. · De cada viaje por revisar se trae de SONAR qué puntos marcó (cada 5 min).</div>`;
+  body.appendChild(card);
+  card.querySelector('#rev-fecha').addEventListener('change', (e) => { if (e.target.value) { _rev.fecha = e.target.value; revCargar(); } });
+  card.querySelectorAll('[data-dia]').forEach((b) => b.addEventListener('click', () => { _rev.fecha = revDia(Number(b.dataset.dia)); revCargar(); }));
+  card.querySelector('#rev-ruta').addEventListener('change', (e) => { _rev.ruta = e.target.value; revPintarTabla(); });
+  card.querySelector('#rev-por')?.addEventListener('change', (e) => { _rev.por = e.target.value; revPintarTabla(); });
+  card.querySelector('#rev-q').addEventListener('input', (e) => { _rev.q = e.target.value; revPintarTabla(); });
+  card.querySelectorAll('[data-fecha]').forEach((b) => b.addEventListener('click', () => {
+    _rev.fecha = b.dataset.fecha; _rev.grupo = 'PENDIENTE'; _rev.por = '';
+    revCargar();
+  }));
+  card.querySelector('[data-clasificar]')?.addEventListener('click', revClasificar);
+  card.querySelectorAll('[data-grupo]').forEach((b) => b.addEventListener('click', () => {
+    if (_rev.grupo === b.dataset.grupo) return;
+    _rev.grupo = b.dataset.grupo; _rev.por = '';
+    revCargar();
+  }));
+  revPintarTabla();
+}
+
+// Lo que dijo SONAR, corto (para la tabla)
+function revSonarCorto(v) {
+  const est = v.estado || '—';
+  const x = v.det;
+  let det = '';
+  if (!x) det = v.revision === 'PENDIENTE' ? '⏳ trayendo los puntos…' : '';
+  else if (x.estado === 'SIN_ITINERARIO') det = 'la ruta no tiene itinerario cargado';
+  else if (x.estado === 'NO_ENCONTRADO') det = 'SONAR no devolvió el detalle';
+  else if (!x.marcados) det = x.seg != null && x.seg < 120 ? `no marcó ningún punto · se cerró a los ${x.seg} s` : 'no marcó ningún punto';
+  else {
+    const f = x.faltan || [];
+    det = `marcó ${x.marcados}${x.total ? ` de ${x.total}` : ''}`
+      + (f.length ? ` · faltó ${f.length === 1 ? 'el ' + (f[0].i + 1) : f.length + ' puntos'}` : '');
+  }
+  if (x && x.salio_ruta) det += (det ? ' · ' : '') + 'se salió de la ruta';
+  return `<span class="${chipClass(est)}">${esc(est)}</span>${det ? `<small>${esc(det)}</small>` : ''}`;
+}
+// Lo que vio el vigilante, corto (para la tabla)
+function revVigCorto(v) {
+  return (v.casos || []).map((c) => {
+    const e = c.decision ? `<span class="chip ${VIG_DECISION[c.decision][2]}">${VIG_DECISION[c.decision][0]} ${VIG_DECISION[c.decision][1]}</span>`
+      : c.ruido ? '<span class="chip chip-gray">Probable ruido</span>' : '';
+    return `<span class="rev-vig-it${c.ruido && !c.decision ? ' rev-tenue' : ''}">${VIG_TIPOS[c.tipo][0]} ${esc(vigFraseCorta(c, c.rol))} ${e}</span>`;
+  }).join('') || '<small class="rev-nada">—</small>';
+}
+function revRevisionCorta(v) {
+  if (v.revision === 'PENDIENTE') return '<button type="button" class="btn btn-sm btn-primary" data-rev-abrir>📝 Revisar</button>';
+  if (v.revision === 'REVISADO') {
+    const dd = REV_DECISION[v.decision];
+    return `${dd ? `<span class="chip ${dd[2]}">${dd[0]} ${esc(dd[1])}</span>` : ''}<small>${esc(REV_MOTIVO_TXT[v.motivo] || v.motivo || 'Revisado')}${v.quien ? ' · ' + esc(v.quien) : ''}</small>`;
+  }
+  if (v.revision === 'AUTO') return `<span class="chip chip-green">🤖 Solo</span><small>${esc(v.auto || '')}</small>`;
+  return revPasado() ? '<span class="chip chip-gray">Sin clasificar</span>' : '<span class="chip chip-indigo">En curso</span>';
+}
+function revPintarTabla() {
+  const box = $('rev-tabla'); if (!box) return;
+  const vs = revFiltrados();
+  if (!(_rev.d?.viajes || []).length) {
+    const vacio = { PENDIENTE: '✅ No hay viajes por revisar este día.', REVISADO: 'Todavía no se ha revisado ningún viaje este día.',
+      AUTO: 'Ningún viaje se ha revisado solo este día.', SIN: revPasado() ? 'No hay viajes sin clasificar.' : 'No hay viajes en curso.' };
+    box.innerHTML = `<div class="pst-vacio">${vacio[_rev.grupo] || 'Sin viajes.'}</div>`;
+    return;
+  }
+  box.innerHTML = `<table class="pst-tabla rev-tabla"><thead><tr><th>Hora</th><th>Ruta</th><th>Móvil</th><th>Conductor</th>
+      <th>Lo que dijo SONAR</th><th>Lo que vio el vigilante</th><th>Revisión</th></tr></thead><tbody>
+    ${vs.map((v) => `<tr class="pst-clic rev-fila" tabindex="0" data-id="${esc(v.id)}">
+        <td><b>${esc(v.hora || '')}</b></td><td>${esc(v.ruta || '')}</td><td><b>${esc(v.movil || '')}</b></td>
+        <td class="rev-cond">${esc(v.conductor || '')}</td>
+        <td class="rev-txt rev-son">${revSonarCorto(v)}</td>
+        <td class="rev-txt rev-vig">${revVigCorto(v)}</td>
+        <td class="rev-txt rev-rev">${revRevisionCorta(v)}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="pst-vacio">Ningún viaje con esos filtros.</td></tr>'}
+    </tbody></table>`;
+  box.querySelectorAll('.rev-fila').forEach((tr) => {
+    const abrir = () => revAbrir(tr.dataset.id);
+    tr.addEventListener('click', abrir);
+    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } });
+  });
+}
+
+// ---- El viaje: lo que dijo SONAR, lo que vio el vigilante y qué pasó ----
+function revModal() {
+  let m = $('revc-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'revc-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card revc-card">
+    <div class="modal-head"><h3 data-tit>Viaje</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="revc-body"></div>
+  </div>`;
+  m.addEventListener('click', (e) => {
+    if (e.target === m || e.target.closest('[data-x]')) { m.hidden = true; return; }
+    const caso = e.target.closest('[data-caso-ver]');
+    if (caso) { revVerCaso(Number(caso.dataset.casoVer)); return; }
+    if (e.target.closest('[data-eventos]')) { revEventos(); return; }
+    if (e.target.closest('[data-corregir]')) { _rev.corregir = true; revPintarViaje(); return; }
+    const g = e.target.closest('[data-guardar]');
+    if (g) revGuardar(g.dataset.guardar === 'sig');
+  });
+  m.addEventListener('change', (e) => {
+    if (e.target.id === 'revc-motivo') {
+      // el motivo propone la decisión (si todavía no la han tocado)
+      const dec = REV_MOTIVO_DEC[e.target.value];
+      const marcada = m.querySelector('input[name="revc-dec"]:checked');
+      if (dec && (!marcada || marcada.dataset.auto === '1')) {
+        const r = m.querySelector(`input[name="revc-dec"][value="${dec}"]`);
+        if (r) { r.checked = true; r.dataset.auto = '1'; }
+        revProponerCasos(dec);
+      }
+    } else if (e.target.name === 'revc-dec') {
+      m.querySelectorAll('input[name="revc-dec"]').forEach((x) => { x.dataset.auto = ''; });
+      revProponerCasos(e.target.value);
+    } else if (e.target.name && e.target.name.startsWith('revc-cd-')) {
+      e.target.closest('[data-caso]').dataset.tocado = '1';
+    }
+    revCasosPintar();
+  });
+  document.body.appendChild(m);
+  return m;
+}
+// La decisión del viaje se propone en los casos que el monitor no ha tocado
+function revProponerCasos(dec) {
+  const m = revModal();
+  m.querySelectorAll('[data-caso]').forEach((box) => {
+    if (box.dataset.tocado === '1') return;
+    const r = box.querySelector(`input[value="${dec}"]`);
+    if (r) r.checked = true;
+  });
+}
+// "¿Quién incumplió?" solo en un adelantamiento confirmado
+function revCasosPintar() {
+  revModal().querySelectorAll('[data-caso]').forEach((box) => {
+    const dec = box.querySelector('input[type="radio"]:checked')?.value;
+    const resp = box.querySelector('[data-resp]');
+    if (resp) resp.hidden = dec !== 'CONFIRMADO';
+  });
+}
+
+function revAbrir(id) {
+  const v = (_rev.d?.viajes || []).find((x) => String(x.id) === String(id));
+  if (v) revAbrirViaje(v, null);
+}
+// alGuardar: desde una fila de Despachos o de una tabla de puesto, al guardar se recarga esa tabla (sin «Guardar y seguir»)
+function revAbrirViaje(v, alGuardar) {
+  _rev.v = v; _rev.corregir = false; _rev.alGuardar = alGuardar || null;
+  revModal().hidden = false;
+  revPintarViaje();
+}
+
+// 🛰️ Lo que dijo SONAR, completo
+function revSonarHtml(v) {
+  const x = v.det, li = [];
+  const est = { Incompleto: 'SONAR cerró el viaje <b>incompleto</b>.', Completo: 'SONAR lo dio por <b>completo</b>.',
+    Cancelado: 'SONAR lo marcó <b>cancelado</b>.', 'En progreso': 'SONAR <b>no lo ha cerrado</b>: sigue abierto.' };
+  li.push(est[v.estado] || esc(v.estado || '—'));
+  if (!x) li.push(v.revision === 'PENDIENTE' ? '⏳ Trayendo de SONAR qué puntos marcó (se consulta cada 5 minutos).' : 'Sin detalle de puntos.');
+  else if (x.estado === 'SIN_ITINERARIO') li.push('La ruta no tiene itinerario cargado: no se sabe qué puntos le tocaban.');
+  else if (x.estado === 'NO_ENCONTRADO') li.push('SONAR no devolvió el detalle de este viaje (se vuelve a preguntar más tarde).');
+  else {
+    if (x.inicio) li.push(`Abrió a las <b>${esc(x.inicio)}</b>${x.fin ? ` y cerró a las <b>${esc(x.fin)}</b>` : ''}${x.seg != null ? ` (${esc(x.seg < 60 ? x.seg + ' s' : vigMin(Math.round(x.seg / 60)))})` : ''}.`);
+    if (!x.marcados) {
+      li.push('<b>No marcó ningún punto de control.</b>');
+      if (x.seg != null && x.seg < 120) li.push(`Se cerró a los ${esc(x.seg)} segundos de abrirse: parece un despacho repetido o cancelado.`);
+    } else {
+      li.push(`Marcó <b>${esc(x.marcados)}${x.total ? ` de ${esc(x.total)}` : ''}</b> puntos.`);
+      const f = x.faltan || [];
+      if (f.length) {
+        const finales = x.total && f.every((p, k) => p.i === x.total - f.length + k);
+        li.push(`${finales ? '<b>No llegó al final.</b> ' : ''}No pasó por: ${f.map((p) => `<b>${esc(p.i + 1)}</b>${p.n ? ' ' + esc(p.n) : ''}`).join(', ')}.`);
+      }
+      if (x.ultimo) {
+        const at = x.atraso_fin;
+        li.push(`Último punto que marcó: <b>${esc(x.ultimo.i + 1)}</b>${x.ultimo.n ? ' ' + esc(x.ultimo.n) : ''}${at > 0 ? `, ${esc(at)} min tarde` : at < 0 ? `, ${esc(-at)} min antes de la hora` : at === 0 ? ', a la hora' : ''}.`);
+      }
+      if (x.tarde) li.push(`${esc(x.tarde)} punto(s) marcados tarde${x.atraso_max > 0 ? ` (hasta ${esc(x.atraso_max)} min)` : ''}.`);
+    }
+    if (x.salio_ruta) li.push('⚠️ SONAR marcó que <b>se salió de la ruta</b>.');
+    if (x.cancelo_usuario) li.push('Lo canceló un usuario en SONAR.');
+  }
+  return `<ul>${li.map((t) => `<li>${t}</li>`).join('')}</ul>
+    <button type="button" class="btn btn-sm btn-sec" data-eventos ${v.mid ? '' : 'disabled'}>🔎 Eventos del bus en SONAR</button>`;
+}
+// 🚨 Un caso del vigilante, con lo que el monitor responde de él
+function revCasoHtml(c, v, editable) {
+  const quien = c.rol === 'ADELANTE' ? 'Este bus iba adelante' : c.tipo === 'ADELANTAMIENTO' ? 'Este bus iba atrás' : '';
+  const respDef = c.responsable || (String(c.causa || '').startsWith('ADELANTE') ? 'ADELANTE' : c.tipo === 'ADELANTAMIENTO' ? 'ATRAS' : '');
+  let pie;
+  if (c.decision) {
+    pie = `<div class="vigc-ya">${vigEstado(c)}${c.responsable && c.responsable !== 'NINGUNO' ? ` · incumplió el de ${c.responsable === 'ADELANTE' ? 'adelante' : 'atrás'}` : ''}
+      ${c.auditado_por ? ` · ${esc(c.auditado_por)}` : ''}${c.nota ? `<br>${esc(c.nota)}` : ''}</div>`;
+  } else if (c.ruido) {
+    pie = `<div class="pst-nota">Probable ruido: ${esc(VIG_RUIDO[c.ruido] || c.ruido)}. No hace falta responderlo.</div>`;
+  } else if (!editable) {
+    pie = '<div class="pst-nota">Sin responder.</div>';
+  } else {
+    pie = `<div class="revc-opts"><span>¿Fue cierto?</span>${Object.entries(REV_DEC_CASO).map(([k, t]) =>
+      `<label><input type="radio" name="revc-cd-${c.id}" value="${k}"> ${esc(t)}</label>`).join('')}</div>
+      ${c.tipo === 'ADELANTAMIENTO' ? `<div class="revc-opts" data-resp hidden><span>¿Quién incumplió?</span>
+        <label><input type="radio" name="revc-cr-${c.id}" value="ADELANTE"${respDef === 'ADELANTE' ? ' checked' : ''}> El de adelante (${esc(c.rol === 'ADELANTE' ? v.movil : c.movil_rel || '')}): se demoró</label>
+        <label><input type="radio" name="revc-cr-${c.id}" value="ATRAS"${respDef === 'ATRAS' ? ' checked' : ''}> El de atrás (${esc(c.rol === 'ADELANTE' ? c.movil : v.movil)}): se adelantó</label></div>` : ''}`;
+  }
+  return `<div class="revc-caso" ${!c.decision && !c.ruido && editable ? `data-caso="${c.id}" data-tipo="${esc(c.tipo)}"` : ''}>
+    <div>${VIG_TIPOS[c.tipo][0]} <b>${c.tipo === 'ADELANTAMIENTO' ? 'Adelantamiento: ' : ''}${esc(vigFraseCorta(c, c.rol))}</b>${quien ? ` <small>(${esc(quien)})</small>` : ''}</div>
+    ${c.causa ? `<div class="vig-causa">Causa probable: ${esc(VIG_CAUSAS[c.causa] || c.causa)}</div>` : ''}
+    ${pie}
+    <button type="button" class="lnk" data-caso-ver="${c.id}">📍 Ver el mapa y dónde pasó ›</button>
+  </div>`;
+}
+function revPintarViaje() {
+  const m = revModal(), v = _rev.v, body = m.querySelector('.revc-body');
+  if (!v) return;
+  const admin = efIsAdmin();   // en «Ver como auditor», como lo ve el monitor
+  const editable = v.revision === 'PENDIENTE' || (admin && v.revision === 'REVISADO' && _rev.corregir);
+  m.querySelector('[data-tit]').textContent = `${v.ruta || '—'} · móvil ${v.movil || '—'} · ${v.hora || ''}`;
+  const casos = v.casos || [];
+  const sig = !_rev.alGuardar && _rev.grupo === 'PENDIENTE' && v.revision === 'PENDIENTE';
+  let respuesta;
+  if (editable) {
+    respuesta = `<section class="revc-sec revc-form">
+      <h4>📝 ¿Qué pasó?</h4>
+      <label class="rev-f">Motivo <select id="revc-motivo"><option value="">— Elige qué pasó —</option>${REV_MOTIVOS.map(([k, t]) =>
+      `<option value="${k}"${_rev.corregir && v.motivo === k ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+      <div class="revc-opts"><span>¿Es falta del conductor?</span>${Object.entries(REV_DECISION).map(([k, t]) =>
+      `<label><input type="radio" name="revc-dec" value="${k}"${_rev.corregir && v.decision === k ? ' checked' : ''}> ${t[0]} ${esc(t[1])}</label>`).join('')}</div>
+      <label class="rev-f">Nota (obligatoria) <textarea id="revc-nota" rows="3" maxlength="800"
+        placeholder="Cuenta qué pasó: con quién se habló, qué se verificó en SONAR o con el despacho…">${_rev.corregir ? esc(v.nota || '') : ''}</textarea></label>
+      ${casos.some((c) => !c.decision && !c.ruido) ? '<div class="pst-nota">La misma nota queda en los casos del vigilante de este viaje.</div>' : ''}
+      ${PREVIEW ? '<div class="rev-aviso">👁️ Estás en «Ver como»: si guardas, la revisión queda hecha de verdad y a tu nombre.</div>' : ''}
+      <div class="revc-pie"><span class="pst-nota" data-msg></span><span class="spacer"></span>
+        ${sig ? '<button type="button" class="btn btn-sec" data-guardar="sig">Guardar y seguir ›</button>' : ''}
+        <button type="button" class="btn btn-primary" data-guardar="uno">Guardar revisión</button></div>
+    </section>`;
+  } else if (v.revision === 'REVISADO') {
+    const dd = REV_DECISION[v.decision];
+    respuesta = `<section class="revc-sec"><h4>✅ Revisado</h4>
+      <div class="vigc-ya"><b>${esc(REV_MOTIVO_TXT[v.motivo] || v.motivo || '—')}</b>${dd ? ` · <span class="chip ${dd[2]}">${dd[0]} ${esc(dd[1])}</span>` : ''}
+        ${v.nota ? `<br>${esc(v.nota)}` : ''}<br><small>${esc(v.quien || '')}${v.cuando ? ' · ' + esc(v.cuando) : ''}</small></div>
+      ${admin ? '<div class="revc-pie"><span class="spacer"></span><button type="button" class="btn btn-sm btn-sec" data-corregir>✏️ Corregir</button></div>' : ''}
+    </section>`;
+  } else if (v.revision === 'AUTO') {
+    respuesta = `<section class="revc-sec"><h4>🤖 Se revisó solo</h4><div class="vigc-ya">${esc(v.auto || '')}</div></section>`;
+  } else {
+    respuesta = v.fecha < hoyServidor()
+      ? '<section class="revc-sec"><h4>⏳ Sin clasificar</h4><div class="pst-nota">Este día no se ha clasificado: un administrador lo clasifica con «⚙️ Clasificar este día».</div></section>'
+      : '<section class="revc-sec"><h4>⏳ En curso</h4><div class="pst-nota">Se revisa cuando SONAR cierre el viaje (la revisión automática corre cada 10 minutos).</div></section>';
+  }
+  body.innerHTML = `
+    <div class="revc-cab">${esc(fechaLegible(v.fecha))} · salió ${esc(v.hora || '—')} · ${esc(v.conductor || 'conductor sin nombre')}${v.placa ? ` · ${esc(v.placa)}` : ''}
+      ${(v.por || []).length ? `<div class="revc-por">${v.por.map((p) => `<span class="chip chip-amber">${(REV_POR[p] || ['', p])[0]} ${esc((REV_POR[p] || ['', p])[1])}</span>`).join(' ')}</div>` : ''}</div>
+    <div class="revc-grid">
+      <section class="revc-sec"><h4>🛰️ Lo que dijo SONAR</h4>${revSonarHtml(v)}</section>
+      <section class="revc-sec"><h4>🚨 Lo que vio el vigilante</h4>${casos.length ? casos.map((c) => revCasoHtml(c, v, editable)).join('')
+    : '<div class="pst-nota">El vigilante no vio nada en este viaje.</div>'}</section>
+    </div>
+    ${respuesta}`;
+  revCasosPintar();
+}
+
+// Abrir el caso del vigilante (mapa y dónde pasó) encima de este; al guardarlo allá se recarga aquí.
+function revVerCaso(id) {
+  const vm = vigCasoModal();
+  document.body.appendChild(vm);            // que quede encima de este
+  const viaje = _rev.v && _rev.v.id, alg = _rev.alGuardar;
+  _vig.alGuardar = alg
+    ? async () => { await alg(); const nv = _revFilas.get(String(viaje)); if (nv && !revModal().hidden) revAbrirViaje(nv, alg); }
+    : async () => { await revCargar(); if (viaje && !revModal().hidden) revAbrir(viaje); };
+  openVigCaso(id);
+}
+function revEventos() {
+  const v = _rev.v; if (!v) return;
+  const em = $('evt-modal'); if (em) document.body.appendChild(em);   // encima de este
+  abrirEventosAuditor({ itl_id: v.id, fecha: v.fecha, mid: v.mid, movil: v.movil, ruta: v.ruta, hora_inicio: v.hora });
+}
+
+async function revGuardar(seguir) {
+  const m = revModal(), v = _rev.v; if (!v) return;
+  const msg = m.querySelector('[data-msg]');
+  const motivo = m.querySelector('#revc-motivo')?.value || '';
+  const dec = m.querySelector('input[name="revc-dec"]:checked')?.value || '';
+  const nota = (m.querySelector('#revc-nota')?.value || '').trim();
+  if (!motivo) { msg.textContent = 'Elige qué pasó.'; return; }
+  if (!dec) { msg.textContent = 'Di si es falta del conductor, si se justifica o si no pasó.'; return; }
+  if (nota.length < 10) { msg.textContent = 'Escribe qué pasó (mínimo 10 letras).'; return; }
+  const casos = [];
+  for (const box of m.querySelectorAll('[data-caso]')) {
+    const id = Number(box.dataset.caso);
+    const d = box.querySelector(`input[name="revc-cd-${id}"]:checked`)?.value;
+    if (!d) { msg.textContent = 'Responde también si cada caso del vigilante fue cierto.'; box.scrollIntoView({ block: 'nearest' }); return; }
+    const r = box.querySelector(`input[name="revc-cr-${id}"]:checked`)?.value || null;
+    if (d === 'CONFIRMADO' && box.dataset.tipo === 'ADELANTAMIENTO' && !r) { msg.textContent = 'Di quién incumplió en el adelantamiento.'; return; }
+    casos.push({ id, decision: d, responsable: d === 'CONFIRMADO' ? r : null });
+  }
+  // el siguiente por revisar (en el orden de la lista que se ve)
+  const lista = revFiltrados().filter((x) => x.revision === 'PENDIENTE');
+  const k = lista.findIndex((x) => x.id === v.id);
+  const siguiente = seguir ? (lista[k + 1] || lista.find((x) => x.id !== v.id) || null) : null;
+  m.querySelectorAll('[data-guardar]').forEach((b) => { b.disabled = true; });
+  msg.textContent = 'Guardando…';
+  try {
+    const { data, error } = await sb.rpc('revisar_viaje', { p_itl_id: Number(v.id), p_motivo: motivo, p_decision: dec, p_nota: nota, p_casos: casos });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    toast(data.casos ? `Revisión guardada (y ${data.casos} caso(s) del vigilante).` : 'Revisión guardada.', 'ok');
+    if (_rev.alGuardar) { m.hidden = true; await _rev.alGuardar(); return; }   // desde una fila: se recarga esa tabla
+    await revCargar();
+    if (siguiente && (_rev.d?.viajes || []).some((x) => x.id === siguiente.id)) revAbrir(siguiente.id);
+    else m.hidden = true;
+  } catch (e) {
+    msg.textContent = 'No se pudo: ' + (e.message || e);
+    m.querySelectorAll('[data-guardar]').forEach((b) => { b.disabled = false; });
+  }
+}
+
+// ---- ✅ La revisión en las FILAS de Despachos y de las tablas de puesto (sql/208) ----
+// Pedido del 25/11/2026: "meterlo entre las tablas y despachos para que el monitor lo vea más visual y sea más práctico".
+// Se trae una vez por carga de la tabla (por el regId de SONAR) y se pinta en la columna «✅ Revisión»; al tocarla se
+// abre la misma ventana de la pantalla. Los viajes despachados directo en SONAR no tienen fila: esos, en la pantalla.
+const _revFilas = new Map();      // regId -> la ficha del viaje (la misma de revision_viajes_dia)
+const _revFilasEstado = { ok: false };   // ¿se pudo consultar? Si no, las filas sin ficha no se clasifican (raya)
+async function revFilasCargar(rows) {
+  _revFilas.clear(); _revFilasEstado.ok = false;
+  const regs = [...new Set(rows.map((r) => String(r.sonar_regid || '').trim()).filter((x) => /^\d{1,18}$/.test(x)))];
+  if (!regs.length) { _revFilasEstado.ok = true; return; }
+  const { data, error } = await sb.rpc('revision_por_viajes', { p_regids: regs });
+  if (error || !data?.ok) return;
+  for (const v of data.viajes || []) _revFilas.set(String(v.id), v);
+  _revFilasEstado.ok = true;
+}
+// La fila no tiene viaje en SONAR: dice por qué (todavía no se despacha, no se realizó, ruta sin SONAR, la marcaron
+// realizada sin despacharla a SONAR, o se acaba de despachar y el viaje todavía no llega de SONAR)
+const revSinSonarPorDiseno = (row) => esRutaSinSonar(row.ruta?.nombre) || !!(TABLES[current] || {}).sinSonar;
+function revCeldaSinViaje(row) {
+  if (!_revFilasEstado.ok) return '<small class="rev-nada" title="No se pudo consultar la revisión: toca ↻">—</small>';
+  const e = revEstadoFila(row);
+  if (e === 'CURSO') return '<small class="rev-nada" title="Se despachó: el viaje llega de SONAR en unos minutos.">🛰️ Llegando de SONAR</small>';
+  if (e === 'NOREAL') return `<small class="rev-nada" title="${esc(row.estado_despacho || '')}">🚫 No se realizó</small>`;
+  if (e === 'SINSONAR') {
+    if (revSinSonarPorDiseno(row)) return '<small class="rev-nada" title="Las rutas de MADRUGADA y CENTRO (y la tabla sin SONAR) no se despachan a SONAR: solo se marca si se realizó.">Ruta sin SONAR</small>';
+    // Marcado «SI» en una ruta que sí va por SONAR: solo lo ve el administrador, para verificar por qué no salió el despacho
+    // (pedido 25/11: «ocultarlo para los auditores»). Al monitor no se le dice nada.
+    return efIsAdmin()
+      ? '<small class="revf-sinsonar" title="Solo administración: se marcó realizado sin despacharlo a SONAR. Verifica por qué no salió el despacho (mira Hora real y Despachador).">⚠️ Sin viaje en SONAR</small>'
+      : '<small class="rev-nada">—</small>';
+  }
+  return `<small class="rev-nada" title="${String(row.fecha || '').slice(0, 10) < hoyServidor() ? 'No se despachó.' : 'Todavía no se despacha.'}">—</small>`;
+}
+function revCeldaFila(row) {
+  const box = document.createElement('div');
+  box.className = 'revf';
+  const v = _revFilas.get(String(row.sonar_regid || '').trim());
+  if (!v) { box.innerHTML = revCeldaSinViaje(row); return box; }
+  const b = document.createElement('button');
+  b.type = 'button';
+  if (v.revision === 'PENDIENTE') {
+    b.className = 'revf-it revf-pend';
+    b.innerHTML = `<span class="chip chip-amber">📝 Por revisar</span><small>${esc((v.por || []).map((p) => (REV_POR[p] || ['', p])[1]).join(' · '))}</small>`;
+    b.title = 'Toca para decir qué pasó.';
+  } else if (v.revision === 'REVISADO') {
+    // ✅ Listo: lo revisó un monitor; en pequeño la decisión y qué pasó (el detalle al pasar el mouse o al tocarlo)
+    const dd = REV_DECISION[v.decision];
+    b.className = 'revf-it revf-listo';
+    b.innerHTML = `<span class="revf-ok">✅ Listo</span><small>${dd ? dd[0] + ' ' : ''}${esc(REV_MOTIVO_TXT[v.motivo] || v.motivo || 'Revisado')}</small>`;
+    b.title = [dd ? dd[1] : '', v.nota, v.quien ? `Revisó: ${v.quien}${v.cuando ? ' · ' + v.cuando : ''}` : ''].filter(Boolean).join('\n');
+  } else if (v.revision === 'AUTO') {
+    // ✅ Listo, revisado automático: terminó completo y sin novedad
+    b.className = 'revf-it revf-listo revf-tenue';
+    b.innerHTML = '<span class="revf-ok">✅ Listo</span><small>automático</small>';
+    b.title = 'Revisado automático. ' + (v.auto || '');
+  } else {
+    b.className = 'revf-it revf-tenue';
+    b.innerHTML = `<span class="chip chip-indigo">${v.fecha < hoyServidor() ? 'Sin clasificar' : 'En curso'}</span>`;
+    b.title = 'Se revisa cuando SONAR cierre el viaje.';
+  }
+  b.onclick = (ev) => { ev.stopPropagation(); revAbrirViaje(v, () => loadData()); };
+  box.appendChild(b);
+  return box;
+}
+
+// Filtro de la revisión en la tabla (pedido 25/11: "ponerle unos filtros"): Todos · Por revisar (y por qué) · Listos ·
+// En curso, y lo que no tiene viaje en SONAR separado por qué (sin despachar · no se realizó · realizado sin SONAR),
+// con cuántos hay de cada uno en el día. Solo con el día completo cargado (calendario). Los de conteo 0 no salen.
+// «Realizado sin SONAR» es solo del administrador (el monitor y «Ver como auditor» no lo ven).
+const REVF_ESTADOS = [['', 'Todos'], ['PENDIENTE', '📝 Por revisar'], ['LISTO', '✅ Listos'], ['CURSO', '⏳ En curso'],
+  ['PORDESP', '🕓 Sin despachar'], ['NOREAL', '🚫 No se realizó'], ['SINSONAR', '⚠️ Realizado sin SONAR']];
+const REVF_NOREAL = /^(NO REALIZA|NO SE REALIZA|CANCELADO)/;
+const revFilaV = (row) => _revFilas.get(String(row.sonar_regid || '').trim());
+function revEstadoFila(row) {
+  const v = revFilaV(row);
+  if (v) {
+    if (v.revision === 'PENDIENTE') return 'PENDIENTE';
+    return v.revision === 'AUTO' || v.revision === 'REVISADO' ? 'LISTO' : 'CURSO';
+  }
+  const est = String(row.estado_despacho || '').trim().toUpperCase();
+  if (REVF_NOREAL.test(est)) return 'NOREAL';
+  if (/^\d{1,18}$/.test(String(row.sonar_regid || '').trim())) return 'CURSO';   // recién despachado: llegando de SONAR
+  if (est === 'SI' || est === 'DESPACHADO' || est === 'PENDIENTE SONAR') return 'SINSONAR';
+  return 'PORDESP';
+}
+function revfBar() {
+  let bar = $('revf-bar');
+  if (!bar) {
+    bar = Object.assign(document.createElement('div'), { id: 'revf-bar', className: 'revf-bar', hidden: true });
+    $('table-wrap').before(bar);
+    bar.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.revf != null) revFiltroElegir(b.dataset.revf, '');
+      else if (b.dataset.revfPor != null) revFiltroElegir(revFiltroTabla.estado, revFiltroTabla.por === b.dataset.revfPor ? '' : b.dataset.revfPor);
+    });
+  }
+  return bar;
+}
+// Pinta la barra con los conteos del día (antes de filtrar) y devuelve las filas del estado elegido
+function revFiltrarFilas(rows, activo) {
+  const bar = revfBar(), f = revFiltroTabla;
+  if (!activo || !_revFilasEstado.ok) { bar.hidden = true; return rows; }
+  const n = { '': rows.length, PENDIENTE: 0, LISTO: 0, CURSO: 0, PORDESP: 0, NOREAL: 0, SINSONAR: 0 }, nPor = {};
+  for (const r of rows) {
+    const e = revEstadoFila(r); n[e]++;
+    if (e === 'PENDIENTE') for (const p of revFilaV(r).por || []) nPor[p] = (nPor[p] || 0) + 1;
+  }
+  if (f.estado === 'SINSONAR' && !efIsAdmin()) f.estado = '';
+  if (f.estado !== 'PENDIENTE' || !nPor[f.por]) f.por = '';
+  bar.innerHTML = `<span class="revf-bar-t">✅ Revisión:</span>${REVF_ESTADOS.filter(([k]) => (k !== 'SINSONAR' || efIsAdmin()) && (['', 'PENDIENTE', 'LISTO'].includes(k) || n[k] || f.estado === k)).map(([k, t]) =>
+    `<button type="button" class="rev-tab${f.estado === k ? ' on' : ''}" data-revf="${k}">${t} <b>${pstNum(n[k])}</b></button>`).join('')}
+    ${f.estado === 'PENDIENTE' && n.PENDIENTE ? `<div class="revf-bar-por"><span>Por qué:</span>${Object.entries(REV_POR).filter(([k]) => nPor[k]).map(([k, [ic, t]]) =>
+    `<button type="button" class="rev-dia${f.por === k ? ' on' : ''}" data-revf-por="${k}">${ic} ${esc(t)} <b>${pstNum(nPor[k])}</b></button>`).join('')}</div>` : ''}`;
+  bar.hidden = false;
+  if (!f.estado) return rows;
+  return rows.filter((r) => revEstadoFila(r) === f.estado && (!f.por || (revFilaV(r).por || []).includes(f.por)));
+}
+// Cambiar el filtro vuelve a pintar el día ya cargado, sin consultar otra vez
+function revFiltroElegir(estado, por) {
+  const f = revFiltroTabla, u = f.ult;
+  f.estado = estado; f.por = por;
+  if (!u || u.tabla !== current) { loadData(); return; }
+  const vis = revFiltrarFilas(u.rows, true);
+  renderTable(u.cfg, vis, f.estado ? vis.length : u.total, u.diaSel);
+}
+
+// ⬇️ Excel del día completo (todos los viajes, con lo que dijo SONAR, el vigilante y la revisión)
+async function revExcel() {
+  const btn = $('pst-excel'); const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando…'; }
+  try {
+    const { data, error } = await sb.rpc('revision_viajes_dia', { p_fecha: _rev.fecha, p_grupo: 'TODOS' });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'no se pudo');
+    const REV = { AUTO: 'Se revisó solo', PENDIENTE: 'Por revisar', REVISADO: 'Revisado' };
+    await _xlsxDescargar([{ name: 'Viajes', aoa: [
+      ['Fecha', 'Hora', 'Ruta', 'Móvil', 'Placa', 'Conductor', 'Estado en SONAR', 'Puntos marcados', 'Puntos del itinerario', 'No pasó por',
+        'Se salió de la ruta (SONAR)', 'Lo que vio el vigilante', 'Revisión', 'Por qué', 'Qué pasó', '¿Falta del conductor?', 'Nota', 'Revisó', 'Cuándo'],
+      ...(data.viajes || []).map((v) => [fechaLegible(v.fecha), v.hora || '', v.ruta || '', v.movil || '', v.placa || '', v.conductor || '', v.estado || '',
+        v.det && v.det.estado !== 'SIN_ITINERARIO' && v.det.estado !== 'NO_ENCONTRADO' ? v.det.marcados : '', v.det?.total ?? '',
+        (v.det?.faltan || []).map((p) => `${p.i + 1}${p.n ? ' ' + p.n : ''}`).join(', '), v.det?.salio_ruta ? 'sí' : '',
+        (v.casos || []).map((c) => `${VIG_TIPOS[c.tipo][1]}: ${vigFraseCorta(c, c.rol)}${c.ruido ? ' (probable ruido)' : ''}${c.decision ? ' — ' + VIG_DECISION[c.decision][1] : ''}`).join(' | '),
+        REV[v.revision] || (revPasado() ? 'Sin clasificar' : 'En curso'), (v.por || []).map((p) => (REV_POR[p] || ['', p])[1]).join(', '),
+        v.revision === 'AUTO' ? (v.auto || '') : (REV_MOTIVO_TXT[v.motivo] || v.motivo || ''), (REV_DECISION[v.decision] || ['', ''])[1],
+        v.nota || '', v.quien || '', v.cuando || ''])] }], `revision_viajes_${_rev.fecha}.xlsx`);
+  } catch (e) { toast('No se pudo generar el Excel: ' + (e.message || e), 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = prev; } }
+}
 
 // ---------- 📬 Correspondencia: radicados de entrada, salida y comunicados ----------
 // La app de correspondencia (la PWA aparte) trabaja sobre ESTA MISMA base: áreas, perfiles de correspondencia (profiles),

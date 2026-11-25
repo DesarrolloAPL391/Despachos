@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v378';
+export const APP_VERSION = 'v379';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -754,6 +754,9 @@ export const TABLES = {
       { label: 'Cambio ruta', cambioRuta: true, auditCol: true },
       { path: 'vehp.numero', label: 'Móvil prog.' },
       { path: 'veh.numero', label: 'Móvil', m: true },
+      // ✅ La revisión del viaje (sql/206-208): por revisar / ✅ listo. Va junto al móvil para que el monitor la vea sin
+      // desplazar la tabla (al final quedaba tapada por los botones fijos). Administración y monitores (puedeVerRevision).
+      { label: '✅ Revisión', revision: true, auditCol: true, m: true, noExport: true },
       { key: 'cambio', label: 'Cambio móvil' },
       { path: 'cond.nombre', label: 'Conductor' },
       { path: 'desp.nombre', label: 'Despachador' },
@@ -884,7 +887,9 @@ export const TABLES = {
       { key: 'conductor', label: 'Conductor', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
       { key: 'hora_inicio', label: 'Hora de inicio', type: 'time', readOnly: true, section: 'Lo que dice SONAR' },
       { key: 'estado', label: 'Estado (lo calcula SONAR)', type: 'text', readOnly: true, section: 'Lo que dice SONAR' },
-      { key: 'auditado', label: '¿Auditado?', type: 'boolean', section: 'Auditoría' },
+      // sql/206: la revisión la escriben la base (completos sin novedad) y ✅ Revisión de viajes (el monitor dice qué pasó).
+      { key: 'auditado', label: '¿Auditado?', type: 'boolean', section: 'Auditoría', readOnly: true,
+        hint: 'Se revisa en ✅ Revisión de viajes: los completos sin novedad se revisan solos.' },
       { key: 'observacion', label: 'Observación del auditor', type: 'textarea', section: 'Auditoría' },
     ],
   },
