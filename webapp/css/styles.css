@@ -4082,3 +4082,88 @@ tr.qrc-sel td { background: #fff1f1; }
 .qrc-foto { border: 1px solid var(--border); border-radius: 10px; padding: 0; overflow: hidden; background: var(--surface); cursor: pointer; display: flex; flex-direction: column; text-align: left; font: inherit; }
 .qrc-foto img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: #eee; }
 .qrc-foto span { font-size: 12px; padding: 4px 6px; color: var(--muted); }
+/* 📬 Correspondencia: la app de radicados dentro del ERP (pantalla de tableros, como Liquidaciones) */
+.corr-acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.corr-tabla td { vertical-align: top; }
+.corr-tabla .chip { white-space: nowrap; display: inline-block; margin: 1px 0; }
+.corr-tabla .lnk { text-align: left; }
+.corr-tabla tr.corr-vacio td { color: var(--muted); text-align: center; padding: 14px 8px; }
+/* En el celular la regla general (table-layout: fixed) montaría los textos: se deslizan de lado */
+.liq-tabla-wrap .corr-tabla { table-layout: auto; min-width: 760px; }
+.liq-tabla-wrap .corr-tabla.corr-areas { min-width: 560px; }
+.corr-filtros label { flex: 0 1 180px; min-width: 0; }
+.corr-filtros label.corr-f-texto { flex: 1 1 260px; }
+.corr-filtros input[type="search"] { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; font: inherit; font-size: 14px;
+  background: #fff; width: 100%; box-sizing: border-box; }
+.corr-filtros select { width: 100%; }
+.corr-mas { display: block; margin: 10px auto 0; }
+.corr-form { display: grid; gap: 12px; margin-bottom: 12px; }
+.corr-numero { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; border-radius: 12px; background: #f1f5f9; border-left: 5px solid #64748b; }
+.corr-numero b { font-size: 22px; letter-spacing: .5px; color: #0f172a; }
+.corr-numero small { color: var(--muted); font-size: 12px; }
+.corr-numero-entrada { background: #ecfdf3; border-left-color: #0f9d58; }
+.corr-numero-salida { background: #eff6ff; border-left-color: #1a73e8; }
+.corr-numero-comunicado { background: #fdeaea; border-left-color: var(--primary); }
+.corr-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px 14px; }
+.corr-campos label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); min-width: 0; }
+.corr-campos .corr-c-ancho { grid-column: 1 / -1; }
+.corr-campos input, .corr-campos select, .corr-campos textarea { font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 9px; background: #fff; color: var(--text); width: 100%; box-sizing: border-box; }
+.corr-campos textarea { resize: vertical; }
+.corr-mal { border-color: #dc2626 !important; box-shadow: 0 0 0 3px rgba(220, 38, 38, .12); }
+.corr-err { color: #b91c1c; font-size: 12px; font-weight: 600; }
+.corr-adj-t { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.corr-drop { border: 2px dashed var(--border); border-radius: 12px; padding: 18px 14px; text-align: center; cursor: pointer; display: flex;
+  flex-direction: column; align-items: center; gap: 4px; background: #fafafa; transition: background .15s, border-color .15s; }
+.corr-drop:hover, .corr-drop:focus-visible, .corr-drop.on { border-color: var(--primary); background: #fdeaea; outline: none; }
+.corr-drop-ic { font-size: 22px; color: var(--primary); line-height: 1; }
+.corr-drop small { color: var(--muted); }
+.corr-archivos, .corr-adjuntos { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.corr-archivos:empty { display: none; }
+.corr-archivos li, .corr-adjuntos li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: #fff; font-size: 13.5px; }
+.corr-archivos li > span, .corr-adj-n { min-width: 0; overflow-wrap: anywhere; }
+.corr-archivos small, .corr-adjuntos small { color: var(--muted); }
+.corr-adjuntos .lnk { text-align: left; }
+.corr-pie { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.corr-pie small { color: var(--muted); font-size: 12.5px; flex: 1 1 260px; }
+.corr-pie-acc { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.corr-cab { margin-bottom: 12px; }
+.corr-cab-n { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.corr-cab-n b { font-size: 22px; display: block; margin-bottom: 4px; overflow-wrap: anywhere; }
+.corr-cab-ic { font-size: 30px; line-height: 1; }
+.corr-datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 10px 18px; margin: 0; }
+.corr-datos dt { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.corr-datos dd { margin: 2px 0 0; font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.corr-datos .corr-d-ancho { grid-column: 1 / -1; }
+.corr-aprob .corr-campos { margin-bottom: 10px; }
+.btn.corr-rechazar { color: #b91c1c; border-color: #fecaca; font-weight: 700; }
+.corr-subir { display: grid; gap: 8px; margin-top: 12px; justify-items: start; }
+.corr-subir .corr-drop-wrap { justify-self: stretch; }
+.corr-hist { list-style: none; margin: 0 0 0 6px; padding: 0 0 0 16px; border-left: 3px solid var(--border); display: grid; gap: 12px; }
+.corr-hist li { font-size: 13.5px; position: relative; overflow-wrap: anywhere; }
+.corr-hist li::before { content: ''; position: absolute; left: -24px; top: 3px; width: 9px; height: 9px; border-radius: 50%; background: #fff;
+  border: 3px solid var(--primary); }
+.corr-hist-h { color: var(--muted); font-size: 12.5px; }
+.corr-hist-c { margin-top: 3px; padding: 6px 10px; background: #f8fafc; border-radius: 8px; white-space: pre-wrap; }
+.corr-admin-f { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+.corr-admin-f input[type="search"], .corr-admin-f input[type="text"] { flex: 1 1 240px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 9px; font: inherit; font-size: 14px; background: #fff; }
+.corr-admin-f .liq-chk, .corr-usuarios .liq-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); font-weight: 500; }
+.liq-tabla-wrap .corr-usuarios { min-width: 720px; }
+.corr-usuarios select { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: #fff; max-width: 230px; }
+@media (max-width: 760px) {
+  .corr-filtros label, .corr-filtros label.corr-f-texto { flex: 1 1 140px; }
+  .corr-numero b, .corr-cab-n b { font-size: 19px; }
+}
+/* 📬 Correspondencia: quién revisa el comunicado (jefe inmediato, sql/205) */
+.corr-revisa { padding: 10px 14px; border-radius: 10px; background: #eff6ff; border-left: 4px solid #2563eb; font-size: 14px; line-height: 1.45; }
+.corr-revisa-sin { background: #fffbeb; border-left-color: #d97706; }
+.corr-aprob .pst-nota { margin: 2px 0 10px; }
+.liq-tabla-wrap .corr-usuarios { min-width: 900px; }
+.corr-usuarios td.corr-jefe { white-space: normal; min-width: 300px; }
+.corr-jefe select { max-width: 290px; }
+.corr-sug { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.35; max-width: 340px; }
+.corr-sug .lnk { font-size: 12px; }
+.corr-sug-sin { color: #b45309; }
+.corr-u-aplicar { white-space: nowrap; flex: 0 0 auto; }

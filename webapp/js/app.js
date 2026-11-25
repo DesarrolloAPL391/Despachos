@@ -833,6 +833,18 @@ function buildSidebar() {
   // El afiliado aprueba las vacaciones de los conductores de sus carros (sql/169).
   if (VAC_AFI) addNavAction(nav, '🏖️', `Vacaciones de mis conductores${VAC_MIOS ? ` <span class="nav-badge">${VAC_MIOS}</span>` : ''}`, openVacaciones, 'nav-vacaciones');
 
+  // 📬 Correspondencia: la app de radicados (misma base) dentro del ERP. Solo administración.
+  if (isAdmin()) {
+    const gCo = addNavGroup(nav, '📬', 'Correspondencia', 'corr');
+    addNavAction(gCo, '🏠', 'Inicio', () => corrVerInicio(), 'nav-corr-inicio');
+    addNavAction(gCo, '📥', 'Entradas', () => corrVerLista('entrada'), 'nav-corr-entrada');
+    addNavAction(gCo, '📤', 'Salidas', () => corrVerLista('salida'), 'nav-corr-salida');
+    addNavAction(gCo, '📣', 'Comunicados', () => corrVerLista('comunicado'), 'nav-corr-comunicado');
+    addNavAction(gCo, '🗂️', 'Todos los radicados', () => corrVerLista(''), 'nav-corr-todos');
+    addNavAction(gCo, '⚙️', 'Áreas y usuarios', () => corrVerAdmin(), 'nav-corr-admin');
+    if (currentView === 'correspondencia' && _corr.nav) $(_corr.nav)?.classList.add('active');
+  }
+
   // ⚙️ Administración (tablas de configuración + acciones)
   const gAd = addNavGroup(nav, '⚙️', 'Administración', 'admin');
   for (const name of vis) { if (TBL_GROUP[name] === 'admin') addTableBtn(gAd, name); }
@@ -26276,7 +26288,7 @@ async function sinExportarLista(titulo, filas) {
 
 ['pst-estado', 'pst-tipo', 'pst-area'].forEach((id) => $(id)?.addEventListener('change', renderPerfilStats));
 ['sst-anio', 'sst-mes', 'sst-gravedad', 'sst-resp'].forEach((id) => $(id)?.addEventListener('change', renderSiniestrosStats));
-$('pst-recargar')?.addEventListener('click', () => (currentView === 'liquidaciones' ? liqRecargar()
+$('pst-recargar')?.addEventListener('click', () => (currentView === 'correspondencia' ? corrRecargar() : currentView === 'liquidaciones' ? liqRecargar()
   : currentView === 'mora' ? (_liqCarCache.clear(), cargarMora()) : currentView === 'cartera' ? cargarCartera() : currentView === 'pqrstats' ? cargarPqrsfStats()
   : currentView === 'sinstats' ? cargarSiniestrosStats() : cargarPerfilStats()));
 $('pst-excel')?.addEventListener('click', () => (currentView === 'mora' ? exportarMora() : currentView === 'cartera' ? exportarCartera() : currentView === 'pqrstats' ? exportarPqrsfStats()
@@ -31703,6 +31715,928 @@ async function qrCtlExcel(btn) {
     XLSX.writeFile(wb, `qr_despachos_${d.desde}_${d.hasta}.xlsx`);
   } catch (e) { toast('No se pudo exportar: ' + (e.message || e), 'err'); }
   finally { btn.disabled = false; btn.textContent = prev; }
+}
+
+
+// ---------- 📬 Correspondencia: radicados de entrada, salida y comunicados ----------
+// La app de correspondencia (la PWA aparte) trabaja sobre ESTA MISMA base: áreas, perfiles de correspondencia (profiles),
+// radicados, sus adjuntos (bucket privado «adjuntos») y su historial. Aquí se trae al ERP para la administración, con las
+// reglas de la app: el número lo pone la base al guardar (no se repite ni se salta), el historial lo escribe la base y la
+// base (RLS) decide qué ve cada uno. Un comunicado lo revisa el JEFE INMEDIATO de quien lo crea (sql/205: lo fija la base
+// al crearlo; sin jefe, administración) o un administrador de la correspondencia, y nadie aprueba el suyo; el jefe de cada
+// uno se asigna en ⚙️ Áreas y usuarios con la sugerencia del Perfil (cargo y área). Al radicar, la base envía el aviso
+// por correo, igual que desde la app. Solo administración.
+const CORR_TIPOS = {
+  entrada: { icon: '📥', uno: 'Entrada', titulo: 'Radicados de entrada', crear: '+ Radicar entrada', form: '📥 Radicar entrada',
+    contacto: ['Remitente', 'remitente'], area: 'Área destino', medio: 'Medio de recepción', boton: 'Radicar',
+    buscar: 'Asunto, remitente o número', vacio: 'No hay radicados de entrada con esos filtros.' },
+  salida: { icon: '📤', uno: 'Salida', titulo: 'Radicados de salida', crear: '+ Radicar salida', form: '📤 Radicar salida',
+    contacto: ['Destinatario', 'destinatario'], area: 'Área que radica', medio: 'Medio de envío', boton: 'Radicar',
+    buscar: 'Asunto, destinatario o número', vacio: 'No hay radicados de salida con esos filtros.' },
+  comunicado: { icon: '📣', uno: 'Comunicado', titulo: 'Comunicados', crear: '+ Nuevo comunicado', form: '📣 Nuevo comunicado',
+    contacto: null, area: 'Área que emite el comunicado', medio: null, boton: 'Enviar para aprobación',
+    buscar: 'Asunto o número', vacio: 'No hay comunicados con esos filtros.' },
+};
+const CORR_ESTADOS = {
+  pendiente: ['⏳', 'Pendiente', 'chip-amber'], en_tramite: ['🔄', 'En trámite', 'chip-blue'],
+  respondido: ['✅', 'Respondido', 'chip-green'], cerrado: ['📁', 'Cerrado', 'chip-gray'],
+};
+const CORR_APROB = { pendiente: ['Pendiente de aprobación', 'chip-amber'], aprobado: ['Aprobado', 'chip-green'], rechazado: ['Rechazado', 'chip-red'] };
+const CORR_MEDIOS = { fisico: 'Físico', mensajeria: 'Mensajería', correo_electronico: 'Correo electrónico', entrega_personal: 'Entrega personal', otro: 'Otro' };
+const CORR_MEDIOS_DE = { entrada: ['fisico', 'correo_electronico', 'otro'], salida: ['fisico', 'mensajeria', 'correo_electronico', 'entrega_personal', 'otro'] };
+const CORR_ROL_ERP = { admin: 'Administrador', despachador: 'Despachador', auditor: 'Auditor', afiliado: 'Afiliado', operaciones: 'Operaciones',
+  gestion_humana: 'Gestión humana', seguridad_vial: 'Seguridad vial', vigilante: 'Vigilante' };
+const CORR_PAG = 25;
+const CORR_MAX_MB = 50;                     // el tope de Supabase para un archivo
+const CORR_COLS = 'id,numero_radicado,tipo,fecha_radicado,remitente,destinatario,asunto,estado,estado_aprobacion,area_actual_id,'
+  + 'revisor_id,creado_por,area:area_actual_id(nombre),revisor:revisor_id(nombre_completo)';
+const CORR_REV = { yo: 'Yo (soy el jefe)', adm: 'Administración (sin jefe)' };
+const corrFiltroVacio = () => ({ texto: '', tipo: '', estado: '', area: '', aprob: '', rev: '' });
+// yo: el perfil de correspondencia de quien mira (undefined = sin leer, null = no tiene)
+const _corr = { vista: 'inicio', tipo: '', id: null, nav: null, tok: 0, yo: undefined, areas: null, f: corrFiltroVacio(), volver: null };
+
+// Es una PANTALLA del programa (la de los tableros, como Liquidaciones). tok dice qué se pidió de último: lo que llega
+// tarde de otra vista no se pinta encima.
+function corrPrepararVista(vista, titulo, navId) {
+  currentView = 'correspondencia';
+  _corr.vista = vista; _corr.nav = navId;
+  statsPrepararVista();
+  $('pst-fl-perfil').hidden = true; $('pst-fl-sin').hidden = true; $('pst-fl-pqr').hidden = true;
+  const x = $('pst-excel'); if (x) x.hidden = true;
+  $(navId)?.classList.add('active');
+  buildBottomNav();
+  const tit = $('pst-title'); if (tit) tit.textContent = titulo;
+  window.scrollTo(0, 0);
+  const b = $('pst-body'); if (b) { b.scrollTop = 0; b.innerHTML = '<div class="loading">Cargando la correspondencia…</div>'; }
+  return ++_corr.tok;
+}
+const corrVivo = (tok) => currentView === 'correspondencia' && _corr.tok === tok;
+function corrOlvidar() { _corr.yo = undefined; _corr.areas = null; }
+function corrFalla(body, tok, e) {
+  if (corrVivo(tok)) body.innerHTML = `<div class="cump-empty">No se pudo consultar: ${esc((e && e.message) || e || '')}</div>`;
+}
+
+async function corrYo() {
+  if (_corr.yo !== undefined) return _corr.yo;
+  const { data: s } = await sb.auth.getSession();
+  const uid = s && s.session && s.session.user && s.session.user.id;
+  if (!uid) return (_corr.yo = null);
+  const { data, error } = await sb.from('profiles').select('id,nombre_completo,area_id,rol,jefe_id,area:area_id(nombre),jefe:jefe_id(id,nombre_completo)')
+    .eq('id', uid).maybeSingle();
+  if (error) throw error;
+  return (_corr.yo = data || null);
+}
+async function corrAreas() {
+  if (!_corr.areas) {
+    const { data, error } = await sb.from('areas').select('id,nombre,activo').order('nombre');
+    if (error) throw error;
+    _corr.areas = data || [];
+  }
+  return _corr.areas;
+}
+const corrAreasActivas = () => (_corr.areas || []).filter((a) => a.activo);
+// Todas las filas (el API corta en 1.000 sin avisar)
+async function corrTodo(tabla, cols) {
+  const out = [];
+  for (let d = 0; d < 100000; d += 1000) {
+    const { data, error } = await sb.from(tabla).select(cols).order('id').range(d, d + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+function corrSinPerfil() {
+  const s = pstEl('section', 'liq-verif');
+  s.innerHTML = `<div class="liq-verif-t"><b>Tu usuario todavía no tiene perfil en la correspondencia</b>
+    <small>La correspondencia tiene sus propios perfiles (área, rol y jefe inmediato). Sin el tuyo, la base no te
+    deja ver los radicados ni crear uno. Se crea una sola vez en la base (sql/204).</small></div>`;
+  return s;
+}
+function corrQuienSoy(yo) {
+  return [yo.nombre_completo || 'Tu usuario', yo.rol === 'admin' ? 'administrador de la correspondencia' : 'usuario de la correspondencia',
+    yo.area ? 'área ' + yo.area.nombre : 'sin área', yo.jefe ? 'jefe inmediato: ' + (yo.jefe.nombre_completo || '') : ''].filter(Boolean).join(' · ');
+}
+// Lo mismo que deja la base (corr_puede_decidir): el revisor o un administrador, y nunca quien lo creó
+const corrPuedoDecidir = (r, yo) => !!(r && yo && r.tipo === 'comunicado' && r.creado_por !== yo.id && (r.revisor_id === yo.id || yo.rol === 'admin'));
+const corrRevisorTxt = (r) => (r.revisor && r.revisor.nombre_completo) || (r.revisor_id ? 'su jefe inmediato' : 'Administración');
+const corrEstadoTxt = (k) => (CORR_ESTADOS[k] || [, k || '—'])[1];
+const corrAprobTxt = (k) => (CORR_APROB[k] || [k || '—'])[0];
+function corrChips(r) {
+  const [ic, txt, cls] = CORR_ESTADOS[r.estado] || ['', r.estado || '', 'chip-gray'];
+  let h = `<span class="chip ${cls}">${ic} ${esc(txt)}</span>`;
+  if (r.tipo === 'comunicado' && r.estado_aprobacion) {
+    const [t2, c2] = CORR_APROB[r.estado_aprobacion] || [r.estado_aprobacion, 'chip-gray'];
+    h += ` <span class="chip ${c2}">${esc(t2)}</span>`;
+  }
+  return h;
+}
+function corrBotonVolver(v) {
+  v = v || { vista: 'lista', tipo: '' };
+  const txt = v.vista === 'inicio' ? '‹ Volver al inicio de la correspondencia'
+    : `‹ Volver a ${v.tipo && CORR_TIPOS[v.tipo] ? CORR_TIPOS[v.tipo].titulo.toLowerCase() : 'todos los radicados'}`;
+  const b = pstEl('button', 'btn btn-sec liq-volver', txt);
+  b.type = 'button';
+  b.addEventListener('click', () => (v.vista === 'inicio' ? corrVerInicio() : corrVerLista(v.tipo || '', { mantener: true })));
+  return b;
+}
+// Un indicador que lleva a la lista
+function corrTile(etq, val, det, ir) {
+  const t = pstTile(etq, pstNum(val), det);
+  if (ir) {
+    t.classList.add('pst-clic'); t.tabIndex = 0; t.setAttribute('role', 'button'); t.title = 'Ver la lista';
+    t.addEventListener('click', ir);
+    t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ir(); } });
+  }
+  return t;
+}
+
+async function corrConsulta(f, desde, hasta, conteo = false) {
+  let q = sb.from('radicados').select(CORR_COLS, conteo ? { count: 'exact' } : undefined).order('created_at', { ascending: false });
+  if (f.tipo) q = q.eq('tipo', f.tipo);
+  if (f.estado) q = q.eq('estado', f.estado);
+  if (f.area) q = q.eq('area_actual_id', f.area);
+  if (f.aprob) q = q.eq('estado_aprobacion', f.aprob);
+  if (f.rev === 'yo' && _corr.yo) q = q.eq('revisor_id', _corr.yo.id);
+  if (f.rev === 'adm') q = q.is('revisor_id', null);
+  // Las comas, paréntesis y comodines romperían el filtro «or» del API
+  const t = String(f.texto || '').replace(/[,%*()"\\:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (t) q = q.or(['asunto', 'remitente', 'destinatario', 'numero_radicado'].map((c) => `${c}.ilike.%${t}%`).join(','));
+  const { data, error, count } = await q.range(desde, hasta);
+  if (error) throw error;
+  return { filas: data || [], total: count };
+}
+
+// La tabla de radicados (inicio y listas). agregar() suma filas («Cargar más»); limpiar() deja un mensaje.
+function corrTabla(conf, volver) {
+  const cols = [
+    ['Número', (r) => `<button type="button" class="lnk" data-rad="${esc(r.id)}">${esc(r.numero_radicado || '—')}</button>`],
+    ...(conf ? [] : [['Tipo', (r) => { const t = CORR_TIPOS[r.tipo]; return t ? `${t.icon} ${t.uno}` : esc(r.tipo || ''); }]]),
+    ['Fecha', (r) => esc(fmtFechaHora(r.fecha_radicado))],
+    ...(conf ? (conf.contacto ? [[conf.contacto[0], (r) => esc(r[conf.contacto[1]] || '')]] : [])
+      : [['Remitente / destinatario', (r) => esc(r.remitente || r.destinatario || '')]]),
+    ['Asunto', (r) => esc(r.asunto || '')],
+    ['Área actual', (r) => esc((r.area && r.area.nombre) || '')],
+    ...(conf === CORR_TIPOS.comunicado ? [['Lo revisa', (r) => esc(corrRevisorTxt(r))]] : []),
+    ['Estado', (r) => corrChips(r)],
+  ];
+  const wrap = pstEl('div', 'liq-tabla-wrap');
+  wrap.innerHTML = `<table class="liq-rev corr-tabla"><thead><tr>${cols.map((c) => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody></tbody></table>`;
+  const tb = wrap.querySelector('tbody');
+  wrap.addEventListener('click', (e) => { const b = e.target.closest('[data-rad]'); if (b) corrVerDetalle(b.dataset.rad, volver); });
+  return {
+    el: wrap,
+    agregar: (filas) => {
+      if (tb.querySelector('.corr-vacio')) tb.innerHTML = '';
+      tb.insertAdjacentHTML('beforeend', filas.map((r) => `<tr>${cols.map((c) => `<td>${c[1](r)}</td>`).join('')}</tr>`).join(''));
+    },
+    limpiar: (msg) => { tb.innerHTML = `<tr class="corr-vacio"><td colspan="${cols.length}">${esc(msg)}</td></tr>`; },
+  };
+}
+
+// ---- 🏠 Inicio: lo que hay, por tipo y por estado, y lo último que se radicó ----
+async function corrVerInicio() {
+  if (!isAdmin()) return;
+  const tok = corrPrepararVista('inicio', '📬 Correspondencia', 'nav-corr-inicio');
+  const body = $('pst-body');
+  let yo = null, filas = [], ult = [];
+  try {
+    yo = await corrYo();
+    if (yo) {
+      const [todas, r] = await Promise.all([corrTodo('radicados', 'tipo,estado,estado_aprobacion,revisor_id,creado_por'), corrConsulta({}, 0, 7)]);
+      filas = todas; ult = r.filas;
+    }
+  } catch (e) { corrFalla(body, tok, e); return; }
+  if (!corrVivo(tok)) return;
+  body.innerHTML = '';
+  if (!yo) { body.appendChild(corrSinPerfil()); return; }
+  $('pst-sub').textContent = corrQuienSoy(yo);
+
+  const acc = pstEl('div', 'corr-acciones');
+  acc.innerHTML = Object.entries(CORR_TIPOS).map(([k, t]) => `<button type="button" class="btn btn-primary" data-radicar="${k}">${t.crear}</button>`).join('')
+    + '<button type="button" class="btn" data-todos>🗂️ Ver todos</button>';
+  acc.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.radicar) corrVerRadicar(b.dataset.radicar); else corrVerLista('');
+  });
+  body.appendChild(acc);
+
+  const n = (fn) => filas.filter(fn).length;
+  const k1 = pstEl('div', 'pst-kpis');
+  k1.append(
+    corrTile('📊 Total', filas.length, yo.rol === 'admin' ? 'todos los radicados' : 'los de tu área y los que creaste', () => corrVerLista('')),
+    corrTile('📥 Entradas', n((r) => r.tipo === 'entrada'), '', () => corrVerLista('entrada')),
+    corrTile('📤 Salidas', n((r) => r.tipo === 'salida'), '', () => corrVerLista('salida')),
+    corrTile('📣 Comunicados', n((r) => r.tipo === 'comunicado'), '', () => corrVerLista('comunicado')));
+  // 🖊️ Lo que me toca revisar: soy el jefe de quien lo creó o (administrador) cualquiera que no sea mío
+  const pend = filas.filter((r) => r.tipo === 'comunicado' && r.estado_aprobacion === 'pendiente');
+  const meToca = pend.filter((r) => corrPuedoDecidir(r, yo));
+  if (pend.length || meToca.length) {
+    const aMi = pend.filter((r) => r.revisor_id === yo.id && r.creado_por !== yo.id).length;
+    const ajenos = pend.filter((r) => r.creado_por !== yo.id);
+    const sinJefe = ajenos.filter((r) => !r.revisor_id).length;
+    const deOtros = ajenos.filter((r) => r.revisor_id && r.revisor_id !== yo.id).length;
+    const misPropios = pend.length - ajenos.length;
+    const det = [aMi ? `${pstNum(aMi)} de tu gente` : '', yo.rol === 'admin' && sinJefe ? `${pstNum(sinJefe)} sin jefe: los revisa administración` : '',
+      deOtros ? `${pstNum(deOtros)} los revisa su jefe` + (yo.rol === 'admin' ? ' (también puedes tú)' : '') : '',
+      misPropios ? `${pstNum(misPropios)} tuyo(s) esperando revisión` : ''].filter(Boolean).join(' · ');
+    const t = corrTile('🖊️ Comunicados por revisar', meToca.length, det,
+      () => corrVerLista('comunicado', { filtro: { aprob: 'pendiente', rev: yo.rol === 'admin' ? '' : 'yo' } }));
+    if (meToca.length) t.classList.add('car-t-debe');
+    k1.appendChild(t);
+  }
+  body.appendChild(k1);
+  const k2 = pstEl('div', 'pst-kpis');
+  Object.entries(CORR_ESTADOS).forEach(([k, [ic, txt]]) =>
+    k2.appendChild(corrTile(`${ic} ${txt}`, n((r) => r.estado === k), '', () => corrVerLista('', { filtro: { estado: k } }))));
+  body.appendChild(k2);
+
+  const c = pstEl('section', 'pst-card liq-lista-card');
+  c.innerHTML = `<div class="pst-card-h"><div><h4>Lo último que se radicó</h4>
+    <div class="pst-nota">Toca el número para abrir el radicado: adjuntos, historial y el cambio de área o de estado.</div></div></div>`;
+  if (!ult.length) c.appendChild(pstEl('div', 'pst-vacio', 'Todavía no hay radicados.'));
+  else { const t = corrTabla(null, { vista: 'inicio' }); t.agregar(ult); c.appendChild(t.el); }
+  body.appendChild(c);
+}
+
+// ---- 📥 📤 📣 🗂️ Listas, con filtros que se aplican solos y «Cargar más» ----
+async function corrVerLista(tipo = '', opc = {}) {
+  if (!isAdmin()) return;
+  const conf = CORR_TIPOS[tipo] || null;
+  const tok = corrPrepararVista('lista', conf ? `${conf.icon} ${conf.titulo}` : '🗂️ Todos los radicados', 'nav-corr-' + (tipo || 'todos'));
+  if (!opc.mantener || _corr.tipo !== tipo) _corr.f = { ...corrFiltroVacio(), ...(opc.filtro || {}) };
+  _corr.tipo = tipo;
+  const body = $('pst-body');
+  let yo;
+  try { yo = await corrYo(); if (yo) await corrAreas(); } catch (e) { corrFalla(body, tok, e); return; }
+  if (!corrVivo(tok)) return;
+  body.innerHTML = '';
+  if (!yo) { body.appendChild(corrSinPerfil()); return; }
+  $('pst-sub').textContent = corrQuienSoy(yo);
+  const f = _corr.f;
+  const opt = (pares, val) => pares.map(([k, t]) => `<option value="${esc(k)}"${val === k ? ' selected' : ''}>${esc(t)}</option>`).join('');
+  const card = pstEl('section', 'pst-card liq-lista-card');
+  card.innerHTML = `<div class="pst-card-h"><div><h4 class="corr-cuenta">Buscando…</h4>
+      <div class="pst-nota">Toca el número para abrir el radicado: adjuntos, historial y el cambio de área o de estado.</div></div>
+      ${conf ? `<button type="button" class="btn btn-primary" data-crear>${conf.crear}</button>` : ''}</div>
+    <div class="liq-filtros corr-filtros">
+      <label class="corr-f-texto">Buscar<input type="search" data-f="texto" placeholder="${esc(conf ? conf.buscar : 'Asunto, remitente, destinatario o número')}" value="${esc(f.texto)}"></label>
+      ${conf ? '' : `<label>Tipo<select data-f="tipo"><option value="">Todos</option>${opt(Object.entries(CORR_TIPOS).map(([k, t]) => [k, t.uno]), f.tipo)}</select></label>`}
+      <label>Estado<select data-f="estado"><option value="">Todos</option>${opt(Object.entries(CORR_ESTADOS).map(([k, v]) => [k, v[1]]), f.estado)}</select></label>
+      ${tipo === 'comunicado' ? `<label>Aprobación<select data-f="aprob"><option value="">Todas</option>${opt(Object.entries(CORR_APROB).map(([k, v]) => [k, v[0]]), f.aprob)}</select></label>
+      <label>Lo revisa<select data-f="rev"><option value="">Todos</option>${opt(Object.entries(CORR_REV), f.rev)}</select></label>` : ''}
+      <label>Área actual<select data-f="area"><option value="">Todas</option>${opt((_corr.areas || []).map((a) => [a.id, a.nombre + (a.activo ? '' : ' (inactiva)')]), f.area)}</select></label>
+      <button type="button" class="btn btn-sm" data-limpiar>Limpiar</button>
+    </div>`;
+  const tabla = corrTabla(conf, { vista: 'lista', tipo });
+  card.appendChild(tabla.el);
+  const mas = pstEl('button', 'btn corr-mas', 'Cargar más');
+  mas.type = 'button'; mas.hidden = true;
+  card.appendChild(mas);
+  body.appendChild(card);
+
+  let desde = 0, total = 0, ltok = 0;
+  const cargar = async (reset) => {
+    const mi = ++ltok;
+    if (reset) { desde = 0; tabla.limpiar('Buscando…'); }
+    mas.disabled = true;
+    let r;
+    try { r = await corrConsulta({ ...f, tipo: tipo || f.tipo, aprob: tipo === 'comunicado' ? f.aprob : '', rev: tipo === 'comunicado' ? f.rev : '' }, desde, desde + CORR_PAG - 1, reset); }
+    catch (e) { if (corrVivo(tok) && mi === ltok) { tabla.limpiar('No se pudo consultar: ' + ((e && e.message) || e)); mas.hidden = true; } return; }
+    if (!corrVivo(tok) || mi !== ltok) return;
+    if (reset) total = r.total ?? r.filas.length;
+    if (reset && !r.filas.length) tabla.limpiar(conf ? conf.vacio : 'No hay radicados con esos filtros.');
+    else tabla.agregar(r.filas);
+    desde += r.filas.length;
+    card.querySelector('.corr-cuenta').textContent = `${pstNum(total)} ${total === 1 ? 'radicado' : 'radicados'}${desde < total ? ` · se ven ${pstNum(desde)}` : ''}`;
+    mas.hidden = desde >= total || r.filas.length < CORR_PAG;
+    mas.disabled = false;
+  };
+  let t = null;
+  card.querySelectorAll('[data-f]').forEach((el) => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
+    f[el.dataset.f] = el.value;
+    clearTimeout(t); t = setTimeout(() => cargar(true), el.tagName === 'SELECT' ? 0 : 300);
+  }));
+  card.querySelector('[data-limpiar]').addEventListener('click', () => { _corr.f = corrFiltroVacio(); corrVerLista(tipo, { mantener: true }); });
+  card.querySelector('[data-crear]')?.addEventListener('click', () => corrVerRadicar(tipo));
+  mas.addEventListener('click', () => cargar(false));
+  await cargar(true);
+}
+
+// ---- Adjuntos: arrastrar o elegir, subir, abrir y borrar ----
+function corrTipoArchivo(mime, nombre) {
+  const ext = String(nombre || '').split('.').pop().toLowerCase(), m = String(mime || '');
+  if (m === 'application/pdf' || ext === 'pdf') return { icono: '📄', etiqueta: 'PDF' };
+  if (/msword|wordprocessingml/.test(m) || ext === 'doc' || ext === 'docx') return { icono: '📝', etiqueta: 'Word' };
+  if (m.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) return { icono: '🖼️', etiqueta: 'Imagen' };
+  return { icono: '📎', etiqueta: 'Archivo' };
+}
+function corrTamano(b) {
+  b = Number(b) || 0;
+  return b >= 1048576 ? (b / 1048576).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+}
+function corrDropzone({ multiple = true, hint = 'PDF, Word o imágenes' } = {}) {
+  const el = pstEl('div', 'corr-drop-wrap');
+  el.innerHTML = `<div class="corr-drop" tabindex="0" role="button" aria-label="Elegir ${multiple ? 'archivos' : 'el archivo'} para adjuntar">
+      <input type="file"${multiple ? ' multiple' : ''} hidden>
+      <span class="corr-drop-ic">⬆</span><b>Arrastra ${multiple ? 'los archivos' : 'el archivo'} aquí</b>
+      <small>o <u>haz clic para buscarlo${multiple ? 's' : ''}</u> · ${esc(hint)}</small></div>
+    <ul class="corr-archivos"></ul>`;
+  const zona = el.querySelector('.corr-drop'), inp = zona.querySelector('input'), lista = el.querySelector('.corr-archivos');
+  let files = [];
+  const pintar = () => {
+    lista.innerHTML = files.map((f, i) => {
+      const t = corrTipoArchivo(f.type, f.name);
+      return `<li><span>${t.icono} ${esc(f.name)} <small>(${t.etiqueta} · ${corrTamano(f.size)})</small></span>
+        <button type="button" class="lnk mal" data-quitar="${i}" aria-label="Quitar ${esc(f.name)}">✕ Quitar</button></li>`;
+    }).join('');
+  };
+  const agregar = (lst) => {
+    const nuevos = Array.from(lst || []), tope = CORR_MAX_MB * 1048576;
+    const grandes = nuevos.filter((f) => f.size > tope), bien = nuevos.filter((f) => f.size <= tope);
+    if (grandes.length) toast(`Pasa de ${CORR_MAX_MB} MB y no se puede subir: ${grandes.map((f) => f.name).join(', ')}`, 'err');
+    if (!bien.length) return;
+    files = multiple ? [...files, ...bien] : bien.slice(0, 1);
+    zona.classList.remove('corr-mal'); el.querySelector('.corr-err')?.remove();
+    pintar();
+  };
+  inp.addEventListener('change', () => { agregar(inp.files); inp.value = ''; });
+  let n = 0;
+  zona.addEventListener('dragenter', (e) => { e.preventDefault(); n++; zona.classList.add('on'); });
+  zona.addEventListener('dragover', (e) => e.preventDefault());
+  zona.addEventListener('dragleave', () => { n = Math.max(0, n - 1); if (!n) zona.classList.remove('on'); });
+  zona.addEventListener('drop', (e) => { e.preventDefault(); n = 0; zona.classList.remove('on'); agregar(e.dataTransfer && e.dataTransfer.files); });
+  zona.addEventListener('click', (e) => { if (e.target !== inp) inp.click(); });
+  zona.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inp.click(); } });
+  lista.addEventListener('click', (e) => { const b = e.target.closest('[data-quitar]'); if (b) { files.splice(Number(b.dataset.quitar), 1); pintar(); } });
+  return { el, zona, archivos: () => files.slice(), agregar };
+}
+// La ruta en el bucket va sin tildes ni símbolos (el almacenamiento rechaza esos nombres); el nombre real queda en la tabla
+async function corrSubirAdjunto(radId, file, categoria = null) {
+  const limpio = String(file.name || 'archivo').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.-]+/g, '_').slice(-80) || 'archivo';
+  const uno = (window.crypto && crypto.randomUUID && crypto.randomUUID()) || (Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const ruta = `${radId}/${uno}-${limpio}`;
+  const up = await sb.storage.from('adjuntos').upload(ruta, file, { contentType: file.type || 'application/octet-stream' });
+  if (up.error) throw up.error;
+  const { error } = await sb.from('radicado_adjuntos').insert({ radicado_id: radId, nombre_archivo: file.name, ruta_storage: ruta,
+    tipo_mime: file.type || null, tamano_bytes: file.size, categoria });
+  if (error) {
+    try { await sb.storage.from('adjuntos').remove([ruta]); } catch (e) { /* queda el archivo suelto, sin fila */ }
+    throw error;
+  }
+}
+// La pestaña se abre YA, con el clic: abierta después de esperar el enlace, el navegador la bloquea
+async function corrAbrirAdjunto(ruta) {
+  const w = window.open('', '_blank');
+  try {
+    const { data, error } = await sb.storage.from('adjuntos').createSignedUrl(ruta, 300);
+    if (error || !data || !data.signedUrl) throw error || new Error('sin enlace');
+    if (w) { try { w.opener = null; } catch (e) { /* */ } w.location.href = data.signedUrl; }
+    else window.open(data.signedUrl, '_blank', 'noopener');
+  } catch (e) {
+    if (w) w.close();
+    toast('No se pudo abrir el adjunto: ' + ((e && e.message) || e), 'err');
+  }
+}
+
+// ---- ➕ Radicar (entrada, salida o comunicado) ----
+async function corrVerRadicar(tipo) {
+  const conf = CORR_TIPOS[tipo];
+  if (!conf || !isAdmin()) return;
+  const tok = corrPrepararVista('radicar', conf.form, 'nav-corr-' + tipo);
+  _corr.tipo = tipo;
+  const body = $('pst-body');
+  let yo, numero = '';
+  try {
+    yo = await corrYo();
+    if (yo) {
+      await corrAreas();
+      // Solo LEE el contador: abandonar el formulario no deja huecos en la numeración
+      const r = await sb.rpc('proximo_numero_radicado', { p_tipo: tipo });
+      if (!r.error && r.data) numero = String(r.data);
+    }
+  } catch (e) { corrFalla(body, tok, e); return; }
+  if (!corrVivo(tok)) return;
+  body.innerHTML = '';
+  body.appendChild(corrBotonVolver({ vista: 'lista', tipo }));
+  if (!yo) { body.appendChild(corrSinPerfil()); return; }
+  $('pst-sub').textContent = corrQuienSoy(yo);
+  const esCom = tipo === 'comunicado';
+  const areas = corrAreasActivas();
+  const card = pstEl('section', 'pst-card corr-form');
+  card.innerHTML = `
+    <div class="corr-numero corr-numero-${tipo}"><small>Número de radicado</small><b>${esc(numero || 'Se asigna al guardar')}</b>
+      <small>Lo pone la base al guardar: si otra persona radica al mismo tiempo, puede quedar con el siguiente.</small></div>
+    <div class="corr-campos">
+      <label class="corr-c-ancho">Asunto *<input type="text" name="asunto" maxlength="500" autocomplete="off"></label>
+      ${esCom ? '' : `<label>${conf.contacto[0]}<input type="text" name="contacto" maxlength="300" autocomplete="off"></label>
+      <label>${conf.medio}<select name="medio">${CORR_MEDIOS_DE[tipo].map((m) => `<option value="${m}">${CORR_MEDIOS[m]}</option>`).join('')}</select></label>`}
+      <label>${conf.area} *<select name="area"><option value="">Elige un área</option>${areas.map((a) =>
+        `<option value="${esc(a.id)}"${a.id === yo.area_id ? ' selected' : ''}>${esc(a.nombre)}</option>`).join('')}</select></label>
+      <label class="corr-c-ancho">Observaciones<textarea name="obs" rows="3" maxlength="2000"></textarea></label>
+    </div>
+    <div class="corr-adj-t">${esCom ? 'Borrador del comunicado (PDF o Word) *' : 'Adjuntos'}</div>`;
+  // Quién lo revisa: el jefe inmediato de quien lo crea (lo fija la base al guardar)
+  const revisa = yo.jefe ? yo.jefe.nombre_completo || 'tu jefe inmediato' : '';
+  if (esCom) {
+    const rv = pstEl('div', 'corr-revisa' + (revisa ? '' : ' corr-revisa-sin'));
+    rv.innerHTML = revisa
+      ? `🖊️ Lo revisa tu jefe inmediato: <b>${esc(revisa)}</b> (aprueba o rechaza y monta la versión final).`
+      : '🖊️ No tienes jefe inmediato asignado: lo revisa <b>un administrador de la correspondencia</b>. El jefe se asigna en «⚙️ Áreas y usuarios».';
+    card.insertBefore(rv, card.querySelector('.corr-campos'));
+  }
+  const dz = corrDropzone({ hint: esCom ? 'PDF o Word' : 'PDF, Word o imágenes' });
+  card.appendChild(dz.el);
+  const pie = pstEl('div', 'corr-pie');
+  pie.innerHTML = `<small>${esCom ? `${revisa ? esc(revisa) : 'Administración'} revisa el borrador y monta la versión final aprobada; nadie aprueba su propio comunicado. ` : ''}Al guardar,
+      la base le pone el número y envía el aviso por correo, igual que la app de correspondencia.</small>
+    <span class="corr-pie-acc"><button type="button" class="btn" data-x>Cancelar</button>
+      <button type="button" class="btn btn-primary" data-ok>${conf.boton}</button></span>`;
+  card.appendChild(pie);
+  body.appendChild(card);
+  const q = (n) => card.querySelector(`[name="${n}"]`);
+  card.querySelector('[data-x]').addEventListener('click', () => corrVerLista(tipo, { mantener: true }));
+  card.querySelectorAll('input, select, textarea').forEach((x) => x.addEventListener('input', () => {
+    x.classList.remove('corr-mal'); if (x.nextElementSibling && x.nextElementSibling.classList.contains('corr-err')) x.nextElementSibling.remove();
+  }));
+  card.querySelector('[data-ok]').addEventListener('click', async (e) => {
+    const bt = e.currentTarget;
+    card.querySelectorAll('.corr-err').forEach((x) => x.remove());
+    card.querySelectorAll('.corr-mal').forEach((x) => x.classList.remove('corr-mal'));
+    const asunto = q('asunto').value.trim(), area = q('area').value, archivos = dz.archivos();
+    const mal = (el, msg) => { el.classList.add('corr-mal'); el.insertAdjacentElement('afterend', pstEl('small', 'corr-err', msg)); };
+    if (asunto.length < 3) mal(q('asunto'), asunto ? 'Debe tener al menos 3 caracteres.' : 'Escribe el asunto del radicado.');
+    if (!area) mal(q('area'), 'Elige un área.');
+    if (esCom && !archivos.length) mal(dz.zona, 'Adjunta el borrador del comunicado antes de enviarlo.');
+    const primero = card.querySelector('.corr-mal');
+    if (primero) { primero.focus(); return; }
+    const nomArea = (areas.find((a) => a.id === area) || {}).nombre || '';
+    const ok = await confirmAction({ title: conf.form, lead: asunto, okLabel: conf.boton,
+      message: `Queda radicado${numero ? ` (si nadie radica antes, con el ${numero})` : ''} en ${nomArea}`
+        + `${archivos.length ? ` con ${archivos.length} adjunto(s)` : ''}, y la base envía el aviso por correo. El número no se puede devolver.`
+        + (esCom ? ` Lo revisa ${revisa || 'un administrador de la correspondencia'}.` : '') });
+    if (!ok || !corrVivo(tok)) return;
+    bt.disabled = true; bt.textContent = 'Guardando…';
+    const payload = { tipo, asunto, area_actual_id: area, area_origen_id: tipo === 'salida' ? area : null, observaciones: q('obs').value.trim() || null };
+    if (!esCom) { payload.medio_recepcion = q('medio').value; payload[conf.contacto[1]] = q('contacto').value.trim() || null; }
+    let rad = null, error = null;
+    try { ({ data: rad, error } = await sb.from('radicados').insert(payload).select('id,numero_radicado').single()); } catch (err) { error = err; }
+    if (error || !rad) {
+      toast('No se pudo radicar: ' + ((error && error.message) || 'la base no respondió'), 'err');
+      bt.disabled = false; bt.textContent = conf.boton;
+      return;
+    }
+    // El radicado YA existe: si un archivo falla, se sigue al radicado (volver a enviar el formulario crearía otro)
+    const fallas = [];
+    for (const file of archivos) {
+      bt.textContent = `Subiendo ${file.name}…`;
+      try { await corrSubirAdjunto(rad.id, file, esCom ? 'borrador' : null); } catch (err) { fallas.push(file.name); }
+    }
+    toast(fallas.length ? `Radicado ${rad.numero_radicado} creado, pero no se subió: ${fallas.join(', ')}. Súbelo desde aquí.`
+      : `Radicado ${rad.numero_radicado} creado.`, fallas.length ? 'err' : 'ok');
+    corrVerDetalle(rad.id, { vista: 'lista', tipo });
+  });
+  setTimeout(() => { if (corrVivo(tok)) q('asunto').focus(); }, 0);
+}
+
+// ---- 📄 Un radicado: datos, adjuntos, aprobación del comunicado, cambio de área o estado e historial ----
+async function corrVerDetalle(id, volver = null) {
+  if (!isAdmin() || !id) return;
+  if (volver) _corr.volver = volver;
+  const v = _corr.volver || { vista: 'lista', tipo: '' };
+  const tok = corrPrepararVista('detalle', '📬 Radicado', v.vista === 'inicio' ? 'nav-corr-inicio' : 'nav-corr-' + (v.tipo || 'todos'));
+  _corr.id = id;
+  const body = $('pst-body');
+  let yo, rad = null, movs = [], adjs = [];
+  try {
+    yo = await corrYo();
+    if (yo) {
+      await corrAreas();
+      const [a, b, c] = await Promise.all([
+        sb.from('radicados').select('*,area_actual:area_actual_id(id,nombre),area_origen:area_origen_id(id,nombre),creador:creado_por(id,nombre_completo),'
+          + 'revisor:revisor_id(id,nombre_completo)').eq('id', id).maybeSingle(),
+        sb.from('radicado_movimientos').select('*,area_anterior:area_anterior_id(nombre),area_nueva:area_nueva_id(nombre),usuario:usuario_id(nombre_completo)')
+          .eq('radicado_id', id).order('created_at', { ascending: false }),
+        sb.from('radicado_adjuntos').select('*').eq('radicado_id', id).order('created_at', { ascending: false }),
+      ]);
+      for (const r of [a, b, c]) if (r.error) throw r.error;
+      rad = a.data; movs = b.data || []; adjs = c.data || [];
+    }
+  } catch (e) { corrFalla(body, tok, e); return; }
+  if (!corrVivo(tok)) return;
+  body.innerHTML = '';
+  body.appendChild(corrBotonVolver(v));
+  if (!yo) { body.appendChild(corrSinPerfil()); return; }
+  if (!rad) { body.appendChild(pstEl('div', 'cump-empty', 'Ese radicado no existe o tu perfil de correspondencia no lo puede ver.')); return; }
+  const conf = CORR_TIPOS[rad.tipo] || { icon: '📬', uno: rad.tipo, medio: null };
+  $('pst-title').textContent = `${conf.icon} ${rad.numero_radicado || 'Radicado'}`;
+  $('pst-sub').textContent = `${conf.uno} · radicado el ${fmtFechaHora(rad.fecha_radicado)}`;
+  // Lo mismo que deja la base (puede_gestionar_radicado): su área, quien lo creó, quien lo revisa o un administrador
+  const puede = yo.rol === 'admin' || rad.area_actual_id === yo.area_id || rad.creado_por === yo.id || (!!rad.revisor_id && rad.revisor_id === yo.id);
+  const recargar = () => { if (corrVivo(tok)) corrVerDetalle(id); };
+  const dato = (k, val, ancho = false) => `<div${ancho ? ' class="corr-d-ancho"' : ''}><dt>${k}</dt><dd>${val}</dd></div>`;
+
+  const cab = pstEl('section', 'pst-card corr-cab');
+  cab.innerHTML = `<div class="corr-cab-n"><span class="corr-cab-ic">${conf.icon}</span>
+      <div><b>${esc(rad.numero_radicado || '')}</b><div>${corrChips(rad)}</div></div></div>
+    <dl class="corr-datos">
+      ${dato('Asunto', esc(rad.asunto || ''), true)}
+      ${dato('Tipo', esc(conf.uno))}
+      ${dato('Fecha', esc(fmtFechaHora(rad.fecha_radicado)))}
+      ${dato('Área actual', esc((rad.area_actual && rad.area_actual.nombre) || '—'))}
+      ${rad.area_origen ? dato('Área que radica', esc(rad.area_origen.nombre)) : ''}
+      ${rad.remitente ? dato('Remitente', esc(rad.remitente)) : ''}
+      ${rad.destinatario ? dato('Destinatario', esc(rad.destinatario)) : ''}
+      ${conf.medio && rad.medio_recepcion ? dato(conf.medio, esc(CORR_MEDIOS[rad.medio_recepcion] || rad.medio_recepcion)) : ''}
+      ${dato('Creado por', esc((rad.creador && rad.creador.nombre_completo) || '—'))}
+      ${rad.tipo === 'comunicado' ? dato('Lo revisa', rad.revisor_id ? esc(corrRevisorTxt(rad)) + ' <small>(jefe inmediato de quien lo creó)</small>'
+        : 'Administración <small>(quien lo creó no tenía jefe inmediato)</small>') : ''}
+      ${rad.observaciones ? dato('Observaciones', esc(rad.observaciones), true) : ''}
+    </dl>`;
+  body.appendChild(cab);
+
+  // 🖊️ Aprobación del comunicado: arriba, que es lo que hay que hacer
+  if (rad.tipo === 'comunicado') {
+    const cAp = pstEl('section', 'pst-card liq-lista-card corr-aprob');
+    cAp.innerHTML = '<div class="pst-card-h"><div><h4>🖊️ Aprobación del comunicado</h4></div></div>';
+    const quien = rad.revisor_id ? corrRevisorTxt(rad) : 'un administrador de la correspondencia';
+    const esMio = rad.creado_por === yo.id;
+    if (rad.estado_aprobacion === 'rechazado' && (esMio || yo.rol === 'admin')) {
+      // ↩️ Reenviar a revisión con el MISMO número, con el borrador corregido
+      cAp.appendChild(pstEl('div', 'pst-nota', 'Quedó rechazado (el motivo está en el historial). Sube el borrador corregido y reenvíalo: conserva el mismo número.'));
+      const dzR = corrDropzone({ multiple: false, hint: 'PDF o Word' });
+      const campos = pstEl('div', 'corr-campos');
+      campos.innerHTML = '<div class="corr-adj-t corr-c-ancho">Borrador corregido (opcional)</div>';
+      campos.appendChild(dzR.el); dzR.el.classList.add('corr-c-ancho');
+      const lc = pstEl('label', 'corr-c-ancho', 'Comentario (opcional)');
+      const com = document.createElement('textarea'); com.rows = 2; com.maxLength = 1000;
+      lc.appendChild(com); campos.appendChild(lc);
+      const acc = pstEl('div', 'corr-pie');
+      acc.innerHTML = `<small>Vuelve a quedar pendiente y lo revisa ${esc(quien)}.</small><span class="corr-pie-acc">
+        <button type="button" class="btn btn-primary" data-reenviar>↩️ Reenviar a revisión</button></span>`;
+      cAp.append(campos, acc);
+      acc.querySelector('[data-reenviar]').addEventListener('click', async (e) => {
+        const bt = e.currentTarget, fs = dzR.archivos();
+        const si = await confirmAction({ title: 'Reenviar a revisión', lead: rad.numero_radicado, okLabel: 'Reenviar',
+          message: `${fs.length ? 'Se sube el borrador corregido y el' : 'El'} comunicado vuelve a quedar pendiente, con el mismo número.` });
+        if (!si || !corrVivo(tok)) return;
+        bt.disabled = true;
+        try {
+          for (const f of fs) await corrSubirAdjunto(id, f, 'borrador');
+          const { error } = await sb.rpc('reenviar_comunicado', { p_radicado_id: id, p_comentario: com.value.trim() || null });
+          if (error) throw error;
+          toast('Comunicado reenviado a revisión.', 'ok');
+          recargar();
+        } catch (err) {
+          toast('No se pudo reenviar: ' + ((err && err.message) || err), 'err');
+          bt.disabled = false;
+        }
+      });
+    } else if (rad.estado_aprobacion !== 'pendiente') {
+      cAp.appendChild(pstEl('div', 'pst-vacio', `Este comunicado ya quedó: ${corrAprobTxt(rad.estado_aprobacion).toLowerCase()}.`));
+    } else if (!corrPuedoDecidir(rad, yo)) {
+      cAp.appendChild(pstEl('div', 'pst-vacio', esMio
+        ? `Está esperando la revisión de ${quien}. Nadie aprueba su propio comunicado.`
+        : `Está pendiente. Lo revisa ${quien} (o un administrador de la correspondencia).`));
+    } else {
+      cAp.appendChild(pstEl('div', 'pst-nota', rad.revisor_id === yo.id ? 'Te toca a ti: eres el jefe inmediato de quien lo creó.'
+        : rad.revisor_id ? `Lo revisa ${quien}; como administrador de la correspondencia también puedes decidir.`
+          : 'Quien lo creó no tiene jefe inmediato: lo revisa administración.'));
+      const dzF = corrDropzone({ multiple: false, hint: 'PDF o Word' });
+      const campos = pstEl('div', 'corr-campos');
+      campos.innerHTML = '<div class="corr-adj-t corr-c-ancho">Versión final del comunicado (PDF o Word) — para aprobarlo</div>';
+      campos.appendChild(dzF.el); dzF.el.classList.add('corr-c-ancho');
+      const lc = pstEl('label', 'corr-c-ancho', 'Comentario (opcional)');
+      const com = document.createElement('textarea'); com.rows = 2; com.maxLength = 1000;
+      lc.appendChild(com); campos.appendChild(lc);
+      const acc = pstEl('div', 'corr-pie');
+      acc.innerHTML = `<small>La decisión y el comentario quedan en el historial.</small><span class="corr-pie-acc">
+        <button type="button" class="btn corr-rechazar" data-dec="rechazado">Rechazar</button>
+        <button type="button" class="btn btn-primary" data-dec="aprobado">Aprobar y montar el comunicado</button></span>`;
+      cAp.append(campos, acc);
+      acc.querySelectorAll('[data-dec]').forEach((b) => b.addEventListener('click', async () => {
+        const dec = b.dataset.dec, fs = dec === 'aprobado' ? dzF.archivos() : [];
+        if (dec === 'aprobado' && !fs.length) { toast('Adjunta la versión final del comunicado para aprobarlo.', 'err'); dzF.zona.focus(); return; }
+        const si = await confirmAction({ title: dec === 'aprobado' ? 'Aprobar el comunicado' : 'Rechazar el comunicado', lead: rad.numero_radicado,
+          message: dec === 'aprobado' ? 'Se sube la versión final y el comunicado queda aprobado.' : 'El comunicado queda rechazado.',
+          okLabel: dec === 'aprobado' ? 'Aprobar' : 'Rechazar', danger: dec === 'rechazado' });
+        if (!si || !corrVivo(tok)) return;
+        acc.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+        try {
+          for (const f of fs) await corrSubirAdjunto(id, f, 'final');
+          const { error } = await sb.rpc('decidir_comunicado', { p_radicado_id: id, p_decision: dec, p_comentario: com.value.trim() || null });
+          if (error) throw error;
+          toast(dec === 'aprobado' ? 'Comunicado aprobado.' : 'Comunicado rechazado.', 'ok');
+          recargar();
+        } catch (err) {
+          toast('No se pudo registrar la decisión: ' + ((err && err.message) || err), 'err');
+          acc.querySelectorAll('button').forEach((x) => { x.disabled = false; });
+        }
+      }));
+    }
+    body.appendChild(cAp);
+  }
+
+  // 📎 Adjuntos
+  const cAdj = pstEl('section', 'pst-card liq-lista-card');
+  cAdj.innerHTML = `<div class="pst-card-h"><div><h4>📎 Adjuntos (${adjs.length})</h4>
+      <div class="pst-nota">Se abren en otra pestaña con un enlace que dura 5 minutos.</div></div></div>
+    ${adjs.length ? `<ul class="corr-adjuntos">${adjs.map((a) => {
+      const t = corrTipoArchivo(a.tipo_mime, a.nombre_archivo);
+      const cat = a.categoria === 'final' ? ' <span class="chip chip-green">Versión final aprobada</span>'
+        : a.categoria === 'borrador' ? ' <span class="chip chip-gray">Borrador</span>' : '';
+      return `<li><span class="corr-adj-n">${t.icono} <button type="button" class="lnk" data-abrir="${esc(a.id)}">${esc(a.nombre_archivo)}</button>
+          <small>${t.etiqueta}${a.tamano_bytes ? ' · ' + corrTamano(a.tamano_bytes) : ''} · ${esc(fmtFechaHora(a.created_at))}</small>${cat}</span>
+        ${puede ? `<button type="button" class="lnk mal" data-borrar="${esc(a.id)}">Eliminar</button>` : ''}</li>`;
+    }).join('')}</ul>` : '<div class="pst-vacio">Sin adjuntos.</div>'}`;
+  cAdj.addEventListener('click', async (e) => {
+    const ab = e.target.closest('[data-abrir]');
+    if (ab) { const a = adjs.find((x) => x.id === ab.dataset.abrir); if (a) corrAbrirAdjunto(a.ruta_storage); return; }
+    const bo = e.target.closest('[data-borrar]'); if (!bo) return;
+    const a = adjs.find((x) => x.id === bo.dataset.borrar); if (!a) return;
+    const si = await confirmAction({ title: 'Eliminar adjunto', lead: a.nombre_archivo, message: 'Se borra el archivo del radicado. No se puede deshacer.',
+      okLabel: 'Eliminar', danger: true });
+    if (!si || !corrVivo(tok)) return;
+    bo.disabled = true;
+    // Primero la fila (ahí la base revisa el permiso); después el archivo
+    const { data: del, error } = await sb.from('radicado_adjuntos').delete().eq('id', a.id).select('id');
+    if (error || !del || !del.length) { toast('No se pudo eliminar: ' + ((error && error.message) || 'sin permiso'), 'err'); bo.disabled = false; return; }
+    try { await sb.storage.from('adjuntos').remove([a.ruta_storage]); } catch (err) { /* la fila ya no está: el archivo queda suelto */ }
+    toast('Adjunto eliminado.', 'ok');
+    recargar();
+  });
+  if (puede) {
+    const sub = pstEl('div', 'corr-subir');
+    const dz = corrDropzone({});
+    const b = pstEl('button', 'btn', 'Subir adjunto'); b.type = 'button';
+    sub.append(dz.el, b);
+    b.addEventListener('click', async () => {
+      const fs = dz.archivos();
+      if (!fs.length) { toast('Elige primero el archivo.', 'err'); return; }
+      b.disabled = true;
+      const fallas = [];
+      for (const f of fs) {
+        b.textContent = `Subiendo ${f.name}…`;
+        try { await corrSubirAdjunto(id, f, null); } catch (err) { fallas.push(`${f.name} (${(err && err.message) || err})`); }
+      }
+      toast(fallas.length ? 'No se subió: ' + fallas.join(', ') : (fs.length > 1 ? 'Adjuntos subidos.' : 'Adjunto subido.'), fallas.length ? 'err' : 'ok');
+      recargar();
+    });
+    cAdj.appendChild(sub);
+  }
+  body.appendChild(cAdj);
+
+  // 🔀 Pasar a otra área o cambiar el estado
+  if (puede) {
+    const cRe = pstEl('section', 'pst-card liq-lista-card');
+    cRe.innerHTML = `<div class="pst-card-h"><div><h4>🔀 Pasar a otra área o cambiar el estado</h4>
+        <div class="pst-nota">Queda en el historial con tu nombre y el comentario.</div></div></div>
+      <div class="corr-campos">
+        <label>Nueva área<select name="area"><option value="">(sin cambio)</option>${corrAreasActivas().filter((a) => a.id !== rad.area_actual_id)
+          .map((a) => `<option value="${esc(a.id)}">${esc(a.nombre)}</option>`).join('')}</select></label>
+        <label>Nuevo estado<select name="estado"><option value="">(sin cambio)</option>${Object.entries(CORR_ESTADOS).filter(([k]) => k !== rad.estado)
+          .map(([k, [ic, t]]) => `<option value="${k}">${ic} ${t}</option>`).join('')}</select></label>
+        <label class="corr-c-ancho">Comentario<textarea name="com" rows="2" maxlength="1000"></textarea></label>
+      </div>
+      <div class="corr-pie"><span></span><span class="corr-pie-acc"><button type="button" class="btn btn-primary" data-guardar>Guardar</button></span></div>`;
+    cRe.querySelector('[data-guardar]').addEventListener('click', async (e) => {
+      const bt = e.currentTarget;
+      const area = cRe.querySelector('[name="area"]').value, est = cRe.querySelector('[name="estado"]').value;
+      const com = cRe.querySelector('[name="com"]').value.trim();
+      if (!area && !est) { toast('Elige una nueva área o un nuevo estado.', 'err'); return; }
+      bt.disabled = true; bt.textContent = 'Guardando…';
+      let error = null;
+      try { ({ error } = await sb.rpc('reasignar_radicado', { p_radicado_id: id, p_area_nueva_id: area || null, p_estado_nuevo: est || null, p_comentario: com || null })); }
+      catch (err) { error = err; }
+      if (error) { toast('No se pudo guardar: ' + (error.message || error), 'err'); bt.disabled = false; bt.textContent = 'Guardar'; return; }
+      toast('Radicado actualizado.', 'ok');
+      recargar();
+    });
+    body.appendChild(cRe);
+  }
+
+  // 🕓 Historial (lo escribe la base) y, al final, cuando se radicó
+  const cH = pstEl('section', 'pst-card liq-lista-card');
+  const linea = (m) => {
+    const cambios = [
+      m.area_anterior_id !== m.area_nueva_id ? `área <b>${esc((m.area_anterior && m.area_anterior.nombre) || '—')}</b> → <b>${esc((m.area_nueva && m.area_nueva.nombre) || '—')}</b>` : '',
+      m.estado_anterior !== m.estado_nuevo ? `estado <b>${esc(corrEstadoTxt(m.estado_anterior))}</b> → <b>${esc(corrEstadoTxt(m.estado_nuevo))}</b>` : '',
+      m.estado_aprobacion_anterior !== m.estado_aprobacion_nuevo
+        ? `aprobación <b>${esc(corrAprobTxt(m.estado_aprobacion_anterior))}</b> → <b>${esc(corrAprobTxt(m.estado_aprobacion_nuevo))}</b>` : '',
+    ].filter(Boolean).join(' · ');
+    return `<li><div class="corr-hist-h"><b>${esc(fmtFechaHora(m.created_at))}</b> · ${esc((m.usuario && m.usuario.nombre_completo) || 'Usuario')}</div>
+      ${cambios ? `<div>${cambios}</div>` : ''}${m.comentario ? `<div class="corr-hist-c">${esc(m.comentario)}</div>` : ''}</li>`;
+  };
+  cH.innerHTML = `<div class="pst-card-h"><div><h4>🕓 Historial</h4></div></div>
+    <ul class="corr-hist">${movs.map(linea).join('')}
+      <li><div class="corr-hist-h"><b>${esc(fmtFechaHora(rad.fecha_radicado))}</b> · ${esc((rad.creador && rad.creador.nombre_completo) || 'Usuario')}</div>
+        <div>Se radicó en <b>${esc((movs.length ? (movs[movs.length - 1].area_anterior || {}).nombre : (rad.area_actual || {}).nombre) || '—')}</b></div></li></ul>`;
+  body.appendChild(cH);
+}
+
+// ---- ⚙️ Áreas y usuarios (lo de «Administración» de la app) ----
+async function corrVerAdmin() {
+  if (!isAdmin()) return;
+  const tok = corrPrepararVista('admin', '⚙️ Áreas y usuarios de la correspondencia', 'nav-corr-admin');
+  const body = $('pst-body');
+  let yo, perfiles = [], erp = [], rads = [], sug = [], sugErr = '';
+  try {
+    _corr.areas = null;
+    yo = await corrYo();
+    if (yo) {
+      await corrAreas();
+      [perfiles, erp, rads] = await Promise.all([
+        corrTodo('profiles', 'id,nombre_completo,rol,area_id,jefe_id'),
+        corrTodo('perfiles', 'id,rol,activo'),
+        corrTodo('radicados', 'area_actual_id'),
+      ]);
+      // El jefe que sugiere el Perfil (cargo y área). Si no llega, la pantalla sigue sin sugerencias.
+      if (yo.rol === 'admin') {
+        const r = await sb.rpc('corr_jefes_perfil');
+        if (r.error) sugErr = r.error.message || String(r.error); else sug = r.data || [];
+      }
+    }
+  } catch (e) { corrFalla(body, tok, e); return; }
+  if (!corrVivo(tok)) return;
+  body.innerHTML = '';
+  if (!yo) { body.appendChild(corrSinPerfil()); return; }
+  $('pst-sub').textContent = corrQuienSoy(yo);
+  if (yo.rol !== 'admin') {
+    body.appendChild(pstEl('div', 'cump-empty', 'Para cambiar áreas y usuarios hay que ser administrador de la correspondencia.'));
+    return;
+  }
+  const recargar = () => { if (corrVivo(tok)) corrVerAdmin(); };
+  const porArea = (lista, k) => lista.reduce((m, x) => { if (x[k]) m[x[k]] = (m[x[k]] || 0) + 1; return m; }, {});
+  const usan = porArea(perfiles, 'area_id'), tienen = porArea(rads, 'area_actual_id');
+
+  // 🏢 Áreas
+  const cA = pstEl('section', 'pst-card liq-lista-card');
+  cA.innerHTML = `<div class="pst-card-h"><div><h4>🏢 Áreas</h4>
+      <div class="pst-nota">Un área inactiva no sale para radicar ni para pasarle un radicado; lo que ya tiene sigue ahí.</div></div></div>
+    <div class="liq-tabla-wrap"><table class="liq-rev corr-tabla corr-areas"><thead><tr><th>Área</th><th>Estado</th><th>Usuarios</th><th>Radicados que tiene</th><th></th></tr></thead><tbody>
+      ${(_corr.areas || []).map((a) => `<tr><td><b>${esc(a.nombre)}</b></td>
+        <td>${a.activo ? '<span class="chip chip-green">Activa</span>' : '<span class="chip chip-gray">Inactiva</span>'}</td>
+        <td>${pstNum(usan[a.id] || 0)}</td><td>${pstNum(tienen[a.id] || 0)}</td>
+        <td><button type="button" class="lnk${a.activo ? ' mal' : ''}" data-area="${esc(a.id)}">${a.activo ? 'Desactivar' : 'Activar'}</button></td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="corr-admin-f"><input type="text" class="corr-area-nueva" maxlength="120" placeholder="Nombre de la nueva área" aria-label="Nombre de la nueva área">
+      <button type="button" class="btn btn-primary" data-agregar>Agregar área</button></div>`;
+  cA.querySelectorAll('[data-area]').forEach((b) => b.addEventListener('click', async () => {
+    const a = (_corr.areas || []).find((x) => x.id === b.dataset.area); if (!a) return;
+    b.disabled = true;
+    const { data, error } = await sb.from('areas').update({ activo: !a.activo }).eq('id', a.id).select('id,activo');
+    if (error || !data || !data.length) { toast('No se pudo cambiar el área: ' + ((error && error.message) || 'sin permiso'), 'err'); b.disabled = false; return; }
+    toast(`${a.nombre}: ${a.activo ? 'desactivada' : 'activada'}.`, 'ok');
+    recargar();
+  }));
+  cA.querySelector('[data-agregar]').addEventListener('click', async (e) => {
+    const inp = cA.querySelector('.corr-area-nueva'), nombre = inp.value.trim().replace(/\s+/g, ' ');
+    if (nombre.length < 2) { toast('Escribe el nombre del área (al menos 2 letras).', 'err'); inp.focus(); return; }
+    const bt = e.currentTarget; bt.disabled = true;
+    const { error } = await sb.from('areas').insert({ nombre }).select('id').single();
+    if (error) {
+      toast(/duplicate|unique/i.test(error.message || '') ? 'Ya hay un área con ese nombre.' : 'No se pudo crear: ' + error.message, 'err');
+      bt.disabled = false; return;
+    }
+    toast(`Área «${nombre}» creada.`, 'ok');
+    recargar();
+  });
+  body.appendChild(cA);
+
+  // 👤 Usuarios: todos los del ERP tienen perfil aquí (se crea solo); los que USAN la correspondencia son los que tienen área
+  const rolErp = Object.fromEntries(erp.map((p) => [p.id, p]));
+  const porId = Object.fromEntries(perfiles.map((p) => [p.id, p]));
+  const sugDe = Object.fromEntries(sug.map((s) => [s.profile_id, s]));
+  const nombre = (id) => (porId[id] && porId[id].nombre_completo) || '(sin nombre)';
+  const sinTildes = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const lista = perfiles.slice().sort((x, y) => String(x.nombre_completo || '').localeCompare(String(y.nombre_completo || ''), 'es'));
+  // Quién puede ser jefe: los que usan la correspondencia (con área o administradores), los que el Perfil sugiere y los que ya lo son
+  const esJefe = (id) => perfiles.some((p) => p.jefe_id === id);
+  const candidatos = () => lista.filter((p) => p.area_id || p.rol === 'admin' || esJefe(p.id) || sug.some((s) => s.jefe_profile_id === p.id));
+  const pendientesPerfil = () => lista.filter((p) => !p.jefe_id && sugDe[p.id] && sugDe[p.id].jefe_profile_id && porId[sugDe[p.id].jefe_profile_id]);
+  const cU = pstEl('section', 'pst-card liq-lista-card');
+  cU.innerHTML = `<div class="pst-card-h"><div><h4>👤 Usuarios de la correspondencia</h4>
+      <div class="pst-nota">Cada usuario del ERP tiene perfil aquí (se crea solo). El administrador ve todo; un usuario ve los radicados
+      de su área, los que creó y los comunicados que le toca revisar. <b>Los comunicados los revisa el jefe inmediato</b> de quien
+      los crea (sin jefe, administración); debajo de cada uno sale el jefe que sugiere el Perfil por su cargo y área.
+      Los cambios se guardan al elegirlos.</div></div>
+      <button type="button" class="btn btn-primary corr-u-aplicar" data-aplicar hidden></button></div>
+    ${sugErr ? `<div class="pst-nota corr-err">No se pudo leer la jerarquía del Perfil (${esc(sugErr)}); el jefe se puede asignar a mano.</div>` : ''}
+    <div class="corr-admin-f"><input type="search" class="corr-u-q" placeholder="Buscar por nombre" aria-label="Buscar usuario por nombre">
+      <label class="liq-chk"><input type="checkbox" class="corr-u-todos"> Ver también los que no tienen área (afiliados, despachadores…)</label></div>
+    <div class="liq-tabla-wrap"><table class="liq-rev corr-tabla corr-usuarios"><thead><tr><th>Nombre</th><th>En el ERP</th><th>Área</th><th>Rol</th>
+      <th>Jefe inmediato <small>(revisa sus comunicados)</small></th></tr></thead><tbody></tbody></table></div>
+    <div class="pst-nota corr-u-cuenta"></div>`;
+  const tb = cU.querySelector('tbody'), btAplicar = cU.querySelector('[data-aplicar]');
+  // Lo que dice el Perfil de esa persona y el jefe que sugiere
+  const sugerencia = (p) => {
+    const s = sugDe[p.id];
+    if (!s) return sug.length ? '<small class="corr-sug">Sin dato en el Perfil.</small>' : '';
+    const de = s.enlace === 'area' ? `Cuenta del área ${esc(s.area_perfil || '')}` : `Perfil: ${esc(s.cargo || 'sin cargo')} (${esc(s.area_perfil || 'sin área')})`;
+    let j;
+    if (!s.jefe_cargo) j = ' · es la cabeza: lo revisa administración';
+    else if (s.jefe_profile_id && porId[s.jefe_profile_id]) {
+      j = s.jefe_profile_id === p.jefe_id ? ` · jefe: ${esc(s.jefe_cargo)} ✓`
+        : ` · jefe: ${esc(s.jefe_cargo)} → <button type="button" class="lnk" data-usar="${esc(s.jefe_profile_id)}">Usar a ${esc(nombre(s.jefe_profile_id))}</button>`;
+    } else j = ` · jefe: ${esc(s.jefe_cargo)}${s.jefe_area ? ' (' + esc(s.jefe_area) + ')' : ''}, <span class="corr-sug-sin">sin cuenta en la correspondencia</span>`;
+    return `<small class="corr-sug">${de}${j}</small>`;
+  };
+  const pintar = () => {
+    const qv = sinTildes(cU.querySelector('.corr-u-q').value.trim());
+    const todos = cU.querySelector('.corr-u-todos').checked;
+    const vis = lista.filter((p) => (todos || p.area_id || p.rol === 'admin' || p.jefe_id || esJefe(p.id))
+      && (!qv || sinTildes(p.nombre_completo).includes(qv)));
+    const cand = candidatos();
+    tb.innerHTML = vis.map((p) => {
+      const e = rolErp[p.id], yoMismo = p.id === yo.id;
+      const opcJefe = cand.filter((c) => c.id !== p.id);
+      if (p.jefe_id && !opcJefe.some((c) => c.id === p.jefe_id) && porId[p.jefe_id]) opcJefe.push(porId[p.jefe_id]);
+      return `<tr data-id="${esc(p.id)}"><td><b>${esc(p.nombre_completo || '(sin nombre)')}</b>${yoMismo ? ' <small>(tú)</small>' : ''}</td>
+        <td><small>${e ? esc(CORR_ROL_ERP[e.rol] || e.rol || '') + (e.activo === false ? ' · inactivo' : '') : '—'}</small></td>
+        <td><select data-c="area_id" aria-label="Área"><option value="">(sin área)</option>${(_corr.areas || []).map((a) =>
+          `<option value="${esc(a.id)}"${a.id === p.area_id ? ' selected' : ''}>${esc(a.nombre)}${a.activo ? '' : ' (inactiva)'}</option>`).join('')}</select></td>
+        <td><select data-c="rol" aria-label="Rol"${yoMismo ? ' disabled title="No puedes quitarte a ti mismo el rol de administrador"' : ''}>
+          <option value="usuario"${p.rol !== 'admin' ? ' selected' : ''}>Usuario</option><option value="admin"${p.rol === 'admin' ? ' selected' : ''}>Administrador</option></select></td>
+        <td class="corr-jefe"><select data-c="jefe_id" aria-label="Jefe inmediato"><option value="">(sin jefe: lo revisa administración)</option>${opcJefe.map((c) => {
+          const ar = (_corr.areas || []).find((a) => a.id === c.area_id);
+          return `<option value="${esc(c.id)}"${c.id === p.jefe_id ? ' selected' : ''}>${esc(c.nombre_completo || '(sin nombre)')}${ar ? ' — ' + esc(ar.nombre) : ''}</option>`;
+        }).join('')}</select>${sugerencia(p)}</td></tr>`;
+    }).join('') || '<tr class="corr-vacio"><td colspan="5">Nadie con ese nombre.</td></tr>';
+    cU.querySelector('.corr-u-cuenta').textContent = `${pstNum(vis.length)} de ${pstNum(lista.length)} perfiles`
+      + ` · ${pstNum(lista.filter((p) => p.area_id).length)} con área · ${pstNum(lista.filter((p) => p.rol === 'admin').length)} administrador(es)`
+      + ` · ${pstNum(lista.filter((p) => p.jefe_id).length)} con jefe inmediato`;
+    const pend = pendientesPerfil();
+    btAplicar.hidden = !pend.length;
+    btAplicar.textContent = `🧭 Poner el jefe del Perfil (${pstNum(pend.length)})`;
+    btAplicar.title = `A ${pstNum(pend.length)} persona(s) sin jefe inmediato se le pone el jefe que sugiere el Perfil por su cargo y área`;
+  };
+  cU.querySelector('.corr-u-q').addEventListener('input', pintar);
+  cU.querySelector('.corr-u-todos').addEventListener('change', pintar);
+  // Guarda un cambio y confirma que la base lo dejó (sin permiso, la base deja el valor como estaba sin decir nada)
+  const guardar = async (p, k, val) => {
+    const { data, error } = await sb.from('profiles').update({ [k]: val }).eq('id', p.id).select('id,rol,area_id,jefe_id');
+    if (error) throw error;
+    const r = data && data[0];
+    if (!r || (r[k] ?? null) !== (val ?? null)) throw new Error('la base no dejó hacer el cambio');
+    p[k] = r[k];
+    if (p.id === yo.id) _corr.yo = undefined;
+  };
+  tb.addEventListener('change', async (e) => {
+    const el = e.target.closest('[data-c]'); if (!el) return;
+    const p = lista.find((x) => x.id === el.closest('tr').dataset.id); if (!p) return;
+    const k = el.dataset.c, val = el.value || null;
+    const deshacer = () => { el.value = p[k] || (k === 'rol' ? 'usuario' : ''); };
+    if (k === 'rol' && val === 'admin') {
+      const si = await confirmAction({ title: 'Hacer administrador de la correspondencia', lead: p.nombre_completo || '', okLabel: 'Sí, darlo',
+        message: 'Va a ver y manejar TODOS los radicados, las áreas y los usuarios de la correspondencia, y podrá decidir cualquier comunicado que no sea suyo.' });
+      if (!si) { deshacer(); return; }
+    }
+    el.disabled = true;
+    try {
+      await guardar(p, k, val);
+      toast(k === 'jefe_id' ? (val ? `Jefe inmediato: ${nombre(val)}.` : 'Sin jefe: sus comunicados los revisa administración.') : 'Guardado.', 'ok');
+    } catch (err) {
+      deshacer();
+      toast('No se pudo guardar: ' + ((err && err.message) || err), 'err');
+    } finally { if (!(k === 'rol' && p.id === yo.id)) el.disabled = false; }
+    pintar();
+  });
+  // «Usar a …»: el jefe que sugiere el Perfil para esa persona
+  tb.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-usar]'); if (!b) return;
+    const p = lista.find((x) => x.id === b.closest('tr').dataset.id); if (!p) return;
+    b.disabled = true;
+    try { await guardar(p, 'jefe_id', b.dataset.usar); toast(`Jefe inmediato: ${nombre(b.dataset.usar)}.`, 'ok'); }
+    catch (err) { toast('No se pudo guardar: ' + ((err && err.message) || err), 'err'); }
+    pintar();
+  });
+  btAplicar.addEventListener('click', async () => {
+    const pend = pendientesPerfil(); if (!pend.length) return;
+    const si = await confirmAction({ title: 'Poner el jefe que dice el Perfil', lead: `${pstNum(pend.length)} persona(s) sin jefe inmediato`, okLabel: 'Ponerlos',
+      message: 'A cada una se le pone el jefe que sugiere el Perfil por su cargo y área. A quien ya tiene jefe no se le cambia. Después se puede corregir uno por uno.' });
+    if (!si || !corrVivo(tok)) return;
+    btAplicar.disabled = true;
+    let bien = 0; const fallas = [];
+    for (const p of pend) {
+      try { await guardar(p, 'jefe_id', sugDe[p.id].jefe_profile_id); bien++; } catch (err) { fallas.push(p.nombre_completo || p.id); }
+    }
+    toast(fallas.length ? `Se pusieron ${bien}; no se pudo con: ${fallas.join(', ')}` : `Listo: ${bien} persona(s) con jefe inmediato.`, fallas.length ? 'err' : 'ok');
+    btAplicar.disabled = false;
+    pintar();
+  });
+  pintar();
+  body.appendChild(cU);
+}
+
+// ↻ de la barra: vuelve a leer lo que está a la vista
+function corrRecargar() {
+  corrOlvidar();
+  if (_corr.vista === 'lista') return corrVerLista(_corr.tipo, { mantener: true });
+  if (_corr.vista === 'detalle' && _corr.id) return corrVerDetalle(_corr.id);
+  if (_corr.vista === 'radicar') return corrVerRadicar(_corr.tipo);
+  if (_corr.vista === 'admin') return corrVerAdmin();
+  return corrVerInicio();
 }
 
 
