@@ -3674,6 +3674,9 @@ input.pqr-dest { width: 100%; min-width: 150px; font: inherit; font-size: 13px; 
 .liq-sug-vacio { display: block; padding: 10px; font-size: 13px; color: var(--muted); font-weight: 500; }
 /* 🤝 Quién consigna por quién (sql/203) */
 .cpq-tabla td { vertical-align: top; }
+/* En el celular la regla general (table-layout: fixed) apretaba las columnas hasta montar un texto encima de otro:
+   estas tablas guardan un ancho mínimo y se deslizan de lado dentro de .liq-tabla-wrap */
+.liq-tabla-wrap .cpq-tabla { table-layout: auto; min-width: 720px; }
 .cpq-acc { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; white-space: nowrap; }
 .cpq-extra > td { background: var(--bg); padding: 12px !important; }
 .cpq-form, .cpq-deps { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; }

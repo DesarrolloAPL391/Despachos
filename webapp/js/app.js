@@ -18370,8 +18370,9 @@ async function liqVerConsignaPor() {
         const que = r.recaudo_id
           ? `Solo el depósito del ${esc(fechaLegible((r.deposito || {}).fecha))} por ${liqPlata((r.deposito || {}).valor)}`
           : (r.desde ? `Todo desde el ${esc(fechaLegible(r.desde))}` : 'Todo lo que consigne') + (r.hasta ? ` hasta el ${esc(fechaLegible(r.hasta))}` : '');
-        return `<tr><td>${r.pagador ? `${cpqQuien(r.pagador_nombre, r.pagador)}<br><small>C.C. ${esc(r.pagador)}</small>` : '<small>sin cédula en el banco</small>'}</td>
-          <td><b>${cpqQuien(r.conductor_nombre, r.conductor)}</b><br><small>C.C. ${esc(r.conductor)}</small></td>
+        return `<tr><td>${r.pagador ? `${r.pagador_nombre ? esc(r.pagador_nombre) : 'No aparece en la app'}<br><small>C.C. ${esc(r.pagador)}</small>`
+          : '<small>sin cédula en el banco</small>'}</td>
+          <td><b>${r.conductor_nombre ? esc(r.conductor_nombre) : 'Sin nombre en la app'}</b><br><small>C.C. ${esc(r.conductor)}</small></td>
           <td>${que}<br><small>${esc(r.creado || '')}</small></td>
           <td>${pstNum(r.depositos)} depósito(s)<br><b>${liqPlata(r.total)}</b></td>
           <td><small>${esc(r.nota || '')}</small></td>
