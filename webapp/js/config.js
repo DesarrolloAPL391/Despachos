@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v379';
+export const APP_VERSION = 'v380';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -1340,14 +1340,14 @@ export const TABLES = {
       { key: 'fecha_novedad', label: 'Fecha novedad', type: 'date', section: 'General' },
       { key: 'ruta', label: 'Ruta infracción', type: 'textsel', optionsFrom: { table: 'itinerarios', col: 'nombre' }, section: 'General', hint: 'Ruta donde ocurrió la infracción (informativo). Elígela de la lista.' },
       { key: 'vehiculo', label: 'Móvil (N° interno)', type: 'textsel', optionsFrom: { table: 'vehiculos', col: 'numero' }, section: 'General', requiredWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, hint: 'En tablas de puesto el bloqueo es por móvil (obligatorio ahí). En Despachos es opcional (ahí bloquea el conductor). Elígelo de la lista para que coincida con el despacho.' },
-      { key: 'conductor', label: 'Conductor', type: 'textsel', optionsFrom: { table: 'conductores_sonar', col: 'nombre', where: ['status', 'ENABLED'] }, section: 'General', requiredWhen: { field: 'tabla', in: ['despachos'] }, hint: 'En Despachos el bloqueo sigue al CONDUCTOR en cualquier móvil (obligatorio ahí). Elígelo de la lista para que coincida EXACTO con el despacho.' },
+      { key: 'conductor', label: 'Conductor', type: 'textsel', optionsFrom: { table: 'conductores_sonar', col: 'nombre', where: ['status', 'ENABLED'] }, section: 'General', requiredWhen: { field: 'tabla', in: ['despachos'] }, hint: 'Con «despachos» la restricción es del CONDUCTOR: no lo deja despachar en ninguna tabla, ruta ni móvil dentro de la franja (obligatorio ahí). Elígelo de la lista para que coincida EXACTO con el despacho.' },
       { key: 'novedad', label: 'Novedad (qué incumplió)', type: 'text', section: 'General' },
-      { key: 'tabla', label: 'Tabla / puesto donde aplica', type: 'enum', options: [...PUESTO_TABLE_KEYS, 'despachos'], required: true, section: 'Restricción', hint: 'Una tabla de puesto (laureles, t_130, …) = bloquea por MÓVIL + RUTA. "despachos" (vista general) = bloquea por CONDUCTOR (cualquier móvil) + franja horaria.' },
+      { key: 'tabla', label: 'Tabla / puesto donde aplica', type: 'enum', options: [...PUESTO_TABLE_KEYS, 'despachos'], required: true, default: 'despachos', section: 'Restricción', hint: '«despachos» = POR CONDUCTOR: no lo deja despachar en NINGUNA tabla, ruta ni móvil dentro de la franja horaria (sql/210). Una tabla de puesto (laureles, t_130, …) = bloquea un MÓVIL en una RUTA, solo en esa tabla.' },
       { key: 'fecha_restriccion', label: 'Fecha en que se cumple la restricción', type: 'date', required: true, section: 'Restricción', hint: 'Día en que el móvil queda restringido (se usa para bloquear el despacho).' },
       { key: 'ruta_restringida', label: 'Ruta a restringir', type: 'textsel', optionsFrom: { table: 'itinerarios', col: 'nombre' }, section: 'Restricción', showWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, requiredWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, hint: 'Ruta del viaje castigado (p. ej. 192). Elígela de la lista. Solo para tablas de puesto.' },
       { key: 'modo', label: 'Tipo de restricción', type: 'enum', options: ['VIAJE', 'HORA'], section: 'Restricción', showWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, requiredWhen: { field: 'tabla', in: PUESTO_TABLE_KEYS }, hint: 'VIAJE = un viaje puntual (ruta + hora de salida). HORA = una franja. Solo para tablas de puesto.' },
       { key: 'hora_viaje', label: 'Hora del viaje a restringir', type: 'time', section: 'Restricción', showWhen: { field: 'modo', in: ['VIAJE'] }, hint: 'Hora de salida del viaje castigado. Se bloquea ±30 min alrededor.' },
-      { key: 'hora_inicial', label: 'Hora inicial (franja)', type: 'time', section: 'Restricción', hint: 'Franja bloqueada: para tipo HORA (puesto) o para Despachos.' },
+      { key: 'hora_inicial', label: 'Hora inicial (franja)', type: 'time', section: 'Restricción', hint: 'Franja bloqueada: para la restricción por conductor o para tipo HORA (puesto). Sin franja, queda restringido todo el día.' },
       { key: 'hora_finalizacion', label: 'Hora finalización (franja)', type: 'time', section: 'Restricción' },
       { key: 'viajes_hora', label: 'Detalle (texto libre)', type: 'text', section: 'Restricción', hint: 'Opcional, p. ej. "se restringe viaje 10:45 ruta 192".' },
       { key: 'estado', label: 'Estado', type: 'enum', options: ['VIGENTE', 'CANCELADA'], required: true, section: 'Restricción' },

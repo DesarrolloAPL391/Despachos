@@ -15166,9 +15166,9 @@ function restriccionBloqueoMsg(b) {
   else if (b.hora_ini && b.hora_fin) cuando = ` entre <b>${esc(String(b.hora_ini).slice(0, 5))}</b> y <b>${esc(String(b.hora_fin).slice(0, 5))}</b>`;
   const esDespachos = String(b.tabla || '').toLowerCase() === 'despachos';
   if (esDespachos) {
-    // En Despachos la restricción es del CONDUCTOR: no puede despacharse en ningún móvil.
+    // Restricción del CONDUCTOR (tabla «despachos»): desde sql/210 frena en TODAS las tablas, rutas y móviles.
     return `🚫 <b>CONDUCTOR RESTRINGIDO</b> · ${esc(String(b.conductor || '').trim())}<br>`
-      + `Tiene una <b>restricción vigente</b>${cuando} (${esc(b.fecha || '')}). No puede despacharse en <b>ningún móvil</b>.<br>`
+      + `Tiene una <b>restricción vigente</b>${cuando} (${esc(b.fecha || '')}). No puede despacharse en <b>ninguna ruta ni móvil</b>.<br>`
       + (b.viaje ? `Detalle: ${esc(b.viaje)}.<br>` : '')
       + 'El auditor debe <b>cancelar</b> la restricción para levantarla.';
   }
@@ -15198,7 +15198,7 @@ async function avisarRestriccionMovil(numero, conductor, boxId) {
         const win = esDesp ? franja
           : (r.modo === 'VIAJE' ? (r.hora_viaje ? ` viaje ${String(r.hora_viaje).slice(0, 5)}` : '') : franja);
         const quien = esDesp
-          ? `Conductor <b>${esc(r.conductor || '?')}</b> (en cualquier móvil)`
+          ? `Conductor <b>${esc(r.conductor || '?')}</b> (en cualquier ruta y móvil)`
           : `Móvil <b>${esc(r.vehiculo || '?')}</b> · ruta <b>${esc(r.ruta_restringida || '?')}</b>`;
         return `• ${quien}${win}${r.viajes_hora ? ' — ' + esc(r.viajes_hora) : ''}`;
       }).join('<br>')
