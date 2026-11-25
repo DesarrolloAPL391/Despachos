@@ -662,7 +662,7 @@ function buildSidebar() {
   const TBL_GROUP = {
     ubicaciones: 'cat', vehiculosgps: 'cat', conductores_sonar: 'cat', parque_automotor: 'cat', itinerarios: 'cat', rutas: 'cat',
     restricciones_rutas: 'restr',
-    siniestros: 'vial', eventos_bus: 'vial', preoperacionales: 'vial',
+    siniestros: 'vial', eventos_bus: 'vial', preoperacionales: 'vial', infracciones_transito: 'vial', accidentes_transito: 'vial',
     horarios: 'admin', puestos: 'admin', perfiles: 'admin', despachadores: 'admin', tablas_despacho: 'admin',
     perfilsociodemografico: 'th', perfil_vinculaciones: 'th',
   };
@@ -1092,6 +1092,7 @@ function selectTable(name, filtroInicial) {
   // Borra TODA la programación de esa fecha en la tabla, para reimportar el día corregido.
   $('del-day-btn').hidden = !(isAdmin() && TABLES[name].dispatchable);
   const bSin = $('sin-sync-btn'); if (bSin) bSin.hidden = name !== 'siniestros' || !puedeVerVial();
+  const bInf = $('inf-imp-btn'); if (bInf) bInf.hidden = !['infracciones_transito', 'accidentes_transito'].includes(name) || !puedeVerInfracciones();
   const bPqr = $('pqr-sync-btn'); if (bPqr) bPqr.hidden = name !== 'pqrsf' || !puedeTraerPqrsf();
   // Al abrir PQRSF, si la hoja lleva rato sin traerse, se trae sola. Sin await: la pantalla
   // se pinta ya y la sincronización va por detrás.
@@ -4374,6 +4375,373 @@ function vlcExcel() {
   });
 }
 
+// ---------- 🚓 Infracciones de tránsito (sql/211) y 💥 accidentes (sql/212) ----------
+// Llegan dos clases de archivo: el MENSUAL de tránsito (hoja "INFRACCIONES") y el HISTÓRICO que se
+// llevaba a mano ("DATA GENERAL INFRACCIONES", 19 columnas). La app solo lee el Excel y manda las
+// celdas como vienen; la BASE las pasa al formato del histórico (infracciones_importar), así el
+// formato no depende de la versión de la app. Primero simula; guarda solo al confirmar.
+// Por ahora solo el admin (regla del 22/10: lo nuevo, primero para el admin). La base ya deja a
+// seguridad vial (es_seguridad_vial): para abrírselo basta cambiar esto y sumar la tabla a TABLAS_VIAL.
+function puedeVerInfracciones() { return isAdmin(); }
+const _infH = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().replace(/[\s_]+/g, ' ').trim();
+// Encabezado normalizado → clave que esperan infracciones_importar (sql/211) y accidentes_importar (sql/212).
+// El archivo mensual de tránsito trae DOS hojas (INFRACCIONES y ACCIDENTES): se importan juntas.
+const INF_FMT = {
+  MENSUAL: {
+    nombre: 'Infracciones del mes', que: 'infracción(es)', rpc: 'infracciones_importar',
+    req: ['fecha comparendo', 'comparendo nro', 'placa', 'codigo infraccion'],
+    cols: { 'fecha comparendo': 'fecha', 'comparendo nro': 'comparendo', placa: 'placa', 'codigo infraccion': 'codigo',
+      infraccion: 'infraccion', 'tipo comparendo': 'tipo', cedula: 'cedula', 'nombre infractor': 'nombre' },
+    fechas: [], fechaHora: ['fecha'],
+  },
+  HISTORICO: {
+    nombre: 'Histórico de infracciones', que: 'infracción(es)', rpc: 'infracciones_importar',
+    req: ['ano del reporte', 'fecha de la infraccion', 'codigo de la infraccion', 'nro. comparendo'],
+    cols: { 'ano del reporte': 'anio', 'mes del reporte': 'mes', 'dia del reporte': 'dia',
+      'fecha de la infraccion': 'fecha', 'codigo del conductor': 'cod_conductor', 'id. conductor': 'ced_conductor',
+      'nombre conductor': 'nom_conductor', 'fecha de ingreso del conductor': 'fecha_ingreso',
+      'cat. licencia de conduccion': 'cat_licencia', 'fcha expedici': 'lic_expedicion', 'fecha vencimiento': 'lic_vencimiento',
+      'posible hora': 'hora', 'codigo de la infraccion': 'codigo', placa: 'placa', 'nro. int.': 'numero_interno',
+      ruta: 'ruta', afiliado: 'afiliado', 'tipo de comparendo': 'tipo', 'nro. comparendo': 'comparendo' },
+    fechas: ['fecha', 'fecha_ingreso', 'lic_expedicion', 'lic_vencimiento'], fechaHora: ['hora'],
+  },
+  ACCIDENTES: {
+    nombre: 'Accidentes del mes', que: 'accidente(s)', rpc: 'accidentes_importar',
+    req: ['nro. croquis', 'placa', 'fecha accidente'],
+    cols: { 'comparendo nro': 'comparendo', 'nro. croquis': 'croquis', direccion: 'direccion', placa: 'placa',
+      'clase accidente': 'clase', 'gravedad accidente': 'gravedad', cedula: 'cedula', 'nombre infractor': 'nombre',
+      'fecha accidente': 'fecha' },
+    fechas: [], fechaHora: ['fecha'],
+  },
+};
+const INF_SEGUN = { COMPARENDO: 'El del comparendo', REPORTE: 'El del reporte de tránsito', SONAR: 'Según SONAR (iba manejando)',
+  MANUAL: 'Corregido a mano', 'SIN DATO': 'Sin conductor', HISTORICO: 'Del histórico' };
+const INF_TABLAS = ['infracciones_transito', 'accidentes_transito'];
+const INF_LOTE = { MENSUAL: 'Infracciones del mes', HISTORICO: 'Histórico', ACCIDENTES: 'Accidentes' };
+
+// Número de Excel (días desde 1899-12-30) → "AAAA-MM-DD", "HH:MM:SS" o "AAAA-MM-DD HH:MM:SS".
+// Se hace a mano y en UTC: con cellDates, SheetJS mueve las horas por la zona de 1899 (Bogotá −4:56).
+function _infCelda(v, tipo) {
+  if (typeof v !== 'number') return String(v);
+  const dias = Math.floor(v), seg = Math.round((v - dias) * 86400);
+  const d = new Date(Date.UTC(1899, 11, 30) + dias * 86400000 + seg * 1000);
+  const p = (x) => String(x).padStart(2, '0');
+  const f = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+  const h = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+  if (tipo === 'fecha') return f;
+  return v < 1 ? h : `${f} ${h}`;
+}
+
+// Reconoce cada hoja por sus encabezados (en los primeros 10 renglones) y lee SOLO las reconocidas: las
+// demás (p. ej. la de conductores del histórico, con salario y salud) nunca se leen completas.
+// Devuelve [{ formato, hoja, filas }], una por hoja reconocida.
+async function _infLeerArchivo(file) {
+  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+  const buf = await file.arrayBuffer();
+  const libro = XLSX.read(buf, { type: 'array', bookSheets: true });
+  const hojas = [];
+  for (const hoja of libro.SheetNames) {
+    const cab = XLSX.read(buf, { type: 'array', sheets: hoja, sheetRows: 10 });
+    const primeras = XLSX.utils.sheet_to_json(cab.Sheets[hoja], { header: 1, raw: true, defval: '' });
+    for (const [formato, F] of Object.entries(INF_FMT)) {
+      const hi = primeras.findIndex((row) => { const hs = row.map(_infH); return F.req.every((r) => hs.includes(r)); });
+      if (hi < 0) continue;
+      const wb = XLSX.read(buf, { type: 'array', sheets: hoja });
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[hoja], { header: 1, raw: true, defval: '' });
+      const hs = aoa[hi].map(_infH);
+      const filas = [];
+      for (let i = hi + 1; i < aoa.length; i++) {
+        const r = aoa[i];
+        if (!r || r.every((c) => String(c == null ? '' : c).trim() === '')) continue;
+        const o = {};
+        hs.forEach((h, j) => {
+          const k = F.cols[h]; const v = r[j];
+          if (!k || v === '' || v == null) return;
+          // 20 dígitos guardados como NÚMERO: Excel ya les borró los últimos; la base lo marca
+          if (k === 'comparendo' && typeof v === 'number') { o.comparendo = BigInt(Math.round(v)).toString(); o.comparendo_num = true; return; }
+          o[k] = F.fechas.includes(k) ? _infCelda(v, 'fecha') : F.fechaHora.includes(k) ? _infCelda(v, 'fechaHora') : String(v);
+        });
+        filas.push(o);
+      }
+      hojas.push({ formato, hoja, filas });
+      break;
+    }
+  }
+  if (!hojas.length) {
+    throw new Error('No reconozco el archivo: debe traer las hojas INFRACCIONES / ACCIDENTES (el mensual de tránsito) o la DATA GENERAL INFRACCIONES (el histórico).');
+  }
+  return hojas;
+}
+
+// Una hoja → su función en la base (simular o importar)
+async function _infRpc(h, aplicar) {
+  const F = INF_FMT[h.formato];
+  const args = { p_filas: h.filas, p_archivo: _inf.archivo, p_aplicar: aplicar };
+  if (F.rpc === 'infracciones_importar') args.p_formato = h.formato;
+  const { data, error } = await sb.rpc(F.rpc, args);
+  if (error) throw error;
+  if (!data || !data.ok) throw new Error((data && data.error) || 'sin respuesta');
+  return data;
+}
+
+const _inf = { archivo: '', hojas: [], sims: [] };
+function infModal() {
+  let m = $('inf-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'inf-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-card">
+    <div class="modal-head"><h3>📥 Importar infracciones y accidentes de tránsito</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-body">
+      <p class="vlc-muted">Suba el archivo que llega cada mes (hojas <b>INFRACCIONES</b> y <b>ACCIDENTES</b>) o el
+        histórico (<b>DATA GENERAL INFRACCIONES</b>). Todo queda en el <b>mismo formato del histórico</b>.
+        Primero se <b>simula</b>: nada se guarda hasta que toque «Importar».</p>
+      <div class="pp-fecha"><label class="btn">📂 Elegir archivo<input type="file" id="inf-file" accept=".xlsx,.xlsm,.xls" hidden></label>
+        <span class="vlc-muted" id="inf-file-n">Ningún archivo</span></div>
+      <div id="inf-res"></div>
+      <h4 class="inf-sub">Últimas importaciones</h4>
+      <div id="inf-lotes" class="vlc-muted">Cargando…</div>
+    </div>
+    <div class="modal-foot"><button type="button" class="btn btn-primary" id="inf-aplicar" hidden>✅ Importar</button>
+      <span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  m.querySelector('#inf-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) infSimular(f); };
+  m.querySelector('#inf-aplicar').onclick = infAplicar;
+  return m;
+}
+
+async function openInfImport() {
+  if (!puedeVerInfracciones()) return;
+  const m = infModal();
+  _inf.archivo = ''; _inf.hojas = []; _inf.sims = [];
+  $('inf-file-n').textContent = 'Ningún archivo';
+  $('inf-res').innerHTML = ''; $('inf-aplicar').hidden = true;
+  m.hidden = false;
+  infLotes();
+}
+
+async function infSimular(file) {
+  const res = $('inf-res'); $('inf-aplicar').hidden = true;
+  _inf.archivo = file.name; _inf.hojas = []; _inf.sims = [];
+  $('inf-file-n').textContent = file.name;
+  res.innerHTML = '<div class="loading">Leyendo el archivo…</div>';
+  try {
+    const hojas = (await _infLeerArchivo(file)).filter((h) => h.filas.length);
+    if (!hojas.length) throw new Error('las hojas del archivo no traen filas');
+    res.innerHTML = `<div class="loading">Revisando ${hojas.reduce((a, h) => a + h.filas.length, 0)} fila(s) contra lo que ya está cargado…</div>`;
+    const sims = [];
+    for (const h of hojas) sims.push(await _infRpc(h, false));
+    _inf.hojas = hojas; _inf.sims = sims;
+    pintarInfSim();
+  } catch (e) { res.innerHTML = `<div class="cump-empty">No se pudo leer: ${esc(e.message || e)}</div>`; }
+}
+
+const _infN = (x) => Number(x || 0).toLocaleString('es-CO');
+// Lo que falta por importar (lo que ya se importó en esta ventana queda con aplicado = true)
+function _infPendientes() { return _inf.hojas.map((h, i) => [h, _inf.sims[i]]).filter(([, d]) => d && !d.aplicado && d.nuevas); }
+
+// La sección de UNA hoja: tarjetas, avisos y el detalle fila por fila
+function _infSeccion(h, d) {
+  const F = INF_FMT[h.formato], acc = h.formato === 'ACCIDENTES', c = d.conductor || {}, n = _infN;
+  const avisos = [];
+  if (d.errores) avisos.push(`<b>${n(d.errores)}</b> fila(s) con error no se importan (abajo dice por qué).`);
+  if (d.sin_vehiculo) avisos.push(`<b>${n(d.sin_vehiculo)}</b> placa(s) que no están en el parque automotor: quedan sin móvil, ruta ni afiliado.`);
+  if (d.sin_perfil) avisos.push(`<b>${n(d.sin_perfil)}</b> cédula(s) que no están en el perfil sociodemográfico: queda el nombre del ${acc ? 'reporte' : 'comparendo'}, sin código ni licencia.`);
+  if (c['SIN DATO']) avisos.push(acc ? `<b>${n(c['SIN DATO'])}</b> accidente(s) sin cédula en el reporte que SONAR tampoco resolvió: se corrigen en la ficha.`
+    : `<b>${n(c['SIN DATO'])}</b> comparendo(s) sin conductor (NN, Electrónico o sin cédula) que SONAR tampoco resolvió: se corrigen en la ficha.`);
+  if (d.imprecisos) avisos.push(`<b>${n(d.imprecisos)}</b> número(s) de comparendo que Excel dañó (los guardó como número) o vienen repetidos con otros datos: entran marcados.`);
+  if ((d.codigos_nuevos || []).length) avisos.push(`Códigos que no estaban en el catálogo: ${d.codigos_nuevos.map(esc).join(', ')}.`);
+  if (acc && d.sin_siniestro) avisos.push(`<b>${n(d.sin_siniestro)}</b> accidente(s) que <b>no aparecen como siniestro</b> reportado en la app (misma placa, ±1 día).`);
+  const est = (e) => (e === 'NUEVA' ? 'chip-green' : e === 'YA ESTABA' ? 'chip-gray' : e.startsWith('ERROR') ? 'chip-red' : 'chip-amber');
+  const segun = (x) => `${esc(INF_SEGUN[x.segun] || x.segun || '')}${x.sonar ? ` <span class="vlc-muted">(${esc(x.sonar)})</span>` : ''}`;
+  const cab = acc ? ['Estado', 'Fecha', 'Croquis', 'Placa', 'Móvil', 'Clase', 'Gravedad', 'Conductor', 'Según', 'Siniestro']
+    : ['Estado', 'Fecha', 'Comparendo', 'Placa', 'Móvil', 'Código', 'Tipo', 'Conductor', 'Según'];
+  const det = (d.detalle || []).map((x) => `<tr>
+      <td><span class="chip ${est(x.estado)}">${esc(x.estado)}</span></td>
+      <td>${esc(fmt(x.fecha))} ${x.hora ? esc(fmt(x.hora)) : ''}</td>
+      <td>${esc((acc ? x.croquis : x.comparendo) || '—')}</td><td>${esc(x.placa || '')}</td><td>${esc(x.movil || '—')}</td>
+      ${acc ? `<td>${esc(x.clase || '')}</td><td>${esc(x.gravedad || '')}</td>` : `<td>${esc(x.codigo || '')}</td><td>${esc(x.tipo || '')}</td>`}
+      <td>${esc(x.conductor || '—')}</td><td>${segun(x)}</td>
+      ${acc ? `<td>${x.siniestro ? '<span class="chip chip-green">Reportado</span>' : '<span class="chip chip-amber">No aparece</span>'}</td>` : ''}</tr>`).join('');
+  return `<section class="inf-hoja">
+    <div class="vlc-regla">📄 <b>${esc(F.nombre)}</b> · hoja «${esc(h.hoja)}» · ${n(d.filas)} fila(s)
+      ${d.desde ? ` · del ${esc(fmt(d.desde))} al ${esc(fmt(d.hasta))}` : ''}
+      ${d.aplicado ? ` · <b>✅ importadas ${n(d.insertadas)}</b>` : ''}</div>
+    <div class="pp-tarjetas">
+      <div class="pp-card ${d.nuevas ? 'ok' : ''}"><b>${n(d.nuevas)}</b><span>Nuevas</span></div>
+      <div class="pp-card"><b>${n(d.ya_estaban)}</b><span>Ya estaban</span></div>
+      <div class="pp-card ${d.repetidas ? 'aviso' : ''}"><b>${n(d.repetidas)}</b><span>Repetidas en el archivo</span></div>
+      <div class="pp-card ${d.errores ? 'mal' : ''}"><b>${n(d.errores)}</b><span>Con error</span></div>
+    </div>
+    ${d.nuevas ? `<div class="vlc-muted">Conductor de las nuevas: ${Object.entries(c).map(([k, v]) => `${esc(INF_SEGUN[k] || k)}: <b>${n(v)}</b>`).join(' · ')}</div>` : ''}
+    ${avisos.length ? `<ul class="inf-avisos">${avisos.map((a) => `<li>${a}</li>`).join('')}</ul>` : ''}
+    <div class="vlc-scroll"><table class="pp-tabla"><thead><tr>${cab.map((t) => `<th>${t}</th>`).join('')}</tr></thead><tbody>${det}</tbody></table></div>
+    ${d.filas > (d.detalle || []).length ? `<div class="vlc-muted">Se muestran ${n((d.detalle || []).length)} de ${n(d.filas)} filas (primero los errores y las nuevas).</div>` : ''}
+  </section>`;
+}
+
+function pintarInfSim() {
+  $('inf-res').innerHTML = _inf.hojas.map((h, i) => _infSeccion(h, _inf.sims[i])).join('');
+  const pend = _infPendientes(), b = $('inf-aplicar');
+  b.hidden = !pend.length; b.disabled = false;
+  b.textContent = '✅ Importar ' + pend.map(([h, d]) => `${_infN(d.nuevas)} ${INF_FMT[h.formato].que}`).join(' y ');
+}
+
+async function infAplicar() {
+  const pend = _infPendientes();
+  if (!pend.length) return;
+  const que = pend.map(([h, d]) => `${_infN(d.nuevas)} ${INF_FMT[h.formato].que}`).join(' y ');
+  const ok = await confirmAction({ title: 'Importar', lead: _inf.archivo,
+    message: `Entran ${que} nueva(s), en el formato del histórico.`, okLabel: 'Importar' });
+  if (!ok) return;
+  const b = $('inf-aplicar'); b.disabled = true; b.textContent = '⏳ Importando…';
+  const hechos = [];
+  try {
+    for (const [h] of pend) {
+      const i = _inf.hojas.indexOf(h);
+      _inf.sims[i] = await _infRpc(h, true);
+      hechos.push(`${_infN(_inf.sims[i].insertadas)} ${INF_FMT[h.formato].que}`);
+    }
+    toast(`Listo: ${hechos.join(' y ')} importada(s).`, 'ok');
+  } catch (e) {
+    toast((hechos.length ? `Se importaron ${hechos.join(' y ')}, pero ` : '') + 'no se pudo importar: ' + (e.message || e), 'err');
+  }
+  pintarInfSim();
+  infLotes();
+  if (INF_TABLAS.includes(current)) loadData();
+}
+
+async function infLotes() {
+  const box = $('inf-lotes'); if (!box) return;
+  const { data, error } = await sb.from('infracciones_lotes')
+    .select('id, formato, archivo, filas, nuevas, ya_estaban, cargado_por, cargado_en').order('id', { ascending: false }).limit(10);
+  if (error) { box.textContent = 'No se pudo cargar: ' + error.message; return; }
+  if (!data || !data.length) { box.textContent = 'Todavía no se ha importado nada.'; return; }
+  box.innerHTML = `<div class="inf-scroll"><table class="pp-tabla"><thead><tr><th>Cuándo</th><th>Archivo</th><th>Resultado</th>
+    <th>Quién</th>${isAdmin() ? '<th></th>' : ''}</tr></thead><tbody>
+    ${data.map((x) => `<tr><td>${esc(fmt(x.cargado_en))}</td><td>${esc(x.archivo || '')}</td>
+      <td>${esc(INF_LOTE[x.formato] || x.formato)} · ${x.filas} fila(s) · <b>${x.nuevas} nueva(s)</b>${x.ya_estaban ? ` · ${x.ya_estaban} ya estaban` : ''}</td>
+      <td>${esc(String(x.cargado_por || '').split('@')[0])}</td>
+      ${isAdmin() ? `<td><button type="button" class="btn btn-sm btn-danger" data-inf-borrar="${x.id}" title="Borra lo que entró con esta importación">↩️ Deshacer</button></td>` : ''}</tr>`).join('')}
+    </tbody></table></div>`;
+  box.querySelectorAll('[data-inf-borrar]').forEach((btn) => { btn.onclick = () => infDeshacer(Number(btn.dataset.infBorrar)); });
+}
+
+async function infDeshacer(lote) {
+  const ok = await confirmAction({ title: 'Deshacer la importación',
+    message: 'Se borra lo que entró con esa importación (sus infracciones o sus accidentes). Las demás no se tocan.',
+    okLabel: 'Deshacer', danger: true });
+  if (!ok) return;
+  const { data, error } = await sb.rpc('infracciones_lote_borrar', { p_lote: lote });
+  if (error || !data || !data.ok) { toast('No se pudo deshacer: ' + ((error && error.message) || (data && data.error) || ''), 'err'); return; }
+  toast(`Importación deshecha: ${data.borradas} fila(s) borrada(s).`, 'ok');
+  infLotes();
+  if (INF_TABLAS.includes(current)) loadData();
+}
+
+// ---- Fichas (infracción y accidente): todo en el formato del histórico + corregir el conductor por cédula
+function _infFichaModal(titulo) {
+  let m = $('inf-ficha');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'inf-ficha'; m.className = 'modal'; m.hidden = true;
+    m.innerHTML = `<div class="modal-card pf-card">
+      <div class="modal-head"><h3></h3><span class="spacer"></span>
+        <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+      <div class="pf-body"></div>
+      <div class="modal-foot"><span class="spacer"></span><button type="button" class="btn" data-x>Cerrar</button></div></div>`;
+    m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal-head h3').textContent = titulo;
+  return m;
+}
+function _infDl(pares) {
+  return `<dl>${pares.map(([k, v, ancho]) => `<dt${ancho ? ' class="pf-ancho"' : ''}>${esc(k)}</dt>
+    <dd class="${ancho ? 'pf-ancho ' : ''}${v == null || v === '' ? 'pf-nada' : ''}">${v == null || v === '' ? '—' : esc(fmt(v))}</dd>`).join('')}</dl>`;
+}
+// Vehículo, conductor (con «Cambiar conductor») y carga: iguales en las dos fichas
+function _infSecciones(r, quien, ayuda) {
+  return {
+    vehiculo: `<div class="pf-sec"><h4>Vehículo</h4>${_infDl([['Placa', r.placa], ['Móvil', r.numero_interno], ['Ruta', r.ruta],
+      ...(puedeVerDatosAfiliado() ? [['Afiliado', r.afiliado]] : [])])}</div>`,
+    conductor: `<div class="pf-sec"><h4>Conductor · ${esc(INF_SEGUN[r.conductor_segun] || r.conductor_segun || '')}</h4>${_infDl([
+      ['Nombre', r.nombre_conductor], ['Código', r.codigo_conductor], ['Cédula', r.cedula_conductor],
+      ['Ingreso', r.fecha_ingreso_conductor], ['Licencia', r.cat_licencia],
+      ['Expedición', r.licencia_expedicion], ['Vencimiento', r.licencia_vencimiento]])}
+      ${r.cedula_infractor || r.nombre_infractor ? `<p class="vlc-muted">${esc(quien)} dice: ${esc(r.nombre_infractor || '')} ${r.cedula_infractor ? '· ' + esc(r.cedula_infractor) : ''}</p>` : ''}
+      ${puedeVerInfracciones() ? `<div class="pp-fecha"><input id="inf-ced" inputmode="numeric" placeholder="Cédula del conductor que iba"
+        aria-label="Cédula del conductor"><button type="button" class="btn" id="inf-ced-btn">👤 Cambiar conductor</button></div>
+        ${ayuda ? `<p class="vlc-muted">${esc(ayuda)}</p>` : ''}` : ''}</div>`,
+    carga: `<div class="pf-sec"><h4>Carga</h4>${_infDl([['Origen', r.origen === 'HISTORICO' ? 'Histórico' : 'Archivo mensual'],
+      ['Importación', r.lote_id], ['Cargada', r.creado_en],
+      ...(r.actualizado_en ? [['Corregida', `${fmt(r.actualizado_en)} · ${String(r.actualizado_por || '').split('@')[0]}`]] : [])])}</div>`,
+  };
+}
+function _infCambiarConductor(m, rpc, id) {
+  const btn = m.querySelector('#inf-ced-btn');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const ced = m.querySelector('#inf-ced').value.trim();
+    if (!ced) { toast('Escriba la cédula.', 'err'); return; }
+    btn.disabled = true;
+    const { data, error } = await sb.rpc(rpc, { p_id: id, p_cedula: ced });
+    btn.disabled = false;
+    if (error || !data || !data.ok) { toast((error && error.message) || (data && data.error) || 'No se pudo.', 'err'); return; }
+    toast('Conductor corregido.', 'ok');
+    m.hidden = true;
+    if (INF_TABLAS.includes(current)) loadData();
+  };
+}
+
+function openInfraccion(r) {
+  const m = _infFichaModal('🚓 Infracción de tránsito');
+  const sinConductor = ['SIN DATO', 'SONAR'].includes(r.conductor_segun) || ['NN O STICKER', 'ELECTRÓNICO'].includes(r.tipo_comparendo);
+  const s = _infSecciones(r, 'El comparendo', sinConductor
+    ? 'En «NN o Sticker» y «Electrónico» el comparendo no trae al conductor: verifique quién iba (SONAR, Despachos) y corríjalo aquí.' : '');
+  m.querySelector('.pf-body').innerHTML = `
+    <div class="pf-sec"><h4>Comparendo</h4>${_infDl([
+      ['Número', r.nro_comparendo + (r.comparendo_impreciso ? '  (número dañado en Excel o repetido)' : '')],
+      ['Tipo', r.tipo_comparendo], ['Fecha', r.fecha_infraccion], ['Posible hora', r.posible_hora],
+      ['Reporte', `${r.dia_reporte || ''} · ${r.mes_reporte || ''} · ${r.anio_reporte || ''}`],
+      ['Código', r.codigo_infraccion], ['Infracción', r.infraccion, true]])}</div>
+    ${s.vehiculo}${s.conductor}${s.carga}`;
+  _infCambiarConductor(m, 'infracciones_conductor_asignar', r.id);
+  m.hidden = false;
+}
+
+function openAccidente(r) {
+  const m = _infFichaModal('💥 Accidente de tránsito');
+  const s = _infSecciones(r, 'El reporte', ['SIN DATO', 'SONAR'].includes(r.conductor_segun)
+    ? 'El reporte no traía la cédula del conductor: verifique quién iba (SONAR, Despachos) y corríjalo aquí.' : '');
+  m.querySelector('.pf-body').innerHTML = `
+    <div class="pf-sec"><h4>Accidente</h4>${_infDl([
+      ['Fecha', r.fecha_accidente], ['Hora', r.hora],
+      ['Reporte', `${r.dia_reporte || ''} · ${r.mes_reporte || ''} · ${r.anio_reporte || ''}`],
+      ['Clase', r.clase_accidente], ['Gravedad', r.gravedad], ['Croquis', r.nro_croquis], ['Comparendo', r.nro_comparendo],
+      ['Dirección', r.direccion, true]])}</div>
+    <div class="pf-sec"><h4>Siniestro en la app</h4>
+      ${r.siniestro_key ? `<p>✅ Se reportó como siniestro (misma placa, ±1 día).</p>
+        <button type="button" class="btn" id="acc-sin-btn">🚨 Ver el siniestro</button>`
+    : '<p>⚠️ <b>No aparece como siniestro</b> reportado en la app (misma placa, ±1 día): el conductor no lo reportó.</p>'}</div>
+    ${s.vehiculo}${s.conductor}${s.carga}`;
+  _infCambiarConductor(m, 'accidentes_conductor_asignar', r.id);
+  const bs = m.querySelector('#acc-sin-btn');
+  if (bs) {
+    bs.onclick = async () => {
+      const { data, error } = await sb.from('siniestros').select('*').eq('key', r.siniestro_key).single();
+      if (error || !data) { toast('No se pudo abrir el siniestro: ' + ((error && error.message) || ''), 'err'); return; }
+      m.hidden = true;
+      openSiniestro(data);
+    };
+  }
+  m.hidden = false;
+}
+
 // ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
 async function openAsignarPuesto() {
   $('pst-error').hidden = true;
@@ -5087,14 +5455,17 @@ function renderTable(cfg, rows, count, diaSel = false) {
       tr.appendChild(act);
     } else if (cfg.fichaDetalle && ((current === 'siniestros' && puedeVerVial())
                                     || (current === 'preoperacionales' && isSeguridadVial())
-                                    || (current === 'pqrsf' && puedeVerPqrsf()))) {
+                                    || (current === 'pqrsf' && puedeVerPqrsf())
+                                    || (['infracciones_transito', 'accidentes_transito'].includes(current) && puedeVerInfracciones()))) {
       // Siniestros y PQRSF: la tabla no se edita, pero cada fila abre el REPORTE COMPLETO
       const act = document.createElement('td');
       act.className = 'row-actions'; act.dataset.label = 'Acciones';
       const ver = Object.assign(document.createElement('button'),
         { className: 'act act-ver', innerHTML: '👁️', title: 'Ver el reporte completo' });
       ver.onclick = () => (current === 'pqrsf' ? openPqrsf(row)
-        : current === 'preoperacionales' ? openPreop(row) : openSiniestro(row));
+        : current === 'preoperacionales' ? openPreop(row)
+        : current === 'infracciones_transito' ? openInfraccion(row)
+        : current === 'accidentes_transito' ? openAccidente(row) : openSiniestro(row));
       act.appendChild(ver);
       tr.appendChild(act);
     } else if (cfg.asistenciaMarcar) {
@@ -30627,6 +30998,7 @@ $('sonarfull-btn').addEventListener('click', async () => {
 
 // ---------- Administración de accesos (solo admin) ----------
 $('sin-sync-btn')?.addEventListener('click', sincronizarSiniestros);
+$('inf-imp-btn')?.addEventListener('click', openInfImport);
 // Sin pasar el evento: el primer argumento de sincronizarPqrsf son sus opciones.
 $('pqr-sync-btn')?.addEventListener('click', () => sincronizarPqrsf());
 $('perfil-new-btn').addEventListener('click', async () => {

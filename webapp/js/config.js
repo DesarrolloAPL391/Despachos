@@ -10,7 +10,7 @@ export const TOMTOM_KEY = '465FQuidHJ1iGwmTWyGQJOkuXO1JF9MU';
 export const PAGE_SIZE = 50;
 
 // Versión visible del aplicativo (mantener igual al número de caché en sw.js)
-export const APP_VERSION = 'v380';
+export const APP_VERSION = 'v381';
 
 // Etiqueta para opciones de un FK (string = columna, función = formato libre)
 const labelVeh = (r) => `${r.numero ?? ''}${r.placa ? ' · ' + r.placa : ''}`;
@@ -26,6 +26,8 @@ export const TABLE_ORDER = [
   'despachos', 'despachos_sonar', 'resumen', 'asistencia', 'horarios', 'puestos', 'perfiles', 'tablas_despacho', 'ubicaciones', 'vehiculosgps',
   'conductores_sonar', 'parque_automotor', 'restricciones_rutas', 'itinerarios', 'perfilsociodemografico', 'perfil_vinculaciones',
   'siniestros',
+  'infracciones_transito',   // 🚓 infracciones de tránsito (sql/211) — por ahora SOLO el admin
+  'accidentes_transito',     // 💥 accidentes de tránsito (sql/212) — por ahora SOLO el admin
   'pqrsf',
   'eventos_bus',
   'preoperacionales',   // inspeccion preoperacional (sql/127) — por ahora SOLO el admin la ve
@@ -1552,6 +1554,112 @@ export const TABLES = {
   },
   // Eventos de conducción (sql/81-84): excesos de velocidad y puertas abiertas en marcha, con el
   // conductor que iba manejando. Los trae solo el barrido nocturno desde SONAR: aquí se consultan.
+  // 🚓 Infracciones de tránsito (sql/211): el histórico que se llevaba en Excel + el archivo que llega cada
+  // mes, en UN SOLO formato. No se edita: entra por «📥 Importar infracciones» (la base lo pasa al formato
+  // del histórico) y cada fila abre su ficha, donde se corrige el conductor de los NN y Electrónicos.
+  // La descarga a Excel sale con los MISMOS 19 encabezados del histórico y en su orden; lo nuevo, al final.
+  infracciones_transito: {
+    label: 'Infracciones de tránsito',
+    icon: '🚓',
+    readonly: true,
+    fichaDetalle: true,
+    pk: 'id',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['nombre_conductor', 'cedula_conductor', 'codigo_conductor', 'placa', 'numero_interno', 'nro_comparendo',
+      'codigo_infraccion', 'ruta', 'infraccion'],
+    defaultOrder: { col: 'fecha_infraccion', asc: false, then: { col: 'posible_hora', asc: false } },
+    filters: [
+      { col: 'tipo_comparendo', label: 'Tipo', chips: true, options: [
+        { value: 'INFRACCIÓN', label: 'Infracción' }, { value: 'EDUCATIVO', label: 'Educativo' },
+        { value: 'ELECTRÓNICO', label: 'Electrónico' }, { value: 'NN O STICKER', label: 'NN o Sticker' }] },
+      { col: 'conductor_segun', label: 'Conductor', chips: true, options: [
+        { value: 'COMPARENDO', label: 'El del comparendo' }, { value: 'SONAR', label: 'Según SONAR' },
+        { value: 'MANUAL', label: 'Corregido a mano' }, { value: 'SIN DATO', label: 'Sin conductor' },
+        { value: 'HISTORICO', label: 'Del histórico' }] },
+      { col: 'fecha_infraccion', label: 'Fecha', type: 'daterange' },
+    ],
+    columns: [
+      { key: 'fecha_infraccion', label: 'Fecha', m: true },
+      { key: 'posible_hora', label: 'Hora' },
+      { key: 'numero_interno', label: 'Móvil', m: true },
+      { key: 'placa', label: 'Placa' },
+      { key: 'ruta', label: 'Ruta' },
+      { key: 'nombre_conductor', label: 'Conductor', m: true },
+      { key: 'codigo_conductor', label: 'Código' },
+      { key: 'codigo_infraccion', label: 'Infracción', m: true },
+      { key: 'tipo_comparendo', label: 'Tipo', badge: true, m: true },
+      { key: 'conductor_segun', label: 'Conductor según', badge: true },
+      { key: 'nro_comparendo', label: 'Comparendo' },
+    ],
+    exportCols: [
+      { key: 'anio_reporte', label: 'AÑO DEL REPORTE' }, { key: 'mes_reporte', label: 'MES DEL REPORTE' },
+      { key: 'dia_reporte', label: 'DIA DEL REPORTE' }, { key: 'fecha_infraccion', label: 'FECHA DE LA INFRACCION' },
+      { key: 'codigo_conductor', label: 'CODIGO DEL CONDUCTOR' }, { key: 'cedula_conductor', label: 'ID. CONDUCTOR' },
+      { key: 'nombre_conductor', label: 'NOMBRE CONDUCTOR' }, { key: 'fecha_ingreso_conductor', label: 'FECHA DE INGRESO DEL CONDUCTOR' },
+      { key: 'cat_licencia', label: 'CAT. LICENCIA DE CONDUCCIÓN' }, { key: 'licencia_expedicion', label: 'FCHA EXPEDICI' },
+      { key: 'licencia_vencimiento', label: 'FECHA VENCIMIENTO' }, { key: 'posible_hora', label: 'POSIBLE HORA' },
+      { key: 'codigo_infraccion', label: 'CODIGO DE LA INFRACCION' }, { key: 'placa', label: 'PLACA' },
+      { key: 'numero_interno', label: 'NRO. INT.' }, { key: 'ruta', label: 'RUTA' },
+      { key: 'afiliado', label: 'AFILIADO', privado: true }, { key: 'tipo_comparendo', label: 'TIPO DE COMPARENDO' },
+      { key: 'nro_comparendo', label: 'NRO. COMPARENDO' },
+      // lo que el histórico no tenía
+      { key: 'infraccion', label: 'INFRACCIÓN' }, { key: 'conductor_segun', label: 'CONDUCTOR SEGÚN' },
+      { key: 'cedula_infractor', label: 'CÉDULA EN EL COMPARENDO' }, { key: 'nombre_infractor', label: 'NOMBRE EN EL COMPARENDO' },
+      { key: 'comparendo_impreciso', label: 'NÚMERO DAÑADO O REPETIDO' }, { key: 'origen', label: 'ORIGEN' },
+    ],
+    fields: [],
+  },
+  // 💥 Accidentes de tránsito (sql/212): la hoja ACCIDENTES del mismo archivo mensual de tránsito, en el formato
+  // de las infracciones. Cada uno se cruza con los SINIESTROS reportados en la app (misma placa ±1 día): el que no
+  // aparece es un accidente que el conductor no reportó. Entra por el mismo «📥 Importar infracciones».
+  accidentes_transito: {
+    label: 'Accidentes de tránsito',
+    icon: '💥',
+    readonly: true,
+    fichaDetalle: true,
+    pk: 'id',
+    pkEditable: false,
+    select: '*',
+    searchCols: ['nombre_conductor', 'cedula_conductor', 'codigo_conductor', 'placa', 'numero_interno', 'nro_croquis',
+      'direccion', 'ruta', 'clase_accidente'],
+    defaultOrder: { col: 'fecha_accidente', asc: false, then: { col: 'hora', asc: false } },
+    filters: [
+      { col: 'clase_accidente', label: 'Clase', chips: true, options: [
+        { value: 'CHOQUE', label: 'Choque' }, { value: 'ATROPELLO', label: 'Atropello' }, { value: 'OTRO', label: 'Otro' }] },
+      { col: 'gravedad', label: 'Gravedad', chips: true, options: [
+        { value: 'HERIDO', label: 'Herido' }, { value: 'MUERTO', label: 'Muerto' }, { value: 'SOLO DAÑOS', label: 'Solo daños' }] },
+      { col: 'fecha_accidente', label: 'Fecha', type: 'daterange' },
+    ],
+    columns: [
+      { key: 'fecha_accidente', label: 'Fecha', m: true },
+      { key: 'hora', label: 'Hora' },
+      { key: 'numero_interno', label: 'Móvil', m: true },
+      { key: 'placa', label: 'Placa' },
+      { key: 'ruta', label: 'Ruta' },
+      { key: 'nombre_conductor', label: 'Conductor', m: true },
+      { key: 'clase_accidente', label: 'Clase', badge: true, m: true },
+      { key: 'gravedad', label: 'Gravedad', badge: true, m: true },
+      { key: 'siniestro_key', label: 'Siniestro en la app', calc: (r) => (r.siniestro_key ? 'Reportado' : 'No aparece') },
+      { key: 'direccion', label: 'Dirección' },
+    ],
+    exportCols: [
+      { key: 'anio_reporte', label: 'AÑO DEL REPORTE' }, { key: 'mes_reporte', label: 'MES DEL REPORTE' },
+      { key: 'dia_reporte', label: 'DIA DEL REPORTE' }, { key: 'fecha_accidente', label: 'FECHA DEL ACCIDENTE' },
+      { key: 'hora', label: 'HORA' },
+      { key: 'codigo_conductor', label: 'CODIGO DEL CONDUCTOR' }, { key: 'cedula_conductor', label: 'ID. CONDUCTOR' },
+      { key: 'nombre_conductor', label: 'NOMBRE CONDUCTOR' }, { key: 'fecha_ingreso_conductor', label: 'FECHA DE INGRESO DEL CONDUCTOR' },
+      { key: 'cat_licencia', label: 'CAT. LICENCIA DE CONDUCCIÓN' }, { key: 'licencia_expedicion', label: 'FCHA EXPEDICI' },
+      { key: 'licencia_vencimiento', label: 'FECHA VENCIMIENTO' }, { key: 'placa', label: 'PLACA' },
+      { key: 'numero_interno', label: 'NRO. INT.' }, { key: 'ruta', label: 'RUTA' },
+      { key: 'afiliado', label: 'AFILIADO', privado: true }, { key: 'clase_accidente', label: 'CLASE DE ACCIDENTE' },
+      { key: 'gravedad', label: 'GRAVEDAD' }, { key: 'nro_croquis', label: 'NRO. CROQUIS' }, { key: 'direccion', label: 'DIRECCIÓN' },
+      { key: 'nro_comparendo', label: 'NRO. COMPARENDO' }, { key: 'conductor_segun', label: 'CONDUCTOR SEGÚN' },
+      { key: 'siniestro_key', label: 'REPORTADO COMO SINIESTRO', calc: (r) => (r.siniestro_key ? 'SÍ' : 'NO') },
+      { key: 'cedula_infractor', label: 'CÉDULA EN EL REPORTE' }, { key: 'nombre_infractor', label: 'NOMBRE EN EL REPORTE' },
+    ],
+    fields: [],
+  },
   eventos_bus: {
     label: 'Conducción',
     icon: '🚦',

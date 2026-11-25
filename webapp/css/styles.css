@@ -4235,3 +4235,12 @@ tr.qrc-sel td { background: #fff1f1; }
   .revc-pie .btn { flex: 1 1 auto; }
   .rev-barra .rev-f { flex: 1 1 140px; }
 }
+/* ===== 🚓 Infracciones de tránsito (sql/211) ===== */
+.inf-sub { margin: 18px 0 6px; font-size: 13px; color: var(--primary); }
+.inf-avisos { margin: 8px 0 12px; padding-left: 20px; font-size: 12.5px; line-height: 1.45; }
+.inf-avisos li::marker { content: "⚠️ "; }
+.inf-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.inf-scroll .pp-tabla { table-layout: auto; min-width: 520px; }
+.inf-scroll .pp-tabla td { padding: 7px 8px; white-space: normal; }
+.inf-scroll .pp-tabla td:first-child, .inf-scroll .pp-tabla td:last-child { white-space: nowrap; }
+.inf-hoja + .inf-hoja { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
