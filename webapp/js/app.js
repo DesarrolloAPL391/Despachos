@@ -616,7 +616,7 @@ async function showApp(user) {
   // permisos (PERM_OK), y sin eso la lista saldría incompleta.
   // Los avisos de obligatoria respuesta van PRIMERO: son instrucciones, no información.
   revisarAvisos().then(() => {
-    refrescarAlertasDocs().then(avisarNovedades, avisarNovedades); // pase lo que pase, el aviso sale
+    refrescarAlertasDocs().then(avisarAlEntrar, avisarAlEntrar); // pase lo que pase, sale un aviso: 🧭 recorrido o ✨ novedades
     avisarNovedadDesbloqueos(); // novedad v239: cómo desbloquear un móvil con documento vencido
   });
 }
@@ -677,6 +677,8 @@ function buildSidebar() {
   // acciones especiales (no son tablas), organizadas en SUBMENÚS plegables
   if (isAdmin() || CTX?.rol === 'despachador' || CTX?.rol === 'afiliado') addNavNotif(nav);
   if (!isGestionHumana()) addNavAction(nav, '🗺️', 'Mapa', showMapView, 'nav-mapa'); // acceso rápido, fuera de grupos
+  // 🧭 Conozca la app (sql/213): el recorrido de bienvenida; a la Gerencia se le abre solo la primera vez
+  if (puedeVerRecorrido()) addNavAction(nav, '🧭', 'Conozca la app', openRecorrido, 'nav-recorrido');
 
   // 🚦 Operación en vivo
   const gOp = addNavGroup(nav, '🚦', 'Operación en vivo', 'op');
@@ -4740,6 +4742,426 @@ function openAccidente(r) {
     };
   }
   m.hidden = false;
+}
+
+// ---------- 🧭 Conozca la app: recorrido de bienvenida para la Gerencia (sql/213) ----------
+// Pedido del 26/11/2026: "quiero que cuando el gerente inicie sesión vea todos los beneficios de la
+// aplicación, que le muestre y le explique todo de acuerdo a los módulos que tiene la app".
+// Un paso por área del menú. Cada módulo dice qué hace, para qué le sirve a la Gerencia, dónde está en
+// el menú y trae un botón que lo abre. Solo salen los módulos que la cuenta tiene en SU menú (se buscan
+// en el menú ya armado): el recorrido nunca muestra algo que la persona no puede abrir.
+// Se abre solo al entrar a quien está en la lista de Gerencia (permiso_gerencia) y todavía no ha visto
+// esta versión (REC_VER). Siempre queda en el menú «🧭 Conozca la app». Por ahora, solo administración.
+const REC_VER = 'v1';
+function puedeVerRecorrido() { return isAdmin(); }
+const _rec = { paso: 0, pasos: [] };
+
+function recPasos() {
+  return [
+    { k: 'despachos', icon: '🚌', t: 'Despachos: la operación del día',
+      lead: 'Cada salida de un bus queda registrada y se envía sola al GPS (SONAR). Lo que antes era una planilla en papel hoy es una tabla en vivo.',
+      items: [
+        { icon: '🚌', l: 'Despachos', tabla: 'despachos',
+          que: 'Todas las salidas: ruta, móvil, conductor, hora programada y real, y si el viaje terminó completo.',
+          sirve: 'La operación de toda la empresa en una sola tabla, con filtros y descarga a Excel.' },
+        { icon: '✅', l: 'Revisión de viajes', nav: 'nav-revviajes',
+          que: 'Los viajes completos y sin novedad se revisan solos; los incompletos los explica el monitor de la ruta.',
+          sirve: 'Cada viaje que falló tiene un motivo y un responsable.' },
+        { icon: '📡', l: 'Auditoría SONAR', tabla: 'despachos_sonar',
+          que: 'Lo que registró el GPS en cada viaje, frente a lo que se despachó.',
+          sirve: 'Muestra los viajes que no se hicieron o quedaron a medias.' },
+        { icon: '📋', l: 'Resumen', tabla: 'resumen',
+          que: 'La apertura y el cierre de cada puesto de despacho: quién abrió, quién cerró y cómo terminó.',
+          sirve: 'Sabe qué puestos operaron cada día sin pedir reportes.' },
+        { icon: '🕘', l: 'Inicio y fin de labores', tabla: 'asistencia',
+          que: 'El personal de despacho marca su llegada y su salida; la app avisa los ingresos tarde.',
+          sirve: 'La puntualidad del equipo sin listas a mano.' },
+        { icon: '📷', l: 'QR, fotos y carnets', nav: 'nav-qr-control',
+          que: 'En los despachos se escanea el QR del bus y se toma la foto del conductor con su carnet.',
+          sirve: 'Prueba de quién salió y en qué carro.' },
+      ] },
+    { k: 'vivo', icon: '🚦', t: 'La operación en vivo',
+      lead: 'Lo que está pasando en la calle en este momento, desde el GPS de cada bus.',
+      items: [
+        { icon: '🗺️', l: 'Mapa', nav: 'nav-mapa',
+          que: 'Todos los buses en el mapa en tiempo real, con el recorrido que llevan en el día.',
+          sirve: 'Ubica cualquier carro en segundos.' },
+        { icon: '🟢', l: 'Rutas en vivo', nav: 'nav-rutas',
+          que: 'Un semáforo por ruta: cuántos carros operan, cuántos van atrasados y cuántos están sin GPS.',
+          sirve: 'Sabe qué ruta tiene problemas sin llamar a nadie.' },
+        { icon: '🚏', l: 'Despachos en vivo lineal', nav: 'nav-lineal',
+          que: 'Cada ruta dibujada como una línea, con los buses en su posición.',
+          sirve: 'Se ve de un vistazo si los buses van muy juntos o muy separados.' },
+        { icon: '🛰️', l: 'Salud del GPS', nav: 'nav-gpssalud',
+          que: 'Avisa cuando un carro que está operando deja de reportar su posición.',
+          sirve: 'Un GPS dañado se arregla el mismo día, antes de que falten datos.' },
+        { icon: '🚨', l: 'Vigilante de ruta', nav: 'nav-vigilante',
+          que: 'Detecta adelantamientos entre buses, carros apagados en ruta y salidas del recorrido autorizado.',
+          sirve: 'Las faltas de operación quedan con hora y lugar.' },
+      ] },
+    { k: 'analisis', icon: '📈', t: 'Cumplimiento y análisis',
+      lead: 'Los números para decidir: cuánto se cumplió, cuánto produce cada carro y cuántos pasajeros se movieron.',
+      items: [
+        { icon: '📈', l: 'Cumplimiento', nav: 'nav-cump',
+          que: 'Viajes programados frente a viajes realizados, por ruta y por día.',
+          sirve: 'El indicador principal de la operación, listo para informes.' },
+        { icon: '🕒', l: 'Cumplimiento por puntos', nav: 'nav-malla',
+          que: 'Si cada bus pasó por los puntos de control a la hora que le tocaba.',
+          sirve: 'Muestra dónde y a qué hora se pierde el horario.' },
+        { icon: '⏱️', l: 'Frecuencia por franja', nav: 'nav-frec',
+          que: 'Cada cuánto pasa un bus en cada franja del día.',
+          sirve: 'Señala dónde el usuario espera de más.' },
+        { icon: '🚐', l: 'Productividad por carro', nav: 'nav-prod',
+          que: 'Viajes, kilómetros y horas de trabajo de cada carro.',
+          sirve: 'Identifica los carros que producen poco.' },
+        { icon: '🕰️', l: 'Jornada del carro', nav: 'nav-jor',
+          que: 'A qué hora empezó y terminó cada carro, según el GPS.',
+          sirve: 'Compara la jornada real con la programada.' },
+        { icon: '🧑‍🤝‍🧑', l: 'Pasajeros', nav: 'nav-pasajeros',
+          que: 'Los pasajeros que subieron a cada bus, contados por los sensores de las puertas.',
+          sirve: 'La demanda real por carro y por día.' },
+        { icon: '🏆', l: 'Top de movilización', nav: 'nav-top',
+          que: 'Los carros y las rutas que más pasajeros movilizaron en la semana o el mes.',
+          sirve: 'Reconoce a los mejores y detecta a los rezagados.' },
+        { icon: '🛂', l: 'Control Laureles', nav: 'nav-laur',
+          que: 'El tablero del día de la ruta Laureles, con el paso de cada bus por sus puntos.',
+          sirve: 'El control de la ruta en una sola pantalla.' },
+        { icon: '🛂', l: 'Control Av. Oriental', nav: 'nav-or',
+          que: 'El mismo control para la Avenida Oriental, con su punto de paso.',
+          sirve: 'Cumplimiento del paso por la Oriental, carro por carro.' },
+      ] },
+    { k: 'documentos', icon: '🚫', t: 'Documentos, restricciones y mantenimiento',
+      lead: 'La app frena lo que no debe salir: no deja despachar un carro con documentos vencidos ni a un conductor restringido.',
+      items: [
+        { icon: '🚫', l: 'Restricciones de rutas', tabla: 'restricciones_rutas',
+          que: 'Qué carro o qué conductor no puede operar, en qué ruta y en qué horario.',
+          sirve: 'Las restricciones se cumplen solas: el despacho se frena.' },
+        { icon: '🔓', l: 'Desbloqueos de documentos', nav: 'nav-desbloq',
+          que: 'Cuando un documento del carro vence, el carro queda bloqueado hasta que se aprueba el documento nuevo con su foto.',
+          sirve: 'SOAT, revisión técnico-mecánica y demás documentos siempre al día.' },
+        { icon: '🪪', l: 'Licencias de conductores', nav: 'nav-licencias',
+          que: 'Avisa las licencias por vencer y aprueba la nueva con su foto.',
+          sirve: 'Ningún conductor opera con la licencia vencida sin que se sepa.' },
+        { icon: '🔧', l: 'Preventivas', nav: 'nav-preventivas',
+          que: 'La programación de la revisión preventiva del bimestre, con aviso por WhatsApp a cada carro.',
+          sirve: 'Ningún carro se queda sin su revisión.' },
+        { icon: '🛠️', l: 'Taller y mantenimiento', nav: 'nav-taller',
+          que: 'Las órdenes de taller de CloudFleet; avisa si un carro que está en taller intenta salir.',
+          sirve: 'Lo que pasa en el taller se ve desde la operación.' },
+        { icon: '⛽', l: 'Combustible', nav: ['nav-cb-tanqueos', 'nav-cb-carros'],
+          que: 'Los tanqueos que registra la estación y el consumo de cada carro.',
+          sirve: 'Detecta consumos fuera de lo normal.' },
+        { icon: '🛠️', l: 'Intervenciones a los equipos', nav: ['nav-iv-agenda', 'nav-iv-historico'],
+          que: 'Las citas de los carros para revisar el GPS, los sensores y las cámaras, y lo que pasó en cada una.',
+          sirve: 'Los equipos del bus funcionando y con seguimiento.' },
+        { icon: '🚌', l: 'Parque automotor', tabla: 'parque_automotor',
+          que: 'La ficha de cada carro: placa, ruta, afiliado, documentos y vencimientos.',
+          sirve: 'Toda la flota en una sola tabla.' },
+      ] },
+    { k: 'vial', icon: '🛡️', t: 'Seguridad vial',
+      lead: 'El riesgo en la vía en un solo lugar: siniestros, infracciones, excesos de velocidad y la revisión diaria del carro.',
+      items: [
+        { icon: '📋', l: 'Preoperacional', tabla: 'preoperacionales',
+          que: 'La revisión del carro antes de salir (Resolución 315), con la selfie del conductor. Sin ella, el carro no se despacha.',
+          sirve: 'Cumplimiento de la norma todos los días, con prueba.' },
+        { icon: '🚑', l: 'Siniestros', tabla: 'siniestros',
+          que: 'Los siniestros reportados, con su seguimiento.',
+          sirve: 'El historial de cada carro y cada conductor.' },
+        { icon: '🚓', l: 'Infracciones de tránsito', tabla: 'infracciones_transito',
+          que: 'Los comparendos que llegan cada mes, con el carro y el conductor.',
+          sirve: 'Un histórico único para ver quién reincide.' },
+        { icon: '💥', l: 'Accidentes de tránsito', tabla: 'accidentes_transito',
+          que: 'Los accidentes del reporte mensual, cruzados con los siniestros reportados.',
+          sirve: 'Se ve si algún accidente no se reportó.' },
+        { icon: '🚦', l: 'Excesos de velocidad', nav: 'nav-evb-vel',
+          que: 'Cada exceso de velocidad que midió el GPS, por conductor.',
+          sirve: 'Saber quién maneja con riesgo, con datos y no con quejas.' },
+        { icon: '🚪', l: 'Puertas abiertas', nav: 'nav-evb-pue',
+          que: 'Cada vez que un bus anduvo con la puerta abierta.',
+          sirve: 'Un riesgo para el pasajero que antes no se medía.' },
+        { icon: '📑', l: 'Reclamaciones por daños', nav: 'nav-reclamaciones',
+          que: 'Los terceros radican su reclamación por un link; aquí se lleva el caso y su expediente.',
+          sirve: 'Cada reclamación con plazos y soportes.' },
+        { icon: '📊', l: 'Estadísticas de siniestros', nav: 'nav-sst-resumen',
+          que: 'Siniestros por año y mes, por conductor, por ruta y por tipo.',
+          sirve: 'Dónde concentrar la prevención.' },
+      ] },
+    { k: 'pqrsf', icon: '📣', t: 'PQRSF: la voz del usuario',
+      lead: 'Lo que dicen los usuarios del servicio: peticiones, quejas, reclamos, sugerencias y felicitaciones.',
+      items: [
+        { icon: '📣', l: 'PQRSF', tabla: 'pqrsf',
+          que: 'Cada PQRSF con el área que la responde y su plazo.',
+          sirve: 'Ninguna queja se queda sin respuesta.' },
+        { icon: '📊', l: 'Estadísticas de PQRSF', nav: 'nav-pqs-resumen',
+          que: 'Cumplimiento de respuesta, vencidas, motivos y canales que más se repiten.',
+          sirve: 'Los problemas del servicio que más molestan al usuario.' },
+        { icon: '🌐', l: 'Radicación del usuario', nav: 'nav-pqr-ruteo',
+          que: 'El link donde el usuario radica, y el reparto automático a cada área.',
+          sirve: 'El usuario radica sin llamar y llega directo a quien responde.' },
+      ] },
+    { k: 'th', icon: '👥', t: 'Talento humano',
+      lead: 'El personal de punta a punta, desde que aspira hasta que se retira. Aquí están las firmas que le corresponden a Gerencia.',
+      items: [
+        { icon: '✅', l: 'Aprobación de ingresos', nav: 'nav-ingresos', badge: () => ING_MIOS, firma: true,
+          que: 'Los requisitos de cada ingreso y las firmas en orden: Gestión Humana, Gerencia y, cuando aplica, el afiliado y la Junta Directiva.',
+          sirve: 'Nadie empieza a trabajar sin los requisitos ni sin su firma.' },
+        { icon: '📝', l: 'Permisos y licencias', nav: 'nav-permisos', badge: () => PERM_MIOS, firma: true,
+          que: 'El empleado lo pide desde el celular con sus soportes; Gestión Humana y Gerencia lo aprueban con un clic.',
+          sirve: 'Se acabó el papel: queda quién aprobó, cuándo y por qué.' },
+        { icon: '🏖️', l: 'Vacaciones', nav: 'nav-vacaciones', badge: () => VAC_MIOS, firma: true,
+          que: 'La solicitud con las fechas exactas (sin domingos ni festivos). Firman el área, Gestión Humana, Gerencia y Nómina.',
+          sirve: 'Cada quien sabe qué día vuelve a trabajar y en qué va su solicitud.' },
+        { icon: '🧾', l: 'Perfil sociodemográfico', tabla: 'perfilsociodemografico',
+          que: 'La hoja de vida de cada persona: datos, vinculaciones y documentos.',
+          sirve: 'Una sola fuente del personal, actualizada por los mismos empleados.' },
+        { icon: '🧑‍✈️', l: 'Aspirantes a conductor', nav: 'nav-aspirantes',
+          que: 'Los aspirantes se inscriben por un link y se llevan por etapas hasta contratarlos.',
+          sirve: 'La selección de conductores ordenada y sin papeles perdidos.' },
+        { icon: '⚖️', l: 'Procesos disciplinarios', nav: ['nav-th-disc', 'nav-dc-bandeja', 'nav-dc-historico'],
+          que: 'Cada proceso con sus etapas, descargos, medidas y expediente.',
+          sirve: 'Procesos a tiempo y bien documentados.' },
+        { icon: '📄', l: 'Certificado laboral', nav: ['nav-th-certificado', 'nav-cert-firmas'],
+          que: 'El certificado sale con el formato de la empresa y se envía por WhatsApp con un enlace.',
+          sirve: 'El empleado lo recibe sin hacer fila.' },
+        { icon: '🗺️', l: 'Mapa de Gestión Humana', nav: 'nav-th-mapa',
+          que: 'Los procesos de Gestión Humana: cuáles ya están en la app y cuáles se llevan todavía por fuera.',
+          sirve: 'Qué falta por sistematizar.' },
+      ] },
+    { k: 'dinero', icon: '💵', t: 'Liquidaciones y cartera',
+      lead: 'El dinero de la operación: lo que liquida cada carro, lo que consigna cada conductor y quién está en mora.',
+      items: [
+        { icon: '💵', l: 'Historial y soportes', nav: 'nav-liq',
+          que: 'Las liquidaciones de los vehículos, día por día, con sus soportes.',
+          sirve: 'Lo que produjo cada carro, sin buscar en la hoja.' },
+        { icon: '💼', l: 'Cartera de conductores', nav: 'nav-cartera',
+          que: 'Lo que debe cada conductor, abonado con las consignaciones que reporta el banco.',
+          sirve: 'Cuentas claras con cada conductor.' },
+        { icon: '🚨', l: 'Conductores en mora', nav: 'nav-mora',
+          que: 'Quién tiene días sin pagar fuera del plazo, cuánto debe y desde cuándo.',
+          sirve: 'La mora se cobra a tiempo.' },
+        { icon: '🔎', l: 'Qué corregir en la hoja', nav: 'nav-liq-rev',
+          que: 'Los errores de la hoja de liquidación que dejan días sin cobrar.',
+          sirve: 'Que no se pierda plata por un dato mal escrito.' },
+      ] },
+    { k: 'corr', icon: '📬', t: 'Correspondencia',
+      lead: 'Entradas, salidas y comunicados con número de radicado, con la misma cuenta y la misma clave.',
+      items: [
+        { icon: '🏠', l: 'Inicio de correspondencia', nav: 'nav-corr-inicio',
+          que: 'Lo pendiente y los comunicados que le toca revisar.',
+          sirve: 'Usted aprueba o rechaza los comunicados de los líderes que le reportan.' },
+        { icon: '📥', l: 'Entradas', nav: 'nav-corr-entrada',
+          que: 'Lo que llega a la empresa, radicado y entregado al área que lo atiende.',
+          sirve: 'Nada que llegue se pierde ni se queda sin respuesta.' },
+        { icon: '📤', l: 'Salidas', nav: 'nav-corr-salida',
+          que: 'Lo que la empresa envía, con su número y su copia.',
+          sirve: 'Prueba de lo que se respondió y cuándo.' },
+        { icon: '📣', l: 'Comunicados', nav: 'nav-corr-comunicado',
+          que: 'Los comunicados internos, revisados por el jefe inmediato antes de salir.',
+          sirve: 'Lo que se comunica tiene el visto bueno de quien corresponde.' },
+      ] },
+    { k: 'admin', icon: '⚙️', t: 'Administración y control',
+      lead: 'Quién entra a la app, qué ve cada uno y los avisos al personal.',
+      items: [
+        { icon: '👤', l: 'Usuarios', nav: 'nav-usuarios',
+          que: 'Las cuentas de la app y el rol de cada una.',
+          sirve: 'Cada quien ve solo lo que le corresponde.' },
+        { icon: '🔐', l: 'Auditoría de accesos', nav: 'nav-auditoria',
+          que: 'Cada ingreso, cada intento fallido y cada cierre de sesión, con la hora.',
+          sirve: 'Seguridad: se sabe quién entró y cuándo.' },
+        { icon: '👥', l: 'Conectados', nav: 'nav-conectados',
+          que: 'Quién está usando la app en este momento.',
+          sirve: 'Confirma que los puestos están atendidos.' },
+        { icon: '📢', l: 'Avisos al personal', nav: 'nav-avisos',
+          que: 'Avisos que el personal debe leer y confirmar al entrar, con la lista de quién falta.',
+          sirve: 'Las instrucciones llegan y queda constancia.' },
+        { icon: '🗂️', l: 'Puestos hoy', nav: 'nav-tablero',
+          que: 'Quién está en cada puesto de despacho hoy.',
+          sirve: 'El equipo del día de un vistazo.' },
+        { icon: '👁️', l: 'Ver como despachador', nav: 'nav-preview',
+          que: 'La app tal como la ve un despachador en su puesto.',
+          sirve: 'Entender lo que vive el equipo de la calle.' },
+      ] },
+  ];
+}
+
+// El botón del menú que abre el módulo (o null si esta cuenta no lo tiene)
+function recEl(it) {
+  const menu = $('sidebar'); if (!menu) return null;
+  if (it.tabla) {
+    if (!visibleTables().includes(it.tabla)) return null;
+    const cfg = TABLES[it.tabla]; const txt = `${cfg.icon || '•'} ${cfg.label}`;
+    return [...menu.querySelectorAll('button:not(.nav-group-h)')].find((b) => b.textContent.trim() === txt) || null;
+  }
+  for (const id of [].concat(it.nav || [])) { const e = $(id); if (e && menu.contains(e)) return e; }
+  return null;
+}
+function recHay(it) { return it.tabla ? visibleTables().includes(it.tabla) : !!recEl(it); }
+// El mismo icono que tiene en el menú, para que la persona lo reconozca al buscarlo
+function recIcon(it) {
+  const el = recEl(it); const s = el && el.querySelector('span');
+  return (s && s.textContent.trim()) || (it.tabla && TABLES[it.tabla] && TABLES[it.tabla].icon) || it.icon;
+}
+// «🚦 Operación en vivo → 🟢 Rutas en vivo»: el camino en el menú, leído del menú mismo
+function recDonde(it) {
+  const el = recEl(it); if (!el) return '';
+  const limpio = (n) => [...n.childNodes].filter((x) => !(x.classList && x.classList.contains('nav-badge')))
+    .map((x) => x.textContent).join('').replace(/\s+/g, ' ').trim();
+  const partes = [limpio(el)];
+  let g = el.closest('.nav-group');
+  while (g) {
+    const t = g.querySelector(':scope > .nav-group-h .nav-group-t');
+    if (t) partes.unshift(limpio(t));
+    g = g.parentElement ? g.parentElement.closest('.nav-group') : null;
+  }
+  return partes.join(' → ');
+}
+function recBadge(it) { try { return Number(it.badge ? it.badge() : 0) || 0; } catch { return 0; } }
+
+function recModal() {
+  let m = $('rec-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'rec-modal'; m.className = 'modal rec-modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card rec-card" role="dialog" aria-modal="true" aria-labelledby="rec-tit" tabindex="-1">
+    <div class="rec-top"><div class="rec-puntos" role="tablist" aria-label="Pasos del recorrido"></div>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar el recorrido">✕</button></div>
+    <div class="rec-body"></div>
+    <div class="modal-foot rec-foot"><button type="button" class="btn" data-rec="ant">← Anterior</button>
+      <span class="rec-cuenta"></span><span class="spacer"></span>
+      <button type="button" class="btn btn-primary" data-rec="sig">Siguiente →</button></div></div>`;
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rec],[data-rec-ir],[data-rec-abrir]');
+    if (b && b.dataset.rec === 'ant') return recIr(_rec.paso - 1);
+    if (b && b.dataset.rec === 'sig') return _rec.paso >= _rec.pasos.length - 1 ? recCerrar() : recIr(_rec.paso + 1);
+    if (b && b.dataset.recIr != null) return recIr(Number(b.dataset.recIr));
+    if (b && b.dataset.recAbrir != null) {
+      const [p, i] = b.dataset.recAbrir.split('.').map(Number);
+      const it = _rec.pasos[p] && _rec.pasos[p].items[i];
+      if (it) recAbrir(it);
+      return;
+    }
+    if (e.target === m || e.target.closest('[data-x]')) recCerrar();
+  });
+  m.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); recCerrar(); }
+    else if (e.key === 'ArrowRight' && !e.target.closest('input,textarea')) recIr(_rec.paso + 1);
+    else if (e.key === 'ArrowLeft' && !e.target.closest('input,textarea')) recIr(_rec.paso - 1);
+  });
+  document.body.appendChild(m);
+  return m;
+}
+
+// Los pasos con lo que ESTA cuenta tiene; las áreas sin ningún módulo no salen
+function recArmar() {
+  const areas = recPasos().map((p) => ({ ...p, items: p.items.filter(recHay) })).filter((p) => p.items.length);
+  return [{ k: 'inicio', inicio: true, items: [] }, ...areas, { k: 'fin', fin: true, items: [] }];
+}
+
+function recPendientes() {
+  const out = [];
+  _rec.pasos.forEach((p, pi) => p.items.forEach((it, i) => { const n = recBadge(it); if (it.firma && n) out.push({ it, n, ref: pi + '.' + i }); }));
+  return out;
+}
+function recPendHtml() {
+  const pend = recPendientes();
+  if (!pend.length) return '<p class="rec-nada">Hoy no tiene nada pendiente por firmar. Cuando le llegue algo, sale con un número rojo en el menú.</p>';
+  return '<ul class="rec-pend">' + pend.map((x) => `<li><span class="rec-pend-n">${x.n}</span><span>${recIcon(x.it)} <b>${esc(x.it.l)}</b> esperan su firma</span>`
+    + `<button type="button" class="btn btn-sm" data-rec-abrir="${x.ref}">Ir a firmar →</button></li>`).join('') + '</ul>';
+}
+
+function recHtmlInicio() {
+  const areas = _rec.pasos.filter((p) => !p.inicio && !p.fin);
+  const nMod = areas.reduce((s, p) => s + p.items.length, 0);
+  return `<div class="rec-hero"><div class="rec-hero-ic" aria-hidden="true">🧭</div>
+      <h2 id="rec-tit">Le damos la bienvenida a la plataforma de APL</h2>
+      <p>Aquí se une todo lo que mueve la empresa: los despachos y el GPS de los buses, la seguridad vial, el personal, el dinero de las liquidaciones y la correspondencia. En este recorrido verá <b>${nMod} módulos en ${areas.length} áreas</b>: qué hace cada uno, para qué le sirve a la Gerencia y un botón para abrirlo.</p></div>
+    <div class="rec-claves">
+      <div><b>Una sola versión de los hechos</b><span>La app cruza lo que registra el despachador con lo que dice el GPS de cada bus.</span></div>
+      <div><b>Controles que no dependen de la memoria</b><span>No deja despachar un carro con documentos vencidos, sin la revisión del día o con un conductor restringido.</span></div>
+      <div><b>Firmas con constancia</b><span>Permisos, vacaciones e ingresos se aprueban con un clic y queda quién, cuándo y por qué.</span></div>
+    </div>
+    <h3 class="rec-h3">Lo que le toca a usted</h3>${recPendHtml()}
+    <h3 class="rec-h3">Las áreas del recorrido</h3>
+    <div class="rec-indice">${areas.map((p) => `<button type="button" class="rec-area" data-rec-ir="${_rec.pasos.indexOf(p)}"><span class="rec-area-ic" aria-hidden="true">${p.icon}</span><span><b>${esc(p.t)}</b><small>${p.items.length} módulo${p.items.length === 1 ? '' : 's'}</small></span></button>`).join('')}</div>`;
+}
+
+function recHtmlArea(p, pi) {
+  return `<div class="rec-area-h"><span class="rec-area-big" aria-hidden="true">${p.icon}</span>
+      <div><h2 id="rec-tit">${esc(p.t)}</h2><p>${esc(p.lead)}</p></div></div>
+    <div class="rec-mods">${p.items.map((it, i) => {
+      const n = recBadge(it); const donde = recDonde(it);
+      return `<article class="rec-mod${it.firma ? ' rec-firma' : ''}">
+        <h4><span aria-hidden="true">${recIcon(it)}</span> ${esc(it.l)}${n ? ` <span class="nav-badge" title="Pendientes para usted">${n}</span>` : ''}</h4>
+        <p>${esc(it.que)}</p>
+        <p class="rec-sirve"><b>Para la Gerencia:</b> ${esc(it.sirve)}</p>
+        <div class="rec-mod-pie">${donde ? `<span class="rec-donde" title="Dónde está en el menú">${esc(donde)}</span>` : '<span></span>'}
+          <button type="button" class="btn btn-sm" data-rec-abrir="${pi}.${i}">Abrir →</button></div></article>`;
+    }).join('')}</div>`;
+}
+
+function recHtmlFin() {
+  return `<div class="rec-hero rec-hero-fin"><div class="rec-hero-ic" aria-hidden="true">✅</div>
+      <h2 id="rec-tit">Listo: ya conoce la app</h2>
+      <p>Tres cosas para el día a día:</p></div>
+    <div class="rec-claves">
+      <div><b>Los números rojos del menú</b><span>Son lo que le toca a usted: firmas de permisos, vacaciones, ingresos y comunicados por revisar.</span></div>
+      <div><b>En el celular</b><span>La barra de abajo tiene los accesos más usados; <b>☰ Más</b> abre el menú completo.</span></div>
+      <div><b>Este recorrido no se pierde</b><span>Lo vuelve a abrir cuando quiera desde el menú: <b>🧭 Conozca la app</b>.</span></div>
+    </div>
+    <h3 class="rec-h3">Lo que le toca a usted</h3>${recPendHtml()}`;
+}
+
+function recIr(n) {
+  const m = recModal();
+  _rec.paso = Math.max(0, Math.min(_rec.pasos.length - 1, n));
+  const p = _rec.pasos[_rec.paso];
+  m.querySelector('.rec-body').innerHTML = p.inicio ? recHtmlInicio() : p.fin ? recHtmlFin() : recHtmlArea(p, _rec.paso);
+  m.querySelector('.rec-body').scrollTop = 0;
+  m.querySelector('.rec-puntos').innerHTML = _rec.pasos.map((x, i) => {
+    const nom = x.inicio ? 'Bienvenida' : x.fin ? 'Final' : x.t;
+    return `<button type="button" role="tab" class="rec-punto${i === _rec.paso ? ' on' : ''}${i < _rec.paso ? ' hecho' : ''}" data-rec-ir="${i}" aria-selected="${i === _rec.paso}" title="${esc(nom)}" aria-label="${esc(nom)}">${x.inicio ? '🧭' : x.fin ? '✅' : x.icon}</button>`;
+  }).join('');
+  // En el celular la fila de puntos no cabe: se corre para que el paso actual quede a la vista
+  const pts = m.querySelector('.rec-puntos'), on = pts.querySelector('.rec-punto.on');
+  if (on && pts.scrollWidth > pts.clientWidth) pts.scrollLeft = on.offsetLeft - (pts.clientWidth - on.offsetWidth) / 2;
+  m.querySelector('.rec-cuenta').textContent = `Paso ${_rec.paso + 1} de ${_rec.pasos.length}`;
+  m.querySelector('[data-rec="ant"]').disabled = _rec.paso === 0;
+  m.querySelector('[data-rec="sig"]').textContent = _rec.paso === 0 ? 'Empezar →' : _rec.paso >= _rec.pasos.length - 1 ? 'Terminar' : 'Siguiente →';
+}
+
+function openRecorrido() {
+  const m = recModal();
+  _rec.pasos = recArmar();
+  recIr(0);
+  closeMenu();
+  m.hidden = false;
+  m.querySelector('.rec-card').focus();
+}
+function recCerrar() {
+  const m = $('rec-modal'); if (m) m.hidden = true;
+  // Visto = no se vuelve a abrir solo (sigue en el menú). Si la base no tiene sql/213, no pasa nada.
+  sb.rpc('recorrido_app_marcar', { p_version: REC_VER }).then(() => {}, () => {});
+}
+function recAbrir(it) {
+  recCerrar();
+  const el = recEl(it);
+  if (el) el.click(); else if (it.tabla) selectTable(it.tabla);
+}
+
+// Al entrar: a la Gerencia que no lo ha visto se le abre solo. Devuelve true si lo abrió.
+async function recorridoAlEntrar() {
+  if (!puedeVerRecorrido()) return false;
+  try {
+    const { data, error } = await sb.rpc('recorrido_app_estado', { p_version: REC_VER });
+    if (error || !data || !data.gerencia || data.visto) return false;
+  } catch { return false; }
+  openRecorrido();
+  return true;
+}
+// Lo que sale al entrar, en orden: el recorrido (si toca) y si no, ✨ Novedades. Nunca los dos juntos.
+async function avisarAlEntrar() {
+  if (await recorridoAlEntrar()) return;
+  avisarNovedades();
 }
 
 // ---------- Asignar puesto (admin): varios despachadores y rango de fechas ----------
