@@ -4311,3 +4311,58 @@ tr.qrc-sel td { background: #fff1f1; }
   .capp-foot .capp-cuenta { font-size: 12px; }
   .capp-pend li { flex-wrap: wrap; }
 }
+
+/* ===== 📷 Foto y 📁 papelería del empleado en la ficha del perfil (sql/215) ===== */
+.pf-av-btn { position: relative; flex: 0 0 auto; border: 0; padding: 0; background: none; border-radius: 50%; cursor: pointer; }
+.pf-av-btn:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.pf-av-btn:hover .pf-av { filter: brightness(.92); }
+.pf-av-cam {
+  position: absolute; right: -4px; bottom: -4px; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px; background: var(--surface, #fff);
+  border: 1px solid var(--border); box-shadow: 0 2px 6px rgba(0,0,0,.15);
+}
+.pf-docs { margin-top: 14px; }
+.pf-docs h4 { display: flex; align-items: center; gap: 8px; }
+.pf-docs-n {
+  min-width: 22px; padding: 1px 7px; border-radius: 999px; background: #eef2ff; color: var(--primary);
+  font-size: 12px; text-align: center;
+}
+.pf-docs-lista { list-style: none; margin: 0; padding: 0; }
+.pf-docs-lista li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+.pf-docs-lista li:last-child { border-bottom: 0; }
+.pf-docs-lista li.quitado .pf-doc-txt b { text-decoration: line-through; color: var(--muted); }
+.pf-doc-ic { flex: 0 0 26px; font-size: 20px; text-align: center; }
+.pf-doc-txt { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.pf-doc-txt .muted { font-size: 12px; margin-top: 2px; }
+.pf-doc-quit { font-size: 12px; color: #991b1b; margin-top: 2px; }
+.pf-doc-acc { display: flex; gap: 6px; flex-wrap: wrap; }
+.pf-docs-vacio { font-size: 13px; padding: 2px 0 4px; }
+.pf-docs-tog { margin-top: 8px; font-size: 12.5px; }
+.pf-doc-card { max-width: 520px; width: 96vw; }
+.pf-doc-body { padding: 14px 20px; display: grid; gap: 12px; overflow-y: auto; }
+.pf-doc-quien { margin: 0; font-size: 13px; }
+.pf-doc-campo { display: grid; gap: 5px; font-size: 13px; font-weight: 700; }
+.pf-doc-campo .req { color: var(--primary); font-style: normal; }
+.pf-doc-campo small { font-weight: 400; }
+.pf-doc-campo input[type="text"], .pf-doc-campo input[type="date"], .pf-doc-campo select {
+  font: inherit; font-weight: 400; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface, #fff); color: var(--text); min-width: 0;
+}
+.pf-doc-arch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-weight: 400; }
+.pf-doc-arch .muted { overflow-wrap: anywhere; min-width: 0; }
+.pf-foto-card { max-width: 620px; width: 96vw; }
+.pf-foto-body { padding: 16px 20px; display: flex; gap: 18px; flex-wrap: wrap; overflow-y: auto; }
+.pf-foto-marco {
+  flex: 0 0 auto; width: 180px; aspect-ratio: 3 / 4; border-radius: 12px; border: 1px solid var(--border);
+  background: #f3f4f6; display: grid; place-items: center; overflow: hidden; font-size: 56px; color: #9ca3af;
+}
+.pf-foto-marco img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pf-foto-lado { flex: 1 1 220px; min-width: 0; display: grid; gap: 10px; align-content: start; font-size: 13px; }
+.pf-foto-lado p { margin: 0; overflow-wrap: anywhere; }
+.pf-foto-bots { display: flex; gap: 8px; flex-wrap: wrap; }
+.pf-foto-bots a.btn { text-decoration: none; }
+.pf-foto-info.pf-foto-nueva { color: #92400e; font-weight: 700; }
+@media (max-width: 560px) {
+  .pf-foto-marco { width: 150px; margin: 0 auto; }
+  .pf-doc-acc { width: 100%; padding-left: 36px; }
+}

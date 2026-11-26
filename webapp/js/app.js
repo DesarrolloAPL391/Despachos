@@ -20528,6 +20528,7 @@ function pfSiniestrosHtml(sin) {
       </li>`).join('')}</ul></section>`;
 }
 function pfRender(row, hist, sin) {
+  _pfSin = sin || [];
   const m = pfModal(), body = m.querySelector('.pf-body');
   const iniciales = String(row.nombre || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('');
   const edad = edadPerfil(row), anios = antiguedadPerfil(row);
@@ -20571,10 +20572,11 @@ function pfRender(row, hist, sin) {
   m.querySelector('[data-cedver]').hidden = !isTalentoHumano() || !_pfCedula;
   _pfHist = hist || [];
   m.querySelector('[data-vacios]').checked = _pfVacios;
+  const avatar = `<div class="pf-av ${row.tipo === 'CONDUCTOR' ? 'cond' : 'adm'}${inactivo ? ' off' : ''}">${_pfFoto
+    ? `<img src="${esc(_pfFoto.foto)}" alt="Foto">` : esc(iniciales)}</div>`;
   body.innerHTML = `
     <header class="pf-top">
-      <div class="pf-av ${row.tipo === 'CONDUCTOR' ? 'cond' : 'adm'}${inactivo ? ' off' : ''}">${_pfFoto
-    ? `<img src="${esc(_pfFoto.foto)}" alt="Foto">` : esc(iniciales)}</div>
+      ${pfDocsPuede() ? `<button type="button" class="pf-av-btn" data-pffoto title="${_pfFoto ? 'Ver o cambiar la foto' : 'Subir la foto del empleado'}">${avatar}<span class="pf-av-cam" aria-hidden="true">📷</span></button>` : avatar}
       <div class="pf-idt">
         <h2>${esc(row.nombre || '—')}</h2>
         <div class="pf-sub">C.C. ${esc(row.cedula || '—')}${row.codigo ? ' · Código ' + esc(row.codigo) : ''}${row.cargo ? ' · ' + esc(row.cargo) : ''}</div>
@@ -20584,9 +20586,14 @@ function pfRender(row, hist, sin) {
     </header>
     ${kpis ? `<div class="pf-kpis">${kpis}</div>` : ''}
     ${avisos}
+    ${pfDocsHtml()}
     <div class="pf-secs">${pfSeccionesHtml(row)}</div>
     ${pfSiniestrosHtml(sin)}
     ${pfHistorialHtml(hist)}`;
+  // 📷 foto y 📁 papelería (sql/215)
+  const bf = body.querySelector('[data-pffoto]');
+  if (bf) bf.onclick = () => pfFotoAbrir(row);
+  pfDocsWire(row);
   // Cada siniestro de la lista abre su reporte completo
   body.querySelectorAll('[data-sinkey]').forEach((b) => { b.onclick = () => sinAbrirPorKey(b.dataset.sinkey); });
   const bl = body.querySelector('[data-hvlink]');
@@ -21333,8 +21340,9 @@ async function openPerfilFicha(row) {
       sb.from('perfil_vinculaciones').select('*').eq('cedula', row.cedula).order('fecha_ingreso', { ascending: false }),
       pfLeerSiniestros(row),
       sb.from('perfil_firmas').select('firma, firmado_en, origen').eq('cedula', row.cedula).maybeSingle(),
-      sb.from('perfil_fotos').select('foto, tomada_en').eq('cedula', row.cedula).maybeSingle(),
+      sb.from('perfil_fotos').select('foto, tomada_en, origen').eq('cedula', row.cedula).maybeSingle(),
       sb.from('perfil_cedulas').select('tomada_en, origen, lectura').eq('cedula', row.cedula).maybeSingle(),
+      pfDocsLeer(row),
     ]);
     _pfFirma = firma || null;
     _pfFoto = foto || null;
@@ -21345,6 +21353,411 @@ async function openPerfilFicha(row) {
   }
 }
 
+
+// ---------- 📷 Foto y 📁 papelería del empleado en la ficha (sql/215) ----------
+// Pedido (26/11/2026): "un espacio para ingresar la foto que es el distintivo de los empleados y
+// espacios para la papelería que monten un documento y lo nombren para evitar problemas".
+//  · 📷 La foto va a perfil_fotos (sql/151): la misma que llega por el link y sale en el PDF de la
+//    hoja de vida. Se recorta sola a 3×4 (600×800) como foto de carnet.
+//  · 📁 Cada documento va al bucket privado `perfil-docs` (d/<uuid>.<ext>: la ruta no lleva datos de la
+//    persona) con su TIPO y un NOMBRE obligatorio que no se repite en la misma persona ni puede ser el
+//    que le puso la cámara o el escáner. Al descargarlo, el archivo sale con ese nombre.
+//  · Nada se borra: «Quitar» pide el motivo y deja el rastro (se ve en «Ver quitados»).
+//  · Lo ven administración y Gestión Humana (v384), igual que la base (es_talento_humano).
+const pfDocsPuede = () => isTalentoHumano();
+// [tipo, icono, ejemplo de nombre]
+const PF_DOC_TIPOS = [
+  ['Cédula', '🪪', 'Cédula (ambas caras)'],
+  ['Hoja de vida', '📋', 'Hoja de vida con soportes'],
+  ['Contrato y otrosíes', '📝', 'Contrato a término fijo 2025'],
+  ['Licencia de conducción', '🚌', 'Licencia C2 vence 2028'],
+  ['Exámenes médicos', '🩺', 'Examen médico de ingreso 2025'],
+  ['Afiliaciones (EPS, ARL, pensión, caja)', '🏥', 'Afiliación a la EPS'],
+  ['Certificados de estudio', '🎓', 'Diploma de bachiller'],
+  ['Certificados laborales y referencias', '🏢', 'Certificado laboral de la empresa anterior'],
+  ['Antecedentes', '🔎', 'Antecedentes de la Procuraduría 2025'],
+  ['Autorización de datos', '✍️', 'Autorización de datos personales firmada'],
+  ['Certificación bancaria', '🏦', 'Certificación de la cuenta de nómina'],
+  ['Capacitaciones y cursos', '📚', 'Curso de manejo defensivo 2026'],
+  ['Beneficiarios y familia', '👪', 'Registro civil del hijo'],
+  ['Retiro (renuncia, liquidación, paz y salvo)', '📤', 'Carta de renuncia'],
+  ['Otro', '📄', 'Escribe qué documento es'],
+];
+const PF_DOC_MIME = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+const PF_DOC_MAX = 15 * 1024 * 1024;       // = file_size_limit del bucket
+const PF_FOTO_ORIGEN = { LINK: 'llegó por el link general', ENLACE: 'llegó por su link personal',
+  ASPIRANTE: 'llegó del proceso de aspirantes', FICHA: 'se subió desde la ficha' };
+let _pfDocs = [];           // documentos de la persona abierta (también los quitados)
+let _pfDocsErr = '';        // si la tabla aún no está en la base, la sección lo dice
+let _pfDocsQuitados = false;
+let _pfSin = [];            // siniestros de la ficha abierta (para volver a pintarla)
+
+async function pfDocsLeer(row) {
+  _pfDocs = []; _pfDocsErr = ''; _pfDocsQuitados = false;
+  if (!pfDocsPuede()) return;
+  try {
+    const { data, error } = await sb.from('perfil_documentos').select('*').eq('cedula', row.cedula)
+      .order('subido_en', { ascending: false });
+    if (error) throw error;
+    _pfDocs = data || [];
+  } catch (e) {
+    const t = String(e.message || e);
+    _pfDocsErr = /perfil_documentos|relation|schema cache/i.test(t)
+      ? 'La papelería todavía no está activa en la base (falta aplicar sql/215).' : 'No se pudo leer la papelería: ' + t;
+  }
+}
+
+// Mismo criterio que _perfil_doc_nombre (sql/215): si cambia uno, cambiar el otro.
+function pfDocNombreError(nombre, idPropio) {
+  const n = String(nombre || '').trim().replace(/\s+/g, ' ');
+  if (n.length < 4) return 'Ponle un nombre al documento (mínimo 4 letras): por ejemplo «Contrato a término fijo 2025».';
+  if (n.length > 120) return 'El nombre del documento es muy largo (máximo 120).';
+  if (/\.(pdf|jpe?g|png|webp|heic|docx?|xlsx?)$/i.test(n)) return 'Eso parece el nombre del archivo: escribe qué documento es.';
+  if (/^(img|dsc|dcim|pxl|photo|pic|foto|image|imagen|cam|camscanner|scan|scanned|escaneo|escaneado|whatsapp( (image|imagen|document|documento|video))?|wa|doc|document|documento|archivo|file|screenshot|captura( de pantalla)?)[ _-]*\d/i.test(n)) {
+    return 'Eso parece el nombre que le puso la cámara o el escáner: escribe qué documento es.';
+  }
+  if (!/[a-záéíóúüñ]{3}/i.test(n)) return 'Escribe qué documento es (con letras).';
+  const k = n.toLowerCase();
+  if (_pfDocs.some((d) => !d.quitado_en && String(d.id) !== String(idPropio || '') && String(d.nombre || '').trim().toLowerCase() === k)) {
+    return 'Esta persona ya tiene un documento con ese nombre: agrégale la fecha o el año para distinguirlos.';
+  }
+  return '';
+}
+const pfDocTipo = (tipo) => PF_DOC_TIPOS.find((x) => x[0] === tipo);
+const pfDocExt = (d) => ((/\.(\w+)$/.exec(d.path || '') || [])[1] || '').toLowerCase();
+function pfDocPeso(n) {
+  n = Number(n || 0);
+  if (!n) return '';
+  return n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1).replace('.', ',') + ' MB';
+}
+// Lo que se puede subir: PDF, Word, Excel tal cual; las fotos se achican a JPG.
+function pfDocClase(f) {
+  const ext = ((/\.(\w+)$/.exec(String(f.name || '').toLowerCase()) || [])[1] || '');
+  if (/hei[cf]/i.test(f.type) || ext === 'heic' || ext === 'heif') {
+    return { error: 'Las fotos HEIC del iPhone no se pueden abrir aquí: envíala como JPG o en PDF.' };
+  }
+  if (f.type === 'application/pdf' || ext === 'pdf') return { ext: 'pdf' };
+  if (ext === 'docx' || ext === 'xlsx') return { ext };
+  if (/^image\/(jpeg|png|webp)$/.test(f.type) || ['jpg', 'jpeg', 'png', 'webp'].includes(ext)) return { imagen: true };
+  return { error: 'Ese tipo de archivo no se puede subir: usa PDF, foto (JPG o PNG), Word (.docx) o Excel (.xlsx).' };
+}
+
+function pfDocsHtml() {
+  if (!pfDocsPuede()) return '';
+  const vivos = _pfDocs.filter((d) => !d.quitado_en), quitados = _pfDocs.filter((d) => d.quitado_en);
+  const orden = (d) => { const i = PF_DOC_TIPOS.findIndex((x) => x[0] === d.tipo); return i < 0 ? 99 : i; };
+  const lista = (_pfDocsQuitados ? quitados : vivos).slice().sort((a, b) => orden(a) - orden(b)
+    || String(b.fecha_doc || '').localeCompare(String(a.fecha_doc || ''))
+    || String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+  const fila = (d) => {
+    const quien = d.subido_nombre || String(d.subido_por || '').split('@')[0] || '—';
+    const det = [esc(d.tipo), d.fecha_doc ? 'del ' + esc(fechaLegible(d.fecha_doc)) : '',
+      esc([pfDocExt(d).toUpperCase(), pfDocPeso(d.tamano)].filter(Boolean).join(' ')),
+      `subió ${esc(quien)} el ${esc(fmtFechaHora(d.subido_en))}`].filter(Boolean).join(' · ');
+    return `<li class="${d.quitado_en ? 'quitado' : ''}">
+      <span class="pf-doc-ic" aria-hidden="true">${(pfDocTipo(d.tipo) || [])[1] || '📄'}</span>
+      <div class="pf-doc-txt"><b>${esc(d.nombre)}</b><div class="muted">${det}</div>
+        ${d.quitado_en ? `<div class="pf-doc-quit">🗑️ Quitado el ${esc(fmtFechaHora(d.quitado_en))}${d.quitado_motivo ? ': ' + esc(d.quitado_motivo) : ''}</div>` : ''}</div>
+      <div class="pf-doc-acc">
+        <button type="button" class="btn btn-sm" data-docver="${esc(d.id)}">👁️ Ver</button>
+        <button type="button" class="btn btn-sm" data-docbajar="${esc(d.id)}" title="Descargar con su nombre">⬇️</button>
+        ${d.quitado_en ? '' : `<button type="button" class="btn btn-sm" data-doceditar="${esc(d.id)}" title="Cambiar el nombre, el tipo o la fecha">✏️</button>
+        <button type="button" class="btn btn-sm" data-docquitar="${esc(d.id)}" title="Quitar (no se borra: queda el rastro)">🗑️</button>`}
+      </div></li>`;
+  };
+  const vacio = _pfDocsQuitados ? 'No hay documentos quitados.'
+    : 'Todavía no hay documentos. Sube cada papel con un nombre que diga qué es: por ejemplo «Contrato a término fijo 2025» o «Cédula (ambas caras)».';
+  return `<section class="pf-sec pf-docs" data-pfdocs>
+    <h4>📁 Papelería <span class="pf-docs-n">${vivos.length}</span><span class="spacer"></span>
+      ${_pfDocsErr ? '' : '<button type="button" class="btn btn-sm btn-primary" data-docnuevo>📎 Subir documento</button>'}</h4>
+    ${_pfDocsErr ? `<div class="pf-aviso ambar">${esc(_pfDocsErr)}</div>`
+      : lista.length ? `<ul class="pf-docs-lista">${lista.map(fila).join('')}</ul>` : `<div class="muted pf-docs-vacio">${vacio}</div>`}
+    ${quitados.length ? `<button type="button" class="pf-link pf-docs-tog" data-doctog>${_pfDocsQuitados ? '← Volver a los documentos'
+      : `Ver ${quitados.length} quitado${quitados.length === 1 ? '' : 's'}`}</button>` : ''}
+  </section>`;
+}
+function pfDocsPintar(row) {
+  const s = document.querySelector('#pf-modal [data-pfdocs]');
+  if (!s) return;
+  s.outerHTML = pfDocsHtml();
+  pfDocsWire(row);
+}
+function pfDocsWire(row) {
+  const s = document.querySelector('#pf-modal [data-pfdocs]');
+  if (!s) return;
+  s.onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const doc = (id) => _pfDocs.find((x) => String(x.id) === String(id));
+    if (b.matches('[data-docnuevo]')) pfDocForm(row, null);
+    else if (b.matches('[data-doctog]')) { _pfDocsQuitados = !_pfDocsQuitados; pfDocsPintar(row); }
+    else if (b.dataset.docver) pfDocAbrir(doc(b.dataset.docver), false);
+    else if (b.dataset.docbajar) pfDocAbrir(doc(b.dataset.docbajar), true);
+    else if (b.dataset.doceditar) pfDocForm(row, doc(b.dataset.doceditar));
+    else if (b.dataset.docquitar) pfDocQuitar(row, doc(b.dataset.docquitar));
+  };
+}
+
+// Ver en otra pestaña, o descargar con el nombre que le pusieron (no "scan0001.pdf").
+const pfDocArchivo = (d) => String(d.nombre || 'documento').replace(/[\\/:*?"<>|]+/g, '-').trim() + (pfDocExt(d) ? '.' + pfDocExt(d) : '');
+async function pfDocAbrir(d, bajar) {
+  if (!d) return;
+  const w = bajar ? null : window.open('', '_blank');
+  const { data, error } = await sb.storage.from('perfil-docs')
+    .createSignedUrl(d.path, 300, bajar ? { download: pfDocArchivo(d) } : undefined);
+  if (error || !data) { if (w) w.close(); toast('No se pudo abrir el documento.', 'err'); return; }
+  if (bajar) {
+    const a = document.createElement('a');
+    a.href = data.signedUrl; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  } else if (w) w.location = data.signedUrl;
+  else window.open(data.signedUrl, '_blank');
+}
+
+function pfDocModal() {
+  let m = $('pf-doc-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pf-doc-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-doc-card">
+    <div class="modal-head"><h3>📎 Subir documento</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-doc-body">
+      <p class="muted pf-doc-quien"></p>
+      <label class="pf-doc-campo"><span>Tipo de documento <i class="req">*</i></span>
+        <select data-dtipo><option value="">— Elige —</option>${PF_DOC_TIPOS.map(([t, i]) =>
+    `<option value="${esc(t)}">${i} ${esc(t)}</option>`).join('')}</select></label>
+      <label class="pf-doc-campo"><span>Nombre del documento <i class="req">*</i></span>
+        <input type="text" data-dnombre maxlength="120" autocomplete="off" placeholder="Ej.: Contrato a término fijo 2025">
+        <small class="muted">Que diga qué es, para encontrarlo sin abrirlo. Con este nombre se descarga.</small></label>
+      <label class="pf-doc-campo"><span>Fecha del documento <small class="muted">(si la tiene)</small></span>
+        <input type="date" data-dfecha></label>
+      <div class="pf-doc-campo" data-darchc><span>Archivo <i class="req">*</i></span>
+        <div class="pf-doc-arch"><label class="btn btn-sm">📁 Elegir archivo<input type="file" hidden data-darch
+          accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.docx,.xlsx"></label>
+          <span class="muted" data-darchtxt></span></div></div>
+      <div class="pf-doc-err error" hidden></div>
+    </div>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cancelar</button>
+      <button type="button" class="btn btn-primary" data-dguardar>Guardar</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+// Subir uno nuevo (doc = null) o cambiarle el nombre, el tipo o la fecha a uno que ya está.
+function pfDocForm(row, doc) {
+  const m = pfDocModal();
+  document.body.appendChild(m);                // encima de la ficha
+  const q = (s) => m.querySelector(s);
+  const err = q('.pf-doc-err'), tipo = q('[data-dtipo]'), nom = q('[data-dnombre]'), fec = q('[data-dfecha]');
+  const arch = q('[data-darch]'), archTxt = q('[data-darchtxt]'), btn = q('[data-dguardar]');
+  const ARCH_AYUDA = 'PDF, foto, Word o Excel · hasta 15 MB';
+  let archivo = null;
+  const fallo = (t) => { err.textContent = t; err.hidden = !t; };
+  q('h3').textContent = doc ? '✏️ Cambiar el nombre del documento' : '📎 Subir documento';
+  q('.pf-doc-quien').textContent = `${row.nombre || ''} · C.C. ${row.cedula || ''}`;
+  if (doc && !pfDocTipo(doc.tipo) && ![...tipo.options].some((o) => o.value === doc.tipo)) {
+    tipo.insertAdjacentHTML('beforeend', `<option value="${esc(doc.tipo)}">📄 ${esc(doc.tipo)}</option>`);
+  }
+  tipo.value = doc ? doc.tipo : '';
+  nom.value = doc ? doc.nombre : '';
+  fec.value = doc && doc.fecha_doc ? String(doc.fecha_doc).slice(0, 10) : '';
+  fec.min = '1950-01-01';
+  fec.max = new Date(Date.now() + 366 * 864e5).toISOString().slice(0, 10);
+  q('[data-darchc]').hidden = !!doc;
+  archTxt.textContent = ARCH_AYUDA;
+  btn.textContent = doc ? 'Guardar cambios' : 'Subir documento';
+  fallo('');
+  const ejemplo = () => { const t = pfDocTipo(tipo.value); nom.placeholder = 'Ej.: ' + (t ? t[2] : 'Contrato a término fijo 2025'); };
+  ejemplo();
+  tipo.onchange = () => { ejemplo(); fallo(''); };
+  nom.oninput = () => fallo('');
+  arch.onchange = () => {
+    const f = arch.files && arch.files[0];
+    arch.value = '';
+    if (!f) return;
+    const c = pfDocClase(f);
+    if (c.error) { archivo = null; archTxt.textContent = ARCH_AYUDA; fallo(c.error); return; }
+    if (!c.imagen && f.size > PF_DOC_MAX) { archivo = null; archTxt.textContent = ARCH_AYUDA; fallo('El archivo pesa más de 15 MB.'); return; }
+    archivo = f; fallo('');
+    archTxt.textContent = `${f.name} · ${pfDocPeso(f.size)}${c.imagen ? ' (se achica antes de subir)' : ''}`;
+  };
+  btn.onclick = async () => {
+    const msg = (!tipo.value ? 'Elige el tipo de documento.' : '') || pfDocNombreError(nom.value, doc && doc.id)
+      || (fec.value && (fec.value < fec.min || fec.value > fec.max) ? 'La fecha del documento no es válida.' : '')
+      || (!doc && !archivo ? 'Elige el archivo.' : '');
+    if (msg) { fallo(msg); return; }
+    const nombre = nom.value.trim().replace(/\s+/g, ' ');
+    btn.disabled = true;
+    showBusy(doc ? 'Guardando…' : 'Subiendo el documento…');
+    try {
+      if (doc) {
+        const { data, error } = await sb.rpc('perfil_doc_editar', { p_id: doc.id, p_tipo: tipo.value, p_nombre: nombre, p_fecha: fec.value || null });
+        if (error) throw error;
+        Object.assign(doc, data.doc);
+      } else {
+        const c = pfDocClase(archivo);
+        let blob = archivo, ext = c.ext, mime = PF_DOC_MIME[c.ext];
+        if (c.imagen) { blob = await comprimirFoto(archivo, 2200, 0.85); ext = 'jpg'; mime = 'image/jpeg'; }
+        if (!blob || blob.size > PF_DOC_MAX) throw new Error('el archivo pesa más de 15 MB');
+        const path = `d/${crypto.randomUUID()}.${ext}`;
+        const up = await sb.storage.from('perfil-docs').upload(path, blob, { contentType: mime, upsert: false });
+        if (up.error) throw up.error;
+        const { data, error } = await sb.rpc('perfil_doc_registrar', {
+          p_cedula: row.cedula, p_tipo: tipo.value, p_nombre: nombre, p_fecha: fec.value || null,
+          p_path: path, p_archivo: archivo.name || null, p_mime: mime, p_tamano: blob.size });
+        if (error) throw error;
+        _pfDocs.unshift(data.doc);
+      }
+      m.hidden = true;
+      _pfDocsQuitados = false;
+      pfDocsPintar(row);
+      toast(doc ? 'Documento actualizado' : 'Documento guardado', 'ok');
+    } catch (e) {
+      fallo('No se pudo guardar: ' + (e.message || e));
+    } finally { btn.disabled = false; hideBusy(); }
+  };
+  m.hidden = false;
+  (doc ? nom : tipo).focus();
+}
+async function pfDocQuitar(row, d) {
+  if (!d) return;
+  const motivo = (window.prompt(`¿Por qué se quita «${d.nombre}»?\n\nNo se borra: queda en «Ver quitados» con este motivo.`, '') || '').trim();
+  if (!motivo) return;
+  if (motivo.length < 5) { toast('Escribe por qué se quita (mínimo 5 letras).', 'err'); return; }
+  showBusy('Quitando…');
+  try {
+    const { data, error } = await sb.rpc('perfil_doc_quitar', { p_id: d.id, p_motivo: motivo });
+    if (error) throw error;
+    Object.assign(d, data.doc);
+    pfDocsPintar(row);
+    toast('Documento quitado (queda el rastro en «Ver quitados»)', 'ok');
+  } catch (e) {
+    toast('No se pudo quitar: ' + (e.message || e), 'err');
+  } finally { hideBusy(); }
+}
+
+// ---- 📷 Foto de carnet ----
+// Recorta al centro a 3×4 (un poco más arriba en fotos altas, para no cortar la cabeza) y sale en JPEG
+// de 600×800; si pasa del tope de perfil_fotos (400.000 caracteres) baja la calidad.
+function pfRecortar34(fuente, w, h) {
+  const W = 600, H = 800;
+  let sw = w, sh = h, sx = 0, sy = 0;
+  if (sw / sh > W / H) { sw = sh * W / H; sx = (w - sw) / 2; } else { sh = sw * H / W; sy = (h - sh) * 0.35; }
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(fuente, sx, sy, sw, sh, 0, 0, W, H);
+  let k = 0.86, url = c.toDataURL('image/jpeg', k);
+  while (url.length > 380000 && k > 0.4) { k -= 0.1; url = c.toDataURL('image/jpeg', k); }
+  return url;
+}
+async function pfFotoDeArchivo(f) {
+  if (/hei[cf]/i.test(f.type) || /\.hei[cf]$/i.test(f.name || '')) throw new Error('Las fotos HEIC del iPhone no se pueden abrir aquí: envíala como JPG.');
+  const src = URL.createObjectURL(f);
+  try {
+    const im = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i); i.onerror = () => rej(new Error('No se pudo leer esa foto. Prueba con otra en JPG o PNG.'));
+      i.src = src;
+    });
+    return pfRecortar34(im, im.naturalWidth, im.naturalHeight);
+  } finally { URL.revokeObjectURL(src); }
+}
+function pfFotoModal() {
+  let m = $('pf-foto-modal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'pf-foto-modal'; m.className = 'modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card pf-foto-card">
+    <div class="modal-head"><h3>📷 Foto del empleado</h3><span class="spacer"></span>
+      <button type="button" class="icon-btn" data-x aria-label="Cerrar">✕</button></div>
+    <div class="pf-foto-body">
+      <div class="pf-foto-marco"><img alt="Foto del empleado" hidden><span aria-hidden="true">👤</span></div>
+      <div class="pf-foto-lado">
+        <p class="pf-foto-quien"></p>
+        <p class="muted pf-foto-info"></p>
+        <div class="pf-foto-bots">
+          <button type="button" class="btn btn-sm" data-fcam>📷 Tomar con la cámara</button>
+          <label class="btn btn-sm">📁 Elegir una foto<input type="file" hidden accept="image/jpeg,image/png,image/webp" data-farch></label>
+          <a class="btn btn-sm" data-fbajar hidden>⬇️ Descargar</a>
+        </div>
+        <small class="muted">Foto tipo documento: de frente, con fondo claro, sin gafas oscuras ni gorra. Se recorta sola a 3×4.</small>
+        <div class="pf-foto-err error" hidden></div>
+      </div>
+    </div>
+    <div class="modal-foot"><span class="spacer"></span>
+      <button type="button" class="btn" data-x>Cerrar</button>
+      <button type="button" class="btn btn-primary" data-fguardar hidden>Guardar foto</button></div>
+  </div>`;
+  m.addEventListener('click', (e) => { if (e.target === m || e.target.closest('[data-x]')) m.hidden = true; });
+  document.body.appendChild(m);
+  return m;
+}
+function pfFotoAbrir(row) {
+  const m = pfFotoModal();
+  document.body.appendChild(m);                // encima de la ficha
+  const q = (s) => m.querySelector(s);
+  const img = q('.pf-foto-marco img'), vacio = q('.pf-foto-marco span'), info = q('.pf-foto-info');
+  const err = q('.pf-foto-err'), guardar = q('[data-fguardar]'), bajar = q('[data-fbajar]'), cam = q('[data-fcam]');
+  let nueva = '';
+  const archivoFoto = `Foto - ${String(row.nombre || row.cedula || 'empleado').replace(/[\\/:*?"<>|]+/g, '-').trim()}.jpg`;
+  const pintar = () => {
+    const src = nueva || (_pfFoto && _pfFoto.foto) || '';
+    img.hidden = !src; vacio.hidden = !!src;
+    if (src) img.src = src; else img.removeAttribute('src');
+    info.classList.toggle('pf-foto-nueva', !!nueva);
+    info.textContent = nueva ? 'Foto nueva sin guardar: si se ve bien, pulsa «Guardar foto».'
+      : _pfFoto ? `Foto del ${fmtFechaHora(_pfFoto.tomada_en)}${PF_FOTO_ORIGEN[_pfFoto.origen] ? ' · ' + PF_FOTO_ORIGEN[_pfFoto.origen] : ''}.`
+        : 'Todavía no tiene foto.';
+    guardar.hidden = !nueva;
+    bajar.hidden = !src || !!nueva;
+    if (src && !nueva) { bajar.href = src; bajar.download = archivoFoto; }
+  };
+  const usar = (url) => { nueva = url; err.hidden = true; pintar(); };
+  q('.pf-foto-quien').innerHTML = `<b>${esc(row.nombre || '')}</b><br><span class="muted">C.C. ${esc(row.cedula || '')}${row.cargo ? ' · ' + esc(row.cargo) : ''}</span>`;
+  cam.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && $('foto-modal'));
+  cam.onclick = async () => {
+    document.body.appendChild($('foto-modal'));   // la cámara, encima de esta ventana
+    if (!(await tomarFoto())) return;
+    const cv = $('foto-preview');
+    if (cv && cv.width) usar(pfRecortar34(cv, cv.width, cv.height));
+  };
+  q('[data-farch]').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try { usar(await pfFotoDeArchivo(f)); } catch (x) { err.textContent = x.message || String(x); err.hidden = false; }
+  };
+  guardar.onclick = async () => {
+    if (!nueva) return;
+    guardar.disabled = true;
+    showBusy('Guardando la foto…');
+    try {
+      const ahora = new Date().toISOString();
+      const { error } = await sb.from('perfil_fotos').upsert(
+        { cedula: row.cedula, foto: nueva, tomada_en: ahora, origen: 'FICHA', guardado_en: ahora }, { onConflict: 'cedula' });
+      if (error) throw error;
+      _pfFoto = { foto: nueva, tomada_en: ahora, origen: 'FICHA' };
+      nueva = '';
+      m.hidden = true;
+      toast('Foto guardada', 'ok');
+      if (_pfRow && _pfRow.cedula === row.cedula) pfRender(_pfRow, _pfHist, _pfSin);
+    } catch (x) {
+      err.textContent = 'No se pudo guardar la foto: ' + (x.message || x); err.hidden = false;
+    } finally { guardar.disabled = false; hideBusy(); }
+  };
+  err.hidden = true;
+  pintar();
+  m.hidden = false;
+}
 
 // ===================================================================================
 // 📄 CERTIFICADO LABORAL (sql/93) — se genera desde la ficha del perfil.
