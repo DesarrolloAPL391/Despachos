@@ -20582,6 +20582,7 @@ function pfRender(row, hist, sin) {
         <div class="pf-sub">C.C. ${esc(row.cedula || '—')}${row.codigo ? ' · Código ' + esc(row.codigo) : ''}${row.cargo ? ' · ' + esc(row.cargo) : ''}</div>
         <div class="pf-chips">${chips}</div>
       </div>
+      ${pfDocsPuede() ? `<button type="button" class="btn ${_pfFoto ? '' : 'btn-primary '}pf-foto-abrir" data-pffoto>${_pfFoto ? '📷 Cambiar foto' : '📷 Subir foto'}</button>` : ''}
       ${row.celular ? `<a class="pf-wabtn" href="https://wa.me/57${esc(String(row.celular).trim())}" target="_blank" rel="noopener">💬 ${esc(row.celular)}</a>` : ''}
     </header>
     ${kpis ? `<div class="pf-kpis">${kpis}</div>` : ''}
@@ -20590,9 +20591,8 @@ function pfRender(row, hist, sin) {
     <div class="pf-secs">${pfSeccionesHtml(row)}</div>
     ${pfSiniestrosHtml(sin)}
     ${pfHistorialHtml(hist)}`;
-  // 📷 foto y 📁 papelería (sql/215)
-  const bf = body.querySelector('[data-pffoto]');
-  if (bf) bf.onclick = () => pfFotoAbrir(row);
+  // 📷 foto (el botón con texto y el avatar) y 📁 papelería (sql/215)
+  body.querySelectorAll('[data-pffoto]').forEach((b) => { b.onclick = () => pfFotoAbrir(row); });
   pfDocsWire(row);
   // Cada siniestro de la lista abre su reporte completo
   body.querySelectorAll('[data-sinkey]').forEach((b) => { b.onclick = () => sinAbrirPorKey(b.dataset.sinkey); });
