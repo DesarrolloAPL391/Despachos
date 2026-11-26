@@ -5018,24 +5018,24 @@ function recDonde(it) {
 function recBadge(it) { try { return Number(it.badge ? it.badge() : 0) || 0; } catch { return 0; } }
 
 function recModal() {
-  let m = $('rec-modal');
+  let m = $('capp-modal');
   if (m) return m;
   m = document.createElement('div');
-  m.id = 'rec-modal'; m.className = 'modal rec-modal'; m.hidden = true;
-  m.innerHTML = `<div class="modal-card rec-card" role="dialog" aria-modal="true" aria-labelledby="rec-tit" tabindex="-1">
-    <div class="rec-top"><div class="rec-puntos" role="tablist" aria-label="Pasos del recorrido"></div>
+  m.id = 'capp-modal'; m.className = 'modal capp-modal'; m.hidden = true;
+  m.innerHTML = `<div class="modal-card capp-card" role="dialog" aria-modal="true" aria-labelledby="capp-tit" tabindex="-1">
+    <div class="capp-top"><div class="capp-puntos" role="tablist" aria-label="Pasos del recorrido"></div>
       <button type="button" class="icon-btn" data-x aria-label="Cerrar el recorrido">✕</button></div>
-    <div class="rec-body"></div>
-    <div class="modal-foot rec-foot"><button type="button" class="btn" data-rec="ant">← Anterior</button>
-      <span class="rec-cuenta"></span><span class="spacer"></span>
-      <button type="button" class="btn btn-primary" data-rec="sig">Siguiente →</button></div></div>`;
+    <div class="capp-body"></div>
+    <div class="modal-foot capp-foot"><button type="button" class="btn" data-capp="ant">← Anterior</button>
+      <span class="capp-cuenta"></span><span class="spacer"></span>
+      <button type="button" class="btn btn-primary" data-capp="sig">Siguiente →</button></div></div>`;
   m.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-rec],[data-rec-ir],[data-rec-abrir]');
-    if (b && b.dataset.rec === 'ant') return recIr(_rec.paso - 1);
-    if (b && b.dataset.rec === 'sig') return _rec.paso >= _rec.pasos.length - 1 ? recCerrar() : recIr(_rec.paso + 1);
-    if (b && b.dataset.recIr != null) return recIr(Number(b.dataset.recIr));
-    if (b && b.dataset.recAbrir != null) {
-      const [p, i] = b.dataset.recAbrir.split('.').map(Number);
+    const b = e.target.closest('[data-capp],[data-capp-ir],[data-capp-abrir]');
+    if (b && b.dataset.capp === 'ant') return recIr(_rec.paso - 1);
+    if (b && b.dataset.capp === 'sig') return _rec.paso >= _rec.pasos.length - 1 ? recCerrar() : recIr(_rec.paso + 1);
+    if (b && b.dataset.cappIr != null) return recIr(Number(b.dataset.cappIr));
+    if (b && b.dataset.cappAbrir != null) {
+      const [p, i] = b.dataset.cappAbrir.split('.').map(Number);
       const it = _rec.pasos[p] && _rec.pasos[p].items[i];
       if (it) recAbrir(it);
       return;
@@ -5064,69 +5064,69 @@ function recPendientes() {
 }
 function recPendHtml() {
   const pend = recPendientes();
-  if (!pend.length) return '<p class="rec-nada">Hoy no tiene nada pendiente por firmar. Cuando le llegue algo, sale con un número rojo en el menú.</p>';
-  return '<ul class="rec-pend">' + pend.map((x) => `<li><span class="rec-pend-n">${x.n}</span><span>${recIcon(x.it)} <b>${esc(x.it.l)}</b> esperan su firma</span>`
-    + `<button type="button" class="btn btn-sm" data-rec-abrir="${x.ref}">Ir a firmar →</button></li>`).join('') + '</ul>';
+  if (!pend.length) return '<p class="capp-nada">Hoy no tiene nada pendiente por firmar. Cuando le llegue algo, sale con un número rojo en el menú.</p>';
+  return '<ul class="capp-pend">' + pend.map((x) => `<li><span class="capp-pend-n">${x.n}</span><span>${recIcon(x.it)} <b>${esc(x.it.l)}</b> esperan su firma</span>`
+    + `<button type="button" class="btn btn-sm" data-capp-abrir="${x.ref}">Ir a firmar →</button></li>`).join('') + '</ul>';
 }
 
 function recHtmlInicio() {
   const areas = _rec.pasos.filter((p) => !p.inicio && !p.fin);
   const nMod = areas.reduce((s, p) => s + p.items.length, 0);
-  return `<div class="rec-hero"><div class="rec-hero-ic" aria-hidden="true">🧭</div>
-      <h2 id="rec-tit">Le damos la bienvenida a la plataforma de APL</h2>
+  return `<div class="capp-hero"><div class="capp-hero-ic" aria-hidden="true">🧭</div>
+      <h2 id="capp-tit">Le damos la bienvenida a la plataforma de APL</h2>
       <p>Aquí se une todo lo que mueve la empresa: los despachos y el GPS de los buses, la seguridad vial, el personal, el dinero de las liquidaciones y la correspondencia. En este recorrido verá <b>${nMod} módulos en ${areas.length} áreas</b>: qué hace cada uno, para qué le sirve a la Gerencia y un botón para abrirlo.</p></div>
-    <div class="rec-claves">
+    <div class="capp-claves">
       <div><b>Una sola versión de los hechos</b><span>La app cruza lo que registra el despachador con lo que dice el GPS de cada bus.</span></div>
       <div><b>Controles que no dependen de la memoria</b><span>No deja despachar un carro con documentos vencidos, sin la revisión del día o con un conductor restringido.</span></div>
       <div><b>Firmas con constancia</b><span>Permisos, vacaciones e ingresos se aprueban con un clic y queda quién, cuándo y por qué.</span></div>
     </div>
-    <h3 class="rec-h3">Lo que le toca a usted</h3>${recPendHtml()}
-    <h3 class="rec-h3">Las áreas del recorrido</h3>
-    <div class="rec-indice">${areas.map((p) => `<button type="button" class="rec-area" data-rec-ir="${_rec.pasos.indexOf(p)}"><span class="rec-area-ic" aria-hidden="true">${p.icon}</span><span><b>${esc(p.t)}</b><small>${p.items.length} módulo${p.items.length === 1 ? '' : 's'}</small></span></button>`).join('')}</div>`;
+    <h3 class="capp-h3">Lo que le toca a usted</h3>${recPendHtml()}
+    <h3 class="capp-h3">Las áreas del recorrido</h3>
+    <div class="capp-indice">${areas.map((p) => `<button type="button" class="capp-area" data-capp-ir="${_rec.pasos.indexOf(p)}"><span class="capp-area-ic" aria-hidden="true">${p.icon}</span><span><b>${esc(p.t)}</b><small>${p.items.length} módulo${p.items.length === 1 ? '' : 's'}</small></span></button>`).join('')}</div>`;
 }
 
 function recHtmlArea(p, pi) {
-  return `<div class="rec-area-h"><span class="rec-area-big" aria-hidden="true">${p.icon}</span>
-      <div><h2 id="rec-tit">${esc(p.t)}</h2><p>${esc(p.lead)}</p></div></div>
-    <div class="rec-mods">${p.items.map((it, i) => {
+  return `<div class="capp-area-h"><span class="capp-area-big" aria-hidden="true">${p.icon}</span>
+      <div><h2 id="capp-tit">${esc(p.t)}</h2><p>${esc(p.lead)}</p></div></div>
+    <div class="capp-mods">${p.items.map((it, i) => {
       const n = recBadge(it); const donde = recDonde(it);
-      return `<article class="rec-mod${it.firma ? ' rec-firma' : ''}">
+      return `<article class="capp-mod${it.firma ? ' capp-firma' : ''}">
         <h4><span aria-hidden="true">${recIcon(it)}</span> ${esc(it.l)}${n ? ` <span class="nav-badge" title="Pendientes para usted">${n}</span>` : ''}</h4>
         <p>${esc(it.que)}</p>
-        <p class="rec-sirve"><b>Para la Gerencia:</b> ${esc(it.sirve)}</p>
-        <div class="rec-mod-pie">${donde ? `<span class="rec-donde" title="Dónde está en el menú">${esc(donde)}</span>` : '<span></span>'}
-          <button type="button" class="btn btn-sm" data-rec-abrir="${pi}.${i}">Abrir →</button></div></article>`;
+        <p class="capp-sirve"><b>Para la Gerencia:</b> ${esc(it.sirve)}</p>
+        <div class="capp-mod-pie">${donde ? `<span class="capp-donde" title="Dónde está en el menú">${esc(donde)}</span>` : '<span></span>'}
+          <button type="button" class="btn btn-sm" data-capp-abrir="${pi}.${i}">Abrir →</button></div></article>`;
     }).join('')}</div>`;
 }
 
 function recHtmlFin() {
-  return `<div class="rec-hero rec-hero-fin"><div class="rec-hero-ic" aria-hidden="true">✅</div>
-      <h2 id="rec-tit">Listo: ya conoce la app</h2>
+  return `<div class="capp-hero capp-hero-fin"><div class="capp-hero-ic" aria-hidden="true">✅</div>
+      <h2 id="capp-tit">Listo: ya conoce la app</h2>
       <p>Tres cosas para el día a día:</p></div>
-    <div class="rec-claves">
+    <div class="capp-claves">
       <div><b>Los números rojos del menú</b><span>Son lo que le toca a usted: firmas de permisos, vacaciones, ingresos y comunicados por revisar.</span></div>
       <div><b>En el celular</b><span>La barra de abajo tiene los accesos más usados; <b>☰ Más</b> abre el menú completo.</span></div>
       <div><b>Este recorrido no se pierde</b><span>Lo vuelve a abrir cuando quiera desde el menú: <b>🧭 Conozca la app</b>.</span></div>
     </div>
-    <h3 class="rec-h3">Lo que le toca a usted</h3>${recPendHtml()}`;
+    <h3 class="capp-h3">Lo que le toca a usted</h3>${recPendHtml()}`;
 }
 
 function recIr(n) {
   const m = recModal();
   _rec.paso = Math.max(0, Math.min(_rec.pasos.length - 1, n));
   const p = _rec.pasos[_rec.paso];
-  m.querySelector('.rec-body').innerHTML = p.inicio ? recHtmlInicio() : p.fin ? recHtmlFin() : recHtmlArea(p, _rec.paso);
-  m.querySelector('.rec-body').scrollTop = 0;
-  m.querySelector('.rec-puntos').innerHTML = _rec.pasos.map((x, i) => {
+  m.querySelector('.capp-body').innerHTML = p.inicio ? recHtmlInicio() : p.fin ? recHtmlFin() : recHtmlArea(p, _rec.paso);
+  m.querySelector('.capp-body').scrollTop = 0;
+  m.querySelector('.capp-puntos').innerHTML = _rec.pasos.map((x, i) => {
     const nom = x.inicio ? 'Bienvenida' : x.fin ? 'Final' : x.t;
-    return `<button type="button" role="tab" class="rec-punto${i === _rec.paso ? ' on' : ''}${i < _rec.paso ? ' hecho' : ''}" data-rec-ir="${i}" aria-selected="${i === _rec.paso}" title="${esc(nom)}" aria-label="${esc(nom)}">${x.inicio ? '🧭' : x.fin ? '✅' : x.icon}</button>`;
+    return `<button type="button" role="tab" class="capp-punto${i === _rec.paso ? ' on' : ''}${i < _rec.paso ? ' hecho' : ''}" data-capp-ir="${i}" aria-selected="${i === _rec.paso}" title="${esc(nom)}" aria-label="${esc(nom)}">${x.inicio ? '🧭' : x.fin ? '✅' : x.icon}</button>`;
   }).join('');
   // En el celular la fila de puntos no cabe: se corre para que el paso actual quede a la vista
-  const pts = m.querySelector('.rec-puntos'), on = pts.querySelector('.rec-punto.on');
+  const pts = m.querySelector('.capp-puntos'), on = pts.querySelector('.capp-punto.on');
   if (on && pts.scrollWidth > pts.clientWidth) pts.scrollLeft = on.offsetLeft - (pts.clientWidth - on.offsetWidth) / 2;
-  m.querySelector('.rec-cuenta').textContent = `Paso ${_rec.paso + 1} de ${_rec.pasos.length}`;
-  m.querySelector('[data-rec="ant"]').disabled = _rec.paso === 0;
-  m.querySelector('[data-rec="sig"]').textContent = _rec.paso === 0 ? 'Empezar →' : _rec.paso >= _rec.pasos.length - 1 ? 'Terminar' : 'Siguiente →';
+  m.querySelector('.capp-cuenta').textContent = `Paso ${_rec.paso + 1} de ${_rec.pasos.length}`;
+  m.querySelector('[data-capp="ant"]').disabled = _rec.paso === 0;
+  m.querySelector('[data-capp="sig"]').textContent = _rec.paso === 0 ? 'Empezar →' : _rec.paso >= _rec.pasos.length - 1 ? 'Terminar' : 'Siguiente →';
 }
 
 function openRecorrido() {
@@ -5135,10 +5135,10 @@ function openRecorrido() {
   recIr(0);
   closeMenu();
   m.hidden = false;
-  m.querySelector('.rec-card').focus();
+  m.querySelector('.capp-card').focus();
 }
 function recCerrar() {
-  const m = $('rec-modal'); if (m) m.hidden = true;
+  const m = $('capp-modal'); if (m) m.hidden = true;
   // Visto = no se vuelve a abrir solo (sigue en el menú). Si la base no tiene sql/213, no pasa nada.
   sb.rpc('recorrido_app_marcar', { p_version: REC_VER }).then(() => {}, () => {});
 }
@@ -7291,7 +7291,8 @@ async function _openEditorInterno(row, inicial = null) {
   // En esos casos el móvil/ruta/conductor quedan bloqueados; solo se editan observaciones y seguimiento.
   const _ed = String(row?.estado_despacho || '').toUpperCase();
   const isDispatched = !!(cfg.dispatchable && row && (_ed === 'DESPACHADO' || _ed === 'SI' || row.sonar_regid));
-  const soyAuditor = isAuditor();
+  // En Restricciones el monitor es quien las crea y edita: formulario completo, sin «modo auditoría»
+  const soyAuditor = isAuditor() && current !== 'restricciones_rutas';
   if (isDispatched && !soyAuditor) {
     const note = document.createElement('div');
     note.className = 'sonar-info';
